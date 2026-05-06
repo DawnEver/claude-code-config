@@ -1,0 +1,8 @@
+.DS_Store
+.claude
+node_modules/
+package-lock.json
+dist/
+env_settings.json
+skills/planning-with-files
+settings.json

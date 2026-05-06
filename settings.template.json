@@ -1,0 +1,90 @@
+{
+  "env": {
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": 1,
+    "CLAUDE_CODE_FORK_SUBAGENTS": 1,
+    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "your-api-key-here",
+    "ANTHROPIC_MODEL": "deepseek-v4-flash",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
+    "ANTHROPIC_REASONING_MODEL": "deepseek-v4-pro[1m]"
+  },
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "allow": [
+      "Bash(openspec *)",
+      "Bash(git *)",
+      "Bash(npm *)",
+      "Bash(make *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(sudo *)",
+      "Bash(curl * | bash)"
+    ]
+  },
+  "model": "deepseek-v4-pro[1m]",
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/notify.cjs --event Notification \"Claude Code\" \"Claude needs your input\""
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "node ~/.claude/scripts/launch.js"
+  },
+  "enabledPlugins": {
+    "skill-creator@claude-plugins-official": true,
+    "claude-hud@claude-hud": true,
+    "superpowers@superpowers-marketplace": false,
+    "codex@openai-codex": true,
+    "ralph-loop@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-hud": {
+      "source": {
+        "source": "github",
+        "repo": "jarrodwatts/claude-hud"
+      }
+    },
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      }
+    },
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
+  },
+  "effortLevel": "low",
+  "autoUpdatesChannel": "latest",
+  "minimumVersion": "2.1.119",
+  "theme": "auto",
+  "editorMode": "vim",
+  "verbose": true,
+  "terminalProgressBarEnabled": true,
+  "metadata": {
+    "NOTIFY_WAITING_TIMEOUT_MINUTES": 5
+  },
+  "mcpServers": {
+    "openspec": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@fission-ai/openspec-mcp"
+      ]
+    }
+  }
+}

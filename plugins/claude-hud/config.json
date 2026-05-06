@@ -1,0 +1,29 @@
+{
+  "lineLayout": "expanded",
+  "showSeparators": false,
+  "language": "en",
+  "gitStatus": {
+    "enabled": true,
+    "showDirty": true,
+    "showAheadBehind": true,
+    "showFileStats": true
+  },
+  "display": {
+    "showModel": true,
+    "showContextBar": true,
+    "showTools": true,
+    "showAgents": true,
+    "showTodos": true,
+    "showProject": true,
+    "showConfigCounts": false,
+    "showTokenBreakdown": true,
+    "showSpeed": true,
+    "showUsage": true,
+    "usageBarEnabled": true,
+    "usageCompact": true,
+    "showSessionName": true,
+    "showDuration": true,
+    "showSessionTokens": true,
+    "customLine": "!cat ~/.claude/models.md"
+  }
+}
