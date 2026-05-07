@@ -16,7 +16,7 @@ npm install -g @anthropic-ai/claude-code
 ```sh
 npm install -g @openai/codex
 codex login
-/codex:setup --enable-review-gate                     
+/codex:setup --enable-review-gate
 ```
 
 ### OpenSpec

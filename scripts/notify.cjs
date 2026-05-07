@@ -40,10 +40,8 @@ const entry = {
   folder,
   workspace: process.env.CLAUDE_WORKSPACE || null,
   goto: gotoTarget || null,
+  ppid: process.ppid,
 };
-
-const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-console.log(`[Notify] [${timeStr}] ${title}: ${message}`);
 
 if (logPath) {
   try {
