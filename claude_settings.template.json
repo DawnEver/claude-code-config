@@ -1,14 +1,18 @@
 {
   "env": {
-    "CLAUDE_CODE_USE_POWERSHELL_TOOL": 1,
-    "CLAUDE_CODE_FORK_SUBAGENTS": 1,
+    "CLAUDE_CODE_FORK_SUBAGENT": "1",
+    "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "1",
+    "CLAUDE_CODE_AUTO_CONNECT_IDE": "1",
+    "DISABLE_LOGIN_COMMAND": "1",
+    "DISABLE_LOGOUT_COMMAND": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_FEEDBACK_COMMAND": "1",
     "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "your-api-key-here",
-    "ANTHROPIC_MODEL": "deepseek-v4-flash",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
-    "ANTHROPIC_REASONING_MODEL": "deepseek-v4-pro[1m]"
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro"
   },
   "includeCoAuthoredBy": false,
   "permissions": {
@@ -16,30 +20,41 @@
       "Bash(openspec *)",
       "Bash(git *)",
       "Bash(npm *)",
-      "Bash(make *)"
+      "Bash(make *)",
+      "Bash(ln *)",
+      "Bash(node *)",
+      "Skill(update-config)",
+      "Bash(chmod +x *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(cmd *)",
+      "Bash(powershell *)"
     ],
     "deny": [
       "Bash(rm -rf *)",
       "Bash(sudo *)",
       "Bash(curl * | bash)"
-    ]
+    ],
+    "defaultMode": "default"
   },
-  "model": "deepseek-v4-pro[1m]",
+  "model": "haiku",
   "hooks": {
     "Notification": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/scripts/notify.cjs --event Notification \"Claude Code\" \"Claude needs your input\""
+            "command": "node ~/.claude/scripts/notify.js --event Notification \"Claude Code\" \"Claude needs your input\""
           }
         ]
       }
     ]
   },
+  "worktree": {
+    "baseRef": "fresh"
+  },
   "statusLine": {
     "type": "command",
-    "command": "node ~/.claude/scripts/launch.js"
+    "command": "node ~/.claude/scripts/launch_claude_hud.js"
   },
   "enabledPlugins": {
     "skill-creator@claude-plugins-official": true,
@@ -71,10 +86,13 @@
   "effortLevel": "low",
   "autoUpdatesChannel": "latest",
   "minimumVersion": "2.1.119",
+  "tui": "fullscreen",
   "theme": "auto",
-  "editorMode": "vim",
+  "editorMode": "normal",
   "verbose": true,
+  "preferredNotifChannel": "auto",
   "terminalProgressBarEnabled": true,
+  "skipAutoPermissionPrompt": true,
   "metadata": {
     "NOTIFY_WAITING_TIMEOUT_MINUTES": 5
   },

@@ -23,7 +23,6 @@
     "usageCompact": true,
     "showSessionName": true,
     "showDuration": true,
-    "showSessionTokens": true,
-    "customLine": "!cat ~/.claude/models.md"
+    "showSessionTokens": true
   }
 }

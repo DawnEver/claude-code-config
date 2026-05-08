@@ -58,7 +58,7 @@
         "claudeNotifications.logPath": {
           "type": "string",
           "default": "${userHome}/.claude/logs/notifications.jsonl",
-          "description": "Path to the JSONL log written by scripts/notify.cjs"
+          "description": "Path to the JSONL log written by scripts/notify.js"
         },
         "claudeNotifications.maxEvents": {
           "type": "number",

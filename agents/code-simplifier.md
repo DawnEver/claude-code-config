@@ -1,3 +1,4 @@
+---
 name: code-simplifier
 description: Simplifies and refines code with adjustable intensity (Aggressive/Balanced/Conservative).
 model: opus

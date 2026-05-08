@@ -18,14 +18,14 @@ Show Claude Code hook notifications inside VS Code with error popups and termina
 
 ## Requirements
 
-Requires the `scripts/notify.cjs` hook script from the parent repo, configured in `settings.json`:
+Requires the `scripts/notify.js` hook script from the parent repo, configured in `settings.json`:
 
 ```json
 "hooks": {
   "Notification": [{
     "hooks": [{
       "type": "command",
-      "command": "node ~/.claude/scripts/notify.cjs --event Notification \"Claude Code\" \"message\""
+      "command": "node ~/.claude/scripts/notify.js --event Notification \"Claude Code\" \"message\""
     }]
   }]
 }
@@ -52,7 +52,7 @@ npm run package    # Package .vsix
 ## Architecture
 
 ```
-notify.cjs (hook) -> notifications.jsonl -> extension.ts -> Error popup / Output channel
+notify.js (hook) -> notifications.jsonl -> extension.ts -> Error popup / Output channel
 ```
 
 The extension watches `notifications.jsonl` for new lines, deduplicates bursts, and shows error popups with jump actions.

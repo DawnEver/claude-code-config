@@ -1,7 +1,7 @@
 ---
 name: reply-email
 description: Generate natural, conversational English email replies. Provide the received email and your draft/key points, and get a polished reply.
-user-invocable: true
+disable-model-invocation: true
 allowed-tools: "Read"
 ---
 

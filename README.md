@@ -1,6 +1,6 @@
-# Claude Code Cross-Platform Configuration Sync
+# Claude Code & Codex Cross-Platform Configuration Sync
 
-Sync Claude Code configuration files across multiple devices via OneDrive to maintain a consistent development environment.
+Sync Claude Code and Codex configuration files across multiple devices via OneDrive to maintain a consistent development environment.
 
 ## Installation
 
@@ -31,13 +31,14 @@ npm install -g @fission-ai/openspec@latest
 node scripts/setup.js
 ```
 
-This script auto-detects the OneDrive source directory and creates symbolic links in `~/.claude/`. Works on macOS, Windows, and Linux. Run it again to verify existing links — it won't overwrite files.
+or replace existing files:
 
-If `settings.json` doesn't exist (it's gitignored to protect secrets), setup automatically copies `settings.template.json` → `settings.json`. Edit your local `settings.json` with your API key and personal config.
+```sh
+node scripts/setup.js --replace
+```
+
+This script auto-detects the OneDrive source directory and creates symbolic links in `~/.claude/` and `~/.codex/`. Works on macOS, Windows, and Linux. Run it again to verify existing links — it won't overwrite files.
+
+If `claude_settings.json` doesn't exist (it's gitignored to protect secrets), setup automatically copies `claude_settings.template.json` → `claude_settings.json`. Edit your local `claude_settings.json` with your API key and personal config.
 
 **Windows note:** If you get a privilege error, enable Developer Mode in Windows Settings or run as Administrator.
-
-## Available Models
-```bash
-!cat ~/.claude/models.md
-```
