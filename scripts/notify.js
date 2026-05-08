@@ -15,12 +15,14 @@ const args = process.argv.slice(2);
 let event = null;
 let gotoTarget = null;
 let logPath = path.join(os.homedir(), '.claude', 'logs', 'notifications.jsonl');
+let showNative = null;
 const rest = [];
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--event') { event = args[++i]; continue; }
   if (args[i] === '--goto') { gotoTarget = args[++i]; continue; }
   if (args[i] === '--no-log') { logPath = null; continue; }
+  if (args[i] === '--show-native') { showNative = args[++i] === 'true'; continue; }
   rest.push(args[i]);
 }
 
@@ -41,6 +43,7 @@ const entry = {
   workspace: process.env.CLAUDE_WORKSPACE || null,
   goto: gotoTarget || null,
   ppid: process.ppid,
+  showNative,
 };
 
 if (logPath) {

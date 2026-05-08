@@ -66,11 +66,6 @@
           "minimum": 10,
           "maximum": 5000,
           "description": "How many recent events to keep in memory for quick-pick."
-        },
-        "claudeNotifications.showNativeNotifications": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show native OS toast notifications (in addition to VS Code popups). Requires restart to take effect."
         }
       }
     }

@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/scripts/notify.js --event Notification \"Claude Code\" \"Claude needs your input\""
+            "command": "node ~/.claude/scripts/notify.js --event Notification --show-native false \"Claude Code\" \"Claude needs your input\""
           }
         ]
       }

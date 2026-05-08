@@ -2,40 +2,104 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { ClaudeEvent, dedupKey, formatLine, resolveHome } from './types';
-import { jumpTo } from './terminal';
+import { execFile } from 'child_process';
 
-export function activate(context: vscode.ExtensionContext) {
+/**
+ * Represents a notification event from Claude Code
+ */
+type ClaudeEvent = {
+  ts?: string;
+  event?: string;
+  severity?: string;
+  title?: string;
+  message?: string;
+  cwd?: string;
+  folder?: string;
+  workspace?: string;
+  goto?: string | null;
+  showNative?: boolean | null;
+};
+
+function resolveHome(p: string): string {
+  return p.replace('${userHome}', os.homedir());
+}
+
+function dedupKey(e: ClaudeEvent): string {
+  return `${e.event ?? ''}|${e.folder ?? e.title ?? ''}|${e.message ?? ''}`;
+}
+
+function formatLine(e: ClaudeEvent): string {
+  const ts = e.ts ? new Date(e.ts).toLocaleTimeString() : new Date().toLocaleTimeString();
+  const sev = e.severity ? ` ${e.severity.toUpperCase()}` : '';
+  const msg = e.message ?? '';
+  const cwd = e.cwd ?? e.workspace ?? '';
+  return `[${ts}] [${e.event ?? 'Event'}${sev}] ${msg}${cwd ? ` (${cwd})` : ''}`;
+}
+
+function sendNativeNotification(title: string, message: string): void {
+  const platform = os.platform();
+  if (platform === 'darwin') {
+    const esc = (s: string) => s.replace(/["\\]/g, '\\$&');
+    execFile('osascript', ['-e', `display notification "${esc(message)}" with title "${esc(title)}"`]);
+  } else if (platform === 'win32') {
+    const b64 = (s: string) => Buffer.from(s).toString('base64');
+    const ps = [
+      '$ErrorActionPreference="SilentlyContinue"',
+      '[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null',
+      '[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]|Out-Null',
+      "$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64(title) + "'))",
+      "$m=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64(message) + "'))",
+      "$id='{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'",
+      '$x=New-Object Windows.Data.Xml.Dom.XmlDocument',
+      '$x.LoadXml(\'<toast><visual><binding template="ToastText02"><text id="1"/><text id="2"/></binding></visual></toast>\')',
+      '$x.GetElementsByTagName("text").Item(0).AppendChild($x.CreateTextNode($t))|Out-Null',
+      '$x.GetElementsByTagName("text").Item(1).AppendChild($x.CreateTextNode($m))|Out-Null',
+      '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($x))',
+    ].join(';');
+    execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps]);
+  } else {
+    execFile('notify-send', [title, message]);
+  }
+}
+
+async function jumpTo(e: ClaudeEvent): Promise<void> {
+  const target = e.cwd || e.workspace;
+  if (!target) {
+    vscode.window.showWarningMessage('No workspace/file info found on this event.');
+    return;
+  }
+  try {
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(target), { forceReuseWindow: true });
+  } catch {
+    vscode.window.showErrorMessage(`Failed to open: ${target}`);
+  }
+}
+
+export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('Claude Notifications');
   context.subscriptions.push(output);
 
-  // ---- State ----
   let events: ClaudeEvent[] = [];
   let fileOffset = 0;
   let catchingUp = true;
   let watcher: fs.FSWatcher | null = null;
-  const DEDUP_WINDOW_MS = 2_000;
+  let config = getConfig();
   let lastNotif: { key: string; ts: number } | null = null;
+  let debounceTimer: NodeJS.Timeout | null = null;
 
-  // ---- Config ----
-  function cfg() {
+  function getConfig() {
     const c = vscode.workspace.getConfiguration('claudeNotifications');
     return {
-      logPath: resolveHome(c.get<string>('logPath', path.join(os.homedir(), '.claude', 'logs', 'notifications.jsonl'))),
+      logPath: resolveHome(c.get<string>('logPath', `${os.homedir()}/.claude/logs/notifications.jsonl`)),
       maxEvents: c.get<number>('maxEvents', 500),
     };
   }
 
-  // ---- Process a new event ----
-  function pushEvent(e: ClaudeEvent) {
-    // Cap history
-    const max = Math.max(10, Math.min(cfg().maxEvents, 5000));
+  function pushEvent(e: ClaudeEvent): void {
+    const max = Math.max(10, Math.min(config.maxEvents, 5000));
     events.push(e);
-    if (events.length > max) events = events.slice(events.length - max);
-
+    if (events.length > max) events = events.slice(-max);
     output.appendLine(formatLine(e));
-
-    // Skip popups during initial catchup
     if (catchingUp) return;
 
     const timeStr = e.ts
@@ -43,118 +107,127 @@ export function activate(context: vscode.ExtensionContext) {
       : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const displayTitle = e.folder || e.title || 'Claude Code';
     const text = e.message ? `[${timeStr}] ${displayTitle}: ${e.message}` : `[${timeStr}] ${displayTitle}`;
+    const hasTarget = !!(e.goto || e.cwd || e.workspace);
+    const label = hasTarget ? 'Go to Claude Code' : undefined;
 
-    // Dedup burst suppression
     const now = Date.now();
-    const dKey = dedupKey(e);
-    if (lastNotif && lastNotif.key === dKey && now - lastNotif.ts < DEDUP_WINDOW_MS) return;
-    lastNotif = { key: dKey, ts: now };
+    const key = dedupKey(e);
+    if (lastNotif && lastNotif.key === key && now - lastNotif.ts < 2000) return;
+    lastNotif = { key, ts: now };
 
-    // Errors → popup. Info/warn → silent (logged to output channel).
-    if (e.severity === 'error') {
-      const jumpLabel = e.goto || e.cwd || e.workspace ? 'Go to Claude Code' : undefined;
-      const buttons = jumpLabel ? ['Dismiss', jumpLabel] : ['Dismiss'];
-      vscode.window.showErrorMessage(text, ...buttons).then((sel) => {
-        if (sel === jumpLabel) jumpTo(e);
+    const showFn =
+      e.severity === 'error'
+        ? vscode.window.showErrorMessage
+        : e.severity === 'warn'
+          ? vscode.window.showWarningMessage
+          : vscode.window.showInformationMessage;
+
+    if (label) {
+      showFn(text, label).then((sel) => {
+        if (sel === label) jumpTo(e);
       });
+    } else {
+      showFn(text);
+    }
+
+    if (e.showNative) {
+      sendNativeNotification(displayTitle, e.message ? `[${timeStr}] ${e.message}` : `[${timeStr}]`);
     }
   }
 
-  // ---- File watching ----
-  function readNewLines(logPath: string) {
+  function readNewLines(): void {
     try {
-      const stat = fs.statSync(logPath);
+      const stat = fs.statSync(config.logPath);
       if (stat.size < fileOffset) fileOffset = 0;
       const toRead = stat.size - fileOffset;
       if (toRead <= 0) return;
-      const buf = Buffer.allocUnsafe(toRead);
-      const fd = fs.openSync(logPath, 'r');
+
+      const buf = Buffer.alloc(toRead);
+      const fd = fs.openSync(config.logPath, 'r');
       fs.readSync(fd, buf, 0, toRead, fileOffset);
       fs.closeSync(fd);
       fileOffset = stat.size;
+
       buf
         .toString('utf8')
         .split(/\r?\n/)
         .filter(Boolean)
         .forEach((line) => {
           try {
-            pushEvent(JSON.parse(line) as ClaudeEvent);
+            pushEvent(JSON.parse(line));
           } catch {
-            output.appendLine(`[warn] Failed to parse JSONL line: ${line}`);
+            /* ignore */
           }
         });
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
 
-  function startWatching() {
-    const { logPath } = cfg();
+  function debouncedRead(): void {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(readNewLines, 50);
+  }
+
+  function startWatching(): void {
     if (watcher) {
       watcher.close();
       watcher = null;
     }
     catchingUp = true;
-    readNewLines(logPath);
+    readNewLines();
     catchingUp = false;
-    // Watch log file for new notifications
+
     try {
-      watcher = fs.watch(logPath, { persistent: true }, () => readNewLines(logPath));
+      watcher = fs.watch(config.logPath, { persistent: true }, debouncedRead);
     } catch {
-      const dir = path.dirname(logPath);
+      const dir = path.dirname(config.logPath);
       fs.mkdirSync(dir, { recursive: true });
       watcher = fs.watch(dir, { persistent: true }, (_evt, filename) => {
-        if (filename && path.join(dir, filename.toString()) === logPath) readNewLines(logPath);
+        if (filename && path.join(dir, filename.toString()) === config.logPath) debouncedRead();
       });
     }
   }
 
-  // ---- Commands ----
   context.subscriptions.push(
     vscode.commands.registerCommand('claudeNotifications.showOutput', () => output.show(true)),
-
     vscode.commands.registerCommand('claudeNotifications.clearHistory', () => {
       events = [];
       try {
-        const { logPath } = cfg();
-        fileOffset = fs.existsSync(logPath) ? fs.statSync(logPath).size : 0;
+        fileOffset = fs.existsSync(config.logPath) ? fs.statSync(config.logPath).size : 0;
       } catch {
         fileOffset = 0;
       }
       output.clear();
       output.appendLine('[info] cleared (ignoring previous log entries)');
     }),
-
     vscode.commands.registerCommand('claudeNotifications.jumpToRecent', async () => {
       if (events.length === 0) {
         vscode.window.showInformationMessage('No Claude events yet.');
         return;
       }
       const picked = await vscode.window.showQuickPick(
-        events
-          .slice()
-          .reverse()
-          .map((e) => ({
-            label: formatLine(e),
-            description: e.goto ?? e.workspace ?? e.cwd ?? '',
-            e,
-          })),
+        [...events].reverse().map((e) => ({
+          label: formatLine(e),
+          description: e.goto ?? e.workspace ?? e.cwd ?? '',
+          e,
+        })),
         { placeHolder: 'Select an event to jump to', matchOnDescription: true },
       );
-      if (picked) {
-        await jumpTo(picked.e);
+      if (picked) await jumpTo(picked.e);
+    }),
+    vscode.workspace.onDidChangeConfiguration((ev) => {
+      if (ev.affectsConfiguration('claudeNotifications')) {
+        config = getConfig();
+        startWatching();
       }
     }),
   );
 
-  // ---- Start ----
   startWatching();
-
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((ev) => {
-      if (ev.affectsConfiguration('claudeNotifications')) startWatching();
-    }),
-  );
-
   output.appendLine('[info] Claude Notifications extension active');
 }
 
-export function deactivate() {}
+export function deactivate(): void {
+  // context.subscriptions handles disposal
+}
