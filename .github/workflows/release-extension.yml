@@ -5,6 +5,9 @@ on:
     tags:
       - 'claude-notifications-v*'
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
@@ -22,7 +25,7 @@ jobs:
       - name: Sync package.json version from tag
         run: |
           TAG_VER="${GITHUB_REF_NAME#claude-notifications-v}"
-          npm version "$TAG_VER" --no-git-tag-version
+          npm pkg set version="$TAG_VER"
           echo "OK: package.json version set to $TAG_VER"
 
       - run: npm install
@@ -35,4 +38,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: vscode-extension/claude-notifications/dist/*.vsix
-          generate_release_notes: true
+          body: placeholder
+
+      - name: Update Release Body
+        run: |
+          VERSION="${GITHUB_REF_NAME#claude-notifications-v}"
+          cat > /tmp/release-body.md <<-EOF
+          ## Claude Notifications ${VERSION}
+
+          Download the \`.vsix\` attachment below, then in VS Code run **Extensions: Install from VSIX...** to install.
+          EOF
+          gh release edit "$GITHUB_REF_NAME" --notes-file /tmp/release-body.md

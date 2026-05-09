@@ -42,3 +42,19 @@ This script auto-detects the OneDrive source directory and creates symbolic link
 If `claude_settings.json` doesn't exist (it's gitignored to protect secrets), setup automatically copies `claude_settings.template.json` → `claude_settings.json`. Edit your local `claude_settings.json` with your API key and personal config.
 
 **Windows note:** If you get a privilege error, enable Developer Mode in Windows Settings or run as Administrator.
+
+## VS Code Extension — Claude Notifications
+
+A companion extension that displays Claude Code hook notifications as VS Code error popups with terminal jump actions.
+
+- Download the latest `.vsix` from [GitHub Releases](https://github.com/DawnEver/claude-code-config/releases)
+- In VS Code, run **Extensions: Install from VSIX...** and select the downloaded file
+- Source: `vscode-extension/claude-notifications/`
+
+To publish a new version:
+```sh
+# Bump version in vscode-extension/claude-notifications/package.json, then:
+git tag claude-notifications-vX.Y.Z
+git push origin main --tags
+# CI will build and create a GitHub Release with the .vsix attached
+```
