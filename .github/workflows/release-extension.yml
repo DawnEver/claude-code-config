@@ -49,3 +49,5 @@ jobs:
           Download the \`.vsix\` attachment below, then in VS Code run **Extensions: Install from VSIX...** to install.
           EOF
           gh release edit "$GITHUB_REF_NAME" --notes-file /tmp/release-body.md
+        env:
+          GH_TOKEN: ${{ github.token }}
