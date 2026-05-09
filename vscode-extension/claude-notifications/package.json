@@ -4,7 +4,7 @@
   "description": "Show Claude Code hook notifications inside VS Code and provide jump actions.",
   "version": "0.0.1",
   "publisher": "DawnEver",
-  "icon": "icon.ico",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.117.0"
   },
@@ -75,7 +75,7 @@
     "watch": "tsc -watch -p .",
     "format": "prettier --check \"src/**/*.ts\"",
     "fix": "prettier --write \"src/**/*.ts\"",
-    "package": "vsce package"
+    "package": "vsce package -o dist/"
   },
   "devDependencies": {
     "@types/node": "^20.19.39",

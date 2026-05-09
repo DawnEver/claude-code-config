@@ -36,6 +36,11 @@
     ],
     "defaultMode": "default"
   },
+  "autoMode": {
+    "environment": [
+      "$defaults"
+    ]
+  },
   "model": "haiku",
   "hooks": {
     "Notification": [

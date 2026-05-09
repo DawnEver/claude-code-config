@@ -236,6 +236,29 @@ function setup() {
     }
   }
 
+  // Build VS Code extension
+  const extensionDir = path.join(sourceDir, 'vscode-extension', 'claude-notifications');
+  if (fs.existsSync(path.join(extensionDir, 'package.json'))) {
+    console.log('\n--- Extension ---');
+    try {
+        console.log('Try   npm install');
+        execSync('npm install', { cwd: extensionDir, stdio: 'pipe' });
+      console.log('OK    npm install');
+    } catch (err) {
+      console.log(`ERR   npm install — ${err.stderr?.toString().trim() || err.message}`);
+      errors++;
+    }
+    try {
+      console.log('Try   npm run compile');
+      execSync('npm run compile', { cwd: extensionDir, stdio: 'pipe' });
+      console.log('OK    npm run compile');
+    } catch (err) {
+      console.log(`ERR   npm run compile — ${err.stderr?.toString().trim() || err.message}`);
+      errors++;
+    }
+    console.log('Try reloading VS Code window to activate extension');
+  }
+
   console.log(`\nDone: ${created} linked, ${skipped} skipped, ${errors} errors`);
 }
 

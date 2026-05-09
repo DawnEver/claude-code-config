@@ -39,6 +39,18 @@ Requires the `scripts/notify.js` hook script from the parent repo, configured in
 | `claudeNotifications.maxEvents` | `500` | Max recent events kept in memory |
 | `claudeNotifications.showNativeNotifications` | `false` | Show native OS toast (restart required) |
 
+## Installation
+
+Download the latest `.vsix` from [GitHub Releases](https://github.com/DawnEver/claude-code-config/releases). In VS Code, run **Extensions: Install from VSIX...** and select the downloaded file.
+
+### Troubleshooting
+
+If `npm install` fails with `EACCES` on `.npm` cache, fix the directory ownership and retry:
+
+```bash
+sudo chown -R $(whoami) ~/.npm
+```
+
 ## Development
 
 ```bash
