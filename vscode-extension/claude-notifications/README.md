@@ -1,20 +1,11 @@
 # Claude Notifications
 
-Show Claude Code hook notifications inside VS Code with error popups and terminal jump actions.
+Show Claude Code hook notifications inside VS Code as info popups with a jump action.
 
 ## Features
 
-- **Error popups** — critical errors show as VS Code `showErrorMessage` popups with jump action.
-- **Jump to Claude Code** — each notification can focus the terminal running Claude Code via process tree matching.
-- **Output channel** — all events logged to `Claude Notifications` output channel for reference.
-
-## Commands
-
-| Command | Title |
-|---------|-------|
-| `claudeNotifications.showOutput` | Claude Notifications: Show Output |
-| `claudeNotifications.jumpToRecent` | Claude Notifications: Jump to Recent Event |
-| `claudeNotifications.clearHistory` | Claude Notifications: Clear History |
+- **Info popups** — new notifications from `notify.js` appear as `showInformationMessage` popups showing the project path + "Need attention"
+- **Jump to project** — each popup has a **Go to Context** button that runs `vscode.openFolder` to switch to the notification's working directory
 
 ## Requirements
 
@@ -25,7 +16,7 @@ Requires the `scripts/notify.js` hook script from the parent repo, configured in
   "Notification": [{
     "hooks": [{
       "type": "command",
-      "command": "node ~/.claude/scripts/notify.js --event Notification \"Claude Code\" \"message\""
+      "command": "node ~/.claude/scripts/notify.js --show-native false"
     }]
   }]
 }
@@ -36,8 +27,6 @@ Requires the `scripts/notify.js` hook script from the parent repo, configured in
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `claudeNotifications.logPath` | `${userHome}/.claude/logs/notifications.jsonl` | Path to the JSONL log |
-| `claudeNotifications.maxEvents` | `500` | Max recent events kept in memory |
-| `claudeNotifications.showNativeNotifications` | `false` | Show native OS toast (restart required) |
 
 ## Installation
 
@@ -59,12 +48,13 @@ npm run watch      # Watch mode
 npm run format     # Check formatting
 npm run fix        # Auto-format
 npm run package    # Package .vsix
+npm run test       # Claude try to read ~/.claude/settings.json to request permision, to test 
 ```
 
 ## Architecture
 
 ```
-notify.js (hook) -> notifications.jsonl -> extension.ts -> Error popup / Output channel
+notify.js (hook) -> notifications.jsonl -> extension.ts -> Info popup
 ```
 
-The extension watches `notifications.jsonl` for new lines, deduplicates bursts, and shows error popups with jump actions.
+The extension watches `notifications.jsonl` for new lines, deduplicates bursts, and shows info popups with a jump action.

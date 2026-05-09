@@ -2,12 +2,13 @@
   "env": {
     "CLAUDE_CODE_FORK_SUBAGENT": "1",
     "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
-    "CLAUDE_CODE_ATTRIBUTION_HEADER": "1",
-    "CLAUDE_CODE_AUTO_CONNECT_IDE": "1",
-    "DISABLE_LOGIN_COMMAND": "1",
-    "DISABLE_LOGOUT_COMMAND": "1",
+    "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_FEEDBACK_COMMAND": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEYS": "1",
+    "DISABLE_LOGIN_COMMAND": "1",
+    "DISABLE_LOGOUT_COMMAND": "1",
     "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "your-api-key-here",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
@@ -48,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/scripts/notify.js --event Notification --show-native false \"Claude Code\" \"Claude needs your input\""
+            "command": "node ~/.claude/scripts/notify.js --show-native false"
           }
         ]
       }

@@ -2,7 +2,7 @@
   "name": "claude-notifications",
   "displayName": "Claude Notifications",
   "description": "Show Claude Code hook notifications inside VS Code and provide jump actions.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "DawnEver",
   "icon": "icon.png",
   "engines": {
@@ -38,20 +38,6 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "claudeNotifications.showOutput",
-        "title": "Claude Notifications: Show Output"
-      },
-      {
-        "command": "claudeNotifications.jumpToRecent",
-        "title": "Claude Notifications: Jump to Recent Event"
-      },
-      {
-        "command": "claudeNotifications.clearHistory",
-        "title": "Claude Notifications: Clear History"
-      }
-    ],
     "configuration": {
       "title": "Claude Notifications",
       "properties": {
@@ -59,13 +45,6 @@
           "type": "string",
           "default": "${userHome}/.claude/logs/notifications.jsonl",
           "description": "Path to the JSONL log written by scripts/notify.js"
-        },
-        "claudeNotifications.maxEvents": {
-          "type": "number",
-          "default": 500,
-          "minimum": 10,
-          "maximum": 5000,
-          "description": "How many recent events to keep in memory for quick-pick."
         }
       }
     }
@@ -75,7 +54,8 @@
     "watch": "tsc -watch -p .",
     "format": "prettier --check \"src/**/*.ts\"",
     "fix": "prettier --write \"src/**/*.ts\"",
-    "package": "vsce package -o dist/"
+    "package": "vsce package -o dist/",
+    "test": "claude --bare --model haiku \"please read ~/.claude/settings.json to test claude permission system [Expected waiting for user's input]\""
   },
   "devDependencies": {
     "@types/node": "^20.19.39",

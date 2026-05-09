@@ -10,8 +10,6 @@ const sourceDir = path.resolve(__dirname, '..');
 const claudeDir = path.join(os.homedir(), '.claude');
 const codexDir = path.join(os.homedir(), '.codex');
 
-const EXTENSION_NAME = 'claude-notifications-0.0.1';
-
 const CLAUDE_LINKS = [
   { src: 'GLOBAL-AGENTS.md', dest: 'CLAUDE.md', type: 'file' },
   { src: 'claude_settings.json', dest: 'settings.json', type: 'file' },
@@ -20,7 +18,6 @@ const CLAUDE_LINKS = [
   { src: 'agents', dest: 'agents', type: 'dir' },
   { src: 'scripts', dest: 'scripts', type: 'dir' },
   { src: 'models.md', dest: 'models.md', type: 'file' },
-  { src: path.join('vscode-extension', 'claude-notifications'), dest: path.join('.vscode', 'extensions', EXTENSION_NAME), type: 'dir', isExtension: true },
 ];
 
 const CODEX_LINKS = [
@@ -234,29 +231,6 @@ function setup() {
         errors++;
       }
     }
-  }
-
-  // Build VS Code extension
-  const extensionDir = path.join(sourceDir, 'vscode-extension', 'claude-notifications');
-  if (fs.existsSync(path.join(extensionDir, 'package.json'))) {
-    console.log('\n--- Extension ---');
-    try {
-        console.log('Try   npm install');
-        execSync('npm install', { cwd: extensionDir, stdio: 'pipe' });
-      console.log('OK    npm install');
-    } catch (err) {
-      console.log(`ERR   npm install — ${err.stderr?.toString().trim() || err.message}`);
-      errors++;
-    }
-    try {
-      console.log('Try   npm run compile');
-      execSync('npm run compile', { cwd: extensionDir, stdio: 'pipe' });
-      console.log('OK    npm run compile');
-    } catch (err) {
-      console.log(`ERR   npm run compile — ${err.stderr?.toString().trim() || err.message}`);
-      errors++;
-    }
-    console.log('Try reloading VS Code window to activate extension');
   }
 
   console.log(`\nDone: ${created} linked, ${skipped} skipped, ${errors} errors`);
