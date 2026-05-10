@@ -5,7 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFile, execFileSync, execSync, spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 
 // ── Native OS notification ──
 // All platforms support clicking the notification to open VS Code at the
@@ -30,17 +30,17 @@ function sendNativeNotification(title, message, workspaceRoot) {
   const platform = os.platform();
   if (platform === 'darwin') {
     const vscodeUri = getVscodeUri(workspaceRoot);
+    const tnArgs = ['-title', title, '-message', message];
+    if (vscodeUri) tnArgs.push('-open', vscodeUri);
     try {
-      execSync('which terminal-notifier 2>/dev/null', { stdio: 'pipe', timeout: 2000 });
-      execFile('terminal-notifier', [
-        '-title', title,
-        '-message', message,
-        '-open', vscodeUri,
-      ]);
-      return;
-    } catch { /* terminal-notifier not installed */ }
-    const esc = (s) => s.replace(/["\\]/g, '\\$&');
-    execFile('osascript', ['-e', `display notification "${esc(message)}" with title "${esc(title)}"`]);
+      execFileSync('terminal-notifier', tnArgs, { timeout: 5000, stdio: 'ignore' });
+    } catch {
+      // terminal-notifier unavailable/failed — fall back to osascript as last resort
+      try {
+        const esc = (s) => s.replace(/["\\]/g, '\\$&');
+        execFileSync('osascript', ['-e', `display notification "${esc(message)}" with title "${esc(title)}"`], { timeout: 3000, stdio: 'ignore' });
+      } catch {}
+    }
   } else if (platform === 'win32') {
     const vscodeUri = getVscodeUri(workspaceRoot);
     const tmpScript = path.join(os.tmpdir(), `claude-notif-${Date.now()}-${process.pid}.ps1`);
@@ -146,8 +146,13 @@ if (!process.stdin.isTTY) {
   try {
     const stdinData = fs.readFileSync(0, 'utf8');
     const input = JSON.parse(stdinData);
-    const hookEventName = input.hook_event_name || '';
-    if (hookEventName.toLowerCase() === 'stop') hookEvent = 'completed';
+    const hookEventName = (input.hook_event_name || '').toLowerCase();
+    // Refer to https://code.claude.com/docs/en/hooks
+    if (hookEventName === 'stop' || hookEventName === 'taskcompleted' || hookEventName === 'task_completed') {
+      hookEvent = 'completed';
+    } else if (hookEventName === 'posttoolusefailure' || hookEventName === 'post_tool_use_failure') {
+      hookEvent = 'error';
+    }
     hookCwd = input.cwd || '';
     if (hookCwd) hookCwd = hookCwd.replace(/\//g, path.sep);
   } catch {}
@@ -191,8 +196,15 @@ if (!workspaceRoot || workspaceRoot === homeDir) {
 }
 
 // Send native notification
-const title = hookEvent === 'completed' ? 'Claude Code — Done' : 'Claude Code';
-const message = hookEvent === 'completed'
-  ? `Task completed in: ${projectName}`
-  : `Waiting for your response in: ${projectName}`;
+let title, message;
+if (hookEvent === 'completed') {
+  title = 'Claude Code — Done';
+  message = `Task completed in: ${projectName}`;
+} else if (hookEvent === 'error') {
+  title = 'Claude Code — Error';
+  message = `Tool failed in: ${projectName}`;
+} else {
+  title = 'Claude Code';
+  message = `Waiting for your response in: ${projectName}`;
+}
 sendNativeNotification(title, message, workspaceRoot);

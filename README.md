@@ -79,3 +79,5 @@ brew install terminal-notifier
 
 Without it, notifications still display but clicking won't open VS Code.
 
+Note: make sure to grant notification permissions in System Settings → Notifications for the terminal or notification helper (e.g. terminal-notifier) so click actions will be allowed.
+
