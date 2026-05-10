@@ -15,8 +15,6 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `claude_settings.template.json`: Template for new clones — auto-copied to `claude_settings.json` by setup
 - `models.md`: LLM model registry
 - `GLOBAL-AGENTS.md`: Global guidelines
-- `vscode-extension/claude-notifications/`: VS Code extension for in-editor notifications
-
 ### Workflows
 - Hooks in `claude_settings.json` trigger `notify.js` for `TaskCompleted`, `PostToolUseFailure`, `Notification`
 - `~/.claude/` links to repo for sync
@@ -24,4 +22,3 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 
 ### Standard
 - After changes, update README and `setup.js` if needed
-- After modifying `vscode-extension/claude-notifications/src/extension.ts`, run `npm run compile` in that directory to rebuild `dist/extension.js`

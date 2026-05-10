@@ -7,3 +7,7 @@
 ## Code Style
 - Write clean, minimal, elegant code with unnecessary comments.
 - Prefer editing existing files over creating new ones.
+
+## Workflow
+- Use LSP if available.
+- Update README.md and memory after finishing tasks.

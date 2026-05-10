@@ -1,9 +1,0 @@
-node_modules/**
-src/**
-tsconfig.json
-package-lock.json
-.prettierrc
-.gitignore
-**/*.ts
-**/*.map
-icon.svg
