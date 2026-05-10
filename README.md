@@ -19,10 +19,13 @@ codex login
 /codex:setup --enable-review-gate
 ```
 
-### OpenSpec
+### MCPs
 
 ```sh
 npm install -g @fission-ai/openspec@latest
+npm install -g pyright
+npm install -g typescript-language-server typescript
+rustup component add rust-analyzer
 ```
 
 ## Setup
@@ -43,18 +46,26 @@ If `claude_settings.json` doesn't exist (it's gitignored to protect secrets), se
 
 **Windows note:** If you get a privilege error, enable Developer Mode in Windows Settings or run as Administrator.
 
-## VS Code Extension — Claude Notifications
+## Notifications
 
-A companion extension that displays Claude Code hook notifications as VS Code error popups with terminal jump actions.
+Claude Code hooks drive cross-platform system notifications with click-to-open VS Code.
 
-- Download the latest `.vsix` from [GitHub Releases](https://github.com/DawnEver/claude-code-config/releases)
-- In VS Code, run **Extensions: Install from VSIX...** and select the downloaded file
-- Source: `vscode-extension/claude-notifications/`
+### How it works
 
-To publish a new version:
+`scripts/notify.js` is triggered by `Stop` and `Notification` hooks defined in `claude_settings.json`. It sends native OS notifications and supports clicking to jump to VS Code at the workspace:
+
+| Platform | Method | Click to open VS Code |
+|----------|--------|-----------------------|
+| **macOS** | `osascript` (fallback) or `terminal-notifier` | Requires `brew install terminal-notifier` |
+| **Windows** | PowerShell toast with `activationType="protocol"` | Works out of the box |
+| **Linux** | `notify-send` + `dbus-monitor` | Works on DEs with D-Bus notification actions |
+
+### macOS setup
+
+Install `terminal-notifier` for click-to-open support:
+
 ```sh
-# Bump version in vscode-extension/claude-notifications/package.json, then:
-git tag claude-notifications-vX.Y.Z
-git push origin main --tags
-# CI will build and create a GitHub Release with the .vsix attached
+brew install terminal-notifier
 ```
+
+Without it, notifications still display but clicking won't open VS Code.

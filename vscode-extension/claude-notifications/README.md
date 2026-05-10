@@ -58,3 +58,6 @@ notify.js (hook) -> notifications.jsonl -> extension.ts -> Info popup
 ```
 
 The extension watches `notifications.jsonl` for new lines, deduplicates bursts, and shows info popups with a jump action.
+
+## Reference
+- https://github.com/dimokol/claude-notifications

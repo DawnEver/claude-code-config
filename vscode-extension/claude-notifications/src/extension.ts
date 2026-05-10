@@ -1,167 +1,230 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { execFile } from 'child_process';
+import { getSignalPath } from './lib/state-paths';
+import { markResolved } from './lib/stage-dedup';
 
-type ClaudeEvent = {
-  ts?: string;
-  cwd?: string;
-  showNative?: boolean;
-};
+const POLL_MS = 400;
+const SWEEP_FIRED_MS = 8000;
+const STALE_THRESHOLD_MS = 30000;
 
-function resolveHome(p: string): string {
-  return p.replace('${userHome}', os.homedir());
+interface Signal {
+  version: number;
+  event: 'waiting' | 'completed';
+  hookEventName: string;
+  sessionId: string;
+  project: string;
+  pids: number[];
+  state: 'pending' | 'fired';
+  timestamp: number;
 }
 
-async function jumpTo(e: ClaudeEvent): Promise<void> {
-  if (!e.cwd) return;
+function parseSignal(content: string): Signal | null {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+
   try {
-    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(e.cwd), { forceReuseWindow: true });
+    const data = JSON.parse(trimmed);
+    if (data.version === 2) {
+      if (data.timestamp && Date.now() - data.timestamp > STALE_THRESHOLD_MS) {
+        return null;
+      }
+      return {
+        version: 2,
+        event: data.event === 'completed' ? 'completed' : 'waiting',
+        hookEventName: typeof data.hookEventName === 'string' ? data.hookEventName : '',
+        sessionId: typeof data.sessionId === 'string' ? data.sessionId : '',
+        project: data.project || 'Unknown',
+        pids: Array.isArray(data.pids) ? data.pids : [],
+        state: data.state === 'fired' ? 'fired' : 'pending',
+        timestamp: data.timestamp || Date.now(),
+      };
+    }
   } catch {
-    vscode.window.showErrorMessage(`Failed to open: ${e.cwd}`);
+    /* corrupt JSON */
   }
+  return null;
 }
 
-function smartPath(cwd: string, maxLen: number): string {
-  if (cwd.length <= maxLen) return cwd;
-  const sep = cwd.includes('\\') ? '\\' : '/';
-  const parts = cwd.split(/[/\\]/);
-  for (let i = 1; i < parts.length; i++) {
-    const tail = '…' + sep + parts.slice(i).join(sep);
-    if (tail.length <= maxLen) return tail;
+async function describeTerminal(terminal: vscode.Terminal, index: number): Promise<string> {
+  let pid = '?';
+  try {
+    const resolved = await terminal.processId;
+    if (resolved) pid = String(resolved);
+  } catch {
+    /* disposed */
   }
-  return 'Workspace: …' + sep + parts[parts.length - 1];
+  return `[${index}]"${terminal.name}"(pid=${pid})`;
 }
 
-function vscodeNotificationText(e: ClaudeEvent): string {
-  const cwd = e.cwd ?? '';
-  if (!cwd) return 'Claude Code Needs Attention';
-  return `Claude Code Needs Attention | ${smartPath(cwd, 40)}`;
-}
+async function focusMatchingTerminal(pids: number[], log: vscode.OutputChannel): Promise<void> {
+  const terminals = vscode.window.terminals;
+  const descriptions = await Promise.all(terminals.map((t, i) => describeTerminal(t, i)));
+  log.appendLine(`Open terminals (${terminals.length}): ${descriptions.join(', ')}`);
 
-function sendNativeNotification(title: string, message: string): void {
-  const platform = os.platform();
-  if (platform === 'darwin') {
-    const esc = (s: string) => s.replace(/["\\]/g, '\\$&');
-    execFile('osascript', ['-e', `display notification "${esc(message)}" with title "${esc(title)}"`]);
-  } else if (platform === 'win32') {
-    const b64 = (s: string) => Buffer.from(s).toString('base64');
-    const ps = [
-      '$ErrorActionPreference="SilentlyContinue"',
-      '[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null',
-      '[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]|Out-Null',
-      "$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64(title) + "'))",
-      "$m=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + b64(message) + "'))",
-      "$id='{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'",
-      '$x=New-Object Windows.Data.Xml.Dom.XmlDocument',
-      '$x.LoadXml(\'<toast><visual><binding template="ToastText02"><text id="1"/><text id="2"/></binding></visual></toast>\')',
-      '$x.GetElementsByTagName("text").Item(0).AppendChild($x.CreateTextNode($t))|Out-Null',
-      '$x.GetElementsByTagName("text").Item(1).AppendChild($x.CreateTextNode($m))|Out-Null',
-      '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($x))',
-    ].join(';');
-    execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps]);
+  // Level 1: PID exact match
+  for (let i = 0; i < terminals.length; i++) {
+    const terminal = terminals[i];
+    try {
+      const termPid = await terminal.processId;
+      if (termPid && pids.includes(termPid)) {
+        log.appendLine(`PID match: ${await describeTerminal(terminal, i)}`);
+        terminal.show();
+        return;
+      }
+    } catch {
+      /* disposed */
+    }
+  }
+
+  // Level 2: name match
+  for (let i = 0; i < terminals.length; i++) {
+    const terminal = terminals[i];
+    const name = terminal.name.toLowerCase();
+    if (name.includes('claude') || name.includes('node')) {
+      log.appendLine(`Name match: ${await describeTerminal(terminal, i)}`);
+      terminal.show();
+      return;
+    }
+  }
+
+  // Level 3: last terminal fallback
+  if (terminals.length > 0) {
+    const last = terminals[terminals.length - 1];
+    log.appendLine(`Fallback: last terminal ${await describeTerminal(last, terminals.length - 1)}`);
+    last.show();
   } else {
-    execFile('notify-send', [title, message]);
+    log.appendLine('No terminals found to focus');
+  }
+}
+
+async function handleSignal(signal: Signal, workspaceRoot: string, log: vscode.OutputChannel): Promise<void> {
+  const sessionTag = signal.sessionId ? signal.sessionId.slice(0, 8) : '?';
+  log.appendLine(
+    `Signal: event=${signal.event}(${signal.hookEventName}), session=${sessionTag}, project=${signal.project}, pids=[${signal.pids.join(',')}]`,
+  );
+
+  // Already-on-correct-terminal check
+  const activeTerminal = vscode.window.activeTerminal;
+  if (activeTerminal) {
+    try {
+      const activePid = await activeTerminal.processId;
+      if (activePid && signal.pids.includes(activePid)) {
+        log.appendLine('Already on correct terminal — skipping toast');
+        markResolved(workspaceRoot, signal.sessionId);
+        return;
+      }
+    } catch {
+      /* disposed */
+    }
+  }
+
+  const message =
+    signal.event === 'completed'
+      ? `Task completed in: ${signal.project}`
+      : `Waiting for your response in: ${signal.project}`;
+
+  const action = await vscode.window.showInformationMessage(message, 'Focus Terminal');
+
+  if (action === 'Focus Terminal') {
+    log.appendLine('User clicked Focus Terminal');
+    await focusMatchingTerminal(signal.pids, log);
+    markResolved(workspaceRoot, signal.sessionId);
+  }
+}
+
+function sweepFiredSignal(signalPath: string): void {
+  try {
+    if (!fs.existsSync(signalPath)) return;
+    const stat = fs.statSync(signalPath);
+    if (Date.now() - stat.mtimeMs < SWEEP_FIRED_MS) return;
+    const content = fs.readFileSync(signalPath, 'utf8');
+    const signal = parseSignal(content);
+    if (!signal || signal.state === 'fired') {
+      fs.unlinkSync(signalPath);
+    }
+  } catch {
+    /* race */
   }
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  let fileOffset = 0;
-  let catchingUp = true;
-  let watcher: fs.FSWatcher | null = null;
-  let lastNotif: { key: string; ts: number } | null = null;
-  let debounceTimer: NodeJS.Timeout | null = null;
-  let logPath = computeLogPath();
+  const log = vscode.window.createOutputChannel('Claude Notifications');
+  log.appendLine(`Claude Notifications v${context.extension.packageJSON.version} activated`);
 
-  function computeLogPath(): string {
-    return (
-      resolveHome(vscode.workspace.getConfiguration('claudeNotifications').get<string>('logPath', '')) ||
-      path.join(os.homedir(), '.claude', 'logs', 'notifications.jsonl')
-    );
-  }
+  // 400ms polling loop
+  const timer = setInterval(() => {
+    if (!vscode.workspace.workspaceFolders) return;
 
-  function pushEvent(e: ClaudeEvent): void {
-    if (catchingUp) return;
+    for (const folder of vscode.workspace.workspaceFolders) {
+      const workspaceRoot = folder.uri.fsPath;
+      const signalPath = getSignalPath(workspaceRoot);
 
-    const now = Date.now();
-    const key = e.cwd ?? '';
-    if (lastNotif && lastNotif.key === key && now - lastNotif.ts < 2000) return;
-    lastNotif = { key, ts: now };
+      sweepFiredSignal(signalPath);
 
-    vscode.window.showInformationMessage(vscodeNotificationText(e), 'Go to Context').then((sel) => {
-      if (sel) jumpTo(e);
-    });
+      if (!fs.existsSync(signalPath)) continue;
 
-    if (e.showNative) {
-      sendNativeNotification('Claude Notification', smartPath(e.cwd ?? '', 40));
+      let content: string;
+      try {
+        content = fs.readFileSync(signalPath, 'utf8').trim();
+      } catch {
+        continue;
+      }
+
+      const signal = parseSignal(content);
+      if (!signal) {
+        try {
+          fs.unlinkSync(signalPath);
+        } catch {
+          /* ignore */
+        }
+        continue;
+      }
+
+      if (signal.state === 'fired') continue;
+
+      try {
+        fs.unlinkSync(signalPath);
+      } catch {
+        /* ignore */
+      }
+
+      handleSignal(signal, workspaceRoot, log);
+      return;
     }
-  }
+  }, POLL_MS);
 
-  function readNewLines(): void {
-    try {
-      const stat = fs.statSync(logPath);
-      if (stat.size < fileOffset) fileOffset = 0;
-      const toRead = stat.size - fileOffset;
-      if (toRead <= 0) return;
+  context.subscriptions.push({ dispose: () => clearInterval(timer) });
 
-      const buf = Buffer.alloc(toRead);
-      const fd = fs.openSync(logPath, 'r');
-      fs.readSync(fd, buf, 0, toRead, fileOffset);
-      fs.closeSync(fd);
-      fileOffset = stat.size;
-
-      buf
-        .toString('utf8')
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .forEach((line) => {
+  // Window focus handler
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) {
+        if (!vscode.workspace.workspaceFolders) return;
+        for (const folder of vscode.workspace.workspaceFolders) {
+          const signalPath = getSignalPath(folder.uri.fsPath);
+          if (!fs.existsSync(signalPath)) continue;
+          let content: string;
           try {
-            pushEvent(JSON.parse(line));
+            content = fs.readFileSync(signalPath, 'utf8').trim();
+          } catch {
+            continue;
+          }
+          const signal = parseSignal(content);
+          if (!signal || signal.state === 'fired') continue;
+          try {
+            fs.unlinkSync(signalPath);
           } catch {
             /* ignore */
           }
-        });
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function debouncedRead(): void {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(readNewLines, 50);
-  }
-
-  function startWatching(): void {
-    if (watcher) {
-      watcher.close();
-      watcher = null;
-    }
-    catchingUp = true;
-    readNewLines();
-    catchingUp = false;
-
-    try {
-      watcher = fs.watch(logPath, { persistent: true }, debouncedRead);
-    } catch {
-      const dir = path.dirname(logPath);
-      fs.mkdirSync(dir, { recursive: true });
-      watcher = fs.watch(dir, { persistent: true }, (_evt, filename) => {
-        if (filename && path.join(dir, filename.toString()) === logPath) debouncedRead();
-      });
-    }
-  }
-
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((ev) => {
-      if (ev.affectsConfiguration('claudeNotifications')) {
-        logPath = computeLogPath();
-        startWatching();
+          handleSignal(signal, folder.uri.fsPath, log);
+          return;
+        }
       }
     }),
   );
 
-  startWatching();
+  log.appendLine(`Polling every ${POLL_MS}ms for signals`);
+  log.appendLine('Ready');
 }
 
 export function deactivate(): void {

@@ -1,15 +1,28 @@
 {
-  "name": "claude-notifications",
-  "displayName": "Claude Notifications",
-  "description": "Show Claude Code hook notifications inside VS Code and provide jump actions.",
-  "version": "0.0.2",
-  "publisher": "DawnEver",
+
+  "name": "claude-notifications-vscode",
+  "displayName": "Claude Notifications for VS Code",
+  "description": "Claude Code hook notifications inside VS Code and terminal focus.",
+  "version": "0.0.4",
+  "publisher": "MingyangBao",
   "icon": "icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DawnEver/claude-code-config"
+  },
+  "bugs": {
+    "url": "https://github.com/DawnEver/claude-code-config/issues"
+  },
+  "homepage": "https://github.com/DawnEver/claude-code-config#readme",
+  "galleryBanner": {
+    "color": "#1a1a1a",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.117.0"
   },
   "categories": [
-    "Notifications",
     "Other"
   ],
   "keywords": [
@@ -20,35 +33,11 @@
     "native notifications",
     "hooks"
   ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/DawnEver/claude-code-config.git"
-  },
-  "bugs": {
-    "url": "https://github.com/DawnEver/claude-code-config/issues"
-  },
-  "homepage": "https://github.com/DawnEver/claude-code-config",
-  "license": "MIT",
-  "galleryBanner": {
-    "color": "#1a1a2e",
-    "theme": "dark"
-  },
   "activationEvents": [
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
-  "contributes": {
-    "configuration": {
-      "title": "Claude Notifications",
-      "properties": {
-        "claudeNotifications.logPath": {
-          "type": "string",
-          "default": "${userHome}/.claude/logs/notifications.jsonl",
-          "description": "Path to the JSONL log written by scripts/notify.js"
-        }
-      }
-    }
-  },
+  "contributes": {},
   "scripts": {
     "compile": "tsc -p . && npm run fix",
     "watch": "tsc -watch -p .",
@@ -64,6 +53,6 @@
     "prettier": "^3.8.3",
     "typescript": "^5.9.3"
   },
-  "author": "DawnEver",
+  "author": "MingyangBao",
   "type": "commonjs"
 }

@@ -2,6 +2,7 @@
   "env": {
     "CLAUDE_CODE_FORK_SUBAGENT": "1",
     "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
+    "ENABLE_LSP_TOOLS": "1",
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_FEEDBACK_COMMAND": "1",
@@ -35,12 +36,7 @@
       "Bash(sudo *)",
       "Bash(curl * | bash)"
     ],
-    "defaultMode": "default"
-  },
-  "autoMode": {
-    "environment": [
-      "$defaults"
-    ]
+    "defaultMode": "acceptEdits"
   },
   "model": "haiku",
   "hooks": {
@@ -67,7 +63,9 @@
     "claude-hud@claude-hud": true,
     "superpowers@superpowers-marketplace": false,
     "codex@openai-codex": true,
-    "ralph-loop@claude-plugins-official": true
+    "ralph-loop@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "claude-hud": {
@@ -99,6 +97,11 @@
   "preferredNotifChannel": "auto",
   "terminalProgressBarEnabled": true,
   "skipAutoPermissionPrompt": true,
+  "autoMode": {
+    "environment": [
+      "$defaults"
+    ]
+  },
   "metadata": {
     "NOTIFY_WAITING_TIMEOUT_MINUTES": 5
   },
