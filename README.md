@@ -134,3 +134,9 @@ Test notification using:
 claude --bare --model haiku "please read ~/.claude/models.md to test claude permission system [Expected waiting for user's input]"
 ```
 
+## Remote Control
+Remove environment variables below to enable remote control(Need Claude Subscribtion):
+```json
+"DISABLE_TELEMETRY": "1",
+"DO_NOT_TRACK": "1",
+```
