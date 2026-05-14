@@ -7,22 +7,15 @@
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_FEEDBACK_COMMAND": "1",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEYS": "1",
-    "DISABLE_LOGIN_COMMAND": "1",
-    "DISABLE_LOGOUT_COMMAND": "1",
-    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-    "ANTHROPIC_AUTH_TOKEN": "your-api-key-here",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro"
+    "DISABLE_LOGIN_COMMAND": "0",
+    "DISABLE_LOGOUT_COMMAND": "0"
   },
   "includeCoAuthoredBy": false,
   "permissions": {
     "allow": [
       "Bash(openspec *)",
       "Bash(git *)",
-      "Bash(npm *)",
       "Bash(make *)",
       "Bash(ln *)",
       "Bash(node *)",
@@ -30,22 +23,42 @@
       "Bash(chmod +x *)",
       "Bash(echo \"exit: $?\")",
       "Bash(cmd *)",
-      "Bash(powershell *)"
+      "Bash(powershell *)",
+      "mcp__ide__getDiagnostics",
+      "Bash(pwsh --version)",
+      "Bash(mshta *)",
+      "Bash(npm init *)",
+      "Bash(npm i *)",
+      "Bash(python *)",
+      "Bash(cmd.exe *)",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "WebSearch",
+      "PowerShell(git *)",
+      "Bash(findstr submodule *)",
+      "mcp__ide__executeCode",
+      "PowerShell(Test-Path *)",
+      "PowerShell(Add-Content *)",
+      "Bash(Code.exe)",
+      "Bash(goto)",
+      "Bash(Remove-Item *)",
+      "PowerShell(Get-Item *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(code *)"
     ],
     "deny": [
       "Bash(rm -rf *)",
       "Bash(sudo *)",
       "Bash(curl * | bash)"
     ],
-    "defaultMode": "acceptEdits"
+    "defaultMode": "auto"
   },
-  "model": "haiku",
+  "model": "sonnet",
   "hooks": {
     "Notification": [
       {
         "hooks": [
           {
-            "matcher": "idle_prompt|elicitation_dialog|permission_prompt",
             "type": "command",
             "command": "node ~/.claude/scripts/notify.js"
           }
@@ -93,17 +106,24 @@
   "autoUpdatesChannel": "latest",
   "minimumVersion": "2.1.119",
   "tui": "fullscreen",
+  "voice": {
+    "enabled": true,
+    "mode": "hold"
+  },
   "theme": "auto",
   "editorMode": "normal",
   "verbose": true,
   "preferredNotifChannel": "auto",
+  "autoCompactEnabled": true,
   "terminalProgressBarEnabled": true,
+  "teammateMode": "auto",
   "skipAutoPermissionPrompt": true,
   "autoMode": {
     "environment": [
       "$defaults"
     ]
   },
+  "voiceEnabled": true,
   "metadata": {
     "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
   }

@@ -17,7 +17,6 @@ const CLAUDE_LINKS = [
   { src: 'skills', dest: 'skills', type: 'dir' },
   { src: 'agents', dest: 'agents', type: 'dir' },
   { src: 'scripts', dest: 'scripts', type: 'dir' },
-  { src: 'models.md', dest: 'models.md', type: 'file' },
 ];
 
 const CODEX_LINKS = [
@@ -54,6 +53,14 @@ function setup() {
   if (!fs.existsSync(settingsPath) && fs.existsSync(settingsTemplatePath)) {
     fs.copyFileSync(settingsTemplatePath, settingsPath);
     console.log('COPY  claude_settings.template.json → claude_settings.json');
+  }
+
+  // Ensure claude_env_settings.json exists (copy from template if not)
+  const envSettingsPath = path.join(sourceDir, 'claude_env_settings.json');
+  const envSettingsTemplatePath = path.join(sourceDir, 'claude_env_settings.template.json');
+  if (!fs.existsSync(envSettingsPath) && fs.existsSync(envSettingsTemplatePath)) {
+    fs.copyFileSync(envSettingsTemplatePath, envSettingsPath);
+    console.log('COPY  claude_env_settings.template.json → claude_env_settings.json');
   }
 
   let created = 0, skipped = 0, errors = 0;
@@ -233,7 +240,73 @@ function setup() {
     }
   }
 
+  // Install shell aliases
+  console.log('\n--- Shell Aliases ---');
+  installShellAliases();
+
   console.log(`\nDone: ${created} linked, ${skipped} skipped, ${errors} errors`);
+}
+
+function installShellAliases() {
+  // Find the directory where `claude` is installed and place wrappers alongside it.
+  // On Windows: write .cmd (CMD/PowerShell) + no-extension script (Git Bash).
+  // On macOS/Linux: write no-extension shell script only.
+  let claudeBin;
+  try {
+    const raw = execSync(isWindows ? 'where claude' : 'which claude', { stdio: 'pipe' })
+      .toString().trim().split(/\r?\n/)[0].trim();
+    claudeBin = path.dirname(raw);
+  } catch {
+    console.log('SKIP  aliases — could not locate claude executable');
+    return;
+  }
+
+  // Use forward slashes so the path works in both node on Windows and sh on Git Bash
+  const ccJsPath = path.join(claudeDir, 'scripts', 'cc.js').replace(/\\/g, '/');
+
+  const ALIASES = [
+    { name: 'cc',   provider: 'claude'   },
+    { name: 'ccds', provider: 'deepseek' },
+  ];
+
+  const MARKER = '# claude-code-alias';
+
+  for (const { name, provider } of ALIASES) {
+    if (isWindows) {
+      const cmdContent = `@echo off\nrem claude-code-alias\nnode "${ccJsPath}" ${provider} %*\n`;
+      writeIfChanged(path.join(claudeBin, `${name}.cmd`), cmdContent, `${name}.cmd`, 'claude-code-alias');
+    }
+
+    const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${ccJsPath}" ${provider} "$@"\n`;
+    const shPath = path.join(claudeBin, name);
+    const result = writeIfChanged(shPath, shContent, name, MARKER);
+    // chmod whenever the file is ours (written or already up-to-date), not for skipped third-party files
+    if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
+  }
+
+  console.log('      cc   → Claude Pro (official subscription)');
+  console.log('      ccds → DeepSeek API');
+  console.log(`      installed to: ${claudeBin}`);
+}
+
+// Returns 'written' | 'ok' | 'skipped'
+function writeIfChanged(filePath, content, label, marker) {
+  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
+  if (existing === null) {
+    fs.writeFileSync(filePath, content);
+    console.log(`WRITE ${label} → ${filePath}`);
+    return 'written';
+  } else if (existing === content) {
+    console.log(`OK    ${label} — already up to date`);
+    return 'ok';
+  } else if (marker && !existing.includes(marker)) {
+    console.log(`SKIP  ${label} — file exists and was not created by this setup (remove manually to replace)`);
+    return 'skipped';
+  } else {
+    fs.writeFileSync(filePath, content);
+    console.log(`WRITE ${label} — updated`);
+    return 'written';
+  }
 }
 
 setup();

@@ -81,6 +81,19 @@ This script auto-detects the OneDrive source directory and creates symbolic link
 
 If `claude_settings.json` doesn't exist (it's gitignored to protect secrets), setup automatically copies `claude_settings.template.json` → `claude_settings.json`. Edit your local `claude_settings.json` with your API key and personal config.
 
+If `claude_env_settings.json` doesn't exist, setup copies `claude_env_settings.template.json` → `claude_env_settings.json`. Fill in your API keys for each provider.
+
+### Provider Switching
+
+Setup installs `cc` and `ccds` wrappers alongside the `claude` executable, available in CMD, PowerShell, and Git Bash:
+
+```sh
+cc      # Claude Pro — official subscription (no API key required)
+ccds    # DeepSeek API — reads claude_env_settings.json
+```
+
+To add more providers, add an `env:<name>` block to `claude_env_settings.json` (see `claude_env_settings.template.json`) and add an alias entry in `scripts/setup.js`.
+
 ### Troubleshooting
 
 **Windows Permissions:** If you get a privilege error, enable Developer Mode in Windows Settings or run as Administrator.
