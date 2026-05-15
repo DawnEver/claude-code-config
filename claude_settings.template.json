@@ -43,7 +43,8 @@
       "Bash(Remove-Item *)",
       "PowerShell(Get-Item *)",
       "PowerShell(Get-ChildItem *)",
-      "PowerShell(code *)"
+      "PowerShell(code *)",
+      "Skill(codex:rescue)"
     ],
     "deny": [
       "Bash(rm -rf *)",

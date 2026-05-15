@@ -327,6 +327,9 @@ animations = true
 # Show onboarding tooltips in the welcome screen. Default: true
 show_tooltips = true
 
+[tui.model_availability_nux]
+"gpt-5.5" = 1
+
 # Control alternate screen usage (auto skips it in Zellij to preserve scrollback).
 # alternate_screen = "auto"
 

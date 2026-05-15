@@ -55,6 +55,14 @@ function setup() {
     console.log('COPY  claude_settings.template.json → claude_settings.json');
   }
 
+  // Ensure codex_config.toml exists (copy from template if not)
+  const codexConfigPath = path.join(sourceDir, 'codex_config.toml');
+  const codexConfigTemplatePath = path.join(sourceDir, 'codex_config.template.toml');
+  if (!fs.existsSync(codexConfigPath) && fs.existsSync(codexConfigTemplatePath)) {
+    fs.copyFileSync(codexConfigTemplatePath, codexConfigPath);
+    console.log('COPY  codex_config.template.toml → codex_config.toml');
+  }
+
   // Ensure claude_env_settings.json exists (copy from template if not)
   const envSettingsPath = path.join(sourceDir, 'claude_env_settings.json');
   const envSettingsTemplatePath = path.join(sourceDir, 'claude_env_settings.template.json');
