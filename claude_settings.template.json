@@ -23,6 +23,7 @@
       "Bash(echo \"exit: $?\")",
       "Bash(cmd *)",
       "Bash(powershell *)",
+      "mcp__claude-in-chrome__tabs_context_mcp",
       "mcp__ide__getDiagnostics",
       "Bash(pwsh --version)",
       "Bash(mshta *)",
@@ -53,7 +54,6 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "sonnet",
   "hooks": {
     "Notification": [
       {
@@ -118,6 +118,8 @@
   "terminalProgressBarEnabled": true,
   "teammateMode": "auto",
   "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
   "autoMode": {
     "environment": [
@@ -127,5 +129,6 @@
   "voiceEnabled": true,
   "metadata": {
     "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
-  }
+  },
+  "model": "opus"
 }

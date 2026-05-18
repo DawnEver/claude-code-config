@@ -17,6 +17,7 @@ const CLAUDE_LINKS = [
   { src: 'skills', dest: 'skills', type: 'dir' },
   { src: 'agents', dest: 'agents', type: 'dir' },
   { src: 'scripts', dest: 'scripts', type: 'dir' },
+  { src: 'keybindings.json', dest: 'keybindings.json', type: 'file' },
 ];
 
 const CODEX_LINKS = [

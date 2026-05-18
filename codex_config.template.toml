@@ -204,7 +204,8 @@ check_for_update_on_startup = true
 # cached returns pre-indexed results; live fetches the most recent data.
 # If you use --yolo or another full access sandbox setting, web search defaults to live.
 web_search = "cached"
-
+approvals_reviewer = "guardian_subagent"
+model_reasoning_effort = "xhigh"
 # Active profile name. When unset, no profile is applied.
 # profile = "default"
 
@@ -328,7 +329,7 @@ animations = true
 show_tooltips = true
 
 [tui.model_availability_nux]
-"gpt-5.5" = 1
+"gpt-5.5" = 4
 
 # Control alternate screen usage (auto skips it in Zellij to preserve scrollback).
 # alternate_screen = "auto"
@@ -383,6 +384,11 @@ enabled = false
 ################################################################################
 
 [features]
+terminal_resize_reflow = true
+memories = true
+external_migration = true
+goals = true
+prevent_idle_sleep = true
 # Leave this table empty to accept defaults. Set explicit booleans to opt in/out.
 # shell_tool = true
 # apps = false
