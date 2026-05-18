@@ -11,3 +11,8 @@
 ## Workflow
 - Use LSP if available.
 - Update README.md and memory after finishing tasks.
+
+## Git Hygiene
+- Linear history: rebase over merge, squash WIP commits before finishing.
+- Commit messages: imperative, conventional (`feat:`, `fix:`, `docs:` …).
+- Never force-push shared branches; use `--force-with-lease` if unavoidable.
