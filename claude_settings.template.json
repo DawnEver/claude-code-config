@@ -76,7 +76,6 @@
   "enabledPlugins": {
     "skill-creator@claude-plugins-official": true,
     "claude-hud@claude-hud": true,
-    "superpowers@superpowers-marketplace": false,
     "codex@openai-codex": true,
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
@@ -87,12 +86,6 @@
       "source": {
         "source": "github",
         "repo": "jarrodwatts/claude-hud"
-      }
-    },
-    "superpowers-marketplace": {
-      "source": {
-        "source": "github",
-        "repo": "obra/superpowers-marketplace"
       }
     },
     "openai-codex": {

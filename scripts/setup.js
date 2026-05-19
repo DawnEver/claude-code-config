@@ -186,69 +186,6 @@ function setup() {
     }
   }
 
-  // Internal repo links (symlinks within the source directory)
-  const INTERNAL_LINKS = [
-    { name: 'skills/planning-with-files', target: path.join('.submodules', 'planning-with-files', 'skills', 'planning-with-files') },
-  ];
-
-  if (INTERNAL_LINKS.length > 0) {
-    console.log('\n--- Internal ---');
-    for (const link of INTERNAL_LINKS) {
-      const linkPath = path.join(sourceDir, link.name);
-      const targetPath = path.join(sourceDir, link.target);
-
-      if (!fs.existsSync(targetPath)) {
-        console.log(`SKIP  ${link.name} — target not found: ${targetPath}`);
-        skipped++;
-        continue;
-      }
-
-      try {
-        const stat = fs.lstatSync(linkPath, { throwIfNoEntry: false });
-        if (stat) {
-          let isLink = stat.isSymbolicLink();
-          if (!isLink) {
-            // Windows junctions may not report as symbolic links — try readlink
-            try {
-              fs.readlinkSync(linkPath);
-              isLink = true;
-            } catch { /* not a link/junction */ }
-          }
-          if (isLink) {
-            const existingTarget = fs.readlinkSync(linkPath);
-            const normalizedExisting = path.resolve(path.dirname(linkPath), existingTarget);
-            if (normalizedExisting === path.resolve(targetPath)) {
-              console.log(`OK    ${link.name} — already linked`);
-              skipped++;
-              continue;
-            }
-            // Link exists but points to wrong target — remove and re-create
-            fs.unlinkSync(linkPath);
-            console.log(`REMV  ${link.name} — removed existing link (wrong target)`);
-          } else if (replace) {
-            removeExisting(linkPath, 'dir');
-            console.log(`REMV  ${link.name} — removed existing`);
-          } else {
-            console.log(`SKIP  ${link.name} — already exists (remove manually to re-link, or use --replace)`);
-            skipped++;
-            continue;
-          }
-        }
-
-        const symlinkType = isWindows ? 'junction' : undefined;
-        fs.symlinkSync(targetPath, linkPath, symlinkType);
-        console.log(`LINK  ${link.name} → ${link.target}`);
-        created++;
-      } catch (err) {
-        console.log(`ERR   ${link.name} — ${err.message}`);
-        if (isWindows && err.message.includes('privilege')) {
-          console.log('      Hint: Enable Developer Mode in Windows Settings, or run as Administrator');
-        }
-        errors++;
-      }
-    }
-  }
-
   // Install shell aliases
   console.log('\n--- Shell Aliases ---');
   installShellAliases();

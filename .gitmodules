@@ -1,4 +1,0 @@
-[submodule ".submodules/planning-with-files"]
-	path = .submodules/planning-with-files
-	url = https://github.com/OthmanAdi/planning-with-files.git
-	branch = master
