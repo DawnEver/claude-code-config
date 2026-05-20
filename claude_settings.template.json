@@ -99,10 +99,6 @@
   "autoUpdatesChannel": "latest",
   "minimumVersion": "2.1.119",
   "tui": "fullscreen",
-  "voice": {
-    "enabled": true,
-    "mode": "hold"
-  },
   "theme": "auto",
   "editorMode": "normal",
   "verbose": true,
@@ -119,7 +115,6 @@
       "$defaults"
     ]
   },
-  "voiceEnabled": true,
   "metadata": {
     "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
   },

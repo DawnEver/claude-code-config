@@ -38,5 +38,12 @@ if (provider !== 'claude') {
   console.log('[cc] Using Claude Pro (official subscription)');
 }
 
-const child = spawn('claude', extraArgs, { env, stdio: 'inherit', shell: true });
+const aiPluginDir = join(__dirname, '..', 'claude_plugins', 'ai');
+const pluginArgs = [];
+if (existsSync(aiPluginDir)) {
+  pluginArgs.push('--plugin-dir', aiPluginDir);
+}
+
+const isWindows = process.platform === 'win32';
+const child = spawn('claude', [...pluginArgs, ...extraArgs], { env, stdio: 'inherit', shell: isWindows });
 child.on('exit', code => process.exit(code ?? 0));

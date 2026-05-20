@@ -186,6 +186,15 @@ function setup() {
     }
   }
 
+  // Register ai plugin (multi-model orchestration)
+  console.log('\n--- AI Plugin ---');
+  const aiPluginDir = path.join(sourceDir, 'claude_plugins', 'ai');
+  if (fs.existsSync(aiPluginDir)) {
+    console.log('OK    ai plugin — loaded via --plugin-dir in cc/ccds');
+  } else {
+    console.log('SKIP  ai plugin — claude_plugins/ai not found');
+  }
+
   // Install shell aliases
   console.log('\n--- Shell Aliases ---');
   installShellAliases();
