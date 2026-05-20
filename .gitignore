@@ -5,6 +5,5 @@ node_modules/
 package-lock.json
 dist/
 claude_env_settings.json
-skills/planning-with-files
 claude_settings.json
 codex_config.toml
