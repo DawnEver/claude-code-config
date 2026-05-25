@@ -1,3 +1,4 @@
 # For VScode tell ripgrep not to exclude:
 .submodules/
 .git/
+!cc-market/

@@ -4,6 +4,7 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { fixLspWindows } from './fix-lsp-windows.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourceDir = path.resolve(__dirname, '..');
@@ -17,6 +18,7 @@ const CLAUDE_LINKS = [
   { src: 'skills', dest: 'skills', type: 'dir' },
   { src: 'agents', dest: 'agents', type: 'dir' },
   { src: 'scripts', dest: 'scripts', type: 'dir' },
+  { src: 'claude_env_settings.json', dest: 'claude_env_settings.json', type: 'file' },
   { src: 'keybindings.json', dest: 'keybindings.json', type: 'file' },
 ];
 
@@ -173,27 +175,62 @@ function setup() {
     }
   }
 
-  // Initialize git submodules (required for internal symlinks below)
-  const gitDir = path.join(sourceDir, '.git');
-  if (fs.existsSync(gitDir)) {
-    console.log('\n--- Git ---');
+  // Clone or update cc-market (community plugin marketplace)
+  console.log('\n--- Plugins (cc-market) ---');
+  const ccMarketDir = path.join(sourceDir, 'cc-market');
+  if (fs.existsSync(path.join(ccMarketDir, '.git'))) {
     try {
-      execSync('git submodule update --init --recursive', { cwd: sourceDir, stdio: 'pipe' });
-      console.log('OK    git submodules initialized');
+      execSync('git pull --ff-only', { cwd: ccMarketDir, stdio: 'pipe' });
+      console.log('OK    cc-market — pulled latest');
+    } catch {
+      console.log('OK    cc-market — already exists (could not pull)');
+    }
+  } else if (fs.existsSync(ccMarketDir)) {
+    console.log('SKIP  cc-market — directory exists but is not a git repo');
+  } else {
+    try {
+      execSync('git clone https://github.com/DawnEver/cc-market', { cwd: sourceDir, stdio: 'pipe' });
+      console.log('OK    cc-market — cloned from https://github.com/DawnEver/cc-market');
     } catch (err) {
-      console.log(`ERR   git submodules — ${err.stderr?.toString().trim() || err.message}`);
+      console.log(`ERR   cc-market — ${err.stderr?.toString().trim() || err.message}`);
       errors++;
     }
   }
+  // Ensure takeover is enabled in claude_settings.json (migrate existing installs)
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      let changed = false;
 
-  // Register ai plugin (multi-model orchestration)
-  console.log('\n--- AI Plugin ---');
-  const aiPluginDir = path.join(sourceDir, 'claude_plugins', 'ai');
-  if (fs.existsSync(aiPluginDir)) {
-    console.log('OK    ai plugin — loaded via --plugin-dir in cc/ccds');
-  } else {
-    console.log('SKIP  ai plugin — claude_plugins/ai not found');
+      if (!settings.enabledPlugins) settings.enabledPlugins = {};
+      if (!('takeover@cc-market' in settings.enabledPlugins)) {
+        settings.enabledPlugins['takeover@cc-market'] = true;
+        changed = true;
+      }
+
+      if (!settings.extraKnownMarketplaces) settings.extraKnownMarketplaces = {};
+      if (!settings.extraKnownMarketplaces['cc-market']) {
+        settings.extraKnownMarketplaces['cc-market'] = {
+          source: { source: 'github', repo: 'DawnEver/cc-market' }
+        };
+        changed = true;
+      }
+
+      if (changed) {
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+        console.log('OK    takeover plugin — added to claude_settings.json');
+      } else if (settings.enabledPlugins['takeover@cc-market']) {
+        console.log('OK    takeover plugin — already enabled');
+      } else {
+        console.log('OK    takeover plugin — disabled (user preference preserved)');
+      }
+    } catch (err) {
+      console.log(`WARN  could not update claude_settings.json — ${err.message}`);
+    }
   }
+
+  // Fix LSP commands on Windows (.cmd extension required)
+  fixLspWindows();
 
   // Install shell aliases
   console.log('\n--- Shell Aliases ---');

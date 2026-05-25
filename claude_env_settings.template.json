@@ -1,5 +1,6 @@
 {
   "env:claude": {},
+  "env:codex": {},
   "env:deepseek": {
     "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "sk-your-deepseek-api-key",

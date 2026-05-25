@@ -37,25 +37,10 @@ npm install -g typescript-language-server typescript
 rustup component add rust-analyzer
 ```
 
-#### Troubleshooting: TypeScript LSP on Windows
+#### TypeScript / Pyright LSP on Windows
 
-**Issue:** typescript-lsp plugin fails on Windows — uv_spawn cannot find binary without .cmd extension
-
-**Reference:** https://github.com/anthropics/claude-plugins-official/issues/1432
-
-**Solution:** Manually edit `~/.claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json` and change:
-
-```json
-"command": "typescript-language-server"
-```
-
-to:
-
-```json
-"command": "typescript-language-server.cmd"
-```
-
-**Note:** Same question for pyright; rust-analyzer does not need .cmd extension
+On Windows, `uv_spawn` cannot find binaries without the `.cmd` extension ([#1432](https://github.com/anthropics/claude-plugins-official/issues/1432)).
+`setup.js` automatically patches `marketplace.json` to append `.cmd` to `typescript-language-server` and `pyright-langserver` — no manual edits needed.
 
 ## Setup
 

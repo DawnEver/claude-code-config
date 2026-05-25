@@ -1,6 +1,7 @@
 {
   "env": {
     "CLAUDE_CODE_FORK_SUBAGENT": "1",
+    "CLAUDE_CODE_WORKFLOWS":"1", 
     "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "ENABLE_LSP_TOOLS": "1",
@@ -64,6 +65,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/stop-retro-hook.js",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "worktree": {
@@ -77,9 +89,10 @@
     "skill-creator@claude-plugins-official": true,
     "claude-hud@claude-hud": true,
     "codex@openai-codex": true,
+    "takeover@cc-market": true,
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true
+    "rust-analyzer-lsp@claude-plugins-official": false
   },
   "extraKnownMarketplaces": {
     "claude-hud": {
@@ -92,6 +105,12 @@
       "source": {
         "source": "github",
         "repo": "openai/codex-plugin-cc"
+      }
+    },
+    "cc-market": {
+      "source": {
+        "source": "github",
+        "repo": "DawnEver/cc-market"
       }
     }
   },
@@ -117,6 +136,5 @@
   },
   "metadata": {
     "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
-  },
-  "model": "opus"
+  }
 }

@@ -10,6 +10,7 @@
 
 ## Workflow
 - Use LSP if available.
+- Aggressively use subagents for high-token-cost operations whose results only need summaries, keeping that work in the subagent's independent context.
 - Update README.md and memory after finishing tasks.
 
 ## Git Hygiene

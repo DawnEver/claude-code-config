@@ -12,6 +12,7 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `scripts/`: `setup.js` (OS detection, symlinks), `notify.js` (cross-platform notifications), `cc.js` (provider launcher)
 - `scripts/shell/`: `aliases.sh`, `aliases.ps1` (legacy; wrappers now installed alongside `claude`)
 - `claude_plugins/`: Custom plugins (e.g., `claude-hud`)
+- `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) — provides `takeover` for multi-model orchestration
 - `claude_settings.json`: Env vars, permissions, hooks (gitignored, secrets not tracked)
 - `claude_settings.template.json`: Template for new clones — auto-copied to `claude_settings.json` by setup
 - `claude_env_settings.json`: API keys per provider (gitignored, secrets not tracked)
