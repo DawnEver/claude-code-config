@@ -25,7 +25,6 @@ npm install -g @anthropic-ai/claude-code
 ```sh
 npm install -g @openai/codex
 codex login
-/codex:setup --enable-review-gate
 ```
 
 
@@ -49,13 +48,13 @@ On Windows, `uv_spawn` cannot find binaries without the `.cmd` extension ([#1432
 Run the setup script to configure symbolic links:
 
 ```sh
-node scripts/setup.js
+node scripts/setup/setup.js
 ```
 
 Or replace existing files:
 
 ```sh
-node scripts/setup.js --replace
+node scripts/setup/setup.js --replace
 ```
 
 ### How It Works
@@ -77,7 +76,7 @@ cc      # Claude Pro — official subscription (no API key required)
 ccds    # DeepSeek API — reads claude_env_settings.json
 ```
 
-To add more providers, add an `env:<name>` block to `claude_env_settings.json` (see `claude_env_settings.template.json`) and add an alias entry in `scripts/setup.js`.
+To add more providers, add an `env:<name>` block to `claude_env_settings.json` (see `claude_env_settings.template.json`) and add an alias entry in `scripts/setup/setup.js`.
 
 ### Troubleshooting
 
@@ -85,13 +84,72 @@ To add more providers, add an `env:<name>` block to `claude_env_settings.json` (
 
 **Note:** Sometimes modifying files in `~/.claude/` directory may require administrator privileges.
 
+## Hooks
+
+Claude Code hooks automate actions on lifecycle events. All hook scripts live in `scripts/hooks/` and are configured in `claude_settings.json`.
+
+### Hook Overview
+
+| Hook Event | Script | Purpose |
+|---|---|---|
+| `Notification` | `notify-hook.js` | Native OS notification on all notification events |
+| `Stop` | `sharp-review-hook.js` | Post-task sharp review — critique decisions and quality |
+| `Stop` | `retrospect-hook.js` | Post-task retrospect — summarize what was done and lessons learned |
+| StatusLine | `hud-hook.js` | Terminal status line via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
+
+### How Hooks Are Wired
+
+In `claude_settings.json`, the `hooks` object maps hook events to arrays of matchers, each containing a list of command hooks:
+
+```json
+"hooks": {
+  "Notification": [{
+    "hooks": [{
+      "type": "command",
+      "command": "node ~/.claude/scripts/hooks/notify-hook.js"
+    }]
+  }],
+  "Stop": [{
+    "hooks": [
+      {
+        "type": "command",
+        "command": "node ~/.claude/scripts/hooks/sharp-review-hook.js",
+        "timeout": 30
+      },
+      {
+        "type": "command",
+        "command": "node ~/.claude/scripts/hooks/retrospect-hook.js",
+        "timeout": 10
+      }
+    ]
+  }]
+}
+```
+
+The `StatusLine` is configured separately via the `statusLine` field:
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": "node ~/.claude/scripts/hooks/hud-hook.js"
+}
+```
+
+Multiple hooks can run on the same event (e.g., both `sharp-review-hook.js` and `retrospect-hook.js` fire on `Stop`). Each hook's `timeout` (in seconds) limits how long it can run.
+
+### Adding a New Hook
+
+1. Create the hook script in `scripts/hooks/`
+2. Add a `hooks` entry in `claude_settings.json` under the desired event
+3. If adding a new provider-specific hook, also add an allow permission for the script
+
 ## Notifications
 
 Claude Code hooks drive cross-platform system notifications with click-to-open VS Code.
 
 ### How It Works
 
-`scripts/notify.js` is triggered by `Stop` and `Notification` hooks defined in `claude_settings.json`. It sends native OS notifications and supports clicking to jump to VS Code at the workspace:
+`scripts/hooks/notify-hook.js` is triggered by `Notification` and `Stop` hooks defined in `claude_settings.json`. It sends native OS notifications and supports clicking to jump to VS Code at the workspace:
 
 | Platform | Method | Click to open VS Code |
 |----------|--------|-----------------------|

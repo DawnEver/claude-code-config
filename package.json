@@ -1,7 +1,7 @@
 {
   "type": "module",
   "scripts": {
-    "setup": "node scripts/setup.js",
-    "replace_setup": "node scripts/setup.js --replace"
+    "setup": "node scripts/setup/setup.js",
+    "replace_setup": "node scripts/setup/setup.js --replace"
   }
 }

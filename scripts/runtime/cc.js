@@ -5,7 +5,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const envSettingsPath = join(__dirname, '..', 'claude_env_settings.json');
+const envSettingsPath = join(__dirname, '..', '..', 'claude_env_settings.json');
 
 const PROVIDER_KEYS = [
   'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',

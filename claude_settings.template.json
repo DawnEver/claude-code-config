@@ -61,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/scripts/notify.js"
+            "command": "node ~/.claude/scripts/hooks/notify-hook.js"
           }
         ]
       }
@@ -71,7 +71,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/scripts/stop-retro-hook.js",
+            "command": "node ~/.claude/scripts/hooks/sharp-review-hook.js",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/retrospect-hook.js",
             "timeout": 10
           }
         ]
@@ -83,7 +88,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "node ~/.claude/scripts/launch_claude_hud.js"
+    "command": "node ~/.claude/scripts/hooks/hud-hook.js"
   },
   "enabledPlugins": {
     "skill-creator@claude-plugins-official": true,

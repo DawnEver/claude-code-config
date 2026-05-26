@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { fixLspWindows } from './fix-lsp-windows.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sourceDir = path.resolve(__dirname, '..');
+const sourceDir = path.resolve(__dirname, '../..');
 const claudeDir = path.join(os.homedir(), '.claude');
 const codexDir = path.join(os.homedir(), '.codex');
 
@@ -55,7 +55,7 @@ function setup() {
   const settingsTemplatePath = path.join(sourceDir, 'claude_settings.template.json');
   if (!fs.existsSync(settingsPath) && fs.existsSync(settingsTemplatePath)) {
     fs.copyFileSync(settingsTemplatePath, settingsPath);
-    console.log('COPY  claude_settings.template.json → claude_settings.json');
+    console.log('COPY  claude_settings.template.json - claude_settings.json');
   }
 
   // Ensure codex_config.toml exists (copy from template if not)
@@ -63,7 +63,7 @@ function setup() {
   const codexConfigTemplatePath = path.join(sourceDir, 'codex_config.template.toml');
   if (!fs.existsSync(codexConfigPath) && fs.existsSync(codexConfigTemplatePath)) {
     fs.copyFileSync(codexConfigTemplatePath, codexConfigPath);
-    console.log('COPY  codex_config.template.toml → codex_config.toml');
+    console.log('COPY  codex_config.template.toml - codex_config.toml');
   }
 
   // Ensure claude_env_settings.json exists (copy from template if not)
@@ -71,7 +71,7 @@ function setup() {
   const envSettingsTemplatePath = path.join(sourceDir, 'claude_env_settings.template.json');
   if (!fs.existsSync(envSettingsPath) && fs.existsSync(envSettingsTemplatePath)) {
     fs.copyFileSync(envSettingsTemplatePath, envSettingsPath);
-    console.log('COPY  claude_env_settings.template.json → claude_env_settings.json');
+    console.log('COPY  claude_env_settings.template.json - claude_env_settings.json');
   }
 
   let created = 0, skipped = 0, errors = 0;
@@ -84,7 +84,7 @@ function setup() {
     const destPath = path.join(baseDir, link.dest);
 
     if (!fs.existsSync(srcPath)) {
-      console.log(`SKIP  ${link.dest} — source not found: ${srcPath}`);
+      console.log(`SKIP  ${link.dest} - source not found: ${srcPath}`);
       skipped++;
       continue;
     }
@@ -98,16 +98,16 @@ function setup() {
           const existingTarget = fs.readlinkSync(destPath);
           const normalizedExisting = path.resolve(path.dirname(destPath), existingTarget);
           if (normalizedExisting === path.resolve(srcPath)) {
-            console.log(`OK    ${link.dest} — already linked`);
+            console.log(`OK    ${link.dest} - already linked`);
             skipped++;
             continue;
           }
         }
         if (replace) {
           removeExisting(destPath, link.type);
-          console.log(`REMV  ${link.dest} — removed existing`);
+          console.log(`REMV  ${link.dest} - removed existing`);
         } else {
-          console.log(`SKIP  ${link.dest} — already exists (remove manually to re-link, or use --replace)`);
+          console.log(`SKIP  ${link.dest} - already exists (remove manually to re-link, or use --replace)`);
           skipped++;
           continue;
         }
@@ -115,10 +115,10 @@ function setup() {
 
       const symlinkType = isWindows ? (link.type === 'dir' ? 'junction' : 'file') : undefined;
       fs.symlinkSync(srcPath, destPath, symlinkType);
-      console.log(`LINK  ${link.dest} → ${srcPath}`);
+      console.log(`LINK  ${link.dest} - ${srcPath}`);
       created++;
     } catch (err) {
-      console.log(`ERR   ${link.dest} — ${err.message}`);
+      console.log(`ERR   ${link.dest} - ${err.message}`);
       if (isWindows && err.message.includes('privilege')) {
         console.log('      Hint: Enable Developer Mode in Windows Settings, or run as Administrator');
       }
@@ -133,7 +133,7 @@ function setup() {
     const destPath = path.join(codexDir, link.dest);
 
     if (!fs.existsSync(srcPath)) {
-      console.log(`SKIP  ${link.dest} — source not found: ${srcPath}`);
+      console.log(`SKIP  ${link.dest} - source not found: ${srcPath}`);
       skipped++;
       continue;
     }
@@ -147,16 +147,16 @@ function setup() {
           const existingTarget = fs.readlinkSync(destPath);
           const normalizedExisting = path.resolve(path.dirname(destPath), existingTarget);
           if (normalizedExisting === path.resolve(srcPath)) {
-            console.log(`OK    ${link.dest} — already linked`);
+            console.log(`OK    ${link.dest} - already linked`);
             skipped++;
             continue;
           }
         }
         if (replace) {
           removeExisting(destPath, link.type);
-          console.log(`REMV  ${link.dest} — removed existing`);
+          console.log(`REMV  ${link.dest} - removed existing`);
         } else {
-          console.log(`SKIP  ${link.dest} — already exists (remove manually to re-link, or use --replace)`);
+          console.log(`SKIP  ${link.dest} - already exists (remove manually to re-link, or use --replace)`);
           skipped++;
           continue;
         }
@@ -164,10 +164,10 @@ function setup() {
 
       const symlinkType = isWindows ? (link.type === 'dir' ? 'junction' : 'file') : undefined;
       fs.symlinkSync(srcPath, destPath, symlinkType);
-      console.log(`LINK  ${link.dest} → ${srcPath}`);
+      console.log(`LINK  ${link.dest} - ${srcPath}`);
       created++;
     } catch (err) {
-      console.log(`ERR   ${link.dest} — ${err.message}`);
+      console.log(`ERR   ${link.dest} - ${err.message}`);
       if (isWindows && err.message.includes('privilege')) {
         console.log('      Hint: Enable Developer Mode in Windows Settings, or run as Administrator');
       }
@@ -181,18 +181,18 @@ function setup() {
   if (fs.existsSync(path.join(ccMarketDir, '.git'))) {
     try {
       execSync('git pull --ff-only', { cwd: ccMarketDir, stdio: 'pipe' });
-      console.log('OK    cc-market — pulled latest');
+      console.log('OK    cc-market - pulled latest');
     } catch {
-      console.log('OK    cc-market — already exists (could not pull)');
+      console.log('OK    cc-market - already exists (could not pull)');
     }
   } else if (fs.existsSync(ccMarketDir)) {
-    console.log('SKIP  cc-market — directory exists but is not a git repo');
+    console.log('SKIP  cc-market - directory exists but is not a git repo');
   } else {
     try {
       execSync('git clone https://github.com/DawnEver/cc-market', { cwd: sourceDir, stdio: 'pipe' });
-      console.log('OK    cc-market — cloned from https://github.com/DawnEver/cc-market');
+      console.log('OK    cc-market - cloned from https://github.com/DawnEver/cc-market');
     } catch (err) {
-      console.log(`ERR   cc-market — ${err.stderr?.toString().trim() || err.message}`);
+      console.log(`ERR   cc-market - ${err.stderr?.toString().trim() || err.message}`);
       errors++;
     }
   }
@@ -218,14 +218,14 @@ function setup() {
 
       if (changed) {
         fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-        console.log('OK    takeover plugin — added to claude_settings.json');
+        console.log('OK    takeover plugin - added to claude_settings.json');
       } else if (settings.enabledPlugins['takeover@cc-market']) {
-        console.log('OK    takeover plugin — already enabled');
+        console.log('OK    takeover plugin - already enabled');
       } else {
-        console.log('OK    takeover plugin — disabled (user preference preserved)');
+        console.log('OK    takeover plugin - disabled (user preference preserved)');
       }
     } catch (err) {
-      console.log(`WARN  could not update claude_settings.json — ${err.message}`);
+      console.log(`WARN  could not update claude_settings.json - ${err.message}`);
     }
   }
 
@@ -249,12 +249,12 @@ function installShellAliases() {
       .toString().trim().split(/\r?\n/)[0].trim();
     claudeBin = path.dirname(raw);
   } catch {
-    console.log('SKIP  aliases — could not locate claude executable');
+    console.log('SKIP  aliases - could not locate claude executable');
     return;
   }
 
   // Use forward slashes so the path works in both node on Windows and sh on Git Bash
-  const ccJsPath = path.join(claudeDir, 'scripts', 'cc.js').replace(/\\/g, '/');
+  const ccJsPath = path.join(claudeDir, 'scripts', 'runtime', 'cc.js').replace(/\\/g, '/');
 
   const ALIASES = [
     { name: 'cc',   provider: 'claude'   },
@@ -276,8 +276,8 @@ function installShellAliases() {
     if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
   }
 
-  console.log('      cc   → Claude Pro (official subscription)');
-  console.log('      ccds → DeepSeek API');
+  console.log('      cc   - Claude Pro (official subscription)');
+  console.log('      ccds - DeepSeek API');
   console.log(`      installed to: ${claudeBin}`);
 }
 
@@ -286,17 +286,17 @@ function writeIfChanged(filePath, content, label, marker) {
   const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
   if (existing === null) {
     fs.writeFileSync(filePath, content);
-    console.log(`WRITE ${label} → ${filePath}`);
+    console.log(`WRITE ${label} - ${filePath}`);
     return 'written';
   } else if (existing === content) {
-    console.log(`OK    ${label} — already up to date`);
+    console.log(`OK    ${label} - already up to date`);
     return 'ok';
   } else if (marker && !existing.includes(marker)) {
-    console.log(`SKIP  ${label} — file exists and was not created by this setup (remove manually to replace)`);
+    console.log(`SKIP  ${label} - file exists and was not created by this setup (remove manually to replace)`);
     return 'skipped';
   } else {
     fs.writeFileSync(filePath, content);
-    console.log(`WRITE ${label} — updated`);
+    console.log(`WRITE ${label} - updated`);
     return 'written';
   }
 }
