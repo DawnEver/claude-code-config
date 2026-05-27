@@ -12,7 +12,12 @@
 - Use LSP if available.
 - Aggressively use subagents for high-token-cost operations whose results only need summaries, keeping that work in the subagent's independent context.
 - Update README.md and memory after finishing tasks.
+
 ## Git Hygiene
 - Linear history: rebase over merge, squash WIP commits before finishing.
 - Commit messages: imperative, conventional (`feat:`, `fix:`, `docs:` …), passing messages directly with `-m "..."` using double quotes.
 - Never force-push shared branches; use `--force-with-lease` if unavoidable.
+
+## Memory
+- Always manage memory with the project's `.claude/memory`; never use auto memory stored in the user directory.
+- Update the index of the memory in @.claude/rules/MEMORY.md

@@ -94,8 +94,10 @@ Claude Code hooks automate actions on lifecycle events. All hook scripts live in
 |---|---|---|
 | `Notification` | `notify-hook.js` | Native OS notification on all notification events |
 | `Stop` | `sharp-review-hook.js` | Post-task sharp review — critique decisions and quality |
-| `Stop` | `retrospect-hook.js` | Post-task retrospect — summarize what was done and lessons learned |
+| `Stop` | `retrospect-hook.js` | Post-task retrospect — summarize what was done, validate changes, update `.claude/rules` and `.claude/memory` |
 | StatusLine | `hud-hook.js` | Terminal status line via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
+
+The retrospect hook gates on session depth: after 3 stop attempts and 2 minutes of work, it blocks the stop (exit 2) to require a retrospective. Lightweight sessions (doc-only changes, few stops) get a shorter prompt. State tracked in `.claude/.retro_state.json`.
 
 ### How Hooks Are Wired
 
@@ -176,6 +178,41 @@ Test notification using:
 ```sh
 claude --bare --model haiku "please read ~/.claude/models.md to test claude permission system [Expected waiting for user's input]"
 ```
+
+## Memory & Rules
+
+Claude Code's memory system uses two tiers within each project's `.claude/` directory:
+
+| Directory | Purpose | When loaded |
+|---|---|---|
+| `.claude/rules/` | `MEMORY.md` index + distilled rule files from compact | Auto-loaded every session |
+| `.claude/memory/` | Append-only archive: all raw memory files with date prefixes | Loaded on demand via the index |
+
+### How It Works
+
+`@.claude/rules/MEMORY.md` is referenced from `GLOBAL-AGENTS.md`, so Claude loads the index every session. The index lists every file in `.claude/memory/` with a one-line summary. When a situation matches a memory topic, Claude reads the relevant file from `.claude/memory/` on demand.
+
+### Git Tracking
+
+Both directories are tracked in git. The `.gitignore` uses `.claude/*` with `!.claude/rules/` and `!.claude/memory/` exceptions to keep other `.claude/` contents (settings, worktrees) private.
+
+### Adding New Memory
+
+After a session:
+1. Write the content file in `.claude/memory/YYYY-MM-DD/<topic>.md`
+2. Prepend a one-line entry to `.claude/rules/MEMORY.md` (dates sorted newest-first)
+3. Keep at most **20 entries** — drop the oldest when adding new ones
+
+### Memory Compact
+
+When MEMORY.md reaches 20 entries, the retrospect hook triggers a **compact**:
+
+1. Read all files in `.claude/memory/`
+2. Distill durable insights into `.claude/rules/` rule files (one per topic)
+3. Update any outdated rules
+4. Clear `.claude/rules/MEMORY.md` (reset index, keep header)
+
+**Append-only rule:** `.claude/memory/` files are **never deleted**. The compact only clears the index — the raw memory archive is permanent.
 
 ## Remote Control
 Remove environment variables below to enable remote control(Need Claude Subscribtion):
