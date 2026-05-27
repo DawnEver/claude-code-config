@@ -94,10 +94,10 @@ Claude Code hooks automate actions on lifecycle events. All hook scripts live in
 |---|---|---|
 | `Notification` | `notify-hook.js` | Native OS notification on all notification events |
 | `Stop` | `sharp-review-hook.js` | Post-task sharp review — critique decisions and quality |
-| `Stop` | `retrospect-hook.js` | Post-task retrospect — summarize what was done, validate changes, update `.claude/rules` and `.claude/memory` |
+| `Stop` | `retrospect-hook.js` | Post-task retrospect — summarize what was done, validate changes, update `.claude/rules` and `.claude/memory` with absolute paths + cross-project self-audit |
 | StatusLine | `hud-hook.js` | Terminal status line via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 
-The retrospect hook gates on session depth: after 3 stop attempts and 2 minutes of work, it blocks the stop (exit 2) to require a retrospective. Lightweight sessions (doc-only changes, few stops) get a shorter prompt. State tracked in `.claude/.retro_state.json`.
+The retrospect hook gates on session depth: after 3 stop attempts and 2 minutes of work, it blocks the stop (exit 2) to require a retrospective. Lightweight sessions (doc-only changes, few stops) get a shorter prompt. State tracked in `.claude/.retro_state.json`. All memory paths in prompts are absolute (`${projectDir}/.claude/memory/`) to prevent cross-project misplacement. Prompts include a cross-project self-audit reminder to check whether the session touched repos beyond `${projectDir}`.
 
 ### How Hooks Are Wired
 
@@ -202,6 +202,7 @@ After a session:
 1. Write the content file in `.claude/memory/YYYY-MM-DD/<topic>.md`
 2. Prepend a one-line entry to `.claude/rules/MEMORY.md` (dates sorted newest-first)
 3. Keep at most **20 entries** — drop the oldest when adding new ones
+4. If the session touched multiple git repos, repeat steps 1–3 for each project's `.claude/`
 
 ### Memory Compact
 
