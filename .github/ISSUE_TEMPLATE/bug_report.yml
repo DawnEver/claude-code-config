@@ -1,0 +1,107 @@
+name: Bug Report
+description: Report a problem with the config sync, hooks, or setup scripts
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please fill in as much detail as possible to help reproduce and diagnose the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What went wrong? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Run `node scripts/setup/setup.js`
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error Output
+      description: Paste the full error message or stack trace
+      render: shell
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: input
+    id: os_version
+    attributes:
+      label: OS Version
+      placeholder: "e.g. Windows 11 23H2, macOS 15.3, Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: Platform Versions
+      description: Run the commands below and paste the output
+      placeholder: |
+        $ claude --version
+        1.x.x
+
+        $ node --version
+        v22.x.x
+
+        $ codex --version   # if applicable
+        x.x.x
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: plugins
+    attributes:
+      label: Installed Claude Code Plugins / MCP Servers
+      description: |
+        Run `claude mcp list` (or check your `claude_settings.json` → `mcpServers`) and paste the output.
+        Also list any plugins from `cc-market/` or `claude_plugins/` that are active.
+      placeholder: |
+        $ claude mcp list
+        - plugin-name   (source: cc-market / claude_plugins / npm)
+        - ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: hooks
+    attributes:
+      label: Active Hooks
+      description: |
+        List the hooks defined in your `claude_settings.json` (remove any secret values).
+        You can run: `node -e "const s=require('./claude_settings.json'); console.log(JSON.stringify(s.hooks,null,2))"`
+      render: json
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / Wrapper Used
+      description: Which launcher triggered the issue?
+      placeholder: "e.g. cc, ccds, plain claude, VS Code extension"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Screenshots, relevant config snippets, or anything else that might help

@@ -279,6 +279,7 @@ function installShellAliases() {
   console.log('      cc   - Claude Pro (official subscription)');
   console.log('      ccds - DeepSeek API');
   console.log(`      installed to: ${claudeBin}`);
+
 }
 
 // Returns 'written' | 'ok' | 'skipped'
