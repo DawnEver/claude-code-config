@@ -18,7 +18,7 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `claude_env_settings.json`: API keys per provider (gitignored, secrets not tracked)
 - `claude_env_settings.template.json`: Desensitized provider template -> auto-copied to `claude_env_settings.json` by setup
 - `keybindings.json`: Claude Code keybindings -> synced to `~/.claude/keybindings.json`
-- `GLOBAL-AGENTS.md`: Global guidelines
+- `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory
 - `.claude/rules/`: Actionable rules loaded every session (git-tracked)
 - `.claude/memory/`: Historical reference with `MEMORY.md` index (git-tracked)
 

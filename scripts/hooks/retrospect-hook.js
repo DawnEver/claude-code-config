@@ -77,27 +77,52 @@ function detectSimpleTask(stopCount, sessionAge) {
   return isDocOnly || !hasCode;
 }
 
+
 const input = readStdinJSON();
 const now = Date.now();
 let state = loadState();
 
+// Session key: use input.session_id when available.
+// For null-id sessions, reuse the stored key (stable across stops in same session).
+// Migrate old state schema: fall back to legacy sessionId field.
+const inputKey = input.session_id ?? null;
+const storedKey = state?.sessionKey ?? state?.sessionId ?? null;
+
+// Only declare a session change when both sides are known and differ.
+// Null input keys cannot prove a session change — rely on time-based expiry instead.
+const knownSessionChange = inputKey != null && storedKey != null && storedKey !== inputKey;
+
 const isFresh = !state
-  || (state.sessionId && input.session_id && state.sessionId !== input.session_id)
+  || knownSessionChange
   || (now - (state.lastTouched || 0) > 30 * 60 * 1000);
+
+// Persist stored key for null-id sessions so the same conversation stays coherent.
+// On a real fresh start (new session or idle timeout), adopt the input key (or null).
+const sessionKey = inputKey ?? (isFresh ? null : storedKey);
 
 if (isFresh) {
   state = {
-    sessionId: input.session_id || `sess-${now}`,
+    sessionKey,
     stopCount: 0,
     firstStopAt: null,
     retroPending: false,
     retroDone: false,
     lastTouched: now,
+    taskActiveUntil: null, // always reset on any fresh start (session change or idle timeout)
   };
 }
 
-state.stopCount = (state.stopCount || 0) + 1;
-if (!state.firstStopAt) state.firstStopAt = now;
+// Evaluate pending work BEFORE advancing counters.
+// Stops during in-flight work must not count toward the retrospective threshold —
+// otherwise the threshold is already met the moment work completes.
+const backgroundTasks = Array.isArray(input.background_tasks) ? input.background_tasks : [];
+const taskActiveUntil = Number.isFinite(state.taskActiveUntil) ? state.taskActiveUntil : 0;
+const hasPendingWork = backgroundTasks.length > 0 || now < taskActiveUntil;
+
+if (!hasPendingWork) {
+  state.stopCount = (state.stopCount || 0) + 1;
+  if (!state.firstStopAt) state.firstStopAt = now;
+}
 state.lastTouched = now;
 
 const retroDone = state.retroDone;
@@ -108,6 +133,9 @@ const stopCount = state.stopCount;
 let decision = 'allow';
 
 if (retroDone) {
+  decision = 'allow';
+} else if (hasPendingWork) {
+  // Work still in flight — not a natural stopping point; don't advance retrospective state.
   decision = 'allow';
 } else if (retroPending) {
   state.retroDone = true;
