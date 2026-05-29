@@ -2,6 +2,9 @@
 
 <!-- Sorted by date, newest first. Keep at most 20 entries. -->
 
+- [2026-05-29 ccgpt removed — Codex uses agent-identity JWT](../memory/2026-05-29/ccgpt_removal.md) — ChatGPT bridge deleted; Codex token incompatible with any standard API endpoint
+- [2026-05-29 GLOBAL-AGENTS.md is global — never edit](../memory/2026-05-29/feedback_global_agents.md) — Only AGENTS.md is project-specific; GLOBAL-AGENTS.md is symlinked to ~/.claude/CLAUDE.md
+- [2026-05-29 api-proxy known bugs](../memory/2026-05-29/api_proxy.md) — Local proxy for DeepSeek only; ChatGPT bridge removed; some sharp-review bugs unfixed
 - [2026-05-28 VS Code provider wrapper](../memory/2026-05-28/vscode_provider_wrapper.md) — Use bare command `"ccds"` for claudeCode.claudeProcessWrapper; full path breaks cross-platform Settings Sync
 - [2026-05-28 Retrospect hook task guard convention](../memory/2026-05-28/retrospect_hook_task_guard.md) — Set taskActiveUntil in .retro_state.json at start of sequential multi-round skills; auto-expires 30min
 - [2026-05-28 Retrospect hook background_tasks fix](../memory/2026-05-28/retrospect_hook_background_tasks.md) — Guard against mid-task interruption using input.background_tasks; session_id leak also fixed

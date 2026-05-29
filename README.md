@@ -30,12 +30,20 @@ rustup component add rust-analyzer
 
 ### Provider Switching
 
-Setup installs `cc` and `ccds` wrappers (CMD, PowerShell, Git Bash):
+Setup installs provider wrappers alongside the `claude` executable (CMD, PowerShell, Git Bash):
 
 ```sh
-cc      # official Claude Pro subscription
-ccds    # DeepSeek API (reads claude_env_settings.json)
+cc       # official Claude Pro subscription
+ccds     # DeepSeek API (via local proxy)
+ccgpt    # ChatGPT subscription / Codex models (via local proxy)
+ccproxy  # start the local API proxy in the foreground (auto-started by ccds/ccgpt)
 ```
+
+`ccds` and `ccgpt` automatically start the local proxy (`api-proxy.js`, port 3082) if it isn't already running. No manual `ccproxy` needed.
+
+**Local proxy** (`scripts/runtime/api-proxy.js`):
+- `/deepseek/*` — strips `{ role: "system" }` messages injected by Claude Code 2.1.154+ into `messages[]`, merges them into the top-level `system` field, then forwards to DeepSeek
+- `/chatgpt/*` — translates Anthropic Messages API ↔ OpenAI Chat Completions; authenticates via ChatGPT subscription OAuth tokens from `~/.codex/auth.json` (no API key required); handles streaming SSE
 
 Add providers by editing `claude_env_settings.json` (see template) and adding an alias entry in `scripts/setup/setup.js`.
 
@@ -82,13 +90,19 @@ Hook wiring in `claude_settings.json`:
 
 ## Notifications
 
-`notify-hook.js` sends native notifications with click-to-open VS Code:
+`notify-hook.js` sends native notifications:
 
-| Platform | Method | Click to open |
-|---|---|---|
-| macOS | `osascript` / `terminal-notifier` | `brew install terminal-notifier` |
-| Windows | PowerShell toast | Works out of the box |
-| Linux | `notify-send` + `dbus-monitor` | Requires D-Bus |
+| Platform | Method | Sound | Click to open |
+|---|---|---|---|
+| macOS | `terminal-notifier` / `osascript` + `afplay` | `terminal-notifier` built-in; `afplay Ping.aiff` fallback | `brew install terminal-notifier` |
+| Windows | PowerShell toast | Toast audio (`ms-winsoundevent:Notification.Default`) | Works out of the box |
+| Linux | `notify-send` + `dbus-monitor` | `paplay` / `aplay` (freedesktop sound theme) | Requires D-Bus |
+
+Sound is **on by default**. Pass `--no-sound` to silence it. By default, clicking the notification does **not** open VS Code. Pass `--open` to enable click-to-open:
+
+```json
+"command": "node ~/.claude/scripts/hooks/notify-hook.js --open --no-sound"
+```
 
 Test:
 ```sh

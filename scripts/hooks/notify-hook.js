@@ -26,12 +26,13 @@ function getVscodeUri(workspaceRoot) {
   return encodeURI(`vscode://file/${p}`);
 }
 
-function sendNativeNotification(title, message, workspaceRoot) {
+function sendNativeNotification(title, message, workspaceRoot, enableSound) {
   const platform = os.platform();
   if (platform === 'darwin') {
     const vscodeUri = getVscodeUri(workspaceRoot);
     const tnArgs = ['-title', title, '-message', message];
     if (vscodeUri) tnArgs.push('-open', vscodeUri);
+    if (enableSound) tnArgs.push('-sound', 'default');
     try {
       execFileSync('terminal-notifier', tnArgs, { timeout: 5000, stdio: 'ignore' });
     } catch {
@@ -39,6 +40,9 @@ function sendNativeNotification(title, message, workspaceRoot) {
       try {
         const esc = (s) => s.replace(/["\\]/g, '\\$&');
         execFileSync('osascript', ['-e', `display notification "${esc(message)}" with title "${esc(title)}"`], { timeout: 3000, stdio: 'ignore' });
+        if (enableSound) {
+          try { execFileSync('afplay', ['/System/Library/Sounds/Ping.aiff'], { timeout: 3000, stdio: 'ignore' }); } catch {}
+        }
       } catch {}
     }
   } else if (platform === 'win32') {
@@ -47,6 +51,7 @@ function sendNativeNotification(title, message, workspaceRoot) {
     const toastLaunch = vscodeUri
       ? `activationType="protocol" launch="${xmlEscape(vscodeUri)}"`
       : 'activationType="background"';
+    const audioSilent = enableSound ? 'false' : 'true';
     const psScript = `
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
@@ -56,7 +61,7 @@ $template = @"
     <text>${xmlEscape(title)}</text>
     <text>${xmlEscape(message)}</text>
   </binding></visual>
-  <audio src="ms-winsoundevent:Notification.Default" silent="true" />
+  <audio src="ms-winsoundevent:Notification.Default" silent="${audioSilent}" />
 </toast>
 "@
 try {
@@ -124,6 +129,26 @@ fi`;
     } else {
       execFileSync('notify-send', [title, message]);
     }
+    if (enableSound) {
+      // Best-effort: paplay (PulseAudio/PipeWire) → aplay (ALSA)
+      const linuxSounds = [
+        '/usr/share/sounds/freedesktop/stereo/complete.oga',
+        '/usr/share/sounds/freedesktop/stereo/message.oga',
+        '/usr/share/sounds/ubuntu/stereo/dialog-information.ogg',
+      ];
+      const soundFile = linuxSounds.find(f => { try { return fs.existsSync(f); } catch { return false; } });
+      if (soundFile) {
+        try {
+          const child = spawn('paplay', [soundFile], { detached: true, stdio: 'ignore' });
+          child.unref();
+        } catch {
+          try {
+            const child = spawn('aplay', [soundFile], { detached: true, stdio: 'ignore' });
+            child.unref();
+          } catch {}
+        }
+      }
+    }
   }
 }
 
@@ -132,8 +157,12 @@ fi`;
 // Parse CLI args
 const args = process.argv.slice(2);
 let isUserPrompt = false;
+let enableOpen = false;
+let enableSound = true;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--event' && args[++i] === 'user-prompt') { isUserPrompt = true; }
+  if (args[i] === '--open') { enableOpen = true; }
+  if (args[i] === '--no-sound') { enableSound = false; }
 }
 
 // Don't notify on user prompt events
@@ -195,6 +224,9 @@ if (!workspaceRoot || workspaceRoot === homeDir) {
   workspaceRoot = projectDir === homeDir ? '' : projectDir;
 }
 
+// Suppress click-to-open unless --open flag is passed
+if (!enableOpen) workspaceRoot = '';
+
 // Send native notification
 let title, message;
 if (hookEvent === 'completed') {
@@ -207,4 +239,4 @@ if (hookEvent === 'completed') {
   title = 'Claude Code';
   message = `Waiting for your response in: ${projectName}`;
 }
-sendNativeNotification(title, message, workspaceRoot);
+sendNativeNotification(title, message, workspaceRoot, enableSound);

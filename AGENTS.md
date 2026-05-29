@@ -9,7 +9,7 @@
 Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links to `~/.claude/` and `~/.codex/`.
 
 ### Structure
-- `scripts/setup/`: `setup.js` (OS detection, symlinks)\n- `scripts/runtime/`: `cc.js` (provider launcher), `aliases.sh`, `aliases.ps1`\n- `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`, `retrospect-hook.js`, `sharp-review-hook.js`
+- `scripts/setup/`: `setup.js` (OS detection, symlinks)\n- `scripts/runtime/`: `cc.js` (provider launcher), `api-proxy.js` (local HTTP proxy), `aliases.sh`, `aliases.ps1`\n- `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`, `retrospect-hook.js`, `sharp-review-hook.js`
 - `skills/`: Custom Claude Code skills — symlinked to `~/.claude/skills`. Add new skills here as `skills/<name>/SKILL.md`; they are picked up automatically.
 - `claude_plugins/`: Custom plugins (e.g., `claude-hud`)
 - `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) -> provides `takeover` for multi-model orchestration
@@ -24,7 +24,9 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 
 ### Provider Switching
 - `cc` -> launch Claude Code with official Claude Pro subscription (clears all provider env vars)
-- `ccds` -> launch Claude Code via DeepSeek API (reads `claude_env_settings.json`)
+- `ccds` -> launch Claude Code via DeepSeek API (routes through local proxy at localhost:3082)
+- `ccproxy` -> start local API proxy in foreground (auto-started by `ccds` if not running)
+- Proxy (`scripts/runtime/api-proxy.js`): `/deepseek/*` fixes system-role messages injected by Claude Code
 - Add providers by editing `claude_env_settings.json` (use `claude_env_settings.template.json` as reference)
 - Wrappers installed alongside `claude` executable; available in CMD, PowerShell, and Git Bash
 

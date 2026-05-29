@@ -276,8 +276,8 @@ function installShellAliases() {
     if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
   }
 
-  console.log('      cc   - Claude Pro (official subscription)');
-  console.log('      ccds - DeepSeek API');
+  console.log('      cc    - Claude Pro (official subscription)');
+  console.log('      ccds  - DeepSeek API (via proxy)');
   console.log(`      installed to: ${claudeBin}`);
 
 }

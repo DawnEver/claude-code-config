@@ -1,7 +1,7 @@
 {
   "env": {
     "CLAUDE_CODE_FORK_SUBAGENT": "1",
-    "CLAUDE_CODE_WORKFLOWS":"1", 
+    "CLAUDE_CODE_WORKFLOWS": "1", 
     "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "ENABLE_LSP_TOOLS": "1",
@@ -120,8 +120,7 @@
     }
   },
   "effortLevel": "low",
-  "autoUpdatesChannel": "latest",
-  "minimumVersion": "2.1.119",
+  "autoUpdatesChannel": "stable",
   "tui": "fullscreen",
   "theme": "auto",
   "editorMode": "normal",

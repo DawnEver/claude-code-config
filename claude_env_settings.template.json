@@ -2,10 +2,14 @@
   "env:claude": {},
   "env:codex": {},
   "env:deepseek": {
-    "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-    "ANTHROPIC_API_KEY": "sk-your-deepseek-api-key",
+    "ANTHROPIC_BASE_URL": "http://localhost:3082/deepseek",
+    "ANTHROPIC_AUTH_TOKEN": "sk-your-deepseek-api-key",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro"
+  },
+  "proxy": {
+    "port": 3082,
+    "deepseek": { "target": "https://api.deepseek.com/anthropic" }
   }
 }
