@@ -62,6 +62,8 @@ Writes `terminal.integrated.env.*` and `claudeCode.claudeProcessWrapper` to loca
 
 **Windows permissions:** Enable Developer Mode or run as Administrator if symlink creation fails.
 
+**`Unable to connect to API (ConnectionRefused)`:** The selected provider is pointing Claude at the local proxy (`http://localhost:3082/...`), but nothing is listening on that port. Start Claude with `ccds` so the proxy is auto-started, or run `ccproxy` in another terminal before launching plain `claude` from a VS Code terminal. To switch back to official Claude Pro, run `node scripts/setup/setup-vscode.js claude` and restart VS Code terminals.
+
 ## Hooks
 
 All hook scripts live in `scripts/hooks/` and are configured in `claude_settings.json`.
@@ -94,7 +96,7 @@ Hook wiring in `claude_settings.json`:
 
 | Platform | Method | Sound | Click to open |
 |---|---|---|---|
-| macOS | `terminal-notifier` / `osascript` + `afplay` | `terminal-notifier` built-in; `afplay Ping.aiff` fallback | `brew install terminal-notifier` |
+| macOS | Swift binary (`NSUserNotificationCenter`) | Built-in notification sound | Compiled by `setup.js` (`swiftc` required) |
 | Windows | PowerShell toast | Toast audio (`ms-winsoundevent:Notification.Default`) | Works out of the box |
 | Linux | `notify-send` + `dbus-monitor` | `paplay` / `aplay` (freedesktop sound theme) | Requires D-Bus |
 

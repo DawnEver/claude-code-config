@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync, spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 
 // ── Native OS notification ──
 // All platforms support clicking the notification to open VS Code at the
@@ -29,21 +30,20 @@ function getVscodeUri(workspaceRoot) {
 function sendNativeNotification(title, message, workspaceRoot, enableSound) {
   const platform = os.platform();
   if (platform === 'darwin') {
-    const vscodeUri = getVscodeUri(workspaceRoot);
-    const tnArgs = ['-title', title, '-message', message];
-    if (vscodeUri) tnArgs.push('-open', vscodeUri);
-    if (enableSound) tnArgs.push('-sound', 'default');
+    // macOS 26+ breaks both AppleScript 'display notification' and
+    // terminal-notifier. Use compiled Swift binary (NSUserNotificationCenter)
+    // that works without an app bundle.
+    const notifyBin = fileURLToPath(new URL('../runtime/claude-notify', import.meta.url));
+    if (!fs.existsSync(notifyBin)) {
+      console.error('[notify-hook] claude-notify binary not found. Run `npm run setup` to compile it.');
+      return;
+    }
+    const nArgs = ['-title', title, '-message', message];
+    if (!enableSound) nArgs.push('--no-sound');
     try {
-      execFileSync('terminal-notifier', tnArgs, { timeout: 5000, stdio: 'ignore' });
-    } catch {
-      // terminal-notifier unavailable/failed — fall back to osascript as last resort
-      try {
-        const esc = (s) => s.replace(/["\\]/g, '\\$&');
-        execFileSync('osascript', ['-e', `display notification "${esc(message)}" with title "${esc(title)}"`], { timeout: 3000, stdio: 'ignore' });
-        if (enableSound) {
-          try { execFileSync('afplay', ['/System/Library/Sounds/Ping.aiff'], { timeout: 3000, stdio: 'ignore' }); } catch {}
-        }
-      } catch {}
+      execFileSync(notifyBin, nArgs, { timeout: 5000, stdio: 'ignore' });
+    } catch (err) {
+      console.error('[notify-hook] notification failed:', err.message);
     }
   } else if (platform === 'win32') {
     const vscodeUri = getVscodeUri(workspaceRoot);

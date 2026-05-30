@@ -2,6 +2,8 @@
 
 <!-- Sorted by date, newest first. Keep at most 20 entries. -->
 
+- [2026-05-30 macOS notify fix — terminal-notifier replaced with Swift binary](../memory/2026-05-30/macos_notify_swift.md) — macOS 26.5 breaks terminal-notifier & AppleScript; NSUserNotificationCenter works from CLI
+- [2026-05-30 Notify sharp review findings (unfixed)](../memory/2026-05-30/notify_review_findings_unfixed.md) — 13 issues found by parallel Codex+DeepSeek review; HIGH: silent failure, dead -open code, compileNotifyBinary error count
 - [2026-05-29 ccgpt removed — Codex uses agent-identity JWT](../memory/2026-05-29/ccgpt_removal.md) — ChatGPT bridge deleted; Codex token incompatible with any standard API endpoint
 - [2026-05-29 GLOBAL-AGENTS.md is global — never edit](../memory/2026-05-29/feedback_global_agents.md) — Only AGENTS.md is project-specific; GLOBAL-AGENTS.md is symlinked to ~/.claude/CLAUDE.md
 - [2026-05-29 api-proxy known bugs](../memory/2026-05-29/api_proxy.md) — Local proxy for DeepSeek only; ChatGPT bridge removed; some sharp-review bugs unfixed

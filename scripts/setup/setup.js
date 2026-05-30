@@ -2,7 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { fixLspWindows } from './fix-lsp-windows.js';
 
@@ -34,9 +34,9 @@ function removeExisting(destPath, type) {
 
   if (stat.isDirectory() && !stat.isSymbolicLink()) {
     fs.rmSync(destPath, { recursive: true, force: true });
-    return true;
+  } else {
+    fs.unlinkSync(destPath);
   }
-  fs.unlinkSync(destPath);
   return true;
 }
 
@@ -80,7 +80,7 @@ function setup() {
   console.log('--- Claude ---');
   for (const link of CLAUDE_LINKS) {
     const srcPath = path.join(sourceDir, link.src);
-    const baseDir = link.isExtension ? os.homedir() : claudeDir;
+    const baseDir = claudeDir;
     const destPath = path.join(baseDir, link.dest);
 
     if (!fs.existsSync(srcPath)) {
@@ -232,11 +232,60 @@ function setup() {
   // Fix LSP commands on Windows (.cmd extension required)
   fixLspWindows();
 
+  // Compile macOS notification binary
+  if (process.platform === 'darwin') {
+    console.log('\n--- macOS Notifications ---');
+    if (!compileNotifyBinary()) errors++;
+  }
+
   // Install shell aliases
   console.log('\n--- Shell Aliases ---');
   installShellAliases();
 
   console.log(`\nDone: ${created} linked, ${skipped} skipped, ${errors} errors`);
+}
+
+function compileNotifyBinary() {
+  const srcPath = path.join(sourceDir, 'scripts', 'runtime', 'notify.swift');
+  const binPath = path.join(sourceDir, 'scripts', 'runtime', 'claude-notify');
+
+  if (!fs.existsSync(srcPath)) {
+    console.log(`SKIP  claude-notify - source not found: ${srcPath}`);
+    return false;
+  }
+
+  // Check if swiftc is available
+  try {
+    execFileSync('xcrun', ['--find', 'swiftc'], { stdio: 'pipe' });
+  } catch {
+    // swiftc not available — keep existing binary if present, else warn
+    if (fs.existsSync(binPath)) {
+      fs.chmodSync(binPath, 0o755);
+      console.log('OK    claude-notify - using existing binary (swiftc not found)');
+      return true;
+    }
+    console.log('SKIP  claude-notify - swiftc not found (install Xcode Command Line Tools)');
+    return false;
+  }
+
+  // Compile to temp file, replace atomically on success
+  const tmpPath = binPath + '.tmp';
+  try {
+    execFileSync('swiftc', ['-O', '-o', tmpPath, srcPath], { stdio: 'pipe', timeout: 30000 });
+    fs.renameSync(tmpPath, binPath);
+    fs.chmodSync(binPath, 0o755);
+    console.log('OK    claude-notify - compiled from notify.swift');
+    return true;
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    if (fs.existsSync(binPath)) {
+      console.log(`WARN  claude-notify - keeping existing binary (compile failed: ${err.stderr?.toString().trim().split('\n')[0] || err.message})`);
+      return true;
+    }
+    console.log(`ERR   claude-notify - ${err.stderr?.toString().trim() || err.message}`);
+    console.log('      Notifications on macOS will not work without this binary.');
+    return false;
+  }
 }
 
 function installShellAliases() {
@@ -255,6 +304,7 @@ function installShellAliases() {
 
   // Use forward slashes so the path works in both node on Windows and sh on Git Bash
   const ccJsPath = path.join(claudeDir, 'scripts', 'runtime', 'cc.js').replace(/\\/g, '/');
+  const proxyJsPath = path.join(claudeDir, 'scripts', 'runtime', 'api-proxy.js').replace(/\\/g, '/');
 
   const ALIASES = [
     { name: 'cc',   provider: 'claude'   },
@@ -276,8 +326,19 @@ function installShellAliases() {
     if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
   }
 
+  if (isWindows) {
+    const cmdContent = `@echo off\nrem claude-code-alias\nnode "${proxyJsPath}" %*\n`;
+    writeIfChanged(path.join(claudeBin, 'ccproxy.cmd'), cmdContent, 'ccproxy.cmd', 'claude-code-alias');
+  }
+
+  const proxyShContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${proxyJsPath}" "$@"\n`;
+  const proxyShPath = path.join(claudeBin, 'ccproxy');
+  const proxyResult = writeIfChanged(proxyShPath, proxyShContent, 'ccproxy', MARKER);
+  if (!isWindows && proxyResult !== 'skipped') fs.chmodSync(proxyShPath, 0o755);
+
   console.log('      cc    - Claude Pro (official subscription)');
   console.log('      ccds  - DeepSeek API (via proxy)');
+  console.log('      ccproxy - local API proxy');
   console.log(`      installed to: ${claudeBin}`);
 
 }
