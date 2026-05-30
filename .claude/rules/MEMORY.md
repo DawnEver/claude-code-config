@@ -2,6 +2,9 @@
 
 <!-- Sorted by date, newest first. Keep at most 20 entries. -->
 
+- [2026-05-30 api-proxy cache fix — anthropic-beta stripped + cache_control removed](../memory/2026-05-30/api_proxy_cache_fix.md) — SAFE_REQ_HEADERS missing anthropic-beta + stripCacheControl() killed prompt caching; both fixed; cache: 3k confirmed in HUD
+- [2026-05-30 api-proxy auth fix — ANTHROPIC_AUTH_TOKEN bearer→x-api-key](../memory/2026-05-29/api_proxy.md) — Use ANTHROPIC_AUTH_TOKEN (not API_KEY) for DeepSeek; proxy converts bearer token to x-api-key header
+- [2026-05-30 api-proxy KV cache removed — claude-hud has native token breakdown](../memory/2026-05-30/api_proxy_kv_cache.md) — Removed metrics tracking, SSE interceptor, /metrics endpoint, kv-cache-status.js; hud-hook simplified
 - [2026-05-30 macOS notify fix — terminal-notifier replaced with Swift binary](../memory/2026-05-30/macos_notify_swift.md) — macOS 26.5 breaks terminal-notifier & AppleScript; NSUserNotificationCenter works from CLI
 - [2026-05-30 Notify sharp review findings (unfixed)](../memory/2026-05-30/notify_review_findings_unfixed.md) — 13 issues found by parallel Codex+DeepSeek review; HIGH: silent failure, dead -open code, compileNotifyBinary error count
 - [2026-05-29 ccgpt removed — Codex uses agent-identity JWT](../memory/2026-05-29/ccgpt_removal.md) — ChatGPT bridge deleted; Codex token incompatible with any standard API endpoint

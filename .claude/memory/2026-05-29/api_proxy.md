@@ -1,6 +1,6 @@
 ---
 name: api-proxy
-description: Local proxy for DeepSeek only (ChatGPT bridge removed 2026-05-29). Some sharp-review bugs remain unfixed.
+description: Local proxy for DeepSeek only. Auth fix 2026-05-30: bearer→x-api-key conversion added so ANTHROPIC_AUTH_TOKEN works. KV cache metrics, cache_control strip. Some sharp-review bugs remain unfixed.
 metadata:
   type: project
 ---
@@ -16,6 +16,12 @@ metadata:
 **Why:** DeepSeek rejects system-role in messages array.
 
 **How to apply:** Run `ccds` — proxy starts automatically. `ccproxy` for manual foreground start.
+
+## Auth fix (2026-05-30)
+
+`ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) is used in `claude_env_settings.json` to avoid collision with the user's Claude Pro subscription key. This env var causes Claude Code to send `Authorization: Bearer <key>` — NOT `x-api-key`. The proxy now extracts the bearer token and injects it as `x-api-key` in `handleDeepSeek`. Do NOT change the config to `ANTHROPIC_API_KEY`.
+
+**Why:** User has both Claude Pro subscription and DeepSeek API key; `ANTHROPIC_API_KEY` would be ambiguous / could override the subscription key.
 
 ## Remaining known bugs (from 2026-05-29 sharp review — NOT YET FIXED)
 

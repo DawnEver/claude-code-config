@@ -24,13 +24,18 @@ function collectBody(req) {
   });
 }
 
-// Whitelist — never forward Claude Code's internal headers to upstream
-const SAFE_REQ_HEADERS = new Set(['content-type', 'anthropic-version', 'anthropic-beta', 'accept']);
+// Whitelist — never forward Claude Code's internal headers to upstream.
+// https://api-docs.deepseek.com/guides/anthropic_api
+// DeepSeek uses x-api-key for auth (authorization is ignored).
+// anthropic-beta is forwarded so prompt-caching-2024-07-31 reaches DeepSeek.
+const SAFE_REQ_HEADERS = new Set([
+  'content-type', 'accept', 'x-api-key', 'anthropic-beta',
+]);
 
 function safeForwardHeaders(reqHeaders, overrides = {}) {
   const out = {};
   for (const [k, v] of Object.entries(reqHeaders)) {
-    if (SAFE_REQ_HEADERS.has(k.toLowerCase())) out[k] = v;
+    if (v != null && SAFE_REQ_HEADERS.has(k.toLowerCase())) out[k] = v;
   }
   return { ...out, ...overrides };
 }
@@ -61,35 +66,46 @@ function contentToString(content, ctx) {
   return '';
 }
 
-// --- DeepSeek route: fix system-role messages injected by Claude Code 2.1.154+ ---
+// (cache_control is kept — DeepSeek's Anthropic-compat API supports prompt caching via cache_control)
 
-function fixSystemRoles(buf) {
-  const data = JSON.parse(buf.toString());
+// --- DeepSeek route: normalize request to avoid cache misses ---
+
+function normalizeRequest(buf) {
+  let data = JSON.parse(buf.toString());
+
+  // 1. Consolidate system-role messages into top-level system field
+  //    (Claude Code 2.1.154+ produces messages with role: 'system')
   const sysMessages = (data.messages || []).filter(m => m.role === 'system');
+  if (sysMessages.length) {
+    const extra = sysMessages.map(m => contentToString(m.content, 'deepseek/system')).join('\n\n');
+    if (typeof data.system === 'string') data.system = extra + '\n\n' + data.system;
+    else if (Array.isArray(data.system)) data.system = [{ type: 'text', text: extra }, ...data.system];
+    else data.system = extra;
+    data.messages = data.messages.filter(m => m.role !== 'system');
+  }
 
-  if (!sysMessages.length) return buf;
-
-  const extra = sysMessages.map(m => contentToString(m.content, 'deepseek/system')).join('\n\n');
-  if (typeof data.system === 'string') data.system = extra + '\n\n' + data.system;
-  else if (Array.isArray(data.system)) data.system = [{ type: 'text', text: extra }, ...data.system];
-  else data.system = extra;
-
-  data.messages = data.messages.filter(m => m.role !== 'system');
   return Buffer.from(JSON.stringify(data));
 }
 
 async function handleDeepSeek(req, res, body, config) {
   const target = new URL(config.deepseek?.target || 'https://api.deepseek.com/anthropic');
   const upstreamPath = target.pathname.replace(/\/$/, '') + req.url.replace(/^\/deepseek/, '');
-  const fixed = fixSystemRoles(body);
 
+  const normalized = normalizeRequest(body);
+
+  // Forward auth headers that DeepSeek actually uses (x-api-key, not authorization)
   const headers = safeForwardHeaders(req.headers, {
-    authorization: req.headers['authorization'],
-    'content-length': String(fixed.byteLength),
+    'content-length': String(normalized.byteLength),
   });
 
+  // Convert Authorization: Bearer <key> → x-api-key (ANTHROPIC_AUTH_TOKEN compat)
+  if (!headers['x-api-key'] && req.headers['authorization']) {
+    const m = req.headers['authorization'].match(/^Bearer\s+(.+)$/i);
+    if (m) headers['x-api-key'] = m[1];
+  }
+
   console.log(`[deepseek] ${req.method} ${upstreamPath}`);
-  proxyPassthrough(target.hostname, target.port || 443, upstreamPath, req.method, headers, fixed, res, 'deepseek');
+  proxyPassthrough(target.hostname, target.port || 443, upstreamPath, req.method, headers, normalized, res, 'deepseek');
 }
 
 function proxyPassthrough(hostname, port, urlPath, method, headers, body, res, tag) {
@@ -117,9 +133,18 @@ function proxyPassthrough(hostname, port, urlPath, method, headers, body, res, t
 
 const config = loadConfig();
 const port = config.port || 3082;
+const IDLE_TIMEOUT_MS = (config.idle_timeout_min ?? 10) * 60 * 1000;
 
-http.createServer(async (req, res) => {
+let lastActivity = Date.now();
+let activeRequests = 0;
+
+function touchActivity() { lastActivity = Date.now(); }
+
+const server = http.createServer(async (req, res) => {
   if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
+  touchActivity();
+  activeRequests++;
+  res.on('finish', () => { activeRequests--; touchActivity(); });
   try {
     const body = await collectBody(req);
     if (req.url.startsWith('/deepseek')) await handleDeepSeek(req, res, body, config);
@@ -128,7 +153,18 @@ http.createServer(async (req, res) => {
     console.error(`[proxy] ${err.message}`);
     if (!res.headersSent) { res.writeHead(500); res.end(JSON.stringify({ error: { message: err.message } })); }
   }
-}).listen(port, () => {
-  console.log(`[proxy] Listening on http://localhost:${port}`);
+});
+
+server.listen(port, () => {
+  console.log(`[proxy] Listening on http://localhost:${port} (idle timeout: ${IDLE_TIMEOUT_MS / 60000}min)`);
   console.log(`[proxy]   /deepseek/* → ${config.deepseek?.target || 'https://api.deepseek.com/anthropic'}`);
 });
+
+// Idle shutdown: exit when no active requests and no activity for IDLE_TIMEOUT_MS
+setInterval(() => {
+  if (activeRequests > 0) return;
+  if (Date.now() - lastActivity >= IDLE_TIMEOUT_MS) {
+    console.log(`[proxy] Idle for ${IDLE_TIMEOUT_MS / 60000}min — shutting down`);
+    server.close(() => process.exit(0));
+  }
+}, 60_000);
