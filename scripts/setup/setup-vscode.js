@@ -12,16 +12,16 @@
  * What it does:
  *   - Sets terminal.integrated.env.* so the "Open in Terminal" button
  *     launches claude with the provider's env vars.
- *   - On macOS/Linux: also sets claudeCode.claudeProcessWrapper so the
- *     chat panel uses the provider wrapper (Windows .cmd cannot be spawned
- *     directly by the extension).
- *   - When provider is "claude" (or omitted): clears both settings.
+ *   - Sets claudeCode.environmentVariables so the chat panel uses the
+ *     provider's env vars (cross-platform, replaces legacy
+ *     claudeCode.claudeProcessWrapper which only worked on macOS/Linux
+ *     and required a native binary).
+ *   - When provider is "claude" (or omitted): clears all provider settings.
  */
 
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +61,10 @@ const PROVIDER_KEYS = [
   'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
   'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL',
   'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_EFFORT_LEVEL',
+  'CLAUDE_CODE_USE_FOUNDRY', 'ANTHROPIC_FOUNDRY_BASE_URL', 'ANTHROPIC_FOUNDRY_API_KEY',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES',
 ];
 
 let changed = false;
@@ -80,13 +84,19 @@ if (provider === 'claude') {
     console.log(`OK    ${termEnvKey} — no provider env vars to remove`);
   }
 
-  if (settings['claudeCode.claudeProcessWrapper']) {
-    delete settings['claudeCode.claudeProcessWrapper'];
+  if (settings['claudeCode.environmentVariables']?.length) {
+    settings['claudeCode.environmentVariables'] = [];
     delete settings['claudeCode.disableLoginPrompt'];
-    console.log('WRITE claudeCode.claudeProcessWrapper — removed');
+    console.log('WRITE claudeCode.environmentVariables — cleared');
     changed = true;
   } else {
-    console.log('OK    claudeCode.claudeProcessWrapper — not set');
+    console.log('OK    claudeCode.environmentVariables — already empty');
+  }
+
+  if (settings['claudeCode.claudeProcessWrapper']) {
+    delete settings['claudeCode.claudeProcessWrapper'];
+    console.log('WRITE claudeCode.claudeProcessWrapper — removed (legacy)');
+    changed = true;
   }
 } else {
   // Apply provider
@@ -130,36 +140,24 @@ if (provider === 'claude') {
     console.log(`OK    ${termEnvKey} — already up to date`);
   }
 
-  // claudeCode.claudeProcessWrapper: only on macOS/Linux (Windows .cmd fails spawn EINVAL)
-  if (!isWindows) {
-    let claudeBin;
-    try {
-      claudeBin = path.dirname(
-        execSync('which claude', { stdio: 'pipe' }).toString().trim()
-      );
-    } catch {
-      claudeBin = null;
-    }
-
-    if (claudeBin) {
-      const wrapperPath = path.join(claudeBin, provider === 'deepseek' ? 'ccds' : provider);
-      if (fs.existsSync(wrapperPath)) {
-        if (settings['claudeCode.claudeProcessWrapper'] !== wrapperPath) {
-          settings['claudeCode.claudeProcessWrapper'] = wrapperPath;
-          settings['claudeCode.disableLoginPrompt'] = true;
-          console.log(`WRITE claudeCode.claudeProcessWrapper = "${wrapperPath}"`);
-          changed = true;
-        } else {
-          console.log('OK    claudeCode.claudeProcessWrapper — already up to date');
-        }
-      } else {
-        console.log(`SKIP  claudeCode.claudeProcessWrapper — wrapper not found at ${wrapperPath}`);
-      }
-    } else {
-      console.log('SKIP  claudeCode.claudeProcessWrapper — could not locate claude executable');
-    }
+  // Set claudeCode.environmentVariables for the VS Code chat panel extension
+  const envVarList = Object.entries(profile)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (JSON.stringify(envVarList) !== JSON.stringify(settings['claudeCode.environmentVariables'] || [])) {
+    settings['claudeCode.environmentVariables'] = envVarList;
+    settings['claudeCode.disableLoginPrompt'] = true;
+    console.log(`WRITE claudeCode.environmentVariables — set ${envVarList.length} env vars for ${provider}`);
+    changed = true;
   } else {
-    console.log('SKIP  claudeCode.claudeProcessWrapper — not supported on Windows (.cmd cannot be spawned by extension)');
+    console.log(`OK    claudeCode.environmentVariables — already up to date`);
+  }
+
+  // Clean up legacy claudeProcessWrapper if still set from a previous version
+  if (settings['claudeCode.claudeProcessWrapper']) {
+    delete settings['claudeCode.claudeProcessWrapper'];
+    console.log('WRITE claudeCode.claudeProcessWrapper — removed (legacy)');
+    changed = true;
   }
 }
 
