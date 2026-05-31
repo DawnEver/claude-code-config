@@ -1,12 +1,12 @@
 ---
 name: vscode-provider-wrapper
-description: VS Code extension uses claudeCode.claudeProcessWrapper to switch providers; use bare command name for cross-platform sync
+description: claudeCode.claudeProcessWrapper is BROKEN — Claude Code validates native binary; shell script wrappers rejected
 metadata:
-  type: project
+  type: feedback
 ---
 
-Set `claudeCode.claudeProcessWrapper = "ccds"` (bare name, not full path) in VS Code user settings to route the VS Code extension through an alternative provider.
+Do NOT use `claudeCode.claudeProcessWrapper` to route to a DeepSeek wrapper (`ccds` or any shell script). Claude Code validates the binary is a native Claude Code binary; shell scripts are rejected with "native binary not found".
 
-**Why:** Full path breaks cross-platform VS Code Settings Sync (Windows path invalid on Mac/Linux). Bare command works because `ccds` is installed alongside `claude` and is always on PATH.
+**Why:** When Claude Code spawns subagents (Agent tool), it passes `claudeCode.claudeProcessWrapper` as `pathToClaudeCodeExecutable` and does a native binary check. A shell script like `ccds` fails this check. Full macOS path `/Users/linxu/.local/bin/ccds` was synced via Settings Sync (broken), bare `ccds` also fails the same binary validation.
 
-**How to apply:** When documenting or setting up provider switching, always use bare command name. README.md#vscode-extension and setup.js HINT both reflect this.
+**How to apply:** Leave `claudeCode.claudeProcessWrapper` unset. For DeepSeek via VS Code terminal, use `terminal.integrated.env.osx` (macOS) or run `ccds` from terminal. Alternatively, modify the proxy to own its own API key so `claudeCode.environmentVariables` can set just `ANTHROPIC_BASE_URL` without a platform-specific token.

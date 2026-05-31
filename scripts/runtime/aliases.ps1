@@ -3,4 +3,3 @@
 
 function cc { node ~/.claude/scripts/runtime/cc.js claude @args }
 function ccds { node ~/.claude/scripts/runtime/cc.js deepseek @args }
-function ccproxy { node ~/.claude/scripts/runtime/api-proxy.js @args }

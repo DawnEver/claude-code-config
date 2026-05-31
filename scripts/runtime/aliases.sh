@@ -3,4 +3,3 @@
 
 alias cc='node ~/.claude/scripts/runtime/cc.js claude'
 alias ccds='node ~/.claude/scripts/runtime/cc.js deepseek'
-alias ccproxy='node ~/.claude/scripts/runtime/api-proxy.js'

@@ -304,7 +304,6 @@ function installShellAliases() {
 
   // Use forward slashes so the path works in both node on Windows and sh on Git Bash
   const ccJsPath = path.join(claudeDir, 'scripts', 'runtime', 'cc.js').replace(/\\/g, '/');
-  const proxyJsPath = path.join(claudeDir, 'scripts', 'runtime', 'api-proxy.js').replace(/\\/g, '/');
 
   const ALIASES = [
     { name: 'cc',   provider: 'claude'   },
@@ -326,19 +325,8 @@ function installShellAliases() {
     if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
   }
 
-  if (isWindows) {
-    const cmdContent = `@echo off\nrem claude-code-alias\nnode "${proxyJsPath}" %*\n`;
-    writeIfChanged(path.join(claudeBin, 'ccproxy.cmd'), cmdContent, 'ccproxy.cmd', 'claude-code-alias');
-  }
-
-  const proxyShContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${proxyJsPath}" "$@"\n`;
-  const proxyShPath = path.join(claudeBin, 'ccproxy');
-  const proxyResult = writeIfChanged(proxyShPath, proxyShContent, 'ccproxy', MARKER);
-  if (!isWindows && proxyResult !== 'skipped') fs.chmodSync(proxyShPath, 0o755);
-
   console.log('      cc    - Claude Pro (official subscription)');
-  console.log('      ccds  - DeepSeek API (via proxy)');
-  console.log('      ccproxy - local API proxy');
+  console.log('      ccds  - DeepSeek API (Foundry mode, direct)');
   console.log(`      installed to: ${claudeBin}`);
 
 }

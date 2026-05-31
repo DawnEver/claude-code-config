@@ -33,17 +33,9 @@ rustup component add rust-analyzer
 Setup installs provider wrappers alongside the `claude` executable (CMD, PowerShell, Git Bash):
 
 ```sh
-cc       # official Claude Pro subscription
-ccds     # DeepSeek API (via local proxy)
-ccgpt    # ChatGPT subscription / Codex models (via local proxy)
-ccproxy  # start the local API proxy in the foreground (auto-started by ccds/ccgpt)
+cc    # official Claude Pro subscription
+ccds  # DeepSeek API (Foundry mode, direct to api.deepseek.com)
 ```
-
-`ccds` and `ccgpt` automatically start the local proxy (`api-proxy.js`, port 3082) if it isn't already running. No manual `ccproxy` needed.
-
-**Local proxy** (`scripts/runtime/api-proxy.js`):
-- `/deepseek/*` — strips `{ role: "system" }` messages injected by Claude Code 2.1.154+ into `messages[]`, merges them into the top-level `system` field, then forwards to DeepSeek
-- `/chatgpt/*` — translates Anthropic Messages API ↔ OpenAI Chat Completions; authenticates via ChatGPT subscription OAuth tokens from `~/.codex/auth.json` (no API key required); handles streaming SSE
 
 Add providers by editing `claude_env_settings.json` (see template) and adding an alias entry in `scripts/setup/setup.js`.
 
@@ -62,7 +54,6 @@ Writes `terminal.integrated.env.*` and `claudeCode.claudeProcessWrapper` to loca
 
 **Windows permissions:** Enable Developer Mode or run as Administrator if symlink creation fails.
 
-**`Unable to connect to API (ConnectionRefused)`:** The selected provider is pointing Claude at the local proxy (`http://localhost:3082/...`), but nothing is listening on that port. Start Claude with `ccds` so the proxy is auto-started, or run `ccproxy` in another terminal before launching plain `claude` from a VS Code terminal. To switch back to official Claude Pro, run `node scripts/setup/setup-vscode.js claude` and restart VS Code terminals.
 
 ## Hooks
 
