@@ -5,7 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 
 const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const homeDir = process.env.HOME || process.env.USERPROFILE || '';
@@ -97,10 +97,7 @@ function extractTaskSummary(transcript) {
   return msgs || '(no summary)';
 }
 
-async function classify(taskSummary, changedFiles, memory) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return { mode: 'none', reason: 'no API key' };
-
+function classify(taskSummary, changedFiles, memory) {
   const examples = memory.slice(-5).map(m =>
     `Task: ${m.task.slice(0, 120)}\nFiles: ${(m.files || []).join(', ')}\nMode: ${m.mode}`
   ).join('\n---\n');
@@ -119,28 +116,18 @@ Changed files: ${changedFiles.join(', ') || 'none'}
 
 Respond ONLY with valid JSON: {"mode": "none"|"once"|"triple", "reason": "one sentence"}`;
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 80,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  const data = await res.json();
-  const text = data?.content?.[0]?.text || '{}';
   try {
+    const result = spawnSync('claude', ['-p', prompt, '--max-tokens', '80'], {
+      env: { ...process.env, SHARP_REVIEW_CLASSIFY: '1' },
+      timeout: 15000,
+      encoding: 'utf8',
+    });
+    const text = result.stdout || '';
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || '{}');
     const mode = ['none', 'once', 'triple'].includes(parsed.mode) ? parsed.mode : 'once';
     return { mode, reason: parsed.reason || '' };
   } catch {
-    return { mode: 'once', reason: 'parse error' };
+    return { mode: 'once', reason: 'classifier error' };
   }
 }
 
@@ -149,6 +136,8 @@ function buildPrompt(round, total) {
 }
 
 async function main() {
+  if (process.env.SHARP_REVIEW_CLASSIFY) process.exit(0);
+
   const input = readStdinJSON();
 
   if (input.stop_hook_active) process.exit(0);
@@ -172,7 +161,7 @@ async function main() {
     const memory = loadMemory();
     let classification;
     try {
-      classification = await classify(taskSummary, changedFiles, memory);
+      classification = classify(taskSummary, changedFiles, memory);
     } catch {
       classification = { mode: 'once', reason: 'classifier error' };
     }

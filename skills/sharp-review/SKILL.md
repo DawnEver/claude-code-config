@@ -7,9 +7,8 @@ description: Post-feature Codex sharp review (锐评) — critique decisions, re
 
 ## Phase 1 — Sharp Review (锐评)
 
-Use the Codex built-in **`adversarial-review`** command (read-only, no file writes) on the current branch diff. It already carries the review contract — do not substitute `rescue`.
+Run **at least 2 of the 3** reviewers below in parallel. All three cover the same surface:
 
-Instruct Codex to surface:
 - Bad architectural or design decisions
 - Redundant / dead code
 - Anything simpler, faster, or more idiomatic
@@ -17,19 +16,30 @@ Instruct Codex to surface:
 
 Tone: blunt. Praise nothing that doesn't deserve it.
 
-### Parallel Review — Takeover + Claude Code
+### Reviewer A — Codex `adversarial-review`
 
-For higher-confidence reviews, run two reviews in parallel and cross-check:
+Always available (built-in). Launch via the Codex **`adversarial-review`** command (read-only, no file writes) on the current branch diff. It already carries the review contract — do not substitute `rescue`.
 
-1. **Launch takeover review** — hand off the branch diff to another model:
-   ```
-   /takeover:continue --provider deepseek review this branch diff for bugs, design issues, and dead code. Be blunt.
-   ```
-2. **Meanwhile, in Claude Code** — run the standard Phase 1 sharp review against the same diff.
-3. **When both return** — compare findings. Overlapping issues are high-confidence; unique findings from either side are worth a closer look.
+### Reviewer B — Takeover DeepSeek (deepseek-v4-pro)
+
+```
+/takeover:continue --provider deepseek --model deepseek-v4-pro review this branch diff: bad design/architecture, dead code, simpler alternatives, edge cases, silent failures. Be blunt.
+```
+
+### Reviewer C — Takeover Sonnet (Claude)
+
+```
+/takeover:continue --provider claude review this branch diff: bad design/architecture, dead code, simpler alternatives, edge cases, silent failures. Be blunt.
+```
+
+### Execution & Cross-Check
+
+1. **Launch all available in parallel** — Codex, takeover deepseek, takeover claude. Minimum two must run; prefer all three.
+2. **When all return** — compare and merge findings:
+   - Issues found by ≥2 reviewers → **high-confidence**.
+   - Issues found by only 1 reviewer → still valid, just not corroborated. Treat them the same.
+3. **Apply fixes** for all confirmed findings immediately.
 4. Resolve any disagreements before proceeding to Phase 2.
-
-This pattern gives you a second opinion without slowing down the main review flow — both run concurrently.
 
 ## Phase 2 — Task Supervision
 
