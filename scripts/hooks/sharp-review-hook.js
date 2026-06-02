@@ -131,10 +131,6 @@ Respond ONLY with valid JSON: {"mode": "none"|"once"|"triple", "reason": "one se
   }
 }
 
-function buildPrompt(round, total) {
-  return `Review Gate (round ${round}/${total}): Before stopping, perform a sharp critique of the changes just made:\n1. Logic errors, edge cases, or missed requirements\n2. Redundant or poorly structured code\n3. Test coverage gaps\n4. Violations of AGENTS.md rules\nBe direct and specific. Apply any fixes found, then stop.`;
-}
-
 async function main() {
   if (process.env.SHARP_REVIEW_CLASSIFY) process.exit(0);
 
@@ -187,8 +183,7 @@ async function main() {
   state.reviewCount += 1;
   saveJSON(stateFile, state);
 
-  const prompt = buildPrompt(state.reviewCount, target);
-  process.stderr.write(prompt + '\n', () => process.exit(2));
+  process.stderr.write('/sharp-review\n', () => process.exit(2));
 }
 
 main().catch(() => process.exit(0));

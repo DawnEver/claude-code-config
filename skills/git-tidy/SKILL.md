@@ -46,9 +46,11 @@ Report a brief summary:
 - Which look like WIP/fixup candidates (list them)
 - Which already have good conventional format
 
-### 2. Propose a consolidation plan
+### 2. Propose a single-commit consolidation plan
 
-Group commits by semantic intent. For each group, suggest a final conventional commit message.
+**Default: squash all branch commits into one.** Read the combined diff of all commits
+(`git diff origin/main..HEAD`) to understand the net change, then propose a single
+conventional commit message that captures the intent.
 
 Conventional commit format:
 ```
@@ -57,7 +59,7 @@ Conventional commit format:
 
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `style`, `ci`, `build`
 
-**Example grouping:**
+**Example:**
 ```
 Before:
   abc1234 wip
@@ -66,38 +68,38 @@ Before:
   jkl3456 more fixes
 
 After (proposed):
-  → feat(auth): add login form with validation   [squash abc+def+ghi+jkl]
+  → feat(auth): add login form with validation   [squash all 4 commits]
 ```
 
-Present the plan clearly and **ask for confirmation** before touching anything. Let the user
-adjust groupings or reword messages. This is their history — don't be presumptuous.
+If the diff is large and clearly covers multiple unrelated changes, mention it and offer to
+split into separate commits — but the default is still one commit. Let the user decide to
+split if they want.
+
+Present the proposed message and **ask for confirmation** before touching anything. Let the
+user adjust the wording. This is their history — don't be presumptuous.
 
 ### 3. Execute (only after user confirms)
 
 Warn: "This rewrites history. Make sure you haven't pushed these commits to a shared branch,
 or use --force-with-lease when pushing."
 
-For non-interactive squash (N commits to squash onto base):
+Squash the entire branch into one commit:
 
 ```bash
-# Soft-reset to the diverge point, then commit with the new message
 git reset --soft origin/main
 git commit -m "feat: your message here"
 ```
 
-For partial squashes (keeping multiple commits), use `git rebase -i origin/main` and
-generate a rebase todo script programmatically — write the pick/squash/reword instructions
-to a temp file and apply via `GIT_SEQUENCE_EDITOR`.
+If the user asked to keep multiple commits, use `git rebase -i origin/main` and generate a
+rebase todo script programmatically — write the pick/squash/reword instructions to a temp
+file and apply via `GIT_SEQUENCE_EDITOR`:
 
-**Pattern for scripted interactive rebase:**
 ```bash
-# Write the rebase-todo instructions to a file
 cat > /tmp/rebase-todo.sh << 'EOF'
 #!/bin/sh
 cat > "$1" << 'SCRIPT'
 pick abc1234 feat(auth): add login form
 squash def5678 wip
-squash ghi9012 fix login
 reword jkl3456 old message
 SCRIPT
 EOF
@@ -121,8 +123,9 @@ else pushed to the branch since your last fetch, preventing accidental overwrite
 
 - **Never rewrite without explicit confirmation.** Show the plan first, ask, then act.
 - **Preserve meaning.** When grouping commits, read the diffs if needed to write accurate messages.
-- **One logical change = one commit.** Don't over-consolidate. If two commits are truly
-  independent, keep them separate.
+- **Default to one commit.** Squash the entire branch into a single conventional commit
+  unless the user explicitly asks to split. Most branches represent one logical change;
+  WIP fixups are noise, not independent work.
 - **Rebase, don't merge.** Linear history is the goal.
 - **Use `--force-with-lease`**, never `--force`, when push is needed after rebase.
 

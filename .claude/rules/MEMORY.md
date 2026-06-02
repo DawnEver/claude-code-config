@@ -2,6 +2,7 @@
 
 <!-- Sorted by date, newest first. Keep at most 20 entries. -->
 
+- [2026-06-02 model-effort-strategy — opusplan for auto plan/exec split, high-effort one-shot for review analysis](../memory/2026-06-02/model_effort_strategy.md) — model: opusplan (Opus in plan, Sonnet in execution); sharp-review hook uses claude -p with high effort for analysis
 - [2026-05-31 sharp-review-hook provider config — reuse env vars instead of hardcoded api.anthropic.com](../memory/2026-05-31/sharp_review_hook_provider_config.md) — classify() now reads Foundry/custom/default provider config; no hardcoded model fallback
 - [2026-05-30 api-proxy cache fix — anthropic-beta stripped + cache_control removed](../memory/2026-05-30/api_proxy_cache_fix.md) — SAFE_REQ_HEADERS missing anthropic-beta + stripCacheControl() killed prompt caching; both fixed; cache: 3k confirmed in HUD
 - [2026-05-30 api-proxy auth fix — ANTHROPIC_AUTH_TOKEN bearer→x-api-key](../memory/2026-05-29/api_proxy.md) — Use ANTHROPIC_AUTH_TOKEN (not API_KEY) for DeepSeek; proxy converts bearer token to x-api-key header

@@ -119,6 +119,7 @@
       }
     }
   },
+  "model": "opusplan",
   "effortLevel": "low",
   "autoUpdatesChannel": "stable",
   "tui": "fullscreen",
