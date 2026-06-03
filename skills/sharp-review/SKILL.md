@@ -5,6 +5,10 @@ description: Post-feature Codex sharp review (锐评) — critique decisions, re
 
 # Codex Review & Supervision
 
+## Output Rule
+
+**Write ALL findings to `.claude/sharp-review/YYYY-MM-DD.md` (append to today's file).** Chat output is ONE summary line only: total issue count + file path. Do NOT dump findings in chat.
+
 ## Phase 1 — Sharp Review (锐评)
 
 Run **at least 2 of the 3** reviewers below in parallel. All three cover the same surface:
@@ -22,14 +26,16 @@ Always available (built-in). Launch via the Codex **`adversarial-review`** comma
 
 ### Reviewer B — Takeover DeepSeek (deepseek-v4-pro)
 
+The takeover agent auto-gathers context (git diff, files) before calling the remote model. Just give it the task:
+
 ```
-/takeover:continue --provider deepseek --model deepseek-v4-pro review this branch diff: bad design/architecture, dead code, simpler alternatives, edge cases, silent failures. Be blunt.
+/takeover:continue --provider deepseek --model deepseek-v4-pro Review the current branch git diff for: bad design/architecture, redundant/dead code, simpler alternatives, edge cases, silent failures. Be BLUNT. Output each finding as [severity] file — issue → suggestion.
 ```
 
 ### Reviewer C — Takeover Sonnet (Claude)
 
 ```
-/takeover:continue --provider claude review this branch diff: bad design/architecture, dead code, simpler alternatives, edge cases, silent failures. Be blunt.
+/takeover:continue --provider claude Review the current branch git diff for: bad design/architecture, redundant/dead code, simpler alternatives, edge cases, silent failures. Be BLUNT. Output each finding as [severity] file — issue → suggestion.
 ```
 
 ### Execution & Cross-Check
@@ -38,8 +44,10 @@ Always available (built-in). Launch via the Codex **`adversarial-review`** comma
 2. **When all return** — compare and merge findings:
    - Issues found by ≥2 reviewers → **high-confidence**.
    - Issues found by only 1 reviewer → still valid, just not corroborated. Treat them the same.
-3. **Apply fixes** for all confirmed findings immediately.
-4. Resolve any disagreements before proceeding to Phase 2.
+3. **Write merged findings to `.claude/sharp-review/YYYY-MM-DD.md`** (create dir if needed, append with `## Review <timestamp>` header).
+4. **Apply fixes** for all confirmed findings immediately.
+5. Resolve any disagreements before proceeding to Phase 2.
+6. **Output in chat ONLY**: `Sharp review: N issues → .claude/sharp-review/YYYY-MM-DD.md`
 
 ## Phase 2 — Task Supervision
 

@@ -3,6 +3,9 @@ name: feedback-global-agents
 description: GLOBAL-AGENTS.md is global config — never modify it; only AGENTS.md is project-specific
 metadata:
   type: feedback
+created: 2026-05-29
+accessed: 2026-05-29
+tier: short
 ---
 
 Never modify `GLOBAL-AGENTS.md` when working in this repo. It is a global config loaded across all projects.

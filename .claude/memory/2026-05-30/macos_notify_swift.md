@@ -3,6 +3,9 @@ name: macos-notify-swift
 description: macOS 26.5 notification fix — terminal-notifier replaced with compiled Swift binary
 metadata:
   type: project
+created: 2026-05-30
+accessed: 2026-05-30
+tier: short
 ---
 
 macOS 26.5 breaks all existing notification paths:

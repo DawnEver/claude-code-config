@@ -1,21 +1,41 @@
 # Memory Index
 
-<!-- Sorted by date, newest first. Keep at most 20 entries. -->
+<!--
+Three-tier memory system:
+  1. Rules (.claude/rules/)         — always injected, core behavioral constraints only
+  2. Long-term memory (tier: long)  — progressive disclosure, demoted to short if inactive between prune cycles
+  3. Short-term memory (tier: short) — progressive disclosure, 90d eviction
 
-- [2026-06-02 model-effort-strategy — opusplan for auto plan/exec split, high-effort one-shot for review analysis](../memory/2026-06-02/model_effort_strategy.md) — model: opusplan (Opus in plan, Sonnet in execution); sharp-review hook uses claude -p with high effort for analysis
-- [2026-05-31 sharp-review-hook provider config — reuse env vars instead of hardcoded api.anthropic.com](../memory/2026-05-31/sharp_review_hook_provider_config.md) — classify() now reads Foundry/custom/default provider config; no hardcoded model fallback
-- [2026-05-30 api-proxy cache fix — anthropic-beta stripped + cache_control removed](../memory/2026-05-30/api_proxy_cache_fix.md) — SAFE_REQ_HEADERS missing anthropic-beta + stripCacheControl() killed prompt caching; both fixed; cache: 3k confirmed in HUD
-- [2026-05-30 api-proxy auth fix — ANTHROPIC_AUTH_TOKEN bearer→x-api-key](../memory/2026-05-29/api_proxy.md) — Use ANTHROPIC_AUTH_TOKEN (not API_KEY) for DeepSeek; proxy converts bearer token to x-api-key header
-- [2026-05-30 api-proxy KV cache removed — claude-hud has native token breakdown](../memory/2026-05-30/api_proxy_kv_cache.md) — Removed metrics tracking, SSE interceptor, /metrics endpoint, kv-cache-status.js; hud-hook simplified
-- [2026-05-30 macOS notify fix — terminal-notifier replaced with Swift binary](../memory/2026-05-30/macos_notify_swift.md) — macOS 26.5 breaks terminal-notifier & AppleScript; NSUserNotificationCenter works from CLI
-- [2026-05-30 Notify sharp review findings (unfixed)](../memory/2026-05-30/notify_review_findings_unfixed.md) — 13 issues found by parallel Codex+DeepSeek review; HIGH: silent failure, dead -open code, compileNotifyBinary error count
-- [2026-05-29 ccgpt removed — Codex uses agent-identity JWT](../memory/2026-05-29/ccgpt_removal.md) — ChatGPT bridge deleted; Codex token incompatible with any standard API endpoint
-- [2026-05-29 GLOBAL-AGENTS.md is global — never edit](../memory/2026-05-29/feedback_global_agents.md) — Only AGENTS.md is project-specific; GLOBAL-AGENTS.md is symlinked to ~/.claude/CLAUDE.md
-- [2026-05-29 api-proxy known bugs](../memory/2026-05-29/api_proxy.md) — Local proxy for DeepSeek only; ChatGPT bridge removed; some sharp-review bugs unfixed
-- [2026-05-31 VS Code provider env vars](../memory/2026-05-31/vscode_provider_envvars.md) — claudeCode.environmentVariables works cross-platform for chat panel provider switching; supersedes broken claudeProcessWrapper
-- [2026-05-28 VS Code provider wrapper BROKEN](../memory/2026-05-28/vscode_provider_wrapper.md) — claudeCode.claudeProcessWrapper rejects shell scripts; Claude Code validates native binary; use environmentVariables instead
-- [2026-05-28 Retrospect hook task guard convention](../memory/2026-05-28/retrospect_hook_task_guard.md) — Set taskActiveUntil in .retro_state.json at start of sequential multi-round skills; auto-expires 30min
-- [2026-05-28 Retrospect hook background_tasks fix](../memory/2026-05-28/retrospect_hook_background_tasks.md) — Guard against mid-task interruption using input.background_tasks; session_id leak also fixed
-- [2026-05-28 Takeover review fixes](../memory/2026-05-28/project_takeover_review.md) — Architectural invariants after 3-round sharp review: stdin-only prompt delivery, testable callers in lib.mjs, unified Agent dispatch, early --write rejection, retry logic
-- [2026-05-27 Git commit: use Bash](../memory/2026-05-27/feedback_git_commit.md) — Always use Bash (not PowerShell) for git commit; PowerShell here-strings leak @ into messages
-- [2026-05-27 Skills location](../memory/2026-05-27/feedback_skills_location.md) — All skills/agents go in repo `skills/<name>/SKILL.md`, symlinked to `~/.claude/skills`
+Promotion: run `node scripts/touch-memory.js <path> --promote` to upgrade short → long
+Demotion:  long-term not accessed between two prune cycles → auto-demoted to short
+Prune:     run `node scripts/prune-memory.js --evict-stale` (short-term eviction + long-term demotion check)
+Compact:   run `node scripts/compact.js --check` when index grows large
+
+Frontmatter:
+  - created:  ISO date (parent folder date)
+  - accessed: ISO date (bumped by touch-memory.js on reference)
+  - tier:     long | short (default short, promoted via touch-memory.js --promote)
+-->
+
+## Short-term (90d eviction window)
+
+
+- [2026-06-03 memory mechanism — three-tier loading, timestamps, eviction](../memory/2026-06-03/memory-mechanism.md) — `created: 2026-06-03, accessed: 2026-06-03`
+- [2026-06-03 takeover plugin v2 cleanup](../memory/2026-06-03/takeover-plugin-v2.md) — `created: 2026-06-03, accessed: 2026-06-03`
+- [2026-06-03 update-plugins-hook-removed](../memory/2026-06-03/update-plugins-hook-removed.md) — `created: 2026-06-03, accessed: 2026-06-03`
+- [2026-06-02 model effort strategy](../memory/2026-06-02/model_effort_strategy.md) — `created: 2026-06-02, accessed: 2026-06-02`
+- [2026-05-31 sharp review hook provider config](../memory/2026-05-31/sharp_review_hook_provider_config.md) — `created: 2026-05-31, accessed: 2026-05-31`
+- [2026-05-31 VS Code provider env vars](../memory/2026-05-31/vscode_provider_envvars.md) — `created: 2026-05-31, accessed: 2026-05-31`
+- [2026-05-30 macOS notify Swift fix](../memory/2026-05-30/macos_notify_swift.md) — `created: 2026-05-30, accessed: 2026-05-30`
+- [2026-05-30 notify review findings unfixed](../memory/2026-05-30/notify_review_findings_unfixed.md) — `created: 2026-05-30, accessed: 2026-05-30`
+- [2026-05-30 api-proxy KV cache removed](../memory/2026-05-30/api_proxy_kv_cache.md) — `created: 2026-05-30, accessed: 2026-05-30`
+- [2026-05-30 api-proxy cache fix](../memory/2026-05-30/api_proxy_cache_fix.md) — `created: 2026-05-30, accessed: 2026-05-30`
+- [2026-05-29 api-proxy auth fix](../memory/2026-05-29/api_proxy.md) — `created: 2026-05-29, accessed: 2026-05-29`
+- [2026-05-29 ccgpt removed](../memory/2026-05-29/ccgpt_removal.md) — `created: 2026-05-29, accessed: 2026-05-29`
+- [2026-05-29 GLOBAL-AGENTS.md is global](../memory/2026-05-29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-05-29`
+- [2026-05-28 VS Code provider wrapper broken](../memory/2026-05-28/vscode_provider_wrapper.md) — `created: 2026-05-28, accessed: 2026-05-28`
+- [2026-05-28 retrospect hook task guard](../memory/2026-05-28/retrospect_hook_task_guard.md) — `created: 2026-05-28, accessed: 2026-05-28`
+- [2026-05-28 retrospect hook background tasks fix](../memory/2026-05-28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-05-28`
+- [2026-05-28 takeover review fixes](../memory/2026-05-28/project_takeover_review.md) — `created: 2026-05-28, accessed: 2026-05-28`
+- [2026-05-27 skills location](../memory/2026-05-27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-05-27`
+- [2026-05-27 git commit — use Bash](../memory/2026-05-27/feedback_git_commit.md) — `created: 2026-05-27, accessed: 2026-05-27`

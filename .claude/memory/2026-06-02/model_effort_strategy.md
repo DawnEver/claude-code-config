@@ -3,6 +3,9 @@ name: model-effort-strategy
 description: Model and effort level strategy — opusplan for auto plan/exec split, sharp-review hook delegates to sharp-review skill
 metadata:
   type: project
+created: 2026-06-02
+accessed: 2026-06-02
+tier: short
 ---
 
 # Model & Effort Strategy

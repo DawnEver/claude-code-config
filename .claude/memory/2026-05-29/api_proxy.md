@@ -3,6 +3,9 @@ name: api-proxy
 description: Local proxy for DeepSeek only. Auth fix 2026-05-30: bearer→x-api-key conversion added so ANTHROPIC_AUTH_TOKEN works. KV cache metrics, cache_control strip. Some sharp-review bugs remain unfixed.
 metadata:
   type: project
+created: 2026-05-29
+accessed: 2026-05-29
+tier: short
 ---
 
 `scripts/runtime/api-proxy.js` — single-file Node.js proxy (no external deps) on port 3082.

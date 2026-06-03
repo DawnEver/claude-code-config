@@ -3,6 +3,9 @@ name: macos-notify-sharp-review-findings
 description: Unfixed sharp review findings from parallel Codex+DeepSeek review of macos-26-notify-fix
 metadata:
   type: project
+created: 2026-05-30
+accessed: 2026-05-30
+tier: short
 ---
 
 Parallel sharp review (Codex adversarial-review + DeepSeek takeover) found these issues. None were fixed before session end.

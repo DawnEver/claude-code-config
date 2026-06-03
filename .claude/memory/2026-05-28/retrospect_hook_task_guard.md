@@ -1,3 +1,13 @@
+---
+name: retrospect-hook-task-guard
+description: taskActiveUntil convention for multi-round sequential skills
+metadata:
+  type: project
+created: 2026-05-28
+accessed: 2026-05-28
+tier: short
+---
+
 # Retrospect Hook — Multi-round Task Guard
 
 ## Convention: `taskActiveUntil` in `.retro_state.json`

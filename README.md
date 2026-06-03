@@ -63,10 +63,10 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 |---|---|---|
 | `Notification` | `notify-hook.js` | Native OS notification |
 | `Stop` | `sharp-review-hook.js` | Post-task sharp review |
-| `Stop` | `retrospect-hook.js` | Post-task retrospective; updates `.claude/memory`, `.claude/rules`, and `CLAUDE.md`/`AGENTS.md` |
+| `Stop` | `rem-hook.js` | REM sleep — post-session memory consolidation, prune, summarize |
 | `StatusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 
-The retrospect hook gates on session depth (≥3 stops, ≥2 min). Lightweight sessions get a shorter prompt. State is tracked in `.claude/.retro_state.json`.
+The REM hook gates on session depth (≥3 stops, ≥2 min). Runs `/rem` skill. State tracked in `.claude/.retro_state.json`.
 
 Hook wiring in `claude_settings.json`:
 
@@ -75,7 +75,7 @@ Hook wiring in `claude_settings.json`:
   "Notification": [{ "hooks": [{ "type": "command", "command": "node ~/.claude/scripts/hooks/notify-hook.js" }] }],
   "Stop": [{ "hooks": [
     { "type": "command", "command": "node ~/.claude/scripts/hooks/sharp-review-hook.js", "timeout": 30 },
-    { "type": "command", "command": "node ~/.claude/scripts/hooks/retrospect-hook.js", "timeout": 10 }
+    { "type": "command", "command": "node ~/.claude/cc-market/rem/hooks/rem-hook.js", "timeout": 10 }
   ]}]
 },
 "statusLine": { "type": "command", "command": "node ~/.claude/scripts/hooks/hud-hook.js" }
@@ -113,7 +113,7 @@ claude --bare --model haiku "please read ~/.claude/models.md to test claude perm
 
 After a session, add entries to `.claude/memory/YYYY-MM-DD/<topic>.md` and prepend a one-line pointer to `MEMORY.md` (keep ≤20 entries, newest-first). If the session changed project architecture or setup, update `AGENTS.md` too.
 
-When `MEMORY.md` hits 20 entries, the retrospect hook triggers a **compact**: distill all memory into `.claude/rules/` rule files, then clear the index. Memory files are never deleted.
+When `MEMORY.md` hits 20 entries, the REM hook triggers a **compact**: distill all memory into `.claude/rules/` rule files, then clear the index. Memory files are never deleted.
 
 Both directories are git-tracked (`.gitignore` uses `.claude/*` with `!.claude/rules/` and `!.claude/memory/` exceptions).
 

@@ -1,5 +1,11 @@
 # AGENTS.md
 
+<!--
+  Boundary: This file covers the config-sync repo ONLY.
+  For cc-market plugin development, see cc-market/AGENTS.md.
+  Do NOT mix plugin details here.
+-->
+
 ## Setup
 - `npm run setup` - Initial setup
 - `node scripts/setup/setup.js` - Manual setup
@@ -11,18 +17,18 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 ### Structure
 - `scripts/setup/`: `setup.js` (OS detection, symlinks)
 - `scripts/runtime/`: `cc.js` (provider launcher), `aliases.sh`, `aliases.ps1`
-- `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`, `retrospect-hook.js`, `sharp-review-hook.js`
+- `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`, `sharp-review-hook.js`
 - `skills/`: Custom Claude Code skills — symlinked to `~/.claude/skills`. Add new skills here as `skills/<name>/SKILL.md`; they are picked up automatically.
 - `claude_plugins/`: Custom plugins (e.g., `claude-hud`)
-- `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) -> provides `takeover` for multi-model orchestration
+- `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) — see `cc-market/AGENTS.md`
 - `claude_settings.json`: Env vars, permissions, hooks (gitignored, secrets not tracked)
 - `claude_settings.template.json`: Template for new clones -> auto-copied to `claude_settings.json` by setup
 - `claude_env_settings.json`: API keys per provider (gitignored, secrets not tracked)
 - `claude_env_settings.template.json`: Desensitized provider template -> auto-copied to `claude_env_settings.json` by setup
 - `keybindings.json`: Claude Code keybindings -> synced to `~/.claude/keybindings.json`
 - `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory
-- `.claude/rules/`: Actionable rules loaded every session (git-tracked)
-- `.claude/memory/`: Historical reference with `MEMORY.md` index (git-tracked)
+- `.claude/rules/`: Actionable rules loaded every session (git-tracked). Hand-written rules at root; `/rem` compact-distilled rules in `rem/` subdirectory for namespace isolation.
+- `.claude/memory/`: Historical reference with `MEMORY.md` index (git-tracked); on-demand loading, `created`/`accessed` timestamps, managed by `rem` plugin
 
 ### Provider Switching
 - `cc` -> launch Claude Code with official Claude Pro subscription (clears all provider env vars)
@@ -37,3 +43,4 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 
 ### Standard
 - After changes, update README and `setup.js` if needed
+- Plugin development, tests, and marketplace conventions → see `cc-market/AGENTS.md`

@@ -11,6 +11,7 @@
 ## Workflow
 - Use LSP if available.
 - Aggressively use subagents for high-token-cost operations or when multiple tasks to do.
+- Consider cross-platform compatibility and team collaboration during design, implementation, and documentation.
 
 ## Git Hygiene
 - Commit messages: imperative, conventional (`feat:`, `fix:`, `docs:` …), passing messages directly with `-m "..."` using double quotes.
@@ -18,4 +19,4 @@
 
 ## Memory
 - Always manage memory with the project's `.claude/memory`; never use auto memory stored in the user directory.
-- Update the index of the memory in @.claude/rules/MEMORY.md
+- Full conventions (format, scripts, eviction) are in the `/rem` skill — loaded only when needed.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // review-gate-hook.js — Claude Code Stop hook
 // A haiku classifier decides how many rounds of sharp critique to run.
-// Modes: none | once | triple. Skips for trivial/non-code tasks.
+// Modes: none | once | multi. Skips for trivial/non-code tasks.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,7 +14,7 @@ const stateFile = path.join(projectDir, '.claude', '.review-gate-state.json');
 const projectMemFile = path.join(projectDir, '.claude', '.review-gate-memory.json');
 const globalMemFile = path.join(homeDir, '.claude', '.review-gate-memory.json');
 const MEMORY_MAX = 20;
-const TARGETS = { none: 0, once: 1, triple: 3 };
+const TARGETS = { none: 0, once: 1, multi: 2 };
 
 function readStdinJSON() {
   if (process.stdin.isTTY) return {};
@@ -107,14 +107,14 @@ function classify(taskSummary, changedFiles, memory) {
 Modes:
 - none: trivial task, no code logic changed, or purely informational
 - once: moderate code change, single review pass is enough
-- triple: complex multi-file change, algorithm change, or high-risk logic
+- multi: complex multi-file change, algorithm change, or high-risk logic
 
 ${examples ? `Past examples:\n${examples}\n---\n` : ''}Current task summary:
 ${taskSummary}
 
 Changed files: ${changedFiles.join(', ') || 'none'}
 
-Respond ONLY with valid JSON: {"mode": "none"|"once"|"triple", "reason": "one sentence"}`;
+Respond ONLY with valid JSON: {"mode": "none"|"once"|"multi", "reason": "one sentence"}`;
 
   try {
     const result = spawnSync('claude', ['-p', prompt, '--max-tokens', '80'], {
@@ -124,7 +124,7 @@ Respond ONLY with valid JSON: {"mode": "none"|"once"|"triple", "reason": "one se
     });
     const text = result.stdout || '';
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] || '{}');
-    const mode = ['none', 'once', 'triple'].includes(parsed.mode) ? parsed.mode : 'once';
+    const mode = ['none', 'once', 'multi'].includes(parsed.mode) ? parsed.mode : 'once';
     return { mode, reason: parsed.reason || '' };
   } catch {
     return { mode: 'once', reason: 'classifier error' };
