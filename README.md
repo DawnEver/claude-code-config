@@ -63,8 +63,9 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 |---|---|---|
 | `Notification` | `notify-hook.js` | Native OS notification |
 | `Stop` | `sharp-review-hook.js` | Post-task sharp review |
-| `Stop` | `rem-hook.js` | REM sleep — post-session memory consolidation, prune, summarize |
 | `StatusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
+
+The `rem` plugin (Stop hook for memory consolidation) is auto-registered via `enabledPlugins` — no manual wiring needed.
 
 The REM hook gates on session depth (≥3 stops, ≥2 min). Runs `/rem` skill. State tracked in `.claude/.retro_state.json`.
 
@@ -74,8 +75,7 @@ Hook wiring in `claude_settings.json`:
 "hooks": {
   "Notification": [{ "hooks": [{ "type": "command", "command": "node ~/.claude/scripts/hooks/notify-hook.js" }] }],
   "Stop": [{ "hooks": [
-    { "type": "command", "command": "node ~/.claude/scripts/hooks/sharp-review-hook.js", "timeout": 30 },
-    { "type": "command", "command": "node ~/.claude/cc-market/rem/hooks/rem-hook.js", "timeout": 10 }
+    { "type": "command", "command": "node ~/.claude/scripts/hooks/sharp-review-hook.js", "timeout": 30 }
   ]}]
 },
 "statusLine": { "type": "command", "command": "node ~/.claude/scripts/hooks/hud-hook.js" }
