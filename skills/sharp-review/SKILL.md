@@ -1,62 +1,70 @@
 ---
 name: sharp-review
-description: Post-feature Codex sharp review (锐评) — critique decisions, redundancy, and quality; then supervise any in-flight Codex tasks until confirmed done.
+description: Post-feature Codex sharp review (锐评) — 3 parallel reviewers with schema enforcement, merge findings, sync task list
 ---
 
-# Codex Review & Supervision
+# Sharp Review (锐评)
 
-## Output Rule
+Workflow-driven post-feature review. Three parallel reviewers (Codex adversarial-review, DeepSeek takeover, Claude takeover) each constrained by JSON Schema, then cross-checked and merged. Findings are written to `.claude/sharp-review/YYYY-MM-DD.md` with stable IDs and synced to `.claude/memory/tasks/tasks.md`.
 
-**Write ALL findings to `.claude/sharp-review/YYYY-MM-DD.md` (append to today's file).** Chat output is ONE summary line only: total issue count + file path. Do NOT dump findings in chat.
+## Execution
 
-## Phase 1 — Sharp Review (锐评)
+### Step 1 — Gather context
 
-Run **at least 2 of the 3** reviewers below in parallel. All three cover the same surface:
-
-- Bad architectural or design decisions
-- Redundant / dead code
-- Anything simpler, faster, or more idiomatic
-- Missed edge cases or silent failures
-
-Tone: blunt. Praise nothing that doesn't deserve it.
-
-### Reviewer A — Codex `adversarial-review`
-
-Always available (built-in). Launch via the Codex **`adversarial-review`** command (read-only, no file writes) on the current branch diff. It already carries the review contract — do not substitute `rescue`.
-
-### Reviewer B — Takeover DeepSeek (deepseek-v4-pro)
-
-The takeover agent auto-gathers context (git diff, files) before calling the remote model. Just give it the task:
-
-```
-/takeover:continue --provider deepseek --model deepseek-v4-pro Review the current branch git diff for: bad design/architecture, redundant/dead code, simpler alternatives, edge cases, silent failures. Be BLUNT. Output each finding as [severity] file — issue → suggestion.
+```bash
+git diff HEAD~1..HEAD
 ```
 
-### Reviewer C — Takeover Sonnet (Claude)
+Capture the full diff. If the branch has multiple commits, use `git diff main...HEAD` instead.
 
+### Step 2 — Run workflow
+
+Invoke the sharp-review workflow with the diff as args:
+
+```js
+Workflow({
+  scriptPath: "~/.claude/workflows/sharp-review.js",
+  args: { diff: "<the git diff>" }
+})
 ```
-/takeover:continue --provider claude Review the current branch git diff for: bad design/architecture, redundant/dead code, simpler alternatives, edge cases, silent failures. Be BLUNT. Output each finding as [severity] file — issue → suggestion.
+
+The workflow launches 3 parallel reviewers, each with a JSON Schema that enforces:
+- `severity`: HIGH | MEDIUM | LOW | INFO
+- `file`: affected file path
+- `summary`: one-line issue description
+- `category`: Bug | Feature | Performance
+- `module`: inferred from file path
+- `status`: OPEN | FIXED
+- `suggestion`: one-line fix
+
+### Step 3 — Write findings
+
+The workflow returns `{ reviewFile, markdown, merged, summary }`. Write `markdown` to the file:
+
+1. Create `.claude/sharp-review/` if it doesn't exist
+2. Append to `reviewFile`
+3. Apply fixes for all confirmed findings immediately
+
+### Step 4 — Sync task list
+
+```bash
+node ~/.claude/scripts/sync-tasks.js
 ```
 
-### Execution & Cross-Check
+### Step 5 — Report
 
-1. **Launch all available in parallel** — Codex, takeover deepseek, takeover claude. Minimum two must run; prefer all three.
-2. **When all return** — compare and merge findings:
-   - Issues found by ≥2 reviewers → **high-confidence**.
-   - Issues found by only 1 reviewer → still valid, just not corroborated. Treat them the same.
-3. **Write merged findings to `.claude/sharp-review/YYYY-MM-DD.md`** (create dir if needed, append with `## Review <timestamp>` header).
-4. **Apply fixes** for all confirmed findings immediately.
-5. Resolve any disagreements before proceeding to Phase 2.
-6. **Output in chat ONLY**: `Sharp review: N issues → .claude/sharp-review/YYYY-MM-DD.md`
+**Output in chat ONLY**: `Sharp review: <summary>`
 
-## Phase 2 — Task Supervision
+Do NOT dump findings in chat.
 
-If Codex tasks are still in flight after the review:
+## Phase 2 — Task Audit
 
-1. Check task status immediately via `TaskGet`.
-2. If not done, send a follow-up nudge; re-check in a few minutes.
-3. Do **not** mark the feature complete until the task output is verified.
+After the review:
+
+1. Read `.claude/memory/tasks/tasks.md` — review open HIGH/MEDIUM bugs against code changed in this session. Mark any that are now resolved.
+2. Flag stale items (> 90d untouched) with `[STALE]` or move to archive if confirmed fixed.
+3. Check in-flight Codex tasks via `TaskGet` — do not mark feature complete until verified.
 
 ## Usage
 
-Run `/sharp-review` after finishing a feature. No arguments needed — context comes from the current branch diff.
+Run `/sharp-review` after finishing a feature. No arguments needed.
