@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 
 const ROOT = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const SHARP_REVIEW_DIR = join(ROOT, '.claude', 'sharp-review');
+const RESOLVED_FILE = join(SHARP_REVIEW_DIR, 'resolved.txt'); // persistent resolved IDs
 const MEMORY_DIR = join(ROOT, '.claude', 'memory');
 const TASKS_DIR = join(MEMORY_DIR, 'tasks');
 const ARCHIVE_DIR = join(TASKS_DIR, 'archive');
@@ -94,7 +95,7 @@ function parseFindings(content, fileDate) {
         category: null,
         module: null,
         status: 'open',
-        discovered: hdr[1].slice(3, 11), // extract date from ID
+        discovered: (() => { const d = hdr[1].slice(3,11); return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`; })(),
         suggestion: '',
         detail: '',
       };
@@ -128,7 +129,7 @@ function parseFindings(content, fileDate) {
       const status = leg[4] && /FIXED|fixed|已修复/i.test(leg[4]) ? 'fixed' : 'open';
       const maybeFile = leg[2].trim();
       // Heuristic: if it looks like a file path (has .ext or /), treat as file; else it's part of summary
-      const looksLikeFile = /[.\\/]/.test(maybeFile) && maybeFile.length < 80;
+      const looksLikeFile = /\.[jt]sx?$|\.[mc]js$|\.md$|\.json$|\.ya?ml$|\.sh$|\.py$|\//.test(maybeFile) && maybeFile.length < 80;
       const file = looksLikeFile ? maybeFile : '';
       const summary = looksLikeFile ? leg[3].trim() : `${maybeFile} — ${leg[3].trim()}`;
       // Collect detail lines until --- or next finding
@@ -167,6 +168,8 @@ function collectSharpReviewFiles() {
       const match = entry.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
       if (match) {
         results.push({ path: join(SHARP_REVIEW_DIR, entry), date: match[1] });
+      } else {
+        console.warn(`[sync-tasks] skipping unexpected file: ${entry}`);
       }
     }
   }
@@ -177,8 +180,12 @@ function collectSharpReviewFiles() {
 // ── Memory cross-reference ──
 
 function collectMemoryRefs() {
-  const refs = new Map(); // slug → { name, description, path }
-  if (!existsSync(MEMORY_DIR)) return refs;
+  // Returns two indexes built in a single pass:
+  //   refs: slug → { name, description, path }
+  //   idIndex: findingId → relPath  (inverted index for O(1) lookup)
+  const refs = new Map();
+  const idIndex = new Map(); // SR-YYYYMMDD-NNN → relPath
+  if (!existsSync(MEMORY_DIR)) return { refs, idIndex };
 
   function walk(dir) {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -191,21 +198,24 @@ function collectMemoryRefs() {
           const content = readFileSync(full, 'utf8');
           const nameMatch = content.match(/^name:\s*(.+)$/m);
           const descMatch = content.match(/^description:\s*(.+)$/m);
+          const relPath = relative(MEMORY_DIR, full).replace(/\\/g, '/');
           if (nameMatch) {
-            const relPath = relative(MEMORY_DIR, full).replace(/\\/g, '/');
             refs.set(nameMatch[1].trim(), {
               name: nameMatch[1].trim(),
               description: descMatch ? descMatch[1].trim() : '',
               path: relPath,
-              fullPath: full,
             });
+          }
+          // Index every SR-ID mentioned in this file
+          for (const m of content.matchAll(/SR-\d{8}-\d{3}/g)) {
+            if (!idIndex.has(m[0])) idIndex.set(m[0], relPath);
           }
         } catch { /* skip unreadable files */ }
       }
     }
   }
   walk(MEMORY_DIR);
-  return refs;
+  return { refs, idIndex };
 }
 
 // ── Staleness check ──
@@ -260,12 +270,12 @@ function groupByCategory(findings) {
   return groups;
 }
 
-function mergePreserved(findings, preserved) {
+function mergePreserved(findings, preserved, resolvedIds = new Set()) {
   // Build map of IDs from sharp-review
   const srIds = new Set(findings.map(f => f.id));
-  // Add preserved entries not found in sharp-review
+  // Add preserved entries not found in sharp-review (and not resolved)
   for (const [id, entry] of preserved) {
-    if (!srIds.has(id) && !entry.checked) {
+    if (!srIds.has(id) && !entry.checked && !resolvedIds.has(id)) {
       findings.push({
         id: entry.id,
         severity: entry.severity,
@@ -307,8 +317,8 @@ function taskFrontmatter(openCount) {
   ].join('\n');
 }
 
-function generateSmall(findings, preserved) {
-  const merged = mergePreserved([...findings], preserved);
+function generateSmall(findings, preserved, resolvedIds = new Set()) {
+  const merged = mergePreserved([...findings], preserved, resolvedIds);
   const open = merged.filter(f => f.status !== 'fixed');
   const byMod = groupByModule(open);
   const lines = [];
@@ -327,8 +337,8 @@ function generateSmall(findings, preserved) {
   return lines.join('\n').trimEnd() + '\n';
 }
 
-function generateMedium(findings, preserved) {
-  const merged = mergePreserved([...findings], preserved);
+function generateMedium(findings, preserved, resolvedIds = new Set()) {
+  const merged = mergePreserved([...findings], preserved, resolvedIds);
   const open = merged.filter(f => f.status !== 'fixed');
   const byCat = groupByCategory(open);
   const lines = [];
@@ -352,15 +362,16 @@ function generateMedium(findings, preserved) {
   return lines.join('\n') + '\n';
 }
 
-function generateLarge(findings, preserved) {
+function generateLarge(findings, preserved, resolvedIds = new Set()) {
   // Returns { 'features.md': content, 'bugs.md': content, 'perf.md': content }
-  const merged = mergePreserved([...findings], preserved);
+  const merged = mergePreserved([...findings], preserved, resolvedIds);
   const open = merged.filter(f => f.status !== 'fixed');
   const byCat = groupByCategory(open);
   const files = {};
   const date = todayISO();
 
   for (const [cat, items] of Object.entries(byCat)) {
+    if (items.length === 0) continue; // SR-004: skip empty categories
     const byMod = groupByModule(items);
     const catSlug = cat.toLowerCase();
     const lines = [];
@@ -418,11 +429,8 @@ function archiveResolved(findings) {
       const header = `# Resolved Tasks — ${month}\n\n`;
       writeFileSync(archiveFile, header + newLines.join('\n') + '\n', 'utf8');
     } else {
-      // Insert new items after header line
-      const headerEnd = existing.indexOf('\n\n');
-      const header = existing.slice(0, headerEnd + 2);
-      const body = existing.slice(headerEnd + 2);
-      writeFileSync(archiveFile, header + newLines.join('\n') + body, 'utf8');
+      // Append after existing content (chronological order)
+      writeFileSync(archiveFile, existing.trimEnd() + '\n\n' + newLines.join('\n') + '\n', 'utf8');
     }
     const archivedCount = newLines.filter(l => l.startsWith('- [x]')).length;
     console.log(`[sync-tasks] Archived ${archivedCount} items → archive/${month}.md`);
@@ -481,9 +489,21 @@ function updateMemoryIndex(scale, openFindings, files) {
   writeFileSync(MEMORY_INDEX, content, 'utf8');
 }
 
+// ── Persistent resolved IDs ──
+
+function loadResolvedIds() {
+  if (!existsSync(RESOLVED_FILE)) return new Set();
+  return new Set(readFileSync(RESOLVED_FILE, 'utf8').split('\n').map(l => l.trim()).filter(Boolean));
+}
+
+function saveResolvedIds(ids) {
+  mkdirSync(SHARP_REVIEW_DIR, { recursive: true });
+  writeFileSync(RESOLVED_FILE, [...ids].sort().join('\n') + '\n', 'utf8');
+}
+
 // ── Existing task parsing ──
 
-const TASK_LINE_RE = /^-\s+\[([ x])\]\s+(SR-\d{8}-\d{3})\s+\[(\w+)\]\s+(.+?)\s+\((\d{4}-\d{2}-\d{2})\).*$/;
+const TASK_LINE_RE = /^-\s+\[([ x])\]\s+(SR-\d{8}-\d{3})\s+\[(\w+)\]\s+(.+?)\s+\((\d{4}-?\d{2}-?\d{2})\).*$/;
 
 function parseExistingTasks(content) {
   const existing = new Map();
@@ -496,7 +516,7 @@ function parseExistingTasks(content) {
         checked: m[1] === 'x',
         severity: m[3],
         summary: m[4].trim(),
-        discovered: m[5],
+        discovered: m[5].includes('-') ? m[5] : `${m[5].slice(0,4)}-${m[5].slice(4,6)}-${m[5].slice(6,8)}`,
         // Preserve trailing info (ref:, stale marker, likely-resolved)
         trail: line.slice(line.lastIndexOf(`(${m[5]})`) + m[5].length + 1).trim(),
       });
@@ -512,6 +532,18 @@ function main() {
   const checkMode = args.includes('--check');
   const reportMode = args.includes('--report');
 
+  // --resolve SR-20260604-001 SR-20260604-002 ... → persist IDs and exit
+  const resolveIdx = args.indexOf('--resolve');
+  if (resolveIdx >= 0) {
+    const ids = args.slice(resolveIdx + 1).filter(a => /^SR-\d{8}-\d{3}$/.test(a));
+    if (ids.length === 0) { console.error('[sync-tasks] --resolve requires at least one SR-YYYYMMDD-NNN id'); process.exit(1); }
+    const existing = loadResolvedIds();
+    ids.forEach(id => existing.add(id));
+    saveResolvedIds(existing);
+    console.log(`[sync-tasks] resolved: ${ids.join(', ')} → ${RESOLVED_FILE}`);
+    process.exit(0);
+  }
+
   // Collect findings from sharp-review files
   const reviewFiles = collectSharpReviewFiles();
   const allFindings = [];
@@ -526,34 +558,21 @@ function main() {
     allFindings.push(...findings);
   }
 
-  // Cross-reference with memory entries
-  const memoryRefs = collectMemoryRefs();
-  // Also scan for findings that have corresponding memory files by slug
+  // Cross-reference with memory entries — O(1) per finding via inverted index
+  const { refs: memoryRefs, idIndex: memoryIdIndex } = collectMemoryRefs();
   for (const f of allFindings) {
-    // Check if any memory entry references this finding by ID
-    for (const [slug, ref] of memoryRefs) {
-      try {
-        const memContent = readFileSync(ref.fullPath, 'utf8');
-        if (memContent.includes(f.id)) {
-          f.memoryRef = ref.path;
-          break;
-        }
-      } catch {}
-    }
-    // Fallback: check if memory description matches the finding summary
+    f.memoryRef = memoryIdIndex.get(f.id) || null;
+    // Fallback: description prefix match (only if no ID match)
     if (!f.memoryRef) {
-      const summaryLower = f.summary.toLowerCase();
-      for (const [slug, ref] of memoryRefs) {
-        if (ref.description.toLowerCase().includes(summaryLower.slice(0, 30))) {
+      const summaryLower = f.summary.toLowerCase().slice(0, 30);
+      for (const ref of memoryRefs.values()) {
+        if (ref.description.toLowerCase().includes(summaryLower)) {
           f.memoryRef = ref.path;
           break;
         }
       }
     }
   }
-
-  // Detect scale based on OPEN findings only
-  const openFindings = allFindings.filter(f => f.status !== 'fixed');
 
   if (checkMode) {
     // --check: exit 0 if up to date, exit 1 if needs sync
@@ -581,15 +600,38 @@ function main() {
     process.exit(0);
   }
 
-  // Archive resolved findings
-  archiveResolved(allFindings);
-
-  // Load existing task file to preserve manual entries
+  // Load existing task file to preserve manual entries + checked-off resolutions
   let preserved = new Map();
   if (existsSync(TASKS_FILE)) {
     const existingContent = readFileSync(TASKS_FILE, 'utf8');
     preserved = parseExistingTasks(existingContent);
   }
+
+  // Apply persistent resolved IDs (from --resolve or previous checked-box sync)
+  const resolvedIds = loadResolvedIds();
+
+  // Propagate checked boxes from tasks.md → persist them, then apply
+  const checkedIds = new Set([...preserved.values()].filter(e => e.checked).map(e => e.id));
+  if (checkedIds.size > 0) {
+    checkedIds.forEach(id => resolvedIds.add(id));
+    saveResolvedIds(resolvedIds);
+    console.log(`[sync-tasks] ${checkedIds.size} finding(s) persisted from checked tasks`);
+  }
+
+  // Mark all resolved IDs as fixed
+  if (resolvedIds.size > 0) {
+    let count = 0;
+    for (const f of allFindings) {
+      if (resolvedIds.has(f.id) && f.status !== 'fixed') { f.status = 'fixed'; count++; }
+    }
+    if (count > 0) console.log(`[sync-tasks] ${count} finding(s) marked fixed via resolved.txt`);
+  }
+
+  // Archive resolved findings
+  archiveResolved(allFindings);
+
+  // Recompute open after resolution propagation
+  const openFindings = allFindings.filter(f => f.status !== 'fixed');
 
   // Generate task file
   const scale = detectScale(openFindings.length);
@@ -597,7 +639,7 @@ function main() {
   if (!existsSync(TASKS_DIR)) mkdirSync(TASKS_DIR, { recursive: true });
 
   if (scale === 'large') {
-    const files = generateLarge(openFindings, preserved);
+    const files = generateLarge(openFindings, preserved, resolvedIds);
     for (const [name, content] of Object.entries(files)) {
       writeFileSync(join(TASKS_DIR, name), content, 'utf8');
     }
@@ -613,7 +655,7 @@ function main() {
     updateMemoryIndex(scale, openFindings, files);
     console.log(`[sync-tasks] Large scale — ${Object.keys(files).length} files → memory/tasks/`);
   } else {
-    const content = scale === 'small' ? generateSmall(openFindings, preserved) : generateMedium(openFindings, preserved);
+    const content = scale === 'small' ? generateSmall(openFindings, preserved, resolvedIds) : generateMedium(openFindings, preserved, resolvedIds);
     writeFileSync(TASKS_FILE, content, 'utf8');
     updateMemoryIndex(scale, openFindings, {});
     console.log(`[sync-tasks] ${openFindings.length} findings → memory/tasks/tasks.md (${scale} tier)`);

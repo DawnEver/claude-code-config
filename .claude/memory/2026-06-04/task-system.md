@@ -32,3 +32,9 @@ tier: short
 2. Resolved tasks → moved to archive/YYYY-MM.md → 90d eviction via rem prune
 3. Stale tasks (> 90d untouched) → flagged, reviewed during REM
 4. MEMORY.md has dedicated `## Tasks` section separate from Short-term memory
+
+## Persistent resolution (FIXED 2026-06-04)
+- `.claude/sharp-review/resolved.txt` — permanent resolved-ID store (survives re-sync)
+- `--resolve SR-xxx` CLI flag persists to resolved.txt
+- Checked boxes in tasks.md auto-promote to resolved.txt on next sync
+- **Critical bug fix**: `generateSmall/Medium/Large` all now receive `resolvedIds` param and pass it to `mergePreserved()` — without this, `mergePreserved` re-added preserved entries (unchecked, from the old tasks.md) even if they were in resolved.txt

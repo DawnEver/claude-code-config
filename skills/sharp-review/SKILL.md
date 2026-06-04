@@ -1,6 +1,6 @@
 ---
 name: sharp-review
-description: Post-feature Codex sharp review (锐评) — 3 parallel reviewers with schema enforcement, merge findings, sync task list
+description: Post-feature sharp review (锐评) — 3 parallel reviewers with schema enforcement, merge findings, sync task list
 ---
 
 # Sharp Review (锐评)
@@ -24,7 +24,7 @@ Invoke the sharp-review workflow with the diff as args:
 ```js
 Workflow({
   scriptPath: "~/.claude/workflows/sharp-review.js",
-  args: { diff: "<the git diff>" }
+  args: { diff: "<the git diff>", date: "<YYYY-MM-DD today>" }
 })
 ```
 

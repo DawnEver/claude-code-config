@@ -67,7 +67,7 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 
 The `rem` plugin (Stop hook for memory consolidation) is auto-registered via `enabledPlugins` — no manual wiring needed.
 
-The REM hook gates on session depth (≥3 stops, ≥2 min). Runs `/rem` skill. State tracked in `.claude/.retro_state.json`.
+The REM hook gates on session depth (≥3 stops, ≥2 min). Runs `/rem` skill. State tracked in `.claude/.rem_state.json`.
 
 Hook wiring in `claude_settings.json`:
 

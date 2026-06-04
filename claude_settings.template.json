@@ -23,6 +23,7 @@
       "Bash(cmd *)",
       "Bash(where *)",
       "Bash(which *)",
+      "PowerShell(where *)",
       "WebSearch",
       "PowerShell(Get-Item *)",
       "PowerShell(Get-ChildItem *)",
