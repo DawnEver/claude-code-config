@@ -67,17 +67,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/sharp-review-hook.js",
-            "timeout": 30
-          }
-        ]
-      }
     ]
   },
   "worktree": {
@@ -95,7 +84,8 @@
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": false,
-    "rem@cc-market": true
+    "rem@cc-market": true,
+    "sharp-review@cc-market": true
   },
   "extraKnownMarketplaces": {
     "claude-hud": {

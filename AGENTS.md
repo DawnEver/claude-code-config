@@ -17,8 +17,8 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 ### Structure
 - `scripts/setup/`: `setup.js` (OS detection, symlinks)
 - `scripts/runtime/`: `cc.js` (provider launcher), `aliases.sh`, `aliases.ps1`
-- `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`, `sharp-review-hook.js`
-- `scripts/sync-tasks.js`: Task engine — bridges sharp-review findings into `.claude/memory/tasks/`, with scale detection, archive, and stale flagging
+- `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`
+- `cc-market/sharp-review/`: Sharp review plugin — hook, skill, workflow, sync-tasks.js (bridges findings into `.claude/memory/tasks/` with scale detection, archive, stale flagging, and memory cross-reference)
 - `skills/`: Custom Claude Code skills — symlinked to `~/.claude/skills`. Add new skills here as `skills/<name>/SKILL.md`; they are picked up automatically.
 - `claude_plugins/`: Custom plugins (e.g., `claude-hud`)
 - `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) — see `cc-market/AGENTS.md`
@@ -31,7 +31,7 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `.claude/rules/`: Actionable rules loaded every session (git-tracked). Hand-written rules at root; `/rem` compact-distilled rules in `rem/` subdirectory for namespace isolation.
 - `.claude/memory/`: Historical reference with `MEMORY.md` index (git-tracked); on-demand loading, `created`/`accessed` timestamps, managed by `rem` plugin
 - `.claude/memory/tasks/`: Active task list + archive — sharp-review findings bridged into structured TODO with progressive disclosure via MEMORY.md
-- `.claude/workflows/`: Saved workflow scripts — `sharp-review.js` (3 parallel schema-constrained reviewers)
+- `.claude/workflows/`: Saved workflow scripts (symlinked from repo; sharp-review workflow now in `cc-market/sharp-review/workflows/`)
 
 ### Provider Switching
 - `cc` -> launch Claude Code with official Claude Pro subscription (clears all provider env vars)
