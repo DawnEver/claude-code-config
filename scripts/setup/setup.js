@@ -18,6 +18,7 @@ const CLAUDE_LINKS = [
   { src: 'skills', dest: 'skills', type: 'dir' },
   { src: 'agents', dest: 'agents', type: 'dir' },
   { src: 'scripts', dest: 'scripts', type: 'dir' },
+  { src: '.claude/workflows', dest: 'workflows', type: 'dir' },
   { src: 'claude_env_settings.json', dest: 'claude_env_settings.json', type: 'file' },
   { src: 'keybindings.json', dest: 'keybindings.json', type: 'file' },
 ];
