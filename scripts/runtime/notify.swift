@@ -1,12 +1,19 @@
 // notify.swift — macOS notification helper
-// Compile ahead of time: swiftc -O -o claude-notify notify.swift
-// Run directly:          swift notify.swift  (slower, re-parses every invocation)
+// Compile: swiftc -O -o claude-notify notify.swift
 //
 // Uses NSUserNotificationCenter (deprecated since macOS 10.14) because
 // UNUserNotificationCenter requires an app bundle — this runs from a CLI
 // process. Both terminal-notifier and AppleScript display notification are
 // broken on macOS 26+.
 import Foundation
+
+// MARK: - Delegate (required on macOS 11+ for notifications to appear)
+class NotifyDelegate: NSObject, NSUserNotificationCenterDelegate {
+    func userNotificationCenter(_ center: NSUserNotificationCenter,
+                                shouldPresent notification: NSUserNotification) -> Bool {
+        return true
+    }
+}
 
 // MARK: - CLI Argument Parsing
 var title = "Claude Code"
@@ -27,6 +34,9 @@ while i < args.endIndex {
 
 // MARK: - Send notification via NSUserNotificationCenter
 let center = NSUserNotificationCenter.default
+let delegate = NotifyDelegate()
+center.delegate = delegate
+
 let notif = NSUserNotification()
 notif.title = title
 notif.informativeText = message
@@ -34,6 +44,5 @@ notif.soundName = enableSound ? NSUserNotificationDefaultSoundName : nil
 
 center.deliver(notif)
 
-// Wait for delivery — RunLoop drains the notification queue;
-// Thread.sleep skips the run loop so the banner may not show.
+// Drain the notification queue — delegate ensures delivery; brief run loop is sufficient
 RunLoop.main.run(until: Date().addingTimeInterval(0.5))

@@ -28,7 +28,7 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `claude_env_settings.template.json`: Desensitized provider template -> auto-copied to `claude_env_settings.json` by setup
 - `keybindings.json`: Claude Code keybindings -> synced to `~/.claude/keybindings.json`
 - `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory
-- `.claude/rules/`: Actionable rules loaded every session (git-tracked). Hand-written rules at root; `/rem` compact-distilled rules in `rem/` subdirectory for namespace isolation.
+- `.claude/rules/rem/`: All rules loaded every session (git-tracked), managed by REM plugin lifecycle. `.claude/rules/MEMORY.md` is the index.
 - `.claude/memory/`: Historical reference with `MEMORY.md` index (git-tracked); on-demand loading, `created`/`accessed` timestamps, managed by `rem` plugin
 - `.claude/memory/tasks/`: Active task list + archive — sharp-review findings bridged into structured TODO with progressive disclosure via MEMORY.md
 - `.claude/workflows/`: Saved workflow scripts (symlinked from repo; sharp-review workflow now in `cc-market/sharp-review/workflows/`)

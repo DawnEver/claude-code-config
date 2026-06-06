@@ -5,6 +5,9 @@
 ### Model selection bug (2026-06-04)
 `mcp__plugin_takeover_takeover__call_model` always sends `model: "sonnet"` regardless of `--provider`. DeepSeek/Claude takeover reviewers fail with "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, but you passed sonnet". Root cause: model selection in `cc-market/takeover/lib.mjs` or `mcp-server.mjs` doesn't respect provider context. Blocks sharp review (2 of 3 reviewers broken).
 
+## Config
+- Config path overridable via `TAKEOVER_CONFIG_PATH` env var
+
 ## Architectural invariants (2026-05-28)
 - Prompt always via stdin, never in spawn args
 - `callCodexCompanion`, `callAnthropicAPI`, `callNativeClaude` exported testable in `lib.mjs`
