@@ -44,5 +44,5 @@ notif.soundName = enableSound ? NSUserNotificationDefaultSoundName : nil
 
 center.deliver(notif)
 
-// Drain the notification queue — delegate ensures delivery; brief run loop is sufficient
+// Drain the notification queue — delegate ensures visibility when frontmost; RunLoop pumps delivery
 RunLoop.main.run(until: Date().addingTimeInterval(0.5))

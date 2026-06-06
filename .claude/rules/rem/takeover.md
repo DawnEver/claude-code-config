@@ -15,6 +15,9 @@
 - `--write` rejected early for non-codex providers
 - Retry: 429/502/503/504 → 2 exponential-backoff retries (1s, 2s); 4xx → fail immediately
 
+## Tests
+Run: `node --test cc-market/takeover/tests/lib.test.mjs cc-market/takeover/tests/mcp-server.test.mjs`
+
 ## Windows (2026-06-03)
 - `spawn("claude", ...)` needs `shell: process.platform === "win32"` — otherwise resolves POSIX script instead of `claude.cmd`
 

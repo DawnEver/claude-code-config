@@ -7,7 +7,7 @@
 
 ## Sharp review findings (2026-05-30) — audit 2026-06-04
 
-All 13 findings resolved except #6 (platform limitation):
+All 13 findings resolved:
 
 ✅ #1-3 (HIGH): catch now logs, -open removed, errors++ on compile failure
 ✅ #4-5,7-9 (MEDIUM): RunLoop delegate, swiftc check, README cleaned, execFileSync, atomic compile
