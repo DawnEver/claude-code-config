@@ -50,7 +50,8 @@ Frontmatter:
 
 ## Scoped
 
-- Takeover plugin → see cc-market/takeover/.claude/rules/MEMORY.md
+- REM plugin → see cc-market/rem/.claude/rules/MEMORY.md
 - Sharp-review plugin → see cc-market/sharp-review/.claude/rules/MEMORY.md
+- Takeover plugin → see cc-market/takeover/.claude/rules/MEMORY.md
 - cc-market (cross-plugin) → see cc-market/.claude/rules/MEMORY.md
 - Watch plugin → see cc-market/watch/.claude/rules/MEMORY.md
