@@ -18,7 +18,8 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `scripts/setup/`: `setup.js` (OS detection, symlinks)
 - `scripts/runtime/`: `cc.js` (provider launcher), `aliases.sh`, `aliases.ps1`
 - `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`
-- `cc-market/sharp-review/`: Sharp review plugin — hook, skill, workflow, sync-tasks.js (bridges findings into `.claude/memory/tasks/` with scale detection, archive, stale flagging, and memory cross-reference)
+- `cc-market/sharp-review/`: Sharp review plugin — hook, skill, workflow, findings sync (`post-review.js`)
+- `cc-market/rem/`: REM plugin — memory lifecycle, task management engine (`task-engine.js`), `/rem` and `/todo` skills
 - `skills/`: Custom Claude Code skills — symlinked to `~/.claude/skills`. Add new skills here as `skills/<name>/SKILL.md`; they are picked up automatically.
 - `claude_plugins/`: Custom plugins (e.g., `claude-hud`)
 - `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) — see `cc-market/AGENTS.md`

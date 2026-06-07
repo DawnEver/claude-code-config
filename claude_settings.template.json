@@ -85,8 +85,7 @@
     "pyright-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": false,
     "rem@cc-market": true,
-    "sharp-review@cc-market": true,
-    "watch@cc-market": false
+    "sharp-review@cc-market": true
   },
   "extraKnownMarketplaces": {
     "claude-hud": {

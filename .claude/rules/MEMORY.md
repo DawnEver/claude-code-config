@@ -19,16 +19,37 @@ Frontmatter:
 
 ## Tasks (progressive disclosure)
 
-<!-- Task list managed by sync-tasks.js. Load on demand via the index entries below. Completed tasks are archived to memory/tasks/archive/ and evicted after 90d. -->
+<!-- Task list managed by rem/scripts/task-engine.js. Load on demand via the index entries below. Completed tasks are archived to memory/tasks/archive/ and evicted after 90d. -->
 
 
 ## Short-term (90d eviction window)
 
 
-- [2026-06-06 Active Tasks](../memory/tasks/tasks.md) — 0 open
-- [2026-06-04 git-tidy-skill-update](../memory/2026-06-04/git-tidy-skill-update.md) — `created: 2026-06-04, accessed: 2026-06-04`
-- [2026-06-04 takeover-model-bug](../memory/2026-06-04/takeover-model-bug.md) — `created: 2026-06-04, accessed: 2026-06-04`
-- [2026-06-04 task-system](../memory/2026-06-04/task-system.md) — `created: 2026-06-04, accessed: 2026-06-04`
-- [2026-06-04 sharp-review-workflow-bugs](../memory/2026-06-04/sharp-review-workflow-bugs.md) — `created: 2026-06-04, accessed: 2026-06-04`
-- [2026-06-03 takeover-plugin-v2](../memory/2026-06-03/takeover-plugin-v2.md) — `created: 2026-06-03, accessed: 2026-06-03`
-- [2026-06-03 update-plugins-hook-removed](../memory/2026-06-03/update-plugins-hook-removed.md) — `created: 2026-06-03, accessed: 2026-06-03`
+
+- [2026 sharp-review-rem-unification](../memory/2026/06/07/sharp-review-rem-unification.md) — `created: 2026-06-07, accessed: 2026-06-07`
+- [2026 sharp-review-2026-06-07](../memory/2026/06/07/sharp-review.md) — `created: 2026-06-07, accessed: 2026-06-07`
+- [2026 feedback-no-auto-push](../memory/2026/06/06/feedback-no-auto-push.md) — `created: 2026-06-06, accessed: 2026-06-06`
+- [tasks active-tasks](../memory/tasks/tasks.md) — `created: 2026-06-06, accessed: 2026-06-06`
+- [2026 git-tidy-skill-update](../memory/2026/06/04/git-tidy-skill-update.md) — `created: 2026-06-04, accessed: 2026-06-04`
+- [2026 sharp-review-workflow-bugs](../memory/2026/06/04/sharp-review-workflow-bugs.md) — `created: 2026-06-04, accessed: 2026-06-04`
+- [2026 takeover-model-bug](../memory/2026/06/04/takeover-model-bug.md) — `created: 2026-06-04, accessed: 2026-06-04`
+- [2026 task-system](../memory/2026/06/04/task-system.md) — `created: 2026-06-04, accessed: 2026-06-04`
+- [2026 memory-mechanism](../memory/2026/06/03/memory-mechanism.md) — `created: 2026-06-03, accessed: 2026-06-03`
+- [2026 takeover-plugin-v2](../memory/2026/06/03/takeover-plugin-v2.md) — `created: 2026-06-03, accessed: 2026-06-03`
+- [2026 update-plugins-hook-removed](../memory/2026/06/03/update-plugins-hook-removed.md) — `created: 2026-06-03, accessed: 2026-06-03`
+- [2026 model-effort-strategy](../memory/2026/06/02/model_effort_strategy.md) — `created: 2026-06-02, accessed: 2026-06-02`
+- [2026 sharp-review-hook-provider-config](../memory/2026/05/31/sharp_review_hook_provider_config.md) — `created: 2026-05-31, accessed: 2026-05-31`
+- [2026 vscode-provider-envvars](../memory/2026/05/31/vscode_provider_envvars.md) — `created: 2026-05-31, accessed: 2026-05-31`
+- [2026 api-proxy-cache-fix](../memory/2026/05/30/api_proxy_cache_fix.md) — `created: 2026-05-30, accessed: 2026-05-30`
+- [2026 api-proxy-kv-cache](../memory/2026/05/30/api_proxy_kv_cache.md) — `created: 2026-05-30, accessed: 2026-05-30`
+- [2026 macos-notify-swift](../memory/2026/05/30/macos_notify_swift.md) — `created: 2026-05-30, accessed: 2026-05-30`
+- [2026 macos-notify-sharp-review-findings](../memory/2026/05/30/notify_review_findings_unfixed.md) — `created: 2026-05-30, accessed: 2026-05-30`
+- [2026 api-proxy](../memory/2026/05/29/api_proxy.md) — `created: 2026-05-29, accessed: 2026-05-29`
+- [2026 ccgpt-removal](../memory/2026/05/29/ccgpt_removal.md) — `created: 2026-05-29, accessed: 2026-05-29`
+- [2026 feedback-global-agents](../memory/2026/05/29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-05-29`
+- [2026 takeover-review-fixes](../memory/2026/05/28/project_takeover_review.md) — `created: 2026-05-28, accessed: 2026-05-28`
+- [2026 retrospect-hook-background-tasks](../memory/2026/05/28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-05-28`
+- [2026 retrospect-hook-task-guard](../memory/2026/05/28/retrospect_hook_task_guard.md) — `created: 2026-05-28, accessed: 2026-05-28`
+- [2026 vscode-provider-wrapper](../memory/2026/05/28/vscode_provider_wrapper.md) — `created: 2026-05-28, accessed: 2026-05-28`
+- [2026 git-commit-use-bash](../memory/2026/05/27/feedback_git_commit.md) — `created: 2026-05-27, accessed: 2026-05-27`
+- [2026 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-05-27`
