@@ -3,6 +3,9 @@ name: cc-market-separate-repo
 description: cc-market is a separate git repo; changes must be committed there, not in the parent repo
 metadata:
   type: project
+created: 2026-06-07
+accessed: 2026-06-07
+tier: short
 ---
 
 # cc-market is a separate git repo
