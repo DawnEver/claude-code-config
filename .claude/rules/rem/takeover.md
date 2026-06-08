@@ -1,9 +1,7 @@
 # Takeover Plugin — Distilled
 
-## Known bugs
-
-### Model selection bug (2026-06-04)
-`mcp__plugin_takeover_takeover__call_model` always sends `model: "sonnet"` regardless of `--provider`. DeepSeek/Claude takeover reviewers fail with "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, but you passed sonnet". Root cause: model selection in `cc-market/takeover/lib.mjs` or `mcp-server.mjs` doesn't respect provider context. Blocks sharp review (2 of 3 reviewers broken).
+## Model resolution (fixed 2026-06-08)
+`resolveModel()` maps logical tier names `"sonnet"/"opus"/"haiku"` to provider-specific model names via the provider's `ANTHROPIC_DEFAULT_*_MODEL` config. Passing `model="sonnet"` to a DeepSeek provider now correctly resolves to `"deepseek-v4-flash"` (or whatever is configured). Non-tier names (e.g. `"deepseek-v4-pro"`) pass through unchanged. cc-market commit e163bca.
 
 ## Config
 - Config path overridable via `TAKEOVER_CONFIG_PATH` env var

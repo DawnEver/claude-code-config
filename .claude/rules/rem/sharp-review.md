@@ -6,12 +6,12 @@ Plugin: `cc-market/sharp-review/`. Stop hook (`hooks/sharp-review-hook.js`) clas
 `classify()` reads the active provider env vars — no hardcoded `api.anthropic.com`. Falls back to `mode: 'once'` if model or key missing.
 
 ## Review execution
-Skill launches 3 parallel plain Claude agents (no agentType). Schema must be `{ type: 'object', properties: { findings: [...] } }` — bare array schema causes silent StructuredOutput failure. Pass `{ diff, date }` as workflow args (date required; `Date.now()` banned in workflow scripts).
+Skill launches 3 parallel reviewers for model diversity: Reviewer A calls Codex's adversarial review through takeover's direct app-server integration (`mcp__plugin_takeover_takeover__call_model`, provider=codex, mode=review — third-party Codex plugin no longer required, see [[takeover-codex-direct]]); Reviewer B uses takeover→DeepSeek (`provider=deepseek`, no explicit `model` — relies on fallback to configured `ANTHROPIC_DEFAULT_SONNET_MODEL`; passing `model="opus"`/`"sonnet"` would fail since DeepSeek's API only accepts `deepseek-v4-pro`/`deepseek-v4-flash` style names, see [[takeover-model-bug]]); Reviewer C is a native plain Claude agent (official subscription, no agentType). Schema must be `{ type: 'object', properties: { findings: [...] } }` — bare array schema causes silent StructuredOutput failure. Pass `{ diff, date }` as workflow args (date required; `Date.now()` banned in workflow scripts).
 
 ## Task system & Rem integration
 - `cc-market/rem/scripts/task-engine.js` — core task engine (owned by rem): generates tasks.md, archives resolved, updates MEMORY.md. Takes `--findings <json-file>`, `--check`, `--report`.
-- `cc-market/sharp-review/scripts/post-review.js` — writes workflow result as single memory entry (`.claude/memory/YYYY-MM-DD/sharp-review.md`) with rem frontmatter → delegates to rem engine
-- Findings live in a single file per session: `.claude/memory/YYYY-MM-DD/sharp-review.md` — rem-managed lifecycle: stamp → touch → promote → compact → evict
+- `cc-market/sharp-review/scripts/post-review.js` — writes workflow result as single memory entry (`.claude/memory/YYYY/MM/DD/sharp-review.md`) with rem frontmatter → delegates to rem engine
+- Findings live in a single file per session: `.claude/memory/YYYY/MM/DD/sharp-review.md` — rem-managed lifecycle: stamp → touch → promote → compact → evict
 - Finding IDs: `SR-YYYYMMDD-NNN`; categories: Bug/Feature/Performance
 - Scale: <10 open → flat list; 10-50 → sectioned; 50+ → split files
 - MEMORY.md has a dedicated `## Tasks` section above short-term memory
@@ -20,7 +20,7 @@ Skill launches 3 parallel plain Claude agents (no agentType). Schema must be `{ 
 - **Memory cross-reference:** SR-IDs written back to related memory files via `[[SR-ID]]` wiki-links by `post-review.js`
 
 ## Full lifecycle
-1. Sharp review → `.claude/memory/YYYY-MM-DD/sharp-review.md` with rem frontmatter
+1. Sharp review → `.claude/memory/YYYY/MM/DD/sharp-review.md` with rem frontmatter
 2. `stamp-memory.js` → indexes in MEMORY.md
 3. `rem-prep.js` → scans transcript for SR-IDs, bumps `accessed`, suggests promotion
 4. Session stop → `/rem` compacts if needed

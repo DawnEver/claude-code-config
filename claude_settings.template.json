@@ -45,7 +45,6 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opusplan",
   "hooks": {
     "SessionStart": [
       {
@@ -79,7 +78,6 @@
   "enabledPlugins": {
     "skill-creator@claude-plugins-official": true,
     "claude-hud@claude-hud": true,
-    "codex@openai-codex": true,
     "takeover@cc-market": true,
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
@@ -92,13 +90,6 @@
       "source": {
         "source": "github",
         "repo": "jarrodwatts/claude-hud"
-      },
-      "autoUpdate": true
-    },
-    "openai-codex": {
-      "source": {
-        "source": "github",
-        "repo": "openai/codex-plugin-cc"
       },
       "autoUpdate": true
     },

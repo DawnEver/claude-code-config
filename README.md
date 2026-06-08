@@ -1,4 +1,4 @@
-# Claude Code & Codex Cross-Platform Config Sync
+﻿# Claude Code & Codex Cross-Platform Config Sync
 
 Syncs Claude Code and Codex configuration across devices via OneDrive.
 
@@ -15,7 +15,7 @@ node scripts/setup/setup.js          # create symlinks
 node scripts/setup/setup.js --replace  # overwrite existing files
 ```
 
-Creates symlinks from `~/.claude/` and `~/.codex/` to this repo. Re-run to verify — won't overwrite.
+Creates symlinks from `~/.claude/` and `~/.codex/` to this repo. Re-run to verify - won't overwrite.
 
 If `claude_settings.json` or `claude_env_settings.json` are missing, setup copies the `.template.json` versions automatically. Fill in your API keys.
 
@@ -26,7 +26,7 @@ npm install -g pyright typescript-language-server typescript
 rustup component add rust-analyzer
 ```
 
-**Windows:** `setup.js` patches `marketplace.json` to append `.cmd` to LSP binary names (required by `uv_spawn` — [#1432](https://github.com/anthropics/claude-plugins-official/issues/1432)).
+**Windows:** `setup.js` patches `marketplace.json` to append `.cmd` to LSP binary names (required by `uv_spawn` - [#1432](https://github.com/anthropics/claude-plugins-official/issues/1432)).
 
 ### Provider Switching
 
@@ -65,9 +65,9 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 | `Stop` | `sharp-review` plugin | Post-task sharp review (3 parallel reviewers) |
 | `StatusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 
-The `rem` and `sharp-review` plugins (Stop hooks for memory consolidation and code review) are auto-registered via `enabledPlugins` — no manual wiring needed.
+The `rem` and `sharp-review` plugins (Stop hooks for memory consolidation and code review) are auto-registered via `enabledPlugins` - no manual wiring needed.
 
-The REM hook gates on session depth (≥3 stops, ≥2 min). Runs `/rem` skill. State tracked in `.claude/.rem-state.json`.
+The REM hook gates on session depth (鈮? stops, 鈮? min). Runs `/rem` skill. State tracked in `.claude/.rem-state.json`.
 
 Hook wiring in `claude_settings.json`:
 
@@ -108,7 +108,7 @@ claude --bare --model haiku "please read ~/.claude/models.md to test claude perm
 
 `@.claude/rules/MEMORY.md` is referenced from `GLOBAL-AGENTS.md` so Claude loads the index every session. When a topic matches, Claude reads the relevant memory file on demand.
 
-After a session, add entries to `.claude/memory/YYYY-MM-DD/<topic>.md` and prepend a one-line pointer to `MEMORY.md` (keep ≤20 entries, newest-first). If the session changed project architecture or setup, update `AGENTS.md` too.
+After a session, add entries to `.claude/memory/YYYY/MM/DD/<topic>.md` and prepend a one-line pointer to `MEMORY.md` (keep 鈮?0 entries, newest-first). If the session changed project architecture or setup, update `AGENTS.md` too.
 
 When `MEMORY.md` hits 20 entries, the REM hook triggers a **compact**: distill all memory into `.claude/rules/` rule files, then clear the index. Memory files are never deleted.
 
