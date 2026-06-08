@@ -230,6 +230,27 @@ function setup() {
     }
   }
 
+  // Ensure cc-market/shared/ is accessible from the plugin cache.
+  // Plugins import '../shared/lib.mjs' — in the repo that resolves to cc-market/shared/,
+  // but in the cache (rem/1.0.9/lib.mjs) '../' goes to rem/, not cc-market/.
+  // Copy shared files to rem/shared/ so the path resolves correctly in both contexts.
+  const pluginCacheBase = path.join(claudeDir, 'plugins', 'cache', 'cc-market');
+  const sharedSrc = path.join(sourceDir, 'cc-market', 'shared');
+  if (fs.existsSync(sharedSrc) && fs.existsSync(pluginCacheBase)) {
+    for (const plugin of ['rem', 'sharp-review', 'watch']) {
+      const pluginCache = path.join(pluginCacheBase, plugin);
+      if (!fs.existsSync(pluginCache)) continue;
+      // Import '../shared/lib.mjs' from a versioned dir (e.g. rem/1.0.9/lib.mjs)
+      // resolves to rem/shared/ — copy shared files there.
+      const dest = path.join(pluginCache, 'shared');
+      if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+      for (const f of fs.readdirSync(sharedSrc).filter(f => f.endsWith('.mjs'))) {
+        fs.copyFileSync(path.join(sharedSrc, f), path.join(dest, f));
+      }
+      console.log(`OK    shared → plugin cache (${plugin})`);
+    }
+  }
+
   // Fix LSP commands on Windows (.cmd extension required)
   fixLspWindows();
 
