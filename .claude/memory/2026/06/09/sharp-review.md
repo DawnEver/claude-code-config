@@ -2,7 +2,7 @@
 name: sharp-review-2026-06-09
 description: Sharp review of setup.js shared-cache fix — symlink vs copy, dynamic plugin discovery
 created: 2026-06-09
-accessed: 2026-06-09
+accessed: 2026-06-08
 tier: short
 ---
 

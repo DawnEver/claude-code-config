@@ -29,12 +29,14 @@ Frontmatter:
 
 <!-- Task list managed by rem/scripts/task-engine.js. Load on demand via the index entries below. Completed tasks are archived to memory/tasks/archive/ and evicted after 90d. -->
 
-- [2026-06-08 Active Tasks](../memory/tasks/tasks.md) — 0 open
 
 ## Short-term (90d eviction window)
 
 
-- [2026-06-09 sharp-review-2026-06-09](../memory/2026/06/09/sharp-review.md) — `created: 2026-06-09, accessed: 2026-06-09`
+
+- [2026-06-08 Active Tasks](../memory/tasks/tasks.md) — 0 open
+
+- [2026-06-09 sharp-review-2026-06-09](../memory/2026/06/09/sharp-review.md) — `created: 2026-06-09, accessed: 2026-06-08`
 - [2026-06-08 sharp-review-2026-06-08](../memory/2026/06/08/sharp-review.md) — `created: 2026-06-08, accessed: 2026-06-08`
 - [2026-06-07 cc-market-separate-repo](../memory/2026/06/07/cc-market-separate-repo.md) — `created: 2026-06-07, accessed: 2026-06-07`
 - [2026-06-06 feedback-no-auto-push](../memory/2026/06/06/feedback-no-auto-push.md) — `created: 2026-06-06, accessed: 2026-06-06`
@@ -52,8 +54,8 @@ Frontmatter:
 - [2026-05-29 api-proxy](../memory/2026/05/29/api_proxy.md) — `created: 2026-05-29, accessed: 2026-05-29`
 - [2026-05-29 ccgpt-removal](../memory/2026/05/29/ccgpt_removal.md) — `created: 2026-05-29, accessed: 2026-05-29`
 - [2026-05-29 feedback-global-agents](../memory/2026/05/29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-05-29`
+- [2026-05-28 retrospect-hook-background-tasks](../memory/2026/05/28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-05-28`
 - [2026-05-28 retrospect-hook-task-guard](../memory/2026/05/28/retrospect_hook_task_guard.md) — `created: 2026-05-28, accessed: 2026-05-28`
 - [2026-05-28 vscode-provider-wrapper](../memory/2026/05/28/vscode_provider_wrapper.md) — `created: 2026-05-28, accessed: 2026-05-28`
-- [2026-05-28 retrospect-hook-background-tasks](../memory/2026/05/28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-05-28`
 - [2026-05-27 git-commit-use-bash](../memory/2026/05/27/feedback_git_commit.md) — `created: 2026-05-27, accessed: 2026-05-27`
 - [2026-05-27 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-05-27`
