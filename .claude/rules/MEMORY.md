@@ -55,8 +55,5 @@ Frontmatter:
 - [2026-05-29 api-proxy](../memory/2026/05/29/api_proxy.md) — `created: 2026-05-29, accessed: 2026-05-29`
 - [2026-05-29 ccgpt-removal](../memory/2026/05/29/ccgpt_removal.md) — `created: 2026-05-29, accessed: 2026-05-29`
 - [2026-05-29 feedback-global-agents](../memory/2026/05/29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-05-29`
-- [2026-05-28 retrospect-hook-task-guard](../memory/2026/05/28/retrospect_hook_task_guard.md) — `created: 2026-05-28, accessed: 2026-05-28`
 - [2026-05-28 vscode-provider-wrapper](../memory/2026/05/28/vscode_provider_wrapper.md) — `created: 2026-05-28, accessed: 2026-05-28`
 - [2026-05-28 retrospect-hook-background-tasks](../memory/2026/05/28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-05-28`
-- [2026-05-27 git-commit-use-bash](../memory/2026/05/27/feedback_git_commit.md) — `created: 2026-05-27, accessed: 2026-05-27`
-- [2026-05-27 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-05-27`

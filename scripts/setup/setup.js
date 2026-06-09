@@ -313,8 +313,21 @@ function installShellAliases() {
     if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
   }
 
-  console.log('      cc    - Claude Pro (official subscription)');
-  console.log('      ccds  - DeepSeek API (Foundry mode, direct)');
+  console.log('      cc      - Claude Pro (official subscription)');
+  console.log('      ccds    - DeepSeek API (Foundry mode, direct)');
+
+  // TraceMe CLI alias — dynamic launcher survives plugin version updates
+  const tracemeLauncher = path.join(sourceDir, 'scripts', 'runtime', 'traceme-launcher.mjs').replace(/\\/g, '/');
+  if (isWindows) {
+    const cmdContent = `@echo off\nrem claude-code-alias\nnode "${tracemeLauncher}" %*\n`;
+    writeIfChanged(path.join(claudeBin, 'traceme.cmd'), cmdContent, 'traceme.cmd', 'claude-code-alias');
+  }
+  const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${tracemeLauncher}" "$@"\n`;
+  const shPath = path.join(claudeBin, 'traceme');
+  const result = writeIfChanged(shPath, shContent, 'traceme', MARKER);
+  if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
+
+  console.log('      traceme - Claude Code observability (token/cost reports)');
   console.log(`      installed to: ${claudeBin}`);
 
 }

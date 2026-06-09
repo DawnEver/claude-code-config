@@ -32,7 +32,11 @@
       "PowerShell(Get-Process *)",
       "Skill(update-config)",
       "Skill(rem:rem)",
-      "Skill(codex:rescue)",
+      "Skill(rem:todo)",
+      "Skill(sharp-review)",
+      "Skill(takeover:continue)",
+      "Skill(takeover:models)",
+      "Skill(takeover:summary)",
       "mcp__plugin_takeover_takeover__call_model",
       "mcp__plugin_takeover_takeover__list_models",
       "mcp__ide__getDiagnostics",
@@ -53,6 +57,11 @@
             "type": "command",
             "command": "node ~/.claude/scripts/setup/fix-lsp-windows.js",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
+            "timeout": 10
           }
         ]
       }
@@ -83,7 +92,8 @@
     "pyright-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": false,
     "rem@cc-market": true,
-    "sharp-review@cc-market": true
+    "sharp-review@cc-market": true,
+    "traceme@cc-market": true
   },
   "extraKnownMarketplaces": {
     "claude-hud": {
