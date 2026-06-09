@@ -30,15 +30,15 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `keybindings.json`: Claude Code keybindings -> synced to `~/.claude/keybindings.json`
 - `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory
 - `.claude/rules/rem/`: All rules loaded every session (git-tracked), managed by REM plugin lifecycle. `.claude/rules/MEMORY.md` is the index.
-- `.claude/memory/`: Historical reference with `MEMORY.md` index (git-tracked); on-demand loading, `created`/`accessed` timestamps, managed by `rem` plugin
-- `.claude/memory/tasks/`: Active task list + archive — sharp-review findings bridged into structured TODO with progressive disclosure via MEMORY.md
+- `.claude/memory/`: Historical reference with `MEMORY.md` index (git-tracked); on-demand loading, `created`/`accessed` timestamps, managed by `rem` plugin. Findings stored as `sharp-review.md` per session — sole source of truth for tasks.
+- `.claude/tasks/`: Task archive (`archive/YYYY/MM/DD.md`) — resolved findings archived here. No derived `tasks.md`; `todo` CLI scans memory directly.
 - `.claude/workflows/`: Saved workflow scripts (symlinked from repo; sharp-review workflow now in `cc-market/sharp-review/workflows/`)
 
-### Provider Switching
-- `cc` -> launch Claude Code with official Claude Pro subscription (clears all provider env vars)
-- `ccds` -> launch Claude Code via DeepSeek using Foundry mode (`CLAUDE_CODE_USE_FOUNDRY=1`, direct to `api.deepseek.com/anthropic`)
-- Add providers by editing `claude_env_settings.json` (use `claude_env_settings.template.json` as reference)
-- Wrappers installed alongside `claude` executable; available in CMD, PowerShell, and Git Bash
+### CLI Tools
+- `cc` / `ccds` — Claude Code launchers (official / DeepSeek), config in `claude_env_settings.json`
+- `todo` — Task management: `todo` (list), `todo <text>` (add), `todo rm <id>` (remove), `todo help`
+- `traceme` — Personal observability: token/cost reports, multi-device sync
+- `aliases.ps1` / `aliases.sh` — Shell integration; `setup.js` installs `.cmd` wrappers on Windows
 
 ### Workflows
 - Hooks in `claude_settings.json` trigger `notify-hook.js` for `TaskCompleted`, `PostToolUseFailure`, `Notification`
