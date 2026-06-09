@@ -230,34 +230,6 @@ function setup() {
     }
   }
 
-  // Ensure cc-market/shared/ is accessible from the plugin cache.
-  // Plugins import '../shared/lib.mjs' — in the repo that resolves to cc-market/shared/,
-  // but in the cache (rem/1.0.9/lib.mjs) '../' goes to rem/, not cc-market/.
-  // Symlink <plugin>/shared → cc-market/shared so the path resolves without drift.
-  const pluginCacheBase = path.join(claudeDir, 'plugins', 'cache', 'cc-market');
-  const sharedSrc = path.join(sourceDir, 'cc-market', 'shared');
-  if (fs.existsSync(sharedSrc) && fs.existsSync(pluginCacheBase)) {
-    for (const plugin of fs.readdirSync(pluginCacheBase)) {
-      const pluginCache = path.join(pluginCacheBase, plugin);
-      if (!fs.statSync(pluginCache).isDirectory()) continue;
-      const dest = path.join(pluginCache, 'shared');
-      if (fs.existsSync(dest)) {
-        // Replace stale copies with a symlink
-        const stat = fs.lstatSync(dest);
-        if (!stat.isSymbolicLink()) {
-          fs.rmSync(dest, { recursive: true });
-          fs.symlinkSync(sharedSrc, dest);
-          console.log(`OK    shared → plugin cache (${plugin}) [replaced copy with symlink]`);
-        }
-      } else {
-        fs.symlinkSync(sharedSrc, dest);
-        console.log(`OK    shared → plugin cache (${plugin})`);
-      }
-    }
-  } else if (fs.existsSync(sharedSrc) && !fs.existsSync(pluginCacheBase)) {
-    console.log('SKIP  shared → plugin cache (install plugins first, then re-run setup)');
-  }
-
   // Fix LSP commands on Windows (.cmd extension required)
   fixLspWindows();
 
