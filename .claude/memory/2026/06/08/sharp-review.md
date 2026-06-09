@@ -294,15 +294,10 @@ Commit 9b3bc06 intended to remove 3 plugin-specific entries but wiped all 20 sho
 - **Suggestion:** Fixed: parseExistingTasks now tracks current `### module` section header; mergePreserved uses entry.module instead of hardcoded 'unknown'
 
 
-## Review 2026-06-08 (follow-up)
-
-## Review 2026-06-08 (follow-up) — task-engine fixes
+### Resolved: task-engine fixes (round 3)
 
 All findings from round 3 resolved. task-engine.js fixed for case-sensitive status, undefined-date preservation, and module attribution.
 
-
-## Review 2026-06-08 (follow-up)
-
-## Review 2026-06-08 (follow-up) — takeover model-selection fix
+### Resolved: takeover model-selection fix
 
 All findings resolved. takeover resolveModel() now maps tier names to provider-specific models.

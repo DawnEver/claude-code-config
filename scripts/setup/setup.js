@@ -29,7 +29,7 @@ const CODEX_LINKS = [
 
 const isWindows = process.platform === 'win32';
 
-function removeExisting(destPath, type) {
+function removeExisting(destPath) {
   const stat = fs.lstatSync(destPath, { throwIfNoEntry: false });
   if (!stat) return false;
 
@@ -105,7 +105,7 @@ function setup() {
           }
         }
         if (replace) {
-          removeExisting(destPath, link.type);
+          removeExisting(destPath);
           console.log(`REMV  ${link.dest} - removed existing`);
         } else {
           console.log(`SKIP  ${link.dest} - already exists (remove manually to re-link, or use --replace)`);
@@ -154,7 +154,7 @@ function setup() {
           }
         }
         if (replace) {
-          removeExisting(destPath, link.type);
+          removeExisting(destPath);
           console.log(`REMV  ${link.dest} - removed existing`);
         } else {
           console.log(`SKIP  ${link.dest} - already exists (remove manually to re-link, or use --replace)`);
@@ -328,6 +328,19 @@ function installShellAliases() {
   if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
 
   console.log('      traceme - Claude Code observability (token/cost reports)');
+
+  // Todo CLI alias — task management
+  const todoLauncher = path.join(sourceDir, 'scripts', 'runtime', 'todo-launcher.mjs').replace(/\\/g, '/');
+  if (isWindows) {
+    const cmdContent = `@echo off\nrem claude-code-alias\nnode "${todoLauncher}" %*\n`;
+    writeIfChanged(path.join(claudeBin, 'todo.cmd'), cmdContent, 'todo.cmd', 'claude-code-alias');
+  }
+  const todoShContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${todoLauncher}" "$@"\n`;
+  const todoShPath = path.join(claudeBin, 'todo');
+  const todoResult = writeIfChanged(todoShPath, todoShContent, 'todo', MARKER);
+  if (!isWindows && todoResult !== 'skipped') fs.chmodSync(todoShPath, 0o755);
+
+  console.log('      todo    - Task management CLI');
   console.log(`      installed to: ${claudeBin}`);
 
 }

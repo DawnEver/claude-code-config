@@ -1,14 +1,14 @@
 ---
 name: sharp-review-2026-06-09
-description: Sharp review — notify hook migration from custom Swift binary to terminal-notifier
+description: Sharp review findings — 7 total
 metadata:
-  type: reference
-  created: 2026-06-09
-  accessed: 2026-06-09
+  type: project
 created: 2026-06-09
 accessed: 2026-06-09
 tier: short
 ---
+
+
 
 ## Review 2026-06-09 (session) — notify hook terminal-notifier migration
 
@@ -67,8 +67,46 @@ On Intel Macs, Homebrew installs to /usr/local/bin. On Apple Silicon, it's /opt/
 
 - **Category:** Bug
 - **Module:** notify hook
-- **Status:** OPEN
+- **Status:** FIXED
 - **Confidence:** single-reviewer
 - **Suggestion:** Consider auto-install via `brew install terminal-notifier` for smoother DX
 
 The old approach compiled a bundled swift file during setup and was self-contained (only required Xcode CLI tools, common on dev machines). The new approach requires Homebrew + terminal-notifier. setup.js only warns and continues. If NSUserNotificationCenter is truly dead on macOS 26+, this switch is justified.
+
+
+## Review 2026-06-09 (follow-up)
+
+
+
+## Review 2026-06-09 (follow-up)
+
+﻿## Review 2026-06-09 (session) — current branch
+
+### Reviewer Status
+- Reviewer A (Codex): OK
+- Reviewer B (DeepSeek): OK
+- Reviewer C (Sonnet): skipped
+
+### Confirmed findings
+
+---
+
+### [SR-20260609-006] [HIGH] traceme/hooks/ingest-hook.js — Dynamic import change may break in CommonJS environments due to import.meta dependency
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer (DeepSeek, agent mode)
+- **Suggestion:** Revert to simpler `import('../scripts/ingest.mjs')` or guard with `typeof import.meta !== 'undefined'`
+
+The original `import('../scripts/ingest.mjs')` works in both ESM and CJS. The new code uses `import.meta.url`, which is only available in ES modules.
+
+---
+
+### [SR-20260609-007] [INFO] .claude-plugin/marketplace.json — Version bump from 2.1.2 to 2.1.3 with no corresponding code changes
+
+- **Category:** Feature
+- **Status:** FIXED
+- **Confidence:** single-reviewer (Codex)
+- **Suggestion:** Ensure the version bump is justified by actual functional changes
+
+The diff only increments the version number in marketplace.json. Verify the intent.

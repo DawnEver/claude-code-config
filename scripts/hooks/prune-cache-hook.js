@@ -1,4 +1,4 @@
-// prune-plugin-cache.js — keep only the latest version of each cached cc-market plugin
+// prune-cache-hook.js — keep only the latest version of each cached cc-market plugin
 // Run on SessionStart to prevent version bloat (~800+ stale files across old versions).
 
 import { readdirSync, rmSync, statSync } from 'fs';
@@ -16,6 +16,15 @@ function compareVersion(a, b) {
   return 0;
 }
 
+function countFiles(dir) {
+  let n = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) { n += countFiles(join(dir, entry.name)); }
+    else { n++; }
+  }
+  return n;
+}
+
 let totalRemoved = 0;
 
 try {
@@ -31,27 +40,20 @@ try {
     for (const old of versions) {
       const oldDir = join(pluginDir, old);
       try {
-        let fileCount = 0;
-        function countFiles(dir) {
-          for (const entry of readdirSync(dir, { withFileTypes: true })) {
-            if (entry.isDirectory()) { countFiles(join(dir, entry.name)); }
-            else { fileCount++; }
-          }
-        }
-        countFiles(oldDir);
+        const fileCount = countFiles(oldDir);
         rmSync(oldDir, { recursive: true, force: true });
         totalRemoved += fileCount;
-        console.error(`[prune-plugin-cache] removed ${plugin}@${old} (${fileCount} files, keeping ${keep})`);
+        console.error(`[prune-cache-hook] removed ${plugin}@${old} (${fileCount} files, keeping ${keep})`);
       } catch (e) {
-        console.error(`[prune-plugin-cache] failed to remove ${plugin}@${old}: ${e.message}`);
+        console.error(`[prune-cache-hook] failed to remove ${plugin}@${old}: ${e.message}`);
       }
     }
   }
 
   if (totalRemoved > 0) {
-    console.error(`[prune-plugin-cache] done — removed ${totalRemoved} stale files`);
+    console.error(`[prune-cache-hook] done — removed ${totalRemoved} stale files`);
   }
 } catch (e) {
   // Cache dir might not exist yet — that's fine
-  if (e.code !== 'ENOENT') console.error(`[prune-plugin-cache] error: ${e.message}`);
+  if (e.code !== 'ENOENT') console.error(`[prune-cache-hook] error: ${e.message}`);
 }
