@@ -84,7 +84,7 @@ Hook wiring in `claude_settings.json`:
 
 | Platform | Method | Sound | Click to open |
 |---|---|---|---|
-| macOS | Swift binary (`NSUserNotificationCenter`) | Built-in notification sound | Compiled by `setup.js` (`swiftc` required) |
+| macOS | `terminal-notifier` (Homebrew) | Built-in notification sound | Not supported (no `-open` flag) |
 | Windows | PowerShell toast | Toast audio (`ms-winsoundevent:Notification.Default`) | Works out of the box |
 | Linux | `notify-send` + `dbus-monitor` | `paplay` / `aplay` (freedesktop sound theme) | Requires D-Bus |
 

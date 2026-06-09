@@ -1,12 +1,16 @@
 ---
 name: sharp-review-2026-06-09
-description: Sharp review of setup.js shared-cache fix — symlink vs copy, dynamic plugin discovery
+description: Sharp review — notify hook migration from custom Swift binary to terminal-notifier
+metadata:
+  type: reference
+  created: 2026-06-09
+  accessed: 2026-06-09
 created: 2026-06-09
-accessed: 2026-06-08
+accessed: 2026-06-09
 tier: short
 ---
 
-## Review 2026-06-09 — setup.js shared cache fix
+## Review 2026-06-09 (session) — notify hook terminal-notifier migration
 
 ### Reviewer Status
 - Reviewer A (Codex, via takeover): OK
@@ -17,54 +21,54 @@ tier: short
 
 ---
 
-### [SR-20260609-001] [HIGH] scripts/setup/setup.js — Hard-coded plugin list ('rem', 'sharp-review', 'watch') will silently skip any new plugin, causing broken imports later.
+### [SR-20260609-001] [HIGH] scripts/hooks/notify-hook.js — Hard-coded path '/opt/homebrew/bin/terminal-notifier' breaks on Intel Macs (Homebrew uses /usr/local/bin) and custom prefixes
 
 - **Category:** Bug
-- **Module:** setup script
+- **Module:** notify hook
 - **Status:** FIXED
-- **Suggestion:** Discover plugin directories dynamically from the cc-market cache folder instead of using a fixed array.
+- **Confidence:** single-reviewer
+- **Suggestion:** Check both /opt/homebrew/bin and /usr/local/bin as fallbacks
+
+On Intel Macs, Homebrew installs to /usr/local/bin. On Apple Silicon, it's /opt/homebrew/bin. Hard-coding one path silently fails notifications on the other architecture.
 
 ---
 
-### [SR-20260609-002] [MEDIUM] scripts/setup/setup.js — Redundant copies of identical .mjs files into every plugin's cache directory; wastes disk and creates an update problem.
-
-- **Category:** Feature
-- **Module:** setup script
-- **Status:** FIXED
-- **Suggestion:** Use symlinks or a single shared location accessible to all plugins so imports resolve without duplication.
-
----
-
-### [SR-20260609-003] [HIGH] scripts/setup/setup.js — Shared files are copied instead of symlinked, so updates to cc-market/shared/ require re-running setup to propagate
+### [SR-20260609-002] [HIGH] scripts/setup/setup.js — checkMacNotify() hard-codes '/opt/homebrew/bin/terminal-notifier', giving false warnings on Intel Macs even when terminal-notifier is installed
 
 - **Category:** Bug
 - **Module:** setup
 - **Status:** FIXED
-- **Suggestion:** Use fs.symlinkSync to create a symlink from pluginCache/shared → cc-market/shared/, consistent with how the rest of setup.js works
+- **Confidence:** single-reviewer
+- **Suggestion:** Check both /opt/homebrew/bin and /usr/local/bin paths
 
 ---
 
-### [SR-20260609-004] [MEDIUM] scripts/setup/setup.js — Plugin list ['rem', 'sharp-review', 'watch'] is hardcoded and will silently skip any future plugin that also imports ../shared/
-
-- **Category:** Feature
-- **Module:** setup
-- **Status:** FIXED
-- **Suggestion:** Enumerate all subdirectories of pluginCacheBase dynamically (fs.readdirSync(pluginCacheBase)) rather than maintaining a static allowlist
-
----
-
-### [SR-20260609-005] [MEDIUM] scripts/setup/setup.js — The fix assumes ../shared/ relative import convention holds forever; a version bump that changes nesting depth silently breaks imports again
+### [SR-20260609-003] [MEDIUM] README.md — macOS 'Click to open' column in notification table describes installation requirement, not actual click behavior
 
 - **Category:** Bug
-- **Module:** setup
+- **Module:** docs
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** State actual click behavior: 'Not supported (terminal-notifier called without -open flag)'
+
+---
+
+### [SR-20260609-004] [MEDIUM] scripts/hooks/notify-hook.js — Top-of-file comment claims 'All platforms support clicking' but macOS notifications are not clickable
+
+- **Category:** Bug
+- **Module:** notify hook
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Update the comment to note macOS click-to-open is unsupported
+
+---
+
+### [SR-20260609-005] [LOW] scripts/hooks/notify-hook.js — Deleted self-contained Swift binary in favor of external Homebrew dependency with no install-time enforcement
+
+- **Category:** Bug
+- **Module:** notify hook
 - **Status:** OPEN
-- **Suggestion:** Fix the import at the source — change plugins to use an absolute path or a package.json import map so the relative path is not fragile across versioned cache layouts
+- **Confidence:** single-reviewer
+- **Suggestion:** Consider auto-install via `brew install terminal-notifier` for smoother DX
 
----
-
-### [SR-20260609-006] [LOW] scripts/setup/setup.js — Silent no-op when pluginCacheBase does not exist on a fresh install
-
-- **Category:** Bug
-- **Module:** setup
-- **Status:** FIXED
-- **Suggestion:** Log a notice when pluginCacheBase is missing so the user knows to install plugins first
+The old approach compiled a bundled swift file during setup and was self-contained (only required Xcode CLI tools, common on dev machines). The new approach requires Homebrew + terminal-notifier. setup.js only warns and continues. If NSUserNotificationCenter is truly dead on macOS 26+, this switch is justified.

@@ -2,7 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync, execFileSync } from 'child_process';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { fixLspWindows } from './fix-lsp-windows.js';
 
@@ -233,10 +233,10 @@ function setup() {
   // Fix LSP commands on Windows (.cmd extension required)
   fixLspWindows();
 
-  // Compile macOS notification binary
+  // Check macOS notification helper
   if (process.platform === 'darwin') {
     console.log('\n--- macOS Notifications ---');
-    if (!compileNotifyBinary()) errors++;
+    if (!checkMacNotify()) errors++;
   }
 
   // Install shell aliases
@@ -246,45 +246,32 @@ function setup() {
   console.log(`\nDone: ${created} linked, ${skipped} skipped, ${errors} errors`);
 }
 
-function compileNotifyBinary() {
-  const srcPath = path.join(sourceDir, 'scripts', 'runtime', 'notify.swift');
-  const binPath = path.join(sourceDir, 'scripts', 'runtime', 'claude-notify');
+function checkMacNotify() {
+  // macOS 26+ requires terminal-notifier (UNUserNotificationCenter via proper .app bundle).
+  // NSUserNotificationCenter and AppleScript display notification are both dead.
+  const brewDirs = ['/opt/homebrew/bin', '/usr/local/bin'];
+  const notifyBin = brewDirs.map(d => path.join(d, 'terminal-notifier')).find(fs.existsSync);
+  if (notifyBin) {
+    console.log(`OK    terminal-notifier found: ${notifyBin}`);
+    return true;
+  }
 
-  if (!fs.existsSync(srcPath)) {
-    console.log(`SKIP  claude-notify - source not found: ${srcPath}`);
+  // Try auto-install via Homebrew
+  const brewBin = brewDirs.map(d => path.join(d, 'brew')).find(fs.existsSync);
+  if (!brewBin) {
+    console.log('WARN  terminal-notifier not found, and Homebrew is not installed.');
+    console.log('      Install Homebrew (https://brew.sh), then: brew install terminal-notifier');
     return false;
   }
 
-  // Check if swiftc is available
+  console.log('INSTALL terminal-notifier...');
   try {
-    execFileSync('xcrun', ['--find', 'swiftc'], { stdio: 'pipe' });
-  } catch {
-    // swiftc not available — keep existing binary if present, else warn
-    if (fs.existsSync(binPath)) {
-      fs.chmodSync(binPath, 0o755);
-      console.log('OK    claude-notify - using existing binary (swiftc not found)');
-      return true;
-    }
-    console.log('SKIP  claude-notify - swiftc not found (install Xcode Command Line Tools)');
-    return false;
-  }
-
-  // Compile to temp file, replace atomically on success
-  const tmpPath = binPath + '.tmp';
-  try {
-    execFileSync('swiftc', ['-O', '-o', tmpPath, srcPath], { stdio: 'pipe', timeout: 30000 });
-    fs.renameSync(tmpPath, binPath);
-    fs.chmodSync(binPath, 0o755);
-    console.log('OK    claude-notify - compiled from notify.swift');
+    execSync(`"${brewBin}" install terminal-notifier`, { stdio: 'pipe', timeout: 120000 });
+    console.log('OK    terminal-notifier installed');
     return true;
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch {}
-    if (fs.existsSync(binPath)) {
-      console.log(`WARN  claude-notify - keeping existing binary (compile failed: ${err.stderr?.toString().trim().split('\n')[0] || err.message})`);
-      return true;
-    }
-    console.log(`ERR   claude-notify - ${err.stderr?.toString().trim() || err.message}`);
-    console.log('      Notifications on macOS will not work without this binary.');
+    console.log(`ERR   brew install terminal-notifier failed: ${err.stderr?.toString().trim() || err.message}`);
+    console.log('      macOS notifications will not work without it.');
     return false;
   }
 }

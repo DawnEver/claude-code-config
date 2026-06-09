@@ -6,12 +6,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync, spawn } from 'child_process';
-import { fileURLToPath } from 'url';
 
 // ── Native OS notification ──
-// All platforms support clicking the notification to open VS Code at the
-// workspace root. The PowerShell/dbus tunnel runs detached so it survives
-// Claude Code tearing down the hook process tree.
+// Windows/Linux support clicking the notification to open VS Code at the
+// workspace root. macOS uses terminal-notifier without click-to-open.
+// The PowerShell/dbus tunnel runs detached so it survives Claude Code
+// tearing down the hook process tree.
 
 function xmlEscape(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -31,15 +31,17 @@ function sendNativeNotification(title, message, workspaceRoot, enableSound) {
   const platform = os.platform();
   if (platform === 'darwin') {
     // macOS 26+ breaks both AppleScript 'display notification' and
-    // terminal-notifier. Use compiled Swift binary (NSUserNotificationCenter)
-    // that works without an app bundle.
-    const notifyBin = fileURLToPath(new URL('../runtime/claude-notify', import.meta.url));
-    if (!fs.existsSync(notifyBin)) {
-      console.error('[notify-hook] claude-notify binary not found. Run `npm run setup` to compile it.');
+    // NSUserNotificationCenter. Use terminal-notifier (Homebrew) which ships
+    // a properly bundled .app with UNUserNotificationCenter.
+    // Check both Homebrew prefixes: /opt/homebrew (Apple Silicon) and /usr/local (Intel).
+    const brewDirs = ['/opt/homebrew/bin', '/usr/local/bin'];
+    const notifyBin = brewDirs.map(d => path.join(d, 'terminal-notifier')).find(fs.existsSync);
+    if (!notifyBin) {
+      console.error('[notify-hook] terminal-notifier not found. Install with: brew install terminal-notifier');
       return;
     }
     const nArgs = ['-title', title, '-message', message];
-    if (!enableSound) nArgs.push('--no-sound');
+    if (enableSound) nArgs.push('-sound', 'default');
     try {
       execFileSync(notifyBin, nArgs, { timeout: 5000, stdio: 'ignore' });
     } catch (err) {
