@@ -4,8 +4,9 @@ description: taskActiveUntil convention for multi-round sequential skills
 metadata:
   type: project
 created: 2026-05-28
-accessed: 2026-05-28
-tier: short
+accessed: 2026-06-10
+tier: long
+access_count: 2
 ---
 
 # Retrospect Hook — Multi-round Task Guard

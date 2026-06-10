@@ -4,8 +4,9 @@ description: claudeCode.claudeProcessWrapper is BROKEN — Claude Code validates
 metadata:
   type: feedback
 created: 2026-05-28
-accessed: 2026-05-28
-tier: short
+accessed: 2026-06-10
+tier: long
+access_count: 2
 ---
 
 Do NOT use `claudeCode.claudeProcessWrapper` to route to a DeepSeek wrapper (`ccds` or any shell script). Claude Code validates the binary is a native Claude Code binary; shell scripts are rejected with "native binary not found".

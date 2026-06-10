@@ -4,8 +4,9 @@ description: Three-tier loading system (rules→AGENTS.md→memory) with created
 metadata:
   type: project
 created: 2026-06-03
-accessed: 2026-06-03
-tier: short
+accessed: 2026-06-10
+tier: long
+access_count: 2
 ---
 
 ## Three-tier loading

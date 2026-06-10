@@ -4,8 +4,9 @@ description: ChatGPT subscription bridge removed — Codex uses agent-identity J
 metadata:
   type: project
 created: 2026-05-29
-accessed: 2026-05-29
-tier: short
+accessed: 2026-06-10
+tier: long
+access_count: 2
 ---
 
 ChatGPT subscription bridge (`ccgpt`, `/chatgpt` proxy route) fully removed.

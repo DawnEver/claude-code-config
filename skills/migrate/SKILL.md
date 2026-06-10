@@ -7,11 +7,20 @@ description: >
   up to the latest format.
 ---
 
-Run the migration CLI from the repo root:
+`~/.claude/skills` is itself a symlink into this repo's `skills/` directory
+(set up by `setup.js`), so the migration CLI is reachable from anywhere via a
+home-relative path — no need to know where this repo is checked out:
 
 ```bash
-npm run migrate
+node ~/.claude/skills/migrate/migrate.js
 ```
+
+On Windows (PowerShell): `node "$env:USERPROFILE\.claude\skills\migrate\migrate.js"`
+
+Run this command **from the directory of the project you want to migrate**
+(its `.claude/` is what step 2 acts on) — `cwd` is what matters, not where
+`migrate.js` itself lives. From within this config repo's own root, `npm run
+migrate` is a shortcut for the same command.
 
 This does two things, both idempotent (safe to re-run, no-op once current):
 
@@ -19,19 +28,19 @@ This does two things, both idempotent (safe to re-run, no-op once current):
    into this repo but no longer correspond to an entry in `CLAUDE_LINKS` /
    `CODEX_LINKS` (e.g. a renamed/removed skill or config), then re-runs the
    normal link-creation pass for the current layout.
-2. **Project `.claude/`** — for every cc-market plugin installed for the
-   current project (from `~/.claude/plugins/installed_plugins.json`), runs
-   its `migrations/migrate.mjs` if it has one (e.g. rem's memory/frontmatter
-   normalization, sharp-review's legacy finding-file consolidation).
+2. **Project `.claude/`** — for every cc-market plugin that provides a
+   `migrations/migrate.mjs` (e.g. rem's memory/frontmatter normalization,
+   sharp-review's legacy finding-file consolidation), runs it against the
+   current project.
 
 Preview repo-link changes only, without touching anything:
 
 ```bash
-npm run migrate -- --dry-run
+node ~/.claude/skills/migrate/migrate.js --dry-run
 ```
 
-(`--dry-run` only covers step 1 — plugin migrations in step 2 are
-self-detecting and write-only, so there's nothing useful to preview there.)
+(`--dry-run` covers step 1 fully; for step 2 it lists which plugins have
+migrations but does not run them, since they are write-only and self-detecting.)
 
 If a plugin's migration reports `changed: true`, read its summary lines —
 they describe exactly what was moved/rewritten.

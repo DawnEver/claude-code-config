@@ -72,78 +72,50 @@ describe('findOrphanedLinks', () => {
 });
 
 describe('discoverProjectMigrators', () => {
-  let tmpHome, projectDir, origHome;
+  let tmpDir, ccMarketDir;
 
-  beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-home-'));
-    projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-project-'));
-    origHome = os.homedir;
-    os.homedir = () => tmpHome;
-  });
-
-  afterEach(() => {
-    os.homedir = origHome;
-    fs.rmSync(tmpHome, { recursive: true, force: true });
-    fs.rmSync(projectDir, { recursive: true, force: true });
-  });
-
-  function writeInstalledPlugins(plugins) {
-    const dir = path.join(tmpHome, '.claude', 'plugins');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'installed_plugins.json'), JSON.stringify({ plugins }));
-  }
-
-  function writeMigration(installPath) {
-    fs.mkdirSync(path.join(installPath, 'migrations'), { recursive: true });
+  function writeMigration(pluginDir) {
+    fs.mkdirSync(path.join(pluginDir, 'migrations'), { recursive: true });
     fs.writeFileSync(
-      path.join(installPath, 'migrations', 'migrate.mjs'),
+      path.join(pluginDir, 'migrations', 'migrate.mjs'),
       'export async function migrate() { return { changed: false, summary: [] }; }',
     );
   }
 
-  test('returns empty when installed_plugins.json is missing', () => {
-    assert.deepEqual(discoverProjectMigrators(projectDir), []);
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-cc-'));
+    ccMarketDir = path.join(tmpDir, 'cc-market');
+    fs.mkdirSync(ccMarketDir, { recursive: true });
   });
 
-  test('includes user-scoped plugins with a migrations/migrate.mjs', () => {
-    const installPath = path.join(tmpHome, 'rem-install');
-    writeMigration(installPath);
-    writeInstalledPlugins({
-      'rem@cc-market': [{ scope: 'user', installPath, version: '1.0.0' }],
-    });
-    const migrators = discoverProjectMigrators(projectDir);
-    assert.deepEqual(migrators, [{ name: 'rem', migratePath: path.join(installPath, 'migrations', 'migrate.mjs') }]);
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('includes project-scoped plugins only for the matching project', () => {
-    const installPath = path.join(tmpHome, 'sr-install');
-    writeMigration(installPath);
-    writeInstalledPlugins({
-      'sharp-review@cc-market': [
-        { scope: 'project', projectPath: projectDir, installPath, version: '1.0.0' },
-        { scope: 'project', projectPath: '/some/other/project', installPath, version: '1.0.0' },
-      ],
-    });
-    const migrators = discoverProjectMigrators(projectDir);
+  test('returns empty when cc-market dir is missing', () => {
+    assert.deepEqual(discoverProjectMigrators(path.join(tmpDir, 'nonexistent')), []);
+  });
+
+  test('returns empty when cc-market dir has no plugins with migrations', () => {
+    fs.mkdirSync(path.join(ccMarketDir, 'takeover'), { recursive: true });
+    assert.deepEqual(discoverProjectMigrators(ccMarketDir), []);
+  });
+
+  test('discovers plugins that have a migrations/migrate.mjs', () => {
+    writeMigration(path.join(ccMarketDir, 'rem'));
+    writeMigration(path.join(ccMarketDir, 'sharp-review'));
+    fs.mkdirSync(path.join(ccMarketDir, 'takeover'), { recursive: true });
+    const migrators = discoverProjectMigrators(ccMarketDir);
+    assert.equal(migrators.length, 2);
+    const names = migrators.map(m => m.name).sort();
+    assert.deepEqual(names, ['rem', 'sharp-review']);
+  });
+
+  test('ignores non-directory entries in cc-market', () => {
+    fs.writeFileSync(path.join(ccMarketDir, 'README.md'), 'readme');
+    writeMigration(path.join(ccMarketDir, 'rem'));
+    const migrators = discoverProjectMigrators(ccMarketDir);
     assert.equal(migrators.length, 1);
-    assert.equal(migrators[0].name, 'sharp-review');
-  });
-
-  test('skips plugins without migrations/migrate.mjs', () => {
-    const installPath = path.join(tmpHome, 'watch-install');
-    fs.mkdirSync(installPath, { recursive: true });
-    writeInstalledPlugins({
-      'watch@cc-market': [{ scope: 'user', installPath, version: '1.0.0' }],
-    });
-    assert.deepEqual(discoverProjectMigrators(projectDir), []);
-  });
-
-  test('ignores non-cc-market plugin entries', () => {
-    const installPath = path.join(tmpHome, 'other-install');
-    writeMigration(installPath);
-    writeInstalledPlugins({
-      'something@other-market': [{ scope: 'user', installPath, version: '1.0.0' }],
-    });
-    assert.deepEqual(discoverProjectMigrators(projectDir), []);
+    assert.equal(migrators[0].name, 'rem');
   });
 });

@@ -4,8 +4,9 @@ description: Removed update-plugins-hook.js — Claude Code built-in autoUpdate 
 metadata:
   type: project
 created: 2026-06-03
-accessed: 2026-06-03
-tier: short
+accessed: 2026-06-10
+tier: long
+access_count: 2
 ---
 
 # update-plugins-hook.js Removed

@@ -4,8 +4,9 @@ description: cc-market is a separate git repo; changes must be committed there, 
 metadata:
   type: project
 created: 2026-06-07
-accessed: 2026-06-07
-tier: short
+accessed: 2026-06-10
+tier: long
+access_count: 2
 ---
 
 # cc-market is a separate git repo

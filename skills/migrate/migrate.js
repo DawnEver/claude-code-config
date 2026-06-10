@@ -8,12 +8,11 @@
 //   A. Repo links — remove symlinks into this repo that no longer correspond
 //      to an entry in CLAUDE_LINKS/CODEX_LINKS (renamed/removed over time),
 //      then re-run the normal link-creation pass.
-//   B. cc-market projects — for every installed cc-market plugin relevant to
-//      the current directory, run its migrations/migrate.mjs (if it has one).
+//   B. cc-market projects — for every cc-market plugin that has a
+//      migrations/migrate.mjs, run it against the current project.
 
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, CODEX_LINKS, removeExisting, setup } from '../../scripts/setup/setup.js';
 
@@ -80,37 +79,22 @@ export function migrateRepoLinks({ dryRun } = {}) {
 
 // ── B. cc-market project migration ──
 
-export function discoverProjectMigrators(cwd) {
-  const installedPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
-  if (!fs.existsSync(installedPath)) return [];
+export function discoverProjectMigrators(ccMarketDir) {
+  const dir = ccMarketDir || path.join(sourceDir, 'cc-market');
+  if (!fs.existsSync(dir)) return [];
 
-  let data;
-  try {
-    data = JSON.parse(fs.readFileSync(installedPath, 'utf8'));
-  } catch {
-    return [];
-  }
-
-  const cwdResolved = path.resolve(cwd);
   const migrators = [];
-  for (const [key, entries] of Object.entries(data.plugins || {})) {
-    if (!key.endsWith('@cc-market')) continue;
-    const name = key.split('@')[0];
-    for (const entry of entries || []) {
-      const relevant = entry.scope === 'user'
-        || (entry.scope === 'project' && entry.projectPath && path.resolve(entry.projectPath) === cwdResolved);
-      if (!relevant || !entry.installPath) continue;
-
-      const migratePath = path.join(entry.installPath, 'migrations', 'migrate.mjs');
-      if (fs.existsSync(migratePath)) migrators.push({ name, migratePath });
-    }
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const migratePath = path.join(dir, entry.name, 'migrations', 'migrate.mjs');
+    if (fs.existsSync(migratePath)) migrators.push({ name: entry.name, migratePath });
   }
   return migrators;
 }
 
 export async function migrateProject(cwd) {
   const results = [];
-  for (const { name, migratePath } of discoverProjectMigrators(cwd)) {
+  for (const { name, migratePath } of discoverProjectMigrators()) {
     const mod = await import(pathToFileURL(migratePath).href);
     if (typeof mod.migrate !== 'function') continue;
     const { changed, summary } = await mod.migrate(cwd);
@@ -136,27 +120,43 @@ async function main() {
 
   console.log('\n--- Project (.claude/) ---');
   const cwd = process.cwd();
-  const results = dryRun ? [] : await migrateProject(cwd);
-  if (dryRun) {
-    console.log('SKIP  --dry-run does not run plugin migrations (they are write-only and self-detecting)');
-  } else if (results.length === 0) {
-    console.log('OK    no cc-market plugins with migrations installed for this project');
-  } else {
-    let any = false;
-    for (const { plugin, changed, summary } of results) {
-      if (!changed) {
-        console.log(`OK    ${plugin} - already up to date`);
-        continue;
-      }
-      any = true;
-      console.log(`OK    ${plugin}:`);
-      for (const line of summary) console.log(`        - ${line}`);
+  if (!fs.existsSync(path.join(cwd, '.claude'))) {
+    console.log('NOTE  no .claude/ directory in current project — nothing to migrate');
+  } else if (dryRun) {
+    const migrators = discoverProjectMigrators();
+    if (migrators.length === 0) {
+      console.log('SKIP  no cc-market plugin migrations found');
+    } else {
+      console.log('SKIP  --dry-run would migrate these plugins:');
+      for (const { name } of migrators) console.log(`        - ${name}`);
     }
-    if (!any) console.log('OK    everything up to date');
+  } else {
+    const results = await migrateProject(cwd);
+    if (results.length === 0) {
+      console.log('OK    no cc-market plugins with migrations');
+    } else {
+      let any = false;
+      for (const { plugin, changed, summary } of results) {
+        if (!changed) {
+          console.log(`OK    ${plugin} - already up to date`);
+          continue;
+        }
+        any = true;
+        console.log(`OK    ${plugin}:`);
+        for (const line of summary) console.log(`        - ${line}`);
+      }
+      if (!any) console.log('OK    everything up to date');
+    }
   }
 }
 
 const skillDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
-if (path.resolve(process.argv[1] || '') === path.resolve(skillDir, 'migrate.js')) {
+const selfPath = path.resolve(skillDir, 'migrate.js');
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+let isDirectInvocation = invokedPath === selfPath;
+if (!isDirectInvocation) {
+  try { isDirectInvocation = fs.realpathSync(invokedPath) === fs.realpathSync(selfPath); } catch {}
+}
+if (isDirectInvocation) {
   main();
 }

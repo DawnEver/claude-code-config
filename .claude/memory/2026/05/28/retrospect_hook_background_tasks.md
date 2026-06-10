@@ -4,8 +4,9 @@ description: Stop hook background_tasks guard — prevents mid-flight interrupti
 metadata:
   type: project
 created: 2026-05-28
-accessed: 2026-05-28
-tier: short
+accessed: 2026-06-10
+tier: long
+access_count: 2
 ---
 
 ## retrospect-hook: background_tasks fix (2026-05-28)

@@ -4,8 +4,9 @@ description: Model and effort level strategy — opusplan for auto plan/exec spl
 metadata:
   type: project
 created: 2026-06-02
-accessed: 2026-06-02
-tier: short
+accessed: 2026-06-10
+tier: long
+access_count: 2
 ---
 
 # Model & Effort Strategy
