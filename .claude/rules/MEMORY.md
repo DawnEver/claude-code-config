@@ -19,13 +19,15 @@ Frontmatter:
 
 ## Scoped
 
-- REM plugin → see cc-market/rem/.claude/rules/MEMORY.md
-- Sharp-review plugin → see cc-market/sharp-review/.claude/rules/MEMORY.md
-- Takeover plugin → see cc-market/takeover/.claude/rules/MEMORY.md
 - cc-market (cross-plugin) → see cc-market/.claude/rules/MEMORY.md
-- Watch plugin → see cc-market/watch/.claude/rules/MEMORY.md
+
 
 ## Entries (tier per-file frontmatter — see comment above)
+
+
+
+
+
 
 
 
@@ -53,22 +55,22 @@ Frontmatter:
 - [2026-05-29 api-proxy](../memory/2026/05/29/api_proxy.md) — `created: 2026-05-29, accessed: 2026-06-10`
 - [2026-05-30 macos-notify-swift](../memory/2026/05/30/macos_notify_swift.md) — `created: 2026-05-30, accessed: 2026-06-10`
 - [2026-05-28 vscode-provider-wrapper](../memory/2026/05/28/vscode_provider_wrapper.md) — `created: 2026-05-28, accessed: 2026-06-10`
-- [2026-05-27 git-commit-use-bash](../memory/2026/05/27/feedback_git_commit.md) — `created: 2026-05-27, accessed: 2026-06-10`
-- [2026-05-29 feedback-global-agents](../memory/2026/05/29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-06-10`
 - [2026-06-10 migrate-skill-path-fix](../memory/2026/06/10/migrate-skill-path-fix.md) — `created: 2026-06-10, accessed: 2026-06-10`
 - [2026-06-10 hybrid-removal](../memory/2026/06/10/hybrid-removal.md) — `created: 2026-06-10, accessed: 2026-06-10`
 - [2026-06-10 traceme-sync-fix](../memory/2026/06/10/traceme-sync-fix.md) — `created: 2026-06-10, accessed: 2026-06-10`
 - [2026-06-10 sharp-review-cache-lag-failure](../memory/2026/06/10/sharp-review-cache-lag-failure.md) — `created: 2026-06-10, accessed: 2026-06-10`
-- [2026-05-27 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-06-10`
 - [2026-05-28 retrospect-hook-background-tasks](../memory/2026/05/28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-06-10`
 - [2026-05-28 retrospect-hook-task-guard](../memory/2026/05/28/retrospect_hook_task_guard.md) — `created: 2026-05-28, accessed: 2026-06-10`
+- [2026-05-27 git-commit-use-bash](../memory/2026/05/27/feedback_git_commit.md) — `created: 2026-05-27, accessed: 2026-06-10`
+- [2026-05-27 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-06-10`
+- [2026-05-29 feedback-global-agents](../memory/2026/05/29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-06-10`
 - [2026-06-07 cc-market-separate-repo](../memory/2026/06/07/cc-market-separate-repo.md) — `created: 2026-06-07, accessed: 2026-06-10`
 - [2026-06-09 task-lib-split](../memory/2026/06/09/task-lib-split.md) — `created: 2026-06-09, accessed: 2026-06-09`
-- [2026-06-09 sharp-review-2026-06-09](../memory/2026/06/09/sharp-review.md) — `created: 2026-06-09, accessed: 2026-06-08`
+- [2026-06-09 sharp-review-2026-06-09](../memory/2026/06/09/sharp-review.md) — `created: 2026-06-09, accessed: 2026-06-09`
 - [2026-06-08 sharp-review-2026-06-08](../memory/2026/06/08/sharp-review.md) — `created: 2026-06-08, accessed: 2026-06-08`
+- [2026-06-04 task-system](../memory/2026/06/04/task-system.md) — `created: 2026-06-04, accessed: 2026-06-04`
 - [2026-06-04 git-tidy-skill-update](../memory/2026/06/04/git-tidy-skill-update.md) — `created: 2026-06-04, accessed: 2026-06-04`
 - [2026-06-04 sharp-review-2026-06-04](../memory/2026/06/04/sharp-review.md) — `created: 2026-06-04, accessed: 2026-06-04`
-- [2026-06-04 task-system](../memory/2026/06/04/task-system.md) — `created: 2026-06-04, accessed: 2026-06-04`
 - [2026-05-30 api-proxy-cache-fix](../memory/2026/05/30/api_proxy_cache_fix.md) — `created: 2026-05-30, accessed: 2026-05-30`
 - [2026-05-30 api-proxy-kv-cache](../memory/2026/05/30/api_proxy_kv_cache.md) — `created: 2026-05-30, accessed: 2026-05-30`
 - [2026-05-30 macos-notify-sharp-review-findings](../memory/2026/05/30/notify_review_findings_unfixed.md) — `created: 2026-05-30, accessed: 2026-05-30`

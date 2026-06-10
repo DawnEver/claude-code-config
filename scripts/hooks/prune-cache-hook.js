@@ -1,15 +1,17 @@
-// prune-cache-hook.js — keep only the latest + currently-installed version of each
-// cached cc-market plugin. Run on SessionStart to prevent version bloat.
+// prune-cache-hook.js — prune stale cached plugin versions across ALL marketplaces.
+// Run on SessionStart to prevent version bloat.
 //
-// Strategy: keep the highest version AND the version referenced in
-// installed_plugins.json (the one currently loaded). Delete the rest.
-// Unused old versions get cleaned on next startup.
+// Strategy: keep the latest version + any version currently referenced by a
+// live process. Live-process detection scans command lines across all
+// processes (cross-platform) to avoid deleting versions still loaded by
+// running Claude Code sessions or MCP servers.
 
-import { readdirSync, rmSync, statSync, readFileSync, existsSync } from 'fs';
+import { readdirSync, rmSync, statSync } from 'fs';
+import { execSync } from 'child_process';
 import { join } from 'path';
+import { homedir } from 'os';
 
-const CACHE_ROOT = join(process.env.USERPROFILE || process.env.HOME, '.claude', 'plugins', 'cache', 'cc-market');
-const INSTALLED_PATH = join(process.env.USERPROFILE || process.env.HOME, '.claude', 'plugins', 'installed_plugins.json');
+const CACHE_ROOT = join(homedir(), '.claude', 'plugins', 'cache');
 
 function compareVersion(a, b) {
   const ap = a.split('.').map(Number);
@@ -30,50 +32,69 @@ function countFiles(dir) {
   return n;
 }
 
-function getInstalledVersions() {
-  const installed = {};
+function getLiveVersions() {
+  const inUse = {};
   try {
-    if (!existsSync(INSTALLED_PATH)) return installed;
-    const data = JSON.parse(readFileSync(INSTALLED_PATH, 'utf8'));
-    for (const [key, entries] of Object.entries(data.plugins || {})) {
-      const name = key.split('@')[0];
-      for (const entry of entries) {
-        if (entry.installPath && entry.installPath.includes('cache\\cc-market\\')) {
-          if (!installed[name]) installed[name] = new Set();
-          installed[name].add(entry.version);
-        }
-      }
+    const isWin = process.platform === 'win32';
+    let cmd;
+    if (isWin) {
+      // Get-WmiObject (not Get-CimInstance) — CIM returns null CommandLine for some processes.
+      // Use -like (not -match) — wildcard avoids regex backslash-escaping hell.
+      // $pid excludes the scanner PowerShell process itself.
+      cmd = 'powershell -NoProfile -Command "Get-WmiObject Win32_Process | Where-Object { $_.ProcessId -ne $pid -and $_.CommandLine -like ' + "'*plugins*cache*'" + ' } | ForEach-Object { $_.CommandLine }"';
+    } else {
+      cmd = "ps aux | grep 'plugins/cache' | grep -v grep || true";
     }
-  } catch {}
-  return installed;
+    const output = execSync(cmd, { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 });
+    const regex = /[\\/]cache[\\/]([^\\/]+)[\\/]([^\\/]+)[\\/](\d+\.\d+\.\d+)/g;
+    let match;
+    while ((match = regex.exec(output)) !== null) {
+      const [, mp, name, version] = match;
+      const key = mp + '/' + name;
+      if (!inUse[key]) inUse[key] = new Set();
+      inUse[key].add(version);
+    }
+    if (Object.keys(inUse).length > 0) {
+      console.error(`[prune-cache-hook] live versions: ${JSON.stringify(Object.fromEntries(Object.entries(inUse).map(([k, v]) => [k, [...v]])))}`);
+    }
+  } catch (e) {
+    console.error(`[prune-cache-hook] live scan failed: ${e.message}`);
+  }
+  return inUse;
 }
 
 let totalRemoved = 0;
-const installedVersions = getInstalledVersions();
+const liveVersions = getLiveVersions();
 
 try {
-  for (const plugin of readdirSync(CACHE_ROOT)) {
-    const pluginDir = join(CACHE_ROOT, plugin);
-    if (!statSync(pluginDir).isDirectory()) continue;
+  for (const mp of readdirSync(CACHE_ROOT)) {
+    const mpDir = join(CACHE_ROOT, mp);
+    if (!statSync(mpDir).isDirectory()) continue;
 
-    const versions = readdirSync(pluginDir).filter(v => /^\d+\.\d+\.\d+$/.test(v));
-    if (versions.length <= 1) continue;
+    for (const plugin of readdirSync(mpDir)) {
+      const pluginDir = join(mpDir, plugin);
+      if (!statSync(pluginDir).isDirectory()) continue;
 
-    versions.sort(compareVersion);
-    const keepLatest = versions.pop(); // highest version
-    const keepInstalled = installedVersions[plugin] || new Set();
-    const keep = new Set([keepLatest, ...keepInstalled]);
+      const versions = readdirSync(pluginDir).filter(v => /^\d+\.\d+\.\d+$/.test(v));
+      if (versions.length <= 1) continue;
 
-    for (const old of versions) {
-      if (keep.has(old)) continue;
-      const oldDir = join(pluginDir, old);
-      try {
-        const fileCount = countFiles(oldDir);
-        rmSync(oldDir, { recursive: true, force: true });
-        totalRemoved += fileCount;
-        console.error(`[prune-cache-hook] removed ${plugin}@${old} (${fileCount} files, keeping ${[...keep].join(', ')})`);
-      } catch (e) {
-        console.error(`[prune-cache-hook] failed to remove ${plugin}@${old}: ${e.message}`);
+      versions.sort(compareVersion);
+      const latest = versions.pop();
+      const key = mp + '/' + plugin;
+      const keepLive = liveVersions[key] || new Set();
+      const keep = new Set([latest, ...keepLive]);
+
+      for (const old of versions) {
+        if (keep.has(old)) continue;
+        const oldDir = join(pluginDir, old);
+        try {
+          const fileCount = countFiles(oldDir);
+          rmSync(oldDir, { recursive: true, force: true });
+          totalRemoved += fileCount;
+          console.error(`[prune-cache-hook] removed ${key}@${old} (${fileCount} files, keeping ${[...keep].join(', ')})`);
+        } catch (e) {
+          console.error(`[prune-cache-hook] failed to remove ${key}@${old}: ${e.message}`);
+        }
       }
     }
   }
