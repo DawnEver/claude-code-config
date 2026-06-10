@@ -13,8 +13,10 @@
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { execSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, CODEX_LINKS, removeExisting, setup } from '../../scripts/setup/setup.js';
+import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, CODEX_LINKS, KNOWN_ALIAS_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
 
 // ── A. Repo link migration ──
 
@@ -77,7 +79,54 @@ export function migrateRepoLinks({ dryRun } = {}) {
   return removed;
 }
 
-// ── B. cc-market project migration ──
+// ── B. Orphaned CLI alias cleanup ──
+
+const MARKER = '# claude-code-alias';
+
+function findClaudeBin() {
+  const isWindows = os.platform() === 'win32';
+  try {
+    const raw = execSync(isWindows ? 'where claude' : 'which claude', { stdio: 'pipe' })
+      .toString().trim().split(/\r?\n/)[0].trim();
+    return path.dirname(raw);
+  } catch { return null; }
+}
+
+export function migrateOrphanedAliases({ dryRun } = {}) {
+  const claudeBin = findClaudeBin();
+  if (!claudeBin || !fs.existsSync(claudeBin)) return [];
+
+  const known = new Set(KNOWN_ALIAS_NAMES);
+  const removed = [];
+
+  let entries;
+  try { entries = fs.readdirSync(claudeBin, { withFileTypes: true }); } catch { return []; }
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const full = path.join(claudeBin, entry.name);
+    // Check if it's one of our managed alias files (has the marker)
+    let content;
+    try { content = fs.readFileSync(full, 'utf8'); } catch { continue; }
+    if (!content.includes(MARKER)) continue;
+
+    // Extract the base name (strip .cmd extension on Windows)
+    const baseName = entry.name.endsWith('.cmd') ? entry.name.slice(0, -4) : entry.name;
+    if (known.has(baseName)) continue;
+
+    if (dryRun) {
+      console.log(`WOULD REMOVE  alias ${entry.name} - orphaned (no longer in KNOWN_ALIAS_NAMES)`);
+    } else {
+      fs.unlinkSync(full);
+      console.log(`REMV  alias ${entry.name} - orphaned (no longer in KNOWN_ALIAS_NAMES)`);
+    }
+    removed.push(entry.name);
+  }
+
+  return removed;
+}
+
+// ── C. cc-market project migration ──
 
 export function discoverProjectMigrators(ccMarketDir) {
   const dir = ccMarketDir || path.join(sourceDir, 'cc-market');
@@ -113,8 +162,12 @@ async function main() {
   const removed = migrateRepoLinks({ dryRun });
   if (removed.length === 0) console.log('OK    no orphaned links');
 
+  console.log('\n--- CLI aliases ---');
+  const aliasRemoved = migrateOrphanedAliases({ dryRun });
+  if (aliasRemoved.length === 0) console.log('OK    no orphaned CLI aliases');
+
   if (!dryRun) {
-    console.log('\n--- Re-link (current layout) ---');
+    console.log('\n--- Re-link & re-alias (current layout) ---');
     setup();
   }
 

@@ -11,6 +11,8 @@ export const sourceDir = path.resolve(__dirname, '../..');
 export const claudeDir = path.join(os.homedir(), '.claude');
 export const codexDir = path.join(os.homedir(), '.codex');
 
+export const KNOWN_ALIAS_NAMES = ['cc', 'ccds', 'todo', 'traceme'];
+
 export const CLAUDE_LINKS = [
   { src: 'GLOBAL-AGENTS.md', dest: 'CLAUDE.md', type: 'file' },
   { src: 'claude_settings.json', dest: 'settings.json', type: 'file' },
@@ -296,7 +298,6 @@ function installShellAliases() {
   const ALIASES = [
     { name: 'cc',   provider: 'claude'   },
     { name: 'ccds', provider: 'deepseek' },
-    { name: 'cchb', provider: 'hybrid'   },
   ];
 
   const MARKER = '# claude-code-alias';
@@ -316,7 +317,6 @@ function installShellAliases() {
 
   console.log('      cc      - Claude Pro (official subscription)');
   console.log('      ccds    - DeepSeek API (Foundry mode, direct)');
-  console.log('      cchb    - Hybrid (DeepSeek Fable/Haiku + Anthropic Opus/Sonnet)');
 
   // TraceMe CLI alias — dynamic launcher survives plugin version updates
   const tracemeLauncher = path.join(sourceDir, 'scripts', 'runtime', 'traceme-launcher.mjs').replace(/\\/g, '/');

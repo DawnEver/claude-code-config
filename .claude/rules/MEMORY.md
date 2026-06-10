@@ -56,6 +56,7 @@ Frontmatter:
 - [2026-05-27 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-06-10`
 - [2026-05-29 feedback-global-agents](../memory/2026/05/29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-06-10`
 - [2026-06-10 migrate-skill-path-fix](../memory/2026/06/10/migrate-skill-path-fix.md) — `created: 2026-06-10, accessed: 2026-06-10`
+- [2026-06-10 hybrid-removal](../memory/2026/06/10/hybrid-removal.md) — `created: 2026-06-10, accessed: 2026-06-10`
 - [2026-06-09 task-lib-split](../memory/2026/06/09/task-lib-split.md) — `created: 2026-06-09, accessed: 2026-06-09`
 - [2026-06-09 sharp-review-2026-06-09](../memory/2026/06/09/sharp-review.md) — `created: 2026-06-09, accessed: 2026-06-08`
 - [2026-06-08 sharp-review-2026-06-08](../memory/2026/06/08/sharp-review.md) — `created: 2026-06-08, accessed: 2026-06-08`
