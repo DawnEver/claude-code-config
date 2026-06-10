@@ -1,11 +1,11 @@
 ---
 name: api-proxy
-description: Local proxy for DeepSeek only. Auth fix 2026-05-30: bearer→x-api-key conversion added so ANTHROPIC_AUTH_TOKEN works. KV cache metrics, cache_control strip. Some sharp-review bugs remain unfixed.
+description: Local DeepSeek proxy (scripts/runtime/api-proxy.js) — auth, prompt caching, KV-metrics removal, known unfixed bugs
 metadata:
   type: project
 created: 2026-05-29
-accessed: 2026-05-29
-tier: short
+accessed: 2026-06-10
+tier: long
 ---
 
 `scripts/runtime/api-proxy.js` — single-file Node.js proxy (no external deps) on port 3082.
@@ -34,3 +34,18 @@ tier: short
 - Non-text content blocks (images, tool_use) silently dropped in `contentToString` — warns but no fallback
 - `ensureProxy` warns and continues if proxy doesn't start — should `process.exit(1)`
 - TCP connect ≠ proxy health; a hung proxy passes the port check (mitigated by `/health` HTTP check)
+
+## Prompt caching fix (2026-05-30)
+
+Two bugs in `api-proxy.js` silently disabled DeepSeek prompt caching (100% cache miss on ccds sessions):
+1. `SAFE_REQ_HEADERS` didn't whitelist `anthropic-beta` — Claude Code's `anthropic-beta: prompt-caching-2024-07-31` header was dropped before forwarding.
+2. `stripCacheControl()` recursively removed all `cache_control` fields from the request body, on the (incorrect) assumption DeepSeek ignores them — DeepSeek's Anthropic-compatible endpoint (`api.deepseek.com/anthropic`) actually supports `cache_control`.
+
+**Fix:** added `'anthropic-beta'` to `SAFE_REQ_HEADERS`; removed `stripCacheControl()` and its call in `normalizeRequest()`. Don't re-add either.
+
+## KV-cache metrics removed (2026-05-30)
+
+Removed as redundant — claude-hud already shows token breakdown natively. Don't re-add:
+- `metrics` object, `persistMetrics()`, `createUsageTracker()` Transform stream, `/metrics` endpoint, `Transform` import from `api-proxy.js`
+- `readKvLabel()` and HUD output interception (`console.log` override) from `scripts/hooks/hud-hook.js` — now just calls `pluginModule.main()` directly
+- `scripts/runtime/kv-cache-status.js` (predecessor of `readKvLabel()`) — deleted

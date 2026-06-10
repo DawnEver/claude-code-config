@@ -3,4 +3,5 @@
 
 function cc { node ~/.claude/scripts/runtime/cc.js claude @args }
 function ccds { node ~/.claude/scripts/runtime/cc.js deepseek @args }
+function cchb { node ~/.claude/scripts/runtime/cc.js hybrid @args }
 function todo { node ~/.claude/scripts/runtime/todo-launcher.mjs @args }

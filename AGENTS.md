@@ -10,12 +10,14 @@
 - `npm run setup` - Initial setup
 - `node scripts/setup/setup.js` - Manual setup
 - Re-run setup to verify (checks existing symlinks)
+- `npm run migrate` - Bring `~/.claude`/`~/.codex` symlinks and the current project's `.claude/` (cc-market plugin files) up to the latest format. `npm run migrate -- --dry-run` previews orphaned-symlink removal only. See `/migrate` skill.
 
 ## Architecture
 Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links to `~/.claude/` and `~/.codex/`.
 
 ### Structure
 - `scripts/setup/`: `setup.js` (OS detection, symlinks)
+- `skills/migrate/`: `/migrate` skill — `migrate.js` (orphaned symlink cleanup + cc-market plugin `.claude/` migrations) and tests
 - `scripts/runtime/`: `cc.js` (provider launcher), `aliases.sh`, `aliases.ps1`
 - `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`
 - `cc-market/sharp-review/`: Sharp review plugin — hook, skill, workflow, findings sync (`post-review.js`)
@@ -48,3 +50,4 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 ### Standard
 - After changes, update README and `setup.js` if needed
 - Plugin development, tests, and marketplace conventions → see `cc-market/AGENTS.md`
+- This repo is publicly available, but it is primarily intended for personal use and rapid iteration — backward compatibility is not a concern. Rename, restructure, or remove anything outdated rather than adding shims or compat layers.

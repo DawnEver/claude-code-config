@@ -2,6 +2,8 @@
 
 Syncs Claude Code and Codex configuration across devices via OneDrive.
 
+> This repo is publicly available, but it is primarily intended for personal use and rapid iteration — backward compatibility is not a concern. Rename, restructure, or remove anything outdated rather than adding shims or compat layers.
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/en/download)

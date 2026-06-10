@@ -7,11 +7,11 @@ import { fileURLToPath } from 'url';
 import { fixLspWindows } from './fix-lsp-windows.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sourceDir = path.resolve(__dirname, '../..');
-const claudeDir = path.join(os.homedir(), '.claude');
-const codexDir = path.join(os.homedir(), '.codex');
+export const sourceDir = path.resolve(__dirname, '../..');
+export const claudeDir = path.join(os.homedir(), '.claude');
+export const codexDir = path.join(os.homedir(), '.codex');
 
-const CLAUDE_LINKS = [
+export const CLAUDE_LINKS = [
   { src: 'GLOBAL-AGENTS.md', dest: 'CLAUDE.md', type: 'file' },
   { src: 'claude_settings.json', dest: 'settings.json', type: 'file' },
   { src: path.join('claude_plugins', 'claude-hud', 'config.json'), dest: path.join('plugins', 'claude-hud', 'config.json'), type: 'file' },
@@ -23,13 +23,13 @@ const CLAUDE_LINKS = [
   { src: 'keybindings.json', dest: 'keybindings.json', type: 'file' },
 ];
 
-const CODEX_LINKS = [
+export const CODEX_LINKS = [
   { src: 'codex_config.toml', dest: 'config.toml', type: 'file' },
 ];
 
 const isWindows = process.platform === 'win32';
 
-function removeExisting(destPath) {
+export function removeExisting(destPath) {
   const stat = fs.lstatSync(destPath, { throwIfNoEntry: false });
   if (!stat) return false;
 
@@ -41,7 +41,7 @@ function removeExisting(destPath) {
   return true;
 }
 
-function setup() {
+export function setup() {
   const args = process.argv.slice(2);
   const replace = args.includes('--replace') || args.includes('-r');
 
@@ -296,6 +296,7 @@ function installShellAliases() {
   const ALIASES = [
     { name: 'cc',   provider: 'claude'   },
     { name: 'ccds', provider: 'deepseek' },
+    { name: 'cchb', provider: 'hybrid'   },
   ];
 
   const MARKER = '# claude-code-alias';
@@ -315,6 +316,7 @@ function installShellAliases() {
 
   console.log('      cc      - Claude Pro (official subscription)');
   console.log('      ccds    - DeepSeek API (Foundry mode, direct)');
+  console.log('      cchb    - Hybrid (DeepSeek Fable/Haiku + Anthropic Opus/Sonnet)');
 
   // TraceMe CLI alias — dynamic launcher survives plugin version updates
   const tracemeLauncher = path.join(sourceDir, 'scripts', 'runtime', 'traceme-launcher.mjs').replace(/\\/g, '/');
@@ -365,4 +367,6 @@ function writeIfChanged(filePath, content, label, marker) {
   }
 }
 
-setup();
+if (path.resolve(process.argv[1] || '') === path.resolve(__dirname, 'setup.js')) {
+  setup();
+}

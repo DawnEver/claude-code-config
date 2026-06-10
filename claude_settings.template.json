@@ -1,136 +1,136 @@
 {
-  "env": {
-    "CLAUDE_CODE_FORK_SUBAGENT": "1",
-    "CLAUDE_CODE_WORKFLOWS": "1",
-    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
-    "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
-    "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "ENABLE_LSP_TOOLS": "1",
-    "DISABLE_ERROR_REPORTING": "1",
-    "DISABLE_FEEDBACK_COMMAND": "1",
-    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEYS": "1"
-  },
-  "includeCoAuthoredBy": false,
-  "permissions": {
-    "allow": [
-      "Bash(git *)",
-      "Bash(node *)",
-      "Bash(npm *)",
-      "Bash(npx *)",
-      "Bash(ln *)",
-      "Bash(chmod +x *)",
-      "Bash(cmd *)",
-      "Bash(where *)",
-      "Bash(which *)",
-      "PowerShell(where *)",
-      "WebSearch",
-      "PowerShell(Get-Item *)",
-      "PowerShell(Get-ChildItem *)",
-      "PowerShell(Test-Path *)",
-      "PowerShell(Get-Command *)",
-      "PowerShell(Get-Process *)",
-      "Skill(update-config)",
-      "Skill(rem:rem)",
-      "Skill(rem:todo)",
-      "Skill(sharp-review)",
-      "Skill(takeover:continue)",
-      "Skill(takeover:models)",
-      "Skill(takeover:summary)",
-      "mcp__plugin_takeover_takeover__call_model",
-      "mcp__plugin_takeover_takeover__list_models",
-      "mcp__ide__getDiagnostics",
-      "mcp__ide__executeCode"
-    ],
-    "deny": [
-      "Bash(rm -rf *)",
-      "Bash(sudo *)",
-      "Bash(curl * | bash)"
-    ],
-    "defaultMode": "auto"
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/setup/fix-lsp-windows.js",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/notify-hook.js"
-          }
-        ]
-      }
-    ]
-  },
-  "worktree": {
-    "baseRef": "fresh"
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "node ~/.claude/scripts/hooks/hud-hook.js"
-  },
-  "enabledPlugins": {
-    "skill-creator@claude-plugins-official": true,
-    "claude-hud@claude-hud": true,
-    "takeover@cc-market": true,
-    "typescript-lsp@claude-plugins-official": true,
-    "pyright-lsp@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": false,
-    "rem@cc-market": true,
-    "sharp-review@cc-market": true,
-    "traceme@cc-market": true
-  },
-  "extraKnownMarketplaces": {
-    "claude-hud": {
-      "source": {
-        "source": "github",
-        "repo": "jarrodwatts/claude-hud"
-      },
-      "autoUpdate": true
+    "env": {
+        "CLAUDE_CODE_FORK_SUBAGENT": "1",
+        "CLAUDE_CODE_WORKFLOWS": "1",
+        "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
+        "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
+        "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
+        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+        "ENABLE_LSP_TOOLS": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+        "DISABLE_FEEDBACK_COMMAND": "1",
+        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEYS": "1"
     },
-    "cc-market": {
-      "source": {
-        "source": "github",
-        "repo": "DawnEver/cc-market"
-      },
-      "autoUpdate": true
+    "includeCoAuthoredBy": false,
+    "permissions": {
+        "allow": [
+            "Bash(git *)",
+            "Bash(node *)",
+            "Bash(npm *)",
+            "Bash(npx *)",
+            "Bash(ln *)",
+            "Bash(chmod +x *)",
+            "Bash(cmd *)",
+            "Bash(where *)",
+            "Bash(which *)",
+            "PowerShell(where *)",
+            "WebSearch",
+            "PowerShell(Get-Item *)",
+            "PowerShell(Get-ChildItem *)",
+            "PowerShell(Test-Path *)",
+            "PowerShell(Get-Command *)",
+            "PowerShell(Get-Process *)",
+            "Skill(update-config)",
+            "Skill(rem:rem)",
+            "Skill(rem:todo)",
+            "Skill(sharp-review)",
+            "Skill(takeover:continue)",
+            "Skill(takeover:models)",
+            "Skill(takeover:summary)",
+            "mcp__plugin_takeover_takeover__call_model",
+            "mcp__plugin_takeover_takeover__list_models",
+            "mcp__ide__getDiagnostics",
+            "mcp__ide__executeCode"
+        ],
+        "deny": [
+            "Bash(rm -rf *)",
+            "Bash(sudo *)",
+            "Bash(curl * | bash)"
+        ],
+        "defaultMode": "auto"
+    },
+    "hooks": {
+        "SessionStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/setup/fix-lsp-windows.js",
+                        "timeout": 5
+                    },
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ],
+        "Notification": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/hooks/notify-hook.js"
+                    }
+                ]
+            }
+        ]
+    },
+    "worktree": {
+        "baseRef": "fresh"
+    },
+    "statusLine": {
+        "type": "command",
+        "command": "node ~/.claude/scripts/hooks/hud-hook.js"
+    },
+    "enabledPlugins": {
+        "skill-creator@claude-plugins-official": true,
+        "claude-hud@claude-hud": true,
+        "takeover@cc-market": true,
+        "typescript-lsp@claude-plugins-official": true,
+        "pyright-lsp@claude-plugins-official": true,
+        "rust-analyzer-lsp@claude-plugins-official": false,
+        "rem@cc-market": true,
+        "sharp-review@cc-market": true,
+        "traceme@cc-market": true
+    },
+    "extraKnownMarketplaces": {
+        "claude-hud": {
+            "source": {
+                "source": "github",
+                "repo": "jarrodwatts/claude-hud"
+            },
+            "autoUpdate": true
+        },
+        "cc-market": {
+            "source": {
+                "source": "github",
+                "repo": "DawnEver/cc-market"
+            },
+            "autoUpdate": true
+        }
+    },
+    "effortLevel": "low",
+    "tui": "fullscreen",
+    "skipWorkflowUsageWarning": true,
+    "theme": "auto",
+    "editorMode": "normal",
+    "verbose": true,
+    "preferredNotifChannel": "auto",
+    "autoCompactEnabled": true,
+    "terminalProgressBarEnabled": true,
+    "teammateMode": "auto",
+    "remoteControlAtStartup": true,
+    "inputNeededNotifEnabled": true,
+    "agentPushNotifEnabled": true,
+    "skipAutoPermissionPrompt": true,
+    "autoMode": {
+        "environment": [
+            "$defaults"
+        ]
+    },
+    "metadata": {
+        "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
     }
-  },
-  "effortLevel": "low",
-  "tui": "fullscreen",
-  "skipWorkflowUsageWarning": true,
-  "theme": "auto",
-  "editorMode": "normal",
-  "verbose": true,
-  "preferredNotifChannel": "auto",
-  "autoCompactEnabled": true,
-  "terminalProgressBarEnabled": true,
-  "teammateMode": "auto",
-  "remoteControlAtStartup": true,
-  "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true,
-  "autoMode": {
-    "environment": [
-      "$defaults"
-    ]
-  },
-  "metadata": {
-    "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
-  }
 }

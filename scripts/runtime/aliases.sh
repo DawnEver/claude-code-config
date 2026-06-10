@@ -3,4 +3,5 @@
 
 alias cc='node ~/.claude/scripts/runtime/cc.js claude'
 alias ccds='node ~/.claude/scripts/runtime/cc.js deepseek'
+alias cchb='node ~/.claude/scripts/runtime/cc.js hybrid'
 alias todo='node ~/.claude/scripts/runtime/todo-launcher.mjs'
