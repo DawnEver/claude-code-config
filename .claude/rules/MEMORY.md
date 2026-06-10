@@ -38,9 +38,12 @@ Frontmatter:
 
 
 
+
+
+
+
 - [2026-06-10 sharp-review-2026-06-10](../memory/2026/06/10/sharp-review.md) — `created: 2026-06-10, accessed: 2026-06-10`
 - [2026-06-10 migrate-tooling](../memory/2026/06/10/migrate-tooling.md) — `created: 2026-06-10, accessed: 2026-06-10`
-- [2026-06-07 cc-market-separate-repo](../memory/2026/06/07/cc-market-separate-repo.md) — `created: 2026-06-07, accessed: 2026-06-10`
 - [2026-06-06 feedback-no-auto-push](../memory/2026/06/06/feedback-no-auto-push.md) — `created: 2026-06-06, accessed: 2026-06-10`
 - [2026-06-03 memory-mechanism](../memory/2026/06/03/memory-mechanism.md) — `created: 2026-06-03, accessed: 2026-06-10`
 - [2026-06-03 update-plugins-hook-removed](../memory/2026/06/03/update-plugins-hook-removed.md) — `created: 2026-06-03, accessed: 2026-06-10`
@@ -49,14 +52,17 @@ Frontmatter:
 - [2026-05-29 ccgpt-removal](../memory/2026/05/29/ccgpt_removal.md) — `created: 2026-05-29, accessed: 2026-06-10`
 - [2026-05-29 api-proxy](../memory/2026/05/29/api_proxy.md) — `created: 2026-05-29, accessed: 2026-06-10`
 - [2026-05-30 macos-notify-swift](../memory/2026/05/30/macos_notify_swift.md) — `created: 2026-05-30, accessed: 2026-06-10`
-- [2026-05-28 retrospect-hook-background-tasks](../memory/2026/05/28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-06-10`
-- [2026-05-28 retrospect-hook-task-guard](../memory/2026/05/28/retrospect_hook_task_guard.md) — `created: 2026-05-28, accessed: 2026-06-10`
 - [2026-05-28 vscode-provider-wrapper](../memory/2026/05/28/vscode_provider_wrapper.md) — `created: 2026-05-28, accessed: 2026-06-10`
 - [2026-05-27 git-commit-use-bash](../memory/2026/05/27/feedback_git_commit.md) — `created: 2026-05-27, accessed: 2026-06-10`
-- [2026-05-27 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-06-10`
 - [2026-05-29 feedback-global-agents](../memory/2026/05/29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-06-10`
 - [2026-06-10 migrate-skill-path-fix](../memory/2026/06/10/migrate-skill-path-fix.md) — `created: 2026-06-10, accessed: 2026-06-10`
 - [2026-06-10 hybrid-removal](../memory/2026/06/10/hybrid-removal.md) — `created: 2026-06-10, accessed: 2026-06-10`
+- [2026-06-10 traceme-sync-fix](../memory/2026/06/10/traceme-sync-fix.md) — `created: 2026-06-10, accessed: 2026-06-10`
+- [2026-06-10 sharp-review-cache-lag-failure](../memory/2026/06/10/sharp-review-cache-lag-failure.md) — `created: 2026-06-10, accessed: 2026-06-10`
+- [2026-05-27 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-06-10`
+- [2026-05-28 retrospect-hook-background-tasks](../memory/2026/05/28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-06-10`
+- [2026-05-28 retrospect-hook-task-guard](../memory/2026/05/28/retrospect_hook_task_guard.md) — `created: 2026-05-28, accessed: 2026-06-10`
+- [2026-06-07 cc-market-separate-repo](../memory/2026/06/07/cc-market-separate-repo.md) — `created: 2026-06-07, accessed: 2026-06-10`
 - [2026-06-09 task-lib-split](../memory/2026/06/09/task-lib-split.md) — `created: 2026-06-09, accessed: 2026-06-09`
 - [2026-06-09 sharp-review-2026-06-09](../memory/2026/06/09/sharp-review.md) — `created: 2026-06-09, accessed: 2026-06-08`
 - [2026-06-08 sharp-review-2026-06-08](../memory/2026/06/08/sharp-review.md) — `created: 2026-06-08, accessed: 2026-06-08`

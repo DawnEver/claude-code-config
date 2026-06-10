@@ -9,7 +9,8 @@
         "ENABLE_LSP_TOOLS": "1",
         "DISABLE_ERROR_REPORTING": "1",
         "DISABLE_FEEDBACK_COMMAND": "1",
-        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEYS": "1"
+        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEYS": "1",
+        "TRACEME_SYNC_REMOTE": "Your TRACEME Git Repo"
     },
     "includeCoAuthoredBy": false,
     "permissions": {

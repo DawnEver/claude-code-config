@@ -3,6 +3,9 @@ name: hybrid-removal
 description: cc v2.1.170 — hybrid 模式下的 Claude 模型无法使用 auto mode，已移除 hybrid provider 和 cchb alias
 metadata:
   type: project
+created: 2026-06-10
+accessed: 2026-06-10
+tier: short
 ---
 
 cc v2.1.170 中，hybrid provider（混用 DeepSeek Fable/Haiku + Anthropic Opus/Sonnet）下的 Claude 模型无法使用 auto mode。已移除 hybrid provider 及 `cchb` alias，仅保留 `cc`（claude）和 `ccds`（deepseek）两个 provider。
