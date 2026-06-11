@@ -22,13 +22,33 @@ Run this command **from the directory of the project you want to migrate**
 `migrate.js` itself lives. From within this config repo's own root, `npm run
 migrate` is a shortcut for the same command.
 
-This does two things, both idempotent (safe to re-run, no-op once current):
+This does three things, all idempotent (safe to re-run, no-op once current):
 
 1. **Repo links** — removes any `~/.claude` / `~/.codex` symlinks that point
    into this repo but no longer correspond to an entry in `CLAUDE_LINKS` /
    `CODEX_LINKS` (e.g. a renamed/removed skill or config), then re-runs the
    normal link-creation pass for the current layout.
-2. **Project `.claude/`** — for every cc-market plugin that provides a
+2. **Gitignore hygiene** — across the current repo and every nested git repo:
+   (a) normalizes `.gitignore` to the depth-agnostic `.claude/` template this skill
+   owns (`CLAUDE_GITIGNORE_TEMPLATE` — base `**/.claude/**` exclusion plus the
+   `agents`/`skills`/`commands`/`workflows`/`settings`/`rules`/`memory` re-includes,
+   with `MEMORY.md` + `_meta.json` ignored last), preserving all unrelated lines;
+   (b) untracks (via `git rm --cached`, keeping files on disk) anything the refreshed
+   rules now ignore but is still committed; (c) deletes stray `.gitignore` files
+   nested inside a `.claude/` tree. This skill is the single writer of the template;
+   rem only ensures ignores for the two files it generates (`MEMORY.md`, `_meta.json`).
+
+   **Overwriting `.gitignore` is confirmed first.** When any repo's `.gitignore`
+   differs from the template, an interactive TTY run asks: **[O]verwrite** (default) /
+   **[A]I edit** (skip writing — leave it for a hand-merge that preserves the repo's
+   own rules) / **[S]kip**. Choose AI edit / Skip for third-party projects whose
+   `.claude/` holds content outside the template's allowlist (e.g. `hooks/`,
+   `settings.local.json`), since overwrite + untrack would stop tracking it. Pass
+   `--gitignore=overwrite|skip|ai` to set it non-interactively. With `skip`/`ai` the
+   template is left alone and untracking only follows the repo's *existing* rules.
+   When running this skill for the user, dry-run first, show which repos would change,
+   and confirm the mode before applying.
+3. **Project `.claude/`** — for every cc-market plugin that provides a
    `migrations/migrate.mjs` (e.g. rem's memory/frontmatter normalization,
    sharp-review's legacy finding-file consolidation), runs it against the
    current project.
@@ -39,8 +59,10 @@ Preview repo-link changes only, without touching anything:
 node ~/.claude/skills/migrate/migrate.js --dry-run
 ```
 
-(`--dry-run` covers step 1 fully; for step 2 it lists which plugins have
-migrations but does not run them, since they are write-only and self-detecting.)
+(`--dry-run` covers steps 1 and 2 fully — it prints which files *would* be
+untracked and which nested ignores *would* be deleted, without touching them;
+for step 3 it lists which plugins have migrations but does not run them, since
+they are write-only and self-detecting.)
 
 If a plugin's migration reports `changed: true`, read its summary lines —
 they describe exactly what was moved/rewritten.

@@ -48,5 +48,6 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 
 ### Standard
 - After changes, update README and `setup.js` if needed
+- **A skill's execution knowledge goes in its `SKILL.md` / `reference/*.md`, never in `rules/*` or `AGENTS.md`/`CLAUDE.md`.** At runtime a skill sees only its own files and the host project's config — never this repo's rules/`AGENTS.md`.
 - Plugin development, tests, and marketplace conventions → see `cc-market/AGENTS.md`
 - This repo is publicly available, but it is primarily intended for personal use and rapid iteration — backward compatibility is not a concern. Rename, restructure, or remove anything outdated rather than adding shims or compat layers.

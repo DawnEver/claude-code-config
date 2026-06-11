@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { findOrphanedLinks, discoverProjectMigrators } from './migrate.js';
+import { execFileSync } from 'node:child_process';
+import { findOrphanedLinks, discoverProjectMigrators, ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './migrate.js';
 
 describe('findOrphanedLinks', () => {
   let tmpDir, sourceDir, baseDir;
@@ -117,5 +118,117 @@ describe('discoverProjectMigrators', () => {
     const migrators = discoverProjectMigrators(ccMarketDir);
     assert.equal(migrators.length, 1);
     assert.equal(migrators[0].name, 'rem');
+  });
+});
+
+describe('ensureGitignoreTemplate', () => {
+  let repoDir;
+
+  // The depth-agnostic template, in canonical order (mirrors CLAUDE_GITIGNORE_TEMPLATE).
+  const TEMPLATE = [
+    '**/.claude/**',
+    '!**/.claude/settings.json',
+    '!**/.claude/agents/', '!**/.claude/agents/**',
+    '!**/.claude/skills/', '!**/.claude/skills/**',
+    '!**/.claude/commands/', '!**/.claude/commands/**',
+    '!**/.claude/workflows/', '!**/.claude/workflows/**',
+    '!**/.claude/rules/', '!**/.claude/rules/**',
+    '!**/.claude/memory/', '!**/.claude/memory/**',
+    '**/.claude/rules/MEMORY.md',
+    '**/_meta.json',
+  ];
+
+  beforeEach(() => { repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gi-tmpl-')); });
+  afterEach(() => { fs.rmSync(repoDir, { recursive: true, force: true }); });
+
+  const read = () => fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
+
+  test('writes the template when no .gitignore exists', () => {
+    assert.equal(ensureGitignoreTemplate(repoDir), true);
+    assert.ok(read().includes(TEMPLATE.join('\n')));         // contiguous, ordered
+  });
+
+  test('is idempotent — no-op when template already present', () => {
+    fs.writeFileSync(path.join(repoDir, '.gitignore'), '.DS_Store\n' + TEMPLATE.join('\n') + '\n');
+    assert.equal(ensureGitignoreTemplate(repoDir), false);
+  });
+
+  test('normalizes the broken dir-only form and preserves unrelated lines', () => {
+    // Dir-only re-includes under **/.claude/** leave nested files ignored — must be fixed.
+    fs.writeFileSync(path.join(repoDir, '.gitignore'),
+      '**/.claude/**\n!**/.claude/memory/\nnode_modules/\n**/.claude/rules/MEMORY.md\n**/_meta.json\n');
+    assert.equal(ensureGitignoreTemplate(repoDir), true);
+    const content = read();
+    assert.ok(content.includes('node_modules/'));            // unrelated kept
+    assert.ok(content.includes(TEMPLATE.join('\n')));        // full template now present
+  });
+
+  test('strips a trailing leak-causing negation (no metadata leak)', () => {
+    // Old root-anchored form + a trailing negation that would re-include _meta.json.
+    fs.writeFileSync(path.join(repoDir, '.gitignore'),
+      '.claude/*\n!.claude/rules/**\n!.claude/memory/**\n');
+    assert.equal(ensureGitignoreTemplate(repoDir), true);
+    const lines = read().split('\n').map(l => l.trim()).filter(Boolean);
+    // **/_meta.json must be last — nothing re-includes after it.
+    assert.equal(lines[lines.length - 1], '**/_meta.json');
+    assert.equal(read().includes('!.claude/memory/**'), false);
+  });
+
+  test('dryRun reports change without writing', () => {
+    assert.equal(ensureGitignoreTemplate(repoDir, { dryRun: true }), true);
+    assert.equal(fs.existsSync(path.join(repoDir, '.gitignore')), false);
+  });
+});
+
+describe('migrateGitignore (integration)', () => {
+  let repoDir;
+  const g = (...a) => execFileSync('git', a, { cwd: repoDir, stdio: 'pipe' });
+
+  beforeEach(() => {
+    repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gi-int-'));
+    g('init', '-q');
+    g('config', 'user.email', 't@t');
+    g('config', 'user.name', 't');
+    g('commit', '--allow-empty', '-q', '-m', 'init');
+  });
+  afterEach(() => { fs.rmSync(repoDir, { recursive: true, force: true }); });
+
+  test('overwrite: normalizes broken template then untracks newly-ignored files', () => {
+    // Broken dir-only form leaves nested memory files ignored under **/.claude/**.
+    fs.writeFileSync(path.join(repoDir, '.gitignore'), '**/.claude/**\n!**/.claude/memory/\n');
+    const memDir = path.join(repoDir, '.claude', 'memory', '2026', '01', '01');
+    fs.mkdirSync(memDir, { recursive: true });
+    fs.writeFileSync(path.join(memDir, 'note.md'), 'x');
+    g('add', '-A', '-f');                 // force-track despite broken ignore
+    g('commit', '-q', '-m', 'add');
+
+    // MEMORY.md is a generated index that SHOULD become untracked.
+    const rulesDir = path.join(repoDir, '.claude', 'rules');
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, 'MEMORY.md'), 'idx');
+    g('add', '-f', '.claude/rules/MEMORY.md');
+    g('commit', '-q', '-m', 'idx');
+
+    assert.deepEqual(reposNeedingTemplate(repoDir), ['.']);
+
+    const [res] = migrateGitignore(repoDir, { gitignoreMode: 'overwrite' });
+    assert.equal(res.templated, true);
+    assert.ok(res.untracked.includes('.claude/rules/MEMORY.md'));
+    // The real memory note stays tracked (template re-includes it correctly).
+    assert.ok(!res.untracked.includes('.claude/memory/2026/01/01/note.md'));
+    const tracked = g('ls-files').toString();
+    assert.ok(tracked.includes('.claude/memory/2026/01/01/note.md'));
+    assert.ok(!tracked.includes('.claude/rules/MEMORY.md'));
+  });
+
+  test('skip: leaves .gitignore untouched, untracks only per existing rules', () => {
+    fs.writeFileSync(path.join(repoDir, '.gitignore'), '**/.claude/**\n!**/.claude/memory/\n');
+    g('add', '-A'); g('commit', '-q', '-m', 'gi');
+    const before = fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
+
+    const [res] = migrateGitignore(repoDir, { gitignoreMode: 'skip' });
+    assert.equal(res.templated, false);
+    assert.equal(res.wouldTemplate, true);   // still reports it differs
+    assert.equal(fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8'), before);
   });
 });
