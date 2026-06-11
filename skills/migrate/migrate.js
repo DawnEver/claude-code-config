@@ -350,9 +350,16 @@ async function main() {
     if (!mode) mode = (!dryRun && pending.length) ? await promptGitignoreMode(pending) : 'overwrite';
 
     if (mode === 'ai' && pending.length) {
-      console.log('NOTE  AI-edit chosen — .gitignore left untouched in:');
-      for (const r of pending) console.log(`        - ${r}/.gitignore`);
-      console.log('      Apply CLAUDE_GITIGNORE_TEMPLATE by hand, merging each repo\'s own rules.');
+      // Emit a machine-actionable block the AI driving this skill picks up and
+      // executes: merge the template into each repo's existing .gitignore by hand
+      // (preserving its own rules), then untrack what the merged rules now ignore.
+      // The script deliberately does NOT write — that is the whole point of 'ai'.
+      console.log('AI-EDIT REQUIRED — perform these merges now, do not stop after this run:');
+      console.log('  Template block to splice into each .gitignore (one contiguous group):');
+      for (const l of CLAUDE_GITIGNORE_TEMPLATE) console.log(`    ${l}`);
+      console.log('  Target files (merge template above with each repo\'s own rules, drop superseded managed lines):');
+      for (const r of pending) console.log(`    - ${path.join(cwd, r, '.gitignore')}`);
+      console.log('  After merging, run `git rm --cached` on any now-ignored tracked files in those repos.');
     }
     const gitignoreMode = mode === 'overwrite' ? 'overwrite' : 'skip';
 

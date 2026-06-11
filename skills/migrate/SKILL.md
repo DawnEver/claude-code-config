@@ -40,12 +40,22 @@ This does three things, all idempotent (safe to re-run, no-op once current):
 
    **Overwriting `.gitignore` is confirmed first.** When any repo's `.gitignore`
    differs from the template, an interactive TTY run asks: **[O]verwrite** (default) /
-   **[A]I edit** (skip writing — leave it for a hand-merge that preserves the repo's
-   own rules) / **[S]kip**. Choose AI edit / Skip for third-party projects whose
-   `.claude/` holds content outside the template's allowlist (e.g. `hooks/`,
-   `settings.local.json`), since overwrite + untrack would stop tracking it. Pass
-   `--gitignore=overwrite|skip|ai` to set it non-interactively. With `skip`/`ai` the
-   template is left alone and untracking only follows the repo's *existing* rules.
+   **[A]I edit** (script writes nothing — you hand-merge afterward) / **[S]kip**.
+   Choose AI edit / Skip for third-party projects whose `.claude/` holds content
+   outside the template's allowlist (e.g. `hooks/`, `settings.local.json`), since
+   overwrite + untrack would stop tracking it. Pass
+   `--gitignore=overwrite|skip|ai` to set it non-interactively.
+
+   **AI edit vs. Skip differ only in your follow-up** — the script's file behavior
+   is identical (it leaves `.gitignore` untouched, untracking only per existing
+   rules). **Skip** abandons the repo. **AI edit** obligates *you* to finish the job:
+   the run prints an `AI-EDIT REQUIRED` block listing the template lines and each
+   target `.gitignore`. After the run, for every listed file: Read it, splice the
+   template block in as one contiguous group, drop superseded managed lines, **keep
+   the repo's own rules**, write it back with Edit, then `git rm --cached` any
+   now-ignored tracked files in that repo. Do not end the turn with the merge
+   undone — an unactioned AI edit is just a Skip.
+
    When running this skill for the user, dry-run first, show which repos would change,
    and confirm the mode before applying.
 3. **Project `.claude/`** — for every cc-market plugin that provides a
