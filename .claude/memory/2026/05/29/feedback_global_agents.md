@@ -5,8 +5,8 @@ metadata:
   type: feedback
 created: 2026-05-29
 accessed: 2026-06-10
-tier: long
-access_count: 2
+tier: short
+access_count: 1
 ---
 
 Never modify `GLOBAL-AGENTS.md` when working in this repo. It is a global config loaded across all projects.

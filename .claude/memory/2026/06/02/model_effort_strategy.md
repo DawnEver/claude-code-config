@@ -5,8 +5,8 @@ metadata:
   type: project
 created: 2026-06-02
 accessed: 2026-06-10
-tier: long
-access_count: 2
+tier: short
+access_count: 1
 ---
 
 # Model & Effort Strategy

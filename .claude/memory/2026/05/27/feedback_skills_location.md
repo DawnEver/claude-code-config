@@ -7,8 +7,8 @@ metadata:
   originSessionId: 2007c28a-2bde-485d-9e8f-3e92612b025f
 created: 2026-05-27
 accessed: 2026-06-10
-tier: long
-access_count: 2
+tier: short
+access_count: 1
 ---
 
 All custom skills and agents must be placed in the repo at `skills/<name>/SKILL.md` (i.e., `C:\Users\linxu\OneDrive - The University of Nottingham\Sync\claude\skills\`), which is symlinked to `~/.claude/skills`.

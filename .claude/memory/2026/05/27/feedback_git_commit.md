@@ -7,8 +7,8 @@ metadata:
   originSessionId: da5efa7d-dd97-4eea-b476-72fff87fd4e0
 created: 2026-05-27
 accessed: 2026-06-10
-tier: long
-access_count: 2
+tier: short
+access_count: 1
 ---
 
 Always use Bash (not PowerShell) for `git commit` commands.

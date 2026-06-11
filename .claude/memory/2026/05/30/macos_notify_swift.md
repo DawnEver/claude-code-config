@@ -5,7 +5,8 @@ metadata:
   type: project
 created: 2026-05-30
 accessed: 2026-06-10
-tier: long
+tier: short
+access_count: 1
 ---
 
 macOS notification APIs have churned repeatedly in this repo. As of `ba3f978`, **`scripts/hooks/notify-hook.js` uses `terminal-notifier` again** — if notifications break on a new macOS version, check `terminal-notifier` install/version first before reintroducing custom Swift/AppleScript/JXA paths below; none of them worked reliably.

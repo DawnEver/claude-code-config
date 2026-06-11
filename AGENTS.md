@@ -33,7 +33,6 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory
 - `.claude/rules/rem/`: All rules loaded every session (git-tracked), managed by REM plugin lifecycle. `.claude/rules/MEMORY.md` is the index.
 - `.claude/memory/`: Historical reference with `MEMORY.md` index (git-tracked); on-demand loading, `created`/`accessed` timestamps, managed by `rem` plugin. Findings stored as `sharp-review.md` per session — sole source of truth for tasks.
-- `.claude/tasks/`: Task archive (`archive/YYYY/MM/DD.md`) — resolved findings archived here. No derived `tasks.md`; `todo` CLI scans memory directly.
 - `.claude/workflows/`: Saved workflow scripts (symlinked from repo; sharp-review workflow now in `cc-market/sharp-review/workflows/`)
 
 ### CLI Tools
