@@ -1,7 +1,9 @@
 .DS_Store
 .claude/*
-!.claude/rules/
-!.claude/memory/
+!.claude/rules/**
+!.claude/memory/**
+.claude/rules/MEMORY.md
+**/_meta.json
 .codex
 node_modules/
 package-lock.json

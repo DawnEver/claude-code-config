@@ -4,10 +4,6 @@ description: Don't push without user confirmation
 metadata:
   type: feedback
   created: 2026-06-06
-created: 2026-06-06
-accessed: 2026-06-10
-tier: short
-access_count: 1
 ---
 
 # No Auto Push

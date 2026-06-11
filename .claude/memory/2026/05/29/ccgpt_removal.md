@@ -3,10 +3,6 @@ name: ccgpt-removal
 description: ChatGPT subscription bridge removed — Codex uses agent-identity JWT auth incompatible with proxy approach
 metadata:
   type: project
-created: 2026-05-29
-accessed: 2026-06-10
-tier: short
-access_count: 1
 ---
 
 ChatGPT subscription bridge (`ccgpt`, `/chatgpt` proxy route) fully removed.

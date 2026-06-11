@@ -3,9 +3,6 @@ name: migrate-skill-path-fix
 description: "/migrate skill invocation simplified to ~/.claude/skills/migrate/migrate.js; compact prefers tier:long promotion over new rules for niche topics"
 metadata:
   type: feedback
-created: 2026-06-10
-accessed: 2026-06-10
-tier: short
 ---
 
 ## migrate skill: drop repo-root requirement

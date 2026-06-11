@@ -3,9 +3,6 @@ name: migrate-tooling
 description: New `npm run migrate` / `/migrate` skill — repo symlink cleanup + per-plugin .claude/ format migrations
 metadata:
   type: project
-created: 2026-06-10
-accessed: 2026-06-10
-tier: short
 ---
 
 Added `skills/migrate/migrate.js` ("migrate to latest only", no version-range bookkeeping):

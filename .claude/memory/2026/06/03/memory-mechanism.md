@@ -3,10 +3,6 @@ name: memory-mechanism
 description: Three-tier loading system (rules→AGENTS.md→memory) with created/accessed timestamps and 90-day eviction policy
 metadata:
   type: project
-created: 2026-06-03
-accessed: 2026-06-10
-tier: short
-access_count: 1
 ---
 
 ## Three-tier loading

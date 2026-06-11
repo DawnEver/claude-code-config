@@ -3,9 +3,6 @@ name: api-proxy-kv-cache
 description: KV cache metrics removed 2026-05-30 — claude-hud already shows token breakdown natively
 metadata:
   type: project
-created: 2026-05-30
-accessed: 2026-05-30
-tier: short
 ---
 
 ## What changed (2026-05-30 — removal)

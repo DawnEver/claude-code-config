@@ -3,10 +3,6 @@ name: retrospect-hook-background-tasks
 description: Stop hook background_tasks guard — prevents mid-flight interruption of async subagents
 metadata:
   type: project
-created: 2026-05-28
-accessed: 2026-06-10
-tier: short
-access_count: 1
 ---
 
 ## retrospect-hook: background_tasks fix (2026-05-28)

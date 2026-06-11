@@ -1,66 +1,40 @@
 # Memory Index
 
+<!-- GENERATED — do not hand-edit. Rebuilt by rebuildIndex() on each session start,
+     touch, prune, and stamp. Device-local (gitignored). -->
+
 <!--
 Three-tier memory system:
-  1. Rules (.claude/rules/)         — always injected, core behavioral constraints only
-  2. Long-term memory (tier: long)  — progressive disclosure, demoted to short if inactive between prune cycles
+  1. Rules (.claude/rules/)          — always injected, core behavioral constraints only
+  2. Long-term memory (tier: long)   — progressive disclosure, demoted to short if inactive between prune cycles
   3. Short-term memory (tier: short) — progressive disclosure, 90d eviction
 
-Promotion: run `node scripts/touch-memory.js <path> --promote` to upgrade short → long
+Promotion: run `node scripts/touch-memory.js <path> --promote` to upgrade short → long,
+           or automatic when access_count >= 3 (rem-prep.js --promote)
 Demotion:  long-term not accessed between two prune cycles → auto-demoted to short
 Prune:     run `node scripts/prune-memory.js --evict-stale` (short-term eviction + long-term demotion check)
 Compact:   run `node scripts/compact.js --check` when index grows large
 
-Frontmatter:
-  - created:  ISO date (parent folder date)
-  - accessed: ISO date (bumped by touch-memory.js on reference)
-  - tier:     long | short (default short, promoted via touch-memory.js --promote)
+Path format:  ../memory/YYYY/MM/DD/slug.md — nested per-day directories (required).
+
+Frontmatter (content fields only):
+  - name:        short kebab-case slug (required)
+  - description: one-line summary (required)
+  - metadata.type: user | feedback | project | reference (required)
+
+Volatile metadata (accessed, count, tier, dropped) lives in gitignored
+_memory/YYYY/MM/DD/_meta.json per date directory — never in frontmatter.
 -->
 
 ## Scoped
 
-- cc-market (cross-plugin) → see cc-market/.claude/rules/MEMORY.md
+- cc-market → see cc-market/.claude/rules/MEMORY.md
+- cc-market/rem → see cc-market/rem/.claude/rules/MEMORY.md
+- cc-market/sharp-review → see cc-market/sharp-review/.claude/rules/MEMORY.md
+- cc-market/takeover → see cc-market/takeover/.claude/rules/MEMORY.md
+- cc-market/traceme → see cc-market/traceme/.claude/rules/MEMORY.md
+- cc-market/watch → see cc-market/watch/.claude/rules/MEMORY.md
 
 
-## Entries (tier per-file frontmatter — see comment above)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-- [2026-06-10 migrate-tooling](../memory/2026/06/10/migrate-tooling.md) — `created: 2026-06-10, accessed: 2026-06-10`
-- [2026-06-06 feedback-no-auto-push](../memory/2026/06/06/feedback-no-auto-push.md) — `created: 2026-06-06, accessed: 2026-06-10`
-- [2026-06-03 memory-mechanism](../memory/2026/06/03/memory-mechanism.md) — `created: 2026-06-03, accessed: 2026-06-10`
-- [2026-06-03 update-plugins-hook-removed](../memory/2026/06/03/update-plugins-hook-removed.md) — `created: 2026-06-03, accessed: 2026-06-10`
-- [2026-06-02 model-effort-strategy](../memory/2026/06/02/model_effort_strategy.md) — `created: 2026-06-02, accessed: 2026-06-10`
-- [2026-05-31 vscode-provider-envvars](../memory/2026/05/31/vscode_provider_envvars.md) — `created: 2026-05-31, accessed: 2026-06-10`
-- [2026-05-29 ccgpt-removal](../memory/2026/05/29/ccgpt_removal.md) — `created: 2026-05-29, accessed: 2026-06-10`
-- [2026-05-29 api-proxy](../memory/2026/05/29/api_proxy.md) — `created: 2026-05-29, accessed: 2026-06-10`
-- [2026-05-30 macos-notify-swift](../memory/2026/05/30/macos_notify_swift.md) — `created: 2026-05-30, accessed: 2026-06-10`
-- [2026-05-28 vscode-provider-wrapper](../memory/2026/05/28/vscode_provider_wrapper.md) — `created: 2026-05-28, accessed: 2026-06-10`
-- [2026-06-10 migrate-skill-path-fix](../memory/2026/06/10/migrate-skill-path-fix.md) — `created: 2026-06-10, accessed: 2026-06-10`
-- [2026-06-10 hybrid-removal](../memory/2026/06/10/hybrid-removal.md) — `created: 2026-06-10, accessed: 2026-06-10`
-- [2026-06-10 traceme-sync-fix](../memory/2026/06/10/traceme-sync-fix.md) — `created: 2026-06-10, accessed: 2026-06-10`
-- [2026-06-10 sharp-review-cache-lag-failure](../memory/2026/06/10/sharp-review-cache-lag-failure.md) — `created: 2026-06-10, accessed: 2026-06-10`
-- [2026-05-28 retrospect-hook-background-tasks](../memory/2026/05/28/retrospect_hook_background_tasks.md) — `created: 2026-05-28, accessed: 2026-06-10`
-- [2026-05-28 retrospect-hook-task-guard](../memory/2026/05/28/retrospect_hook_task_guard.md) — `created: 2026-05-28, accessed: 2026-06-10`
-- [2026-05-27 git-commit-use-bash](../memory/2026/05/27/feedback_git_commit.md) — `created: 2026-05-27, accessed: 2026-06-10`
-- [2026-05-27 feedback_skills_location](../memory/2026/05/27/feedback_skills_location.md) — `created: 2026-05-27, accessed: 2026-06-10`
-- [2026-05-29 feedback-global-agents](../memory/2026/05/29/feedback_global_agents.md) — `created: 2026-05-29, accessed: 2026-06-10`
-- [2026-06-07 cc-market-separate-repo](../memory/2026/06/07/cc-market-separate-repo.md) — `created: 2026-06-07, accessed: 2026-06-10`
+## Entries
+- [2026-06-11 volatile-metadata-externalized](../memory/2026/06/11/volatile-metadata-externalized.md) — `created: 2026-06-11, accessed: 2026-06-11`

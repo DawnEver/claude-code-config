@@ -3,10 +3,6 @@ name: api-proxy
 description: Local DeepSeek proxy (scripts/runtime/api-proxy.js) — auth, prompt caching, KV-metrics removal, known unfixed bugs
 metadata:
   type: project
-created: 2026-05-29
-accessed: 2026-06-10
-tier: short
-access_count: 1
 ---
 
 `scripts/runtime/api-proxy.js` — single-file Node.js proxy (no external deps) on port 3082.

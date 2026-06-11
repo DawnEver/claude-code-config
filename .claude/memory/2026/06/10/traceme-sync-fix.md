@@ -3,9 +3,6 @@ name: traceme-sync-fix
 description: traceme sync-hook never pushed because TRACEME_SYNC_REMOTE was unset; fixed env var + hook now also auto-aggregates
 metadata:
   type: project
-created: 2026-06-10
-accessed: 2026-06-10
-tier: short
 ---
 
 `cc-market/traceme/hooks/sync-hook.js` gated push behind `process.env.TRACEME_SYNC_REMOTE`,

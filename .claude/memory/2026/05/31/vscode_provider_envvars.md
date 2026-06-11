@@ -3,10 +3,6 @@ name: vscode-provider-envvars
 description: claudeCode.environmentVariables works on all platforms for VS Code chat panel provider switching
 metadata:
   type: feedback
-created: 2026-05-31
-accessed: 2026-06-10
-tier: short
-access_count: 1
 ---
 
 Use `claudeCode.environmentVariables` (array of `{name, value}`) to pass provider env vars to the VS Code chat panel's spawned Claude Code process. This replaces the broken `claudeCode.claudeProcessWrapper` approach which only worked with native binaries on macOS/Linux.

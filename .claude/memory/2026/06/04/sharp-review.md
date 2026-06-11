@@ -3,9 +3,6 @@ name: sharp-review-2026-06-04
 description: Sharp review findings — 4 total
 metadata:
   type: project
-created: 2026-06-04
-accessed: 2026-06-04
-tier: short
 ---
 
 ## Review 2026-06-04 (session) — current branch

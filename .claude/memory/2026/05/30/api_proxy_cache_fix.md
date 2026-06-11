@@ -3,9 +3,6 @@ name: api-proxy-cache-fix
 description: Fixed two bugs in api-proxy.js that silently disabled DeepSeek prompt caching
 metadata:
   type: project
-created: 2026-05-30
-accessed: 2026-05-30
-tier: short
 ---
 
 ## What changed (2026-05-30)

@@ -3,9 +3,6 @@ name: sharp-review-cache-lag-failure
 description: sharp-review workflow failed (args.stats.files undefined) because the installed plugin cache (1.1.5) lags behind the cc-market dev repo's fix
 metadata:
   type: project
-created: 2026-06-10
-accessed: 2026-06-10
-tier: short
 ---
 
 `/sharp-review` ran via `Workflow({scriptPath: "C:\Users\linxu\.claude\plugins\cache\cc-market\sharp-review\1.1.5\scripts\sharp-review-workflow.js", ...})` and failed:

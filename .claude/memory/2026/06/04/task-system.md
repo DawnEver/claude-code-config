@@ -3,9 +3,6 @@ name: task-system
 description: Sharp-review + rem task integration — sync-tasks.js engine, 3-tier scale, archive mechanism, workflow+schema enforcement
 metadata:
   type: project
-created: 2026-06-04
-accessed: 2026-06-04
-tier: short
 ---
 
 # Task System (sharp-review + rem integration)

@@ -3,9 +3,6 @@ name: task-lib-split
 description: task-engine.js split into task-lib.mjs + CLI, archive migrated to YYYY/MM/DD.md, 4 bugs fixed, 52 tests
 metadata:
   type: project
-created: 2026-06-09
-accessed: 2026-06-09
-tier: short
 ---
 
 ## Split

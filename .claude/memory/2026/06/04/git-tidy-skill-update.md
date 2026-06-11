@@ -3,9 +3,6 @@ name: git-tidy-skill-update
 description: git-tidy skill updated — uncommitted changes now always folded in via WIP commit before squash; skill trimmed to 56 lines
 metadata:
   type: project
-created: 2026-06-04
-accessed: 2026-06-04
-tier: short
 ---
 
 Improved `skills/git-tidy/SKILL.md`:
