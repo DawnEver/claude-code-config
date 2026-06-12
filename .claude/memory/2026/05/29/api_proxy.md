@@ -19,9 +19,9 @@ metadata:
 
 ## Auth fix (2026-05-30)
 
-`ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) is used in `claude_env_settings.json` to avoid collision with the user's Claude Pro subscription key. This env var causes Claude Code to send `Authorization: Bearer <key>` — NOT `x-api-key`. The proxy now extracts the bearer token and injects it as `x-api-key` in `handleDeepSeek`. Do NOT change the config to `ANTHROPIC_API_KEY`.
+`ANTHROPIC_AUTH_TOKEN` (not `ANTHROPIC_API_KEY`) is used in `claude_env_settings.json` to avoid collision with the user's Claude subscription key. This env var causes Claude Code to send `Authorization: Bearer <key>` — NOT `x-api-key`. The proxy now extracts the bearer token and injects it as `x-api-key` in `handleDeepSeek`. Do NOT change the config to `ANTHROPIC_API_KEY`.
 
-**Why:** User has both Claude Pro subscription and DeepSeek API key; `ANTHROPIC_API_KEY` would be ambiguous / could override the subscription key.
+**Why:** User has both Claude subscription and DeepSeek API key; `ANTHROPIC_API_KEY` would be ambiguous / could override the subscription key.
 
 ## Remaining known bugs (from 2026-05-29 sharp review — NOT YET FIXED)
 

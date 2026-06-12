@@ -35,7 +35,7 @@ rustup component add rust-analyzer
 Setup installs provider wrappers alongside the `claude` executable (CMD, PowerShell, Git Bash):
 
 ```sh
-cc    # official Claude Pro subscription
+cc    # official Claude subscription
 ccds  # DeepSeek API (Foundry mode, direct to api.deepseek.com)
 ```
 

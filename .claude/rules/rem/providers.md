@@ -24,7 +24,7 @@ Sharp-review hook delegates to `/sharp-review` skill — the hook only handles c
 Single-file Node.js proxy (no external deps) on port 3082. Auto-started by `cc.js`.
 
 **Auth:** `ANTHROPIC_AUTH_TOKEN` (NOT `ANTHROPIC_API_KEY`) in `claude_env_settings.json` to
-avoid collision with Claude Pro subscription key. The proxy extracts the bearer token and
+avoid collision with Claude subscription key. The proxy extracts the bearer token and
 injects it as `x-api-key` for DeepSeek.
 
 **Critical invariants (do NOT revert):**

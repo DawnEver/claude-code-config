@@ -40,7 +40,7 @@ if (provider !== 'claude') {
   Object.assign(env, profile);
   console.log(`[cc] Using provider: ${provider}`);
 } else {
-  console.log('[cc] Using Claude Pro (official subscription)');
+  console.log('[cc] Using Claude (official subscription)');
 }
 
 const isWindows = process.platform === 'win32';

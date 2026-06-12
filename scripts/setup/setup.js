@@ -315,7 +315,7 @@ function installShellAliases() {
     if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
   }
 
-  console.log('      cc      - Claude Pro (official subscription)');
+  console.log('      cc      - Claude (official subscription)');
   console.log('      ccds    - DeepSeek API (Foundry mode, direct)');
 
   // TraceMe CLI alias — dynamic launcher survives plugin version updates
