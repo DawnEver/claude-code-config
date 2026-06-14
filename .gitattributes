@@ -1,0 +1,5 @@
+# Memory/task markdown is parsed line-by-line by rem's task-engine, which is
+# sensitive to line endings. Force LF so git autocrlf never rewrites CRLF on
+# Windows checkout and silently breaks task parsing.
+.claude/memory/**/*.md text eol=lf
+.claude/rules/**/*.md  text eol=lf
