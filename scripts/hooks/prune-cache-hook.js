@@ -7,7 +7,7 @@
 // running Claude Code sessions or MCP servers.
 
 import { readdirSync, rmSync, statSync } from 'fs';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -36,16 +36,20 @@ function getLiveVersions() {
   const inUse = {};
   try {
     const isWin = process.platform === 'win32';
-    let cmd;
+    // execFileSync (no shell) — Node spawns the target directly, so on Windows
+    // it never goes through `cmd.exe /c` (avoids EDR child_process+cmd.exe alerts).
+    let output;
     if (isWin) {
       // Get-WmiObject (not Get-CimInstance) — CIM returns null CommandLine for some processes.
       // Use -like (not -match) — wildcard avoids regex backslash-escaping hell.
       // $pid excludes the scanner PowerShell process itself.
-      cmd = 'powershell -NoProfile -Command "Get-WmiObject Win32_Process | Where-Object { $_.ProcessId -ne $pid -and $_.CommandLine -like ' + "'*plugins*cache*'" + ' } | ForEach-Object { $_.CommandLine }"';
+      const ps = "Get-WmiObject Win32_Process | Where-Object { $_.ProcessId -ne $pid -and $_.CommandLine -like '*plugins*cache*' } | ForEach-Object { $_.CommandLine }";
+      output = execFileSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 });
     } else {
-      cmd = "ps aux | grep 'plugins/cache' | grep -v grep || true";
+      // Run `ps` directly and filter in JS — no shell pipeline needed.
+      const raw = execFileSync('ps', ['aux'], { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 });
+      output = raw.split('\n').filter(line => line.includes('plugins/cache')).join('\n');
     }
-    const output = execSync(cmd, { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 });
     const regex = /[\\/]cache[\\/]([^\\/]+)[\\/]([^\\/]+)[\\/](\d+\.\d+\.\d+)/g;
     let match;
     while ((match = regex.exec(output)) !== null) {

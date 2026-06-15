@@ -2,7 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { fixLspWindows } from './fix-lsp-windows.js';
 
@@ -183,7 +183,7 @@ export function setup() {
   const ccMarketDir = path.join(sourceDir, 'cc-market');
   if (fs.existsSync(path.join(ccMarketDir, '.git'))) {
     try {
-      execSync('git pull --ff-only', { cwd: ccMarketDir, stdio: 'pipe' });
+      execFileSync('git', ['pull', '--ff-only'], { cwd: ccMarketDir, stdio: 'pipe' });
       console.log('OK    cc-market - pulled latest');
     } catch {
       console.log('OK    cc-market - already exists (could not pull)');
@@ -192,7 +192,7 @@ export function setup() {
     console.log('SKIP  cc-market - directory exists but is not a git repo');
   } else {
     try {
-      execSync('git clone https://github.com/DawnEver/cc-market', { cwd: sourceDir, stdio: 'pipe' });
+      execFileSync('git', ['clone', 'https://github.com/DawnEver/cc-market'], { cwd: sourceDir, stdio: 'pipe' });
       console.log('OK    cc-market - cloned from https://github.com/DawnEver/cc-market');
     } catch (err) {
       console.log(`ERR   cc-market - ${err.stderr?.toString().trim() || err.message}`);
@@ -268,7 +268,7 @@ function checkMacNotify() {
 
   console.log('INSTALL terminal-notifier...');
   try {
-    execSync(`"${brewBin}" install terminal-notifier`, { stdio: 'pipe', timeout: 120000 });
+    execFileSync(brewBin, ['install', 'terminal-notifier'], { stdio: 'pipe', timeout: 120000 });
     console.log('OK    terminal-notifier installed');
     return true;
   } catch (err) {
@@ -284,7 +284,7 @@ function installShellAliases() {
   // On macOS/Linux: write no-extension shell script only.
   let claudeBin;
   try {
-    const raw = execSync(isWindows ? 'where claude' : 'which claude', { stdio: 'pipe' })
+    const raw = execFileSync(isWindows ? 'where' : 'which', ['claude'], { stdio: 'pipe' })
       .toString().trim().split(/\r?\n/)[0].trim();
     claudeBin = path.dirname(raw);
   } catch {

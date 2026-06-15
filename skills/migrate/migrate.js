@@ -14,7 +14,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import readline from 'readline';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, CODEX_LINKS, KNOWN_ALIAS_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
@@ -87,7 +87,7 @@ const MARKER = '# claude-code-alias';
 function findClaudeBin() {
   const isWindows = os.platform() === 'win32';
   try {
-    const raw = execSync(isWindows ? 'where claude' : 'which claude', { stdio: 'pipe' })
+    const raw = execFileSync(isWindows ? 'where' : 'which', ['claude'], { stdio: 'pipe' })
       .toString().trim().split(/\r?\n/)[0].trim();
     return path.dirname(raw);
   } catch { return null; }
@@ -173,8 +173,9 @@ const MANAGED_GITIGNORE_LINES = new Set([
 
 const REPO_SKIP_DIRS = new Set(['node_modules', '.git', 'dist']);
 
-function git(repoDir, argStr) {
-  return execSync(`git ${argStr}`, { cwd: repoDir, stdio: 'pipe' }).toString();
+function git(repoDir, ...args) {
+  // execFileSync (no shell) — avoids `cmd.exe /c` on Windows.
+  return execFileSync('git', args, { cwd: repoDir, stdio: 'pipe' }).toString();
 }
 
 function isGitRepo(dir) {
@@ -221,7 +222,7 @@ export function ensureGitignoreTemplate(repoDir, { dryRun } = {}) {
 // Files tracked by `repoDir` that its own .gitignore now excludes.
 export function untrackIgnored(repoDir, { dryRun } = {}) {
   let out;
-  try { out = git(repoDir, 'ls-files --cached --ignored --exclude-standard'); }
+  try { out = git(repoDir, 'ls-files', '--cached', '--ignored', '--exclude-standard'); }
   catch { return []; }
   const files = out.split('\n').map(s => s.trim()).filter(Boolean);
   if (!files.length || dryRun) return files;
