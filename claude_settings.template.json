@@ -1,5 +1,6 @@
 {
     "env": {
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
         "CLAUDE_CODE_FORK_SUBAGENT": "1",
         "CLAUDE_CODE_WORKFLOWS": "1",
         "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
@@ -91,9 +92,9 @@
         "takeover@cc-market": true,
         "typescript-lsp@claude-plugins-official": true,
         "pyright-lsp@claude-plugins-official": true,
-        "rust-analyzer-lsp@claude-plugins-official": false,
         "rem@cc-market": true,
         "sharp-review@cc-market": true,
+        "evolve@cc-market": true,
         "traceme@cc-market": true
     },
     "extraKnownMarketplaces": {
