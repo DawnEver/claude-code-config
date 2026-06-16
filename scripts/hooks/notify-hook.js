@@ -78,9 +78,10 @@ try {
 `;
     try {
       fs.writeFileSync(tmpScript, psScript, 'utf8');
-      const child = spawn('cmd.exe', [
-        '/c', 'start', '""', '/B',
-        'powershell.exe',
+      // Spawn powershell.exe directly — do NOT wrap in `cmd /c start`, which
+      // opens its own console window that windowsHide cannot suppress. A direct
+      // spawn with windowsHide+detached runs the toast with no visible window.
+      const child = spawn('powershell.exe', [
         '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
         '-File', tmpScript
       ], {
@@ -205,7 +206,7 @@ let workspaceRoot = '';
 try {
   const gitRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
     timeout: 3000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    cwd: projectDir
+    cwd: projectDir, windowsHide: true
   }).trim();
   if (gitRoot) workspaceRoot = gitRoot;
 } catch {
