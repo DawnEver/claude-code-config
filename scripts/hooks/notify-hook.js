@@ -78,10 +78,15 @@ try {
 `;
     try {
       fs.writeFileSync(tmpScript, psScript, 'utf8');
-      // Spawn powershell.exe directly — do NOT wrap in `cmd /c start`, which
-      // opens its own console window that windowsHide cannot suppress. A direct
-      // spawn with windowsHide+detached runs the toast with no visible window.
-      const child = spawn('powershell.exe', [
+      // Launch via `cmd /c start "" /B` so the toast process breaks away from
+      // Claude Code's hook job object and SURVIVES the hook teardown — a plain
+      // detached spawn gets killed before the ~1-2s WinRT load + toast register
+      // completes, so no notification ever shows. `/B` runs powershell without a
+      // new console window, and windowsHide hides cmd's own console, so there is
+      // no terminal flash despite the start wrapper.
+      const child = spawn('cmd.exe', [
+        '/c', 'start', '""', '/B',
+        'powershell.exe',
         '-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
         '-File', tmpScript
       ], {

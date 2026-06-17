@@ -11,10 +11,22 @@ session (sharp-review startup was popping ~3 windows; notify-hook popped one eve
 `windowsHide: true` suppresses the window and is a harmless no-op on macOS/Linux, so add it
 unconditionally.
 
-**Never** wrap a background launch in `cmd /c start …`. `start` spawns its own console that
-`windowsHide` on the `cmd.exe` call cannot suppress. Spawn the target binary directly:
+**Avoid** wrapping a background launch in `cmd /c start …` **when the child does NOT need to
+outlive the hook.** Bare `start` (no `/B`) spawns its own console that `windowsHide` cannot
+suppress. Spawn the target binary directly:
 ```js
 spawn('powershell.exe', [...args], { detached: true, stdio: 'ignore', windowsHide: true });
+```
+
+**Exception — child MUST survive hook teardown (`notify-hook.js` toast):** a plain detached
+spawn is killed when Claude Code tears down the hook's job object, before the ~1-2s WinRT
+load + toast register completes, so no notification ever shows. Only `cmd /c start "" /B`
+makes the child break away from the job object and survive. Use `/B` (runs the target with
+no new console) + `windowsHide: true` (hides cmd's own console) + `-WindowStyle Hidden` —
+this survives AND does not flash:
+```js
+spawn('cmd.exe', ['/c', 'start', '""', '/B', 'powershell.exe', '-WindowStyle', 'Hidden', ...args],
+  { detached: true, stdio: 'ignore', windowsHide: true });
 ```
 
 **Exception:** foreground launchers the user invokes in their own terminal with
