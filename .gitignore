@@ -10,6 +10,8 @@
 !**/.claude/commands/**
 !**/.claude/workflows/
 !**/.claude/workflows/**
+!**/.claude/output-styles/
+!**/.claude/output-styles/**
 !**/.claude/rules/
 !**/.claude/rules/**
 !**/.claude/memory/

@@ -132,6 +132,7 @@ describe('ensureGitignoreTemplate', () => {
     '!**/.claude/skills/', '!**/.claude/skills/**',
     '!**/.claude/commands/', '!**/.claude/commands/**',
     '!**/.claude/workflows/', '!**/.claude/workflows/**',
+    '!**/.claude/output-styles/', '!**/.claude/output-styles/**',
     '!**/.claude/rules/', '!**/.claude/rules/**',
     '!**/.claude/memory/', '!**/.claude/memory/**',
     '**/.claude/rules/MEMORY.md',

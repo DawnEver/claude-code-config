@@ -41,6 +41,25 @@ ccds  # DeepSeek API (Foundry mode, direct to api.deepseek.com)
 
 Add providers by editing `claude_env_settings.json` (see template) and adding an alias entry in `scripts/setup/setup.js`.
 
+#### Output styles (non-coding personas)
+
+For non-coding work (e.g. academic writing) in the terminal, use an **output
+style** rather than the default coding prompt: `output-styles/<name>.md` (synced
+and symlinked to `~/.claude/output-styles`). With `keep-coding-instructions:
+false` it strips Claude Code's coding guidance while keeping the harness and
+tools, so you can switch between coding and writing within one session:
+
+```
+/config  → Output style → Academic   # needs /clear or a new session to take effect
+```
+
+`output-styles/academic.md` is a scholarly writing/thinking persona. Add more by
+dropping a `<name>.md` file in `output-styles/`.
+
+> A full system-prompt replacement (`--system-prompt-file`) was considered and
+> rejected: it discards the entire harness and degrades Claude Code into a plain
+> chatbox. See `.claude/memory/2026/06/20/persona-vs-output-style.md`.
+
 ### VS Code Extension
 
 The VS Code extension spawns its own `claude` process. Configure it separately:

@@ -18,6 +18,7 @@ export const CLAUDE_LINKS = [
   { src: 'claude_settings.json', dest: 'settings.json', type: 'file' },
   { src: path.join('claude_plugins', 'claude-hud', 'config.json'), dest: path.join('plugins', 'claude-hud', 'config.json'), type: 'file' },
   { src: 'skills', dest: 'skills', type: 'dir' },
+  { src: 'output-styles', dest: 'output-styles', type: 'dir' },
   { src: 'agents', dest: 'agents', type: 'dir' },
   { src: 'scripts', dest: 'scripts', type: 'dir' },
   { src: '.claude/workflows', dest: 'workflows', type: 'dir' },

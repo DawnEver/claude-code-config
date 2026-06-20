@@ -152,6 +152,8 @@ const CLAUDE_GITIGNORE_TEMPLATE = [
   '!**/.claude/commands/**',
   '!**/.claude/workflows/',
   '!**/.claude/workflows/**',
+  '!**/.claude/output-styles/',
+  '!**/.claude/output-styles/**',
   '!**/.claude/rules/',
   '!**/.claude/rules/**',
   '!**/.claude/memory/',
@@ -169,6 +171,7 @@ const MANAGED_GITIGNORE_LINES = new Set([
   '.claude/*', '!.claude/rules/**', '!.claude/memory/**', '.claude/rules/MEMORY.md',
   '!.claude/settings.json', '!.claude/agents/', '!.claude/skills/',
   '!.claude/commands/', '!.claude/workflows/', '!.claude/rules/', '!.claude/memory/',
+  '!.claude/output-styles/', '!.claude/output-styles/**',
 ]);
 
 const REPO_SKIP_DIRS = new Set(['node_modules', '.git', 'dist']);
