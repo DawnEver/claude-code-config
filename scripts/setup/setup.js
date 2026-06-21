@@ -28,6 +28,9 @@ export const CLAUDE_LINKS = [
 
 export const CODEX_LINKS = [
   { src: 'codex_config.toml', dest: 'config.toml', type: 'file' },
+  // Codex's global instructions file is $CODEX_HOME/AGENTS.md (mirrors ~/.claude/CLAUDE.md
+  // for Claude). Same single source — GLOBAL-AGENTS.md — linked to both hosts.
+  { src: 'GLOBAL-AGENTS.md', dest: 'AGENTS.md', type: 'file' },
 ];
 
 const isWindows = process.platform === 'win32';
