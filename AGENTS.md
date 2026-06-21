@@ -37,7 +37,7 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `.claude/workflows/`: Saved workflow scripts (symlinked from repo; sharp-review workflow now in `cc-market/sharp-review/workflows/`)
 
 ### CLI Tools
-- `cc` / `ccds` — Claude Code launchers (official / DeepSeek), config in `claude_env_settings.json`
+- `ccc` / `ccds` — Claude Code launchers (official / DeepSeek), config in `claude_env_settings.json`
 - `todo` — Task management: `todo` (list), `todo <text>` (add), `todo rm <id>` (remove), `todo help`
 - `traceme` — Personal observability: token/cost reports, multi-device sync
 - `aliases.ps1` / `aliases.sh` — Shell integration; `setup.js` installs `.cmd` wrappers on Windows
