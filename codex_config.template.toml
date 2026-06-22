@@ -2,6 +2,9 @@
 # Ordered fallbacks when AGENTS.md is missing at a directory level. Default: []
 project_doc_fallback_filenames = ["CLAUDE.md","AGENT.md","README.md"]
 approvals_reviewer = "auto_review"
+model = "gpt-5.5"
+model_reasoning_effort = "low"
+
 [tui.model_availability_nux]
 "gpt-5.5" = 4
 
@@ -23,10 +26,6 @@ enabled = true
 
 [plugins."rem@cc-market"]
 enabled = true
-# Control whether users can submit feedback from `/feedback`. Default: true
-[feedback]
-enabled = false
 
 [features]
-goals = true
 prevent_idle_sleep = true
