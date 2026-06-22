@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { CLAUDE_LINKS, CODEX_LINKS } from '../../scripts/setup/setup.js';
 import { findOrphanedLinks, discoverProjectMigrators, ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './migrate.js';
 
 describe('findOrphanedLinks', () => {
@@ -118,6 +119,13 @@ describe('discoverProjectMigrators', () => {
     const migrators = discoverProjectMigrators(ccMarketDir);
     assert.equal(migrators.length, 1);
     assert.equal(migrators[0].name, 'rem');
+  });
+});
+
+describe('setup link tables', () => {
+  test('skills are linked for both Claude and Codex', () => {
+    assert.ok(CLAUDE_LINKS.some((link) => link.src === 'skills' && link.dest === 'skills'));
+    assert.ok(CODEX_LINKS.some((link) => link.src === 'skills' && link.dest === 'skills'));
   });
 });
 

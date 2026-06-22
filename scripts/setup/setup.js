@@ -28,6 +28,7 @@ export const CLAUDE_LINKS = [
 
 export const CODEX_LINKS = [
   { src: 'codex_config.toml', dest: 'config.toml', type: 'file' },
+  { src: 'skills', dest: 'skills', type: 'dir' },
   // Codex's global instructions file is $CODEX_HOME/AGENTS.md (mirrors ~/.claude/CLAUDE.md
   // for Claude). Same single source — GLOBAL-AGENTS.md — linked to both hosts.
   { src: 'GLOBAL-AGENTS.md', dest: 'AGENTS.md', type: 'file' },
@@ -349,6 +350,32 @@ function installShellAliases() {
   console.log('      todo    - Task management CLI');
   console.log(`      installed to: ${claudeBin}`);
 
+  if (isWindows) installPowerShellProfileAliasSource();
+}
+
+function installPowerShellProfileAliasSource() {
+  const profilePath = path.join(os.homedir(), 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
+  const oldSource = '. ~/.claude/scripts/shell/aliases.ps1';
+  const sourceLine = '. ~/.claude/scripts/runtime/aliases.ps1';
+
+  fs.mkdirSync(path.dirname(profilePath), { recursive: true });
+  const existing = fs.existsSync(profilePath) ? fs.readFileSync(profilePath, 'utf8') : '';
+  const normalized = existing.replace(/\r\n/g, '\n');
+
+  let next = normalized;
+  if (next.includes(oldSource)) {
+    next = next.replaceAll(oldSource, sourceLine);
+  } else if (!next.includes(sourceLine)) {
+    const prefix = next.trimEnd();
+    next = `${prefix}${prefix ? '\n\n' : ''}# Claude Code aliases\n${sourceLine}\n`;
+  }
+
+  if (next !== normalized) {
+    fs.writeFileSync(profilePath, next.replace(/\n/g, os.EOL));
+    console.log(`WRITE PowerShell profile - ${profilePath}`);
+  } else {
+    console.log('OK    PowerShell profile - already up to date');
+  }
 }
 
 // Returns 'written' | 'ok' | 'skipped'
