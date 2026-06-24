@@ -35,7 +35,15 @@ Report: total commits, which look like WIP (`wip`, `fix`, `temp`, `xxx`, single 
 
 ### 2. Propose
 
-Read `git diff origin/main..HEAD`. Propose a single squash commit:
+Read `git diff origin/main..HEAD`. Choose a target shape based on how much is on the branch:
+
+- **Few commits (≤5) or one cohesive change** → propose a single squash commit. This is the default.
+- **Many commits (>5) or clearly separable concerns** → propose splitting into a few logical
+  commits, one per concern (e.g. feature vs. test vs. docs vs. unrelated fix). Group by what the
+  diff touches, not by the original commit boundaries. Keep the count small — aim for the fewest
+  commits that keep unrelated changes apart.
+
+Each proposed commit uses:
 
 ```
 <type>(<scope>): <imperative description>
@@ -43,7 +51,7 @@ Read `git diff origin/main..HEAD`. Propose a single squash commit:
 
 Types: `feat` `fix` `docs` `refactor` `test` `chore` `perf` `style` `ci` `build`
 
-If the diff clearly covers unrelated changes, mention it and offer to split — but default is one commit. **Ask for confirmation before touching history.**
+Present the proposed commit(s) as a list and **ask for confirmation before touching history.**
 
 ### 3. Execute (after confirmation)
 
@@ -54,7 +62,20 @@ git commit -m "feat: your message here"
 
 This squashes everything — including any WIP commit from Step 0 — into one clean commit.
 
-For multiple commits: use `GIT_SEQUENCE_EDITOR` with a temp script (Bash) or `git config sequence.editor` (Windows) to drive `git rebase -i origin/main` non-interactively.
+**For a split into multiple commits**, `reset --soft` then stage each concern separately:
+
+```bash
+git reset --soft origin/main   # unstage everything, keep working tree
+git restore --staged .         # move all changes to unstaged
+git add <files for concern 1>
+git commit -m "feat: ..."
+git add <files for concern 2>
+git commit -m "test: ..."
+# repeat per concern
+```
+
+If concerns are interleaved within the same file, use `git add -p` to stage hunks. Avoid
+interactive rebase for splits — staging from a soft reset works identically on all platforms.
 
 ### 4. Verify and push
 
@@ -69,6 +90,7 @@ Push only on request:
 ## Rules
 
 - Never rewrite without confirmation.
-- Default to one commit; split only if user asks.
+- Default to one commit; split into a few logical commits when the branch has many commits (>5)
+  or clearly separable concerns. Keep the split minimal.
 - Rebase, don't merge.
 - Prefer `git reset --soft` over interactive rebase for simple squashes — works identically on all platforms.
