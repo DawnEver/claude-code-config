@@ -9,7 +9,7 @@
         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
         "DISABLE_ERROR_REPORTING": "1",
         "DISABLE_FEEDBACK_COMMAND": "1",
-        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEYS": "1",
+        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
         "TRACEME_SYNC_REMOTE": "Your TRACEME Git Repo"
     },
     "includeCoAuthoredBy": false,
@@ -31,7 +31,6 @@
             "PowerShell(Test-Path *)",
             "PowerShell(Get-Command *)",
             "PowerShell(Get-Process *)",
-            "Skill(update-config)",
             "Skill(rem:rem)",
             "Skill(rem:todo)",
             "Skill(sharp-review)",

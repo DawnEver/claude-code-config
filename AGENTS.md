@@ -18,7 +18,7 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 ### Structure
 - `scripts/setup/`: `setup.js` (OS detection, symlinks)
 - `skills/migrate/`: `/migrate` skill — `migrate.js` (orphaned symlink cleanup + cc-market plugin `.claude/` migrations) and tests
-- `scripts/runtime/`: `cc.js` (provider launcher), `aliases.sh`, `aliases.ps1`
+- `scripts/runtime/`: `cc.js` (provider launcher), `aliases.sh`, `aliases.ps1`, `todo-launcher.mjs`, `traceme-launcher.mjs`
 - `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`
 - `cc-market/sharp-review/`: Sharp review plugin — hook, skill, workflow, findings sync (`post-review.js`)
 - `cc-market/rem/`: REM plugin — memory lifecycle, task management engine (`task-engine.js`), `/rem` and `/todo` skills
@@ -34,7 +34,7 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory. Single source linked to both `~/.claude/CLAUDE.md` (Claude) and `~/.codex/AGENTS.md` (Codex global instructions)
 - `.claude/rules/rem/`: All rules loaded every session (git-tracked), managed by REM plugin lifecycle. `.claude/rules/MEMORY.md` is the device-local generated index (gitignored).
 - `.claude/memory/`: Historical reference — content git-tracked; access metadata in gitignored `_meta.json` per date directory. `MEMORY.md` index is device-local generated (gitignored). Findings stored as `sharp-review.md` per session — sole source of truth for tasks.
-- `.claude/workflows/`: Saved workflow scripts (symlinked from repo; sharp-review workflow now in `cc-market/sharp-review/workflows/`)
+- `.claude/workflows/`: Saved workflow scripts (symlinked from repo; the sharp-review workflow lives at `cc-market/sharp-review/scripts/sharp-review-workflow.js`)
 
 ### CLI Tools
 - `ccc` / `ccds` — Claude Code launchers (official / DeepSeek), config in `claude_env_settings.json`

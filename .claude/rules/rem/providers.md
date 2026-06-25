@@ -19,25 +19,11 @@ and Sonnet during execution. For critical plan sessions, run `/effort high` befo
 Sharp-review hook delegates to `/sharp-review` skill — the hook only handles classification
 (none/once/triple) and state tracking; all review logic lives in the skill.
 
-## DeepSeek Proxy (`scripts/runtime/api-proxy.js`)
+## DeepSeek via Foundry Mode
 
-Single-file Node.js proxy (no external deps) on port 3082. Auto-started by `cc.js`.
-
-**Auth:** `ANTHROPIC_AUTH_TOKEN` (NOT `ANTHROPIC_API_KEY`) in `claude_env_settings.json` to
-avoid collision with Claude subscription key. The proxy extracts the bearer token and
-injects it as `x-api-key` for DeepSeek.
-
-**Critical invariants (do NOT revert):**
-- `SAFE_REQ_HEADERS` must include `'anthropic-beta'` — otherwise prompt caching headers are
-  dropped before forwarding (100% cache miss).
-- Do NOT re-add `stripCacheControl()` — DeepSeek's Anthropic-compatible endpoint supports
-  `cache_control` natively.
-- Do NOT re-add KV-cache metrics (`metrics`, `persistMetrics`, `/metrics` endpoint, HUD
-  `readKvLabel`) — claude-hud shows token breakdown natively.
-
-**Known unfixed bugs:** `fixSystemRoles` mixed Buffer/string return, `proxyPassthrough`
-leaks `Content-Type` on error bodies, `content-length` not recalculated after body mutation,
-non-text content blocks silently dropped, `ensureProxy` warns but continues on proxy failure.
+DeepSeek connects via Foundry mode (`CLAUDE_CODE_USE_FOUNDRY=1`), configured with
+`ANTHROPIC_FOUNDRY_BASE_URL` and `ANTHROPIC_FOUNDRY_API_KEY` in `claude_env_settings.json`.
+No local proxy needed — `cc.js` passes Foundry env vars directly to Claude Code.
 
 ## ChatGPT Bridge — REMOVED, do NOT re-add
 

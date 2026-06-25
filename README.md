@@ -69,7 +69,7 @@ node scripts/setup/setup-vscode.js deepseek   # switch to DeepSeek
 node scripts/setup/setup-vscode.js claude      # revert to official
 ```
 
-Writes `terminal.integrated.env.*` and `claudeCode.claudeProcessWrapper` to local VS Code `settings.json`. Re-run on each machine. Exclude these keys from VS Code Settings Sync to avoid cross-platform conflicts.
+Writes `terminal.integrated.env.*` and `claudeCode.environmentVariables` to local VS Code `settings.json` (and cleans up legacy `claudeCode.claudeProcessWrapper`). Re-run on each machine. Exclude these keys from VS Code Settings Sync to avoid cross-platform conflicts.
 
 ### Troubleshooting
 
@@ -84,7 +84,7 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 |---|---|---|
 | `Notification` | `notify-hook.js` | Native OS notification |
 | `Stop` | `sharp-review` plugin | Post-task sharp review (3 parallel reviewers) |
-| `StatusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
+| `statusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 
 The `rem` and `sharp-review` plugins (Stop hooks for memory consolidation and code review) are auto-registered via `enabledPlugins` - no manual wiring needed.
 
@@ -117,7 +117,7 @@ Sound is **on by default**. Pass `--no-sound` to silence it. By default, clickin
 
 Test:
 ```sh
-claude --bare --model haiku "please read ~/.claude/models.md to test claude permission system [Expected waiting for user's input]"
+claude --bare --model haiku "please read ~/.claude/CLAUDE.md to test claude permission system [Expected waiting for user's input]"
 ```
 
 ## Memory & Rules
@@ -127,11 +127,11 @@ claude --bare --model haiku "please read ~/.claude/models.md to test claude perm
 | `.claude/rules/` | `MEMORY.md` index + distilled rule files | Every session |
 | `.claude/memory/` | Append-only archive with date prefixes | On demand via index |
 
-`@.claude/rules/MEMORY.md` is referenced from `GLOBAL-AGENTS.md` so Claude loads the index every session. When a topic matches, Claude reads the relevant memory file on demand.
+`@.claude/rules/MEMORY.md` is auto-loaded by Claude Code as a `.claude/rules/` file each session. When a topic matches, Claude reads the relevant memory file on demand.
 
 After a session, add entries to `.claude/memory/YYYY/MM/DD/<topic>.md` and prepend a one-line pointer to `MEMORY.md` (keep 鈮?0 entries, newest-first). If the session changed project architecture or setup, update `AGENTS.md` too.
 
-When `MEMORY.md` hits 20 entries, the REM hook triggers a **compact**: distill all memory into `.claude/rules/` rule files, then clear the index. Memory files are never deleted.
+When `MEMORY.md` hits 20 entries, the REM hook triggers a **crystallize**: distill all memory into `.claude/rules/` rule files, then clear the index. Memory files are never deleted.
 
 Both directories are git-tracked (`.gitignore` uses `.claude/*` with `!.claude/rules/` and `!.claude/memory/` exceptions).
 
