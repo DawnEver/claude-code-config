@@ -5,6 +5,8 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { fixLspWindows } from './fix-lsp-windows.js';
+import { checkMacNotify } from './check-mac-notify.js';
+import { installShellAliases } from './install-shell-aliases.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const sourceDir = path.resolve(__dirname, '../..');
@@ -248,154 +250,9 @@ export function setup() {
 
   // Install shell aliases
   console.log('\n--- Shell Aliases ---');
-  installShellAliases();
+  installShellAliases(claudeDir, sourceDir);
 
   console.log(`\nDone: ${created} linked, ${skipped} skipped, ${errors} errors`);
-}
-
-function checkMacNotify() {
-  // macOS 26+ requires terminal-notifier (UNUserNotificationCenter via proper .app bundle).
-  // NSUserNotificationCenter and AppleScript display notification are both dead.
-  const brewDirs = ['/opt/homebrew/bin', '/usr/local/bin'];
-  const notifyBin = brewDirs.map(d => path.join(d, 'terminal-notifier')).find(fs.existsSync);
-  if (notifyBin) {
-    console.log(`OK    terminal-notifier found: ${notifyBin}`);
-    return true;
-  }
-
-  // Try auto-install via Homebrew
-  const brewBin = brewDirs.map(d => path.join(d, 'brew')).find(fs.existsSync);
-  if (!brewBin) {
-    console.log('WARN  terminal-notifier not found, and Homebrew is not installed.');
-    console.log('      Install Homebrew (https://brew.sh), then: brew install terminal-notifier');
-    return false;
-  }
-
-  console.log('INSTALL terminal-notifier...');
-  try {
-    execFileSync(brewBin, ['install', 'terminal-notifier'], { stdio: 'pipe', timeout: 120000 });
-    console.log('OK    terminal-notifier installed');
-    return true;
-  } catch (err) {
-    console.log(`ERR   brew install terminal-notifier failed: ${err.stderr?.toString().trim() || err.message}`);
-    console.log('      macOS notifications will not work without it.');
-    return false;
-  }
-}
-
-function installShellAliases() {
-  // Find the directory where `claude` is installed and place wrappers alongside it.
-  // On Windows: write .cmd (CMD/PowerShell) + no-extension script (Git Bash).
-  // On macOS/Linux: write no-extension shell script only.
-  let claudeBin;
-  try {
-    const raw = execFileSync(isWindows ? 'where' : 'which', ['claude'], { stdio: 'pipe' })
-      .toString().trim().split(/\r?\n/)[0].trim();
-    claudeBin = path.dirname(raw);
-  } catch {
-    console.log('SKIP  aliases - could not locate claude executable');
-    return;
-  }
-
-  // Use forward slashes so the path works in both node on Windows and sh on Git Bash
-  const ccJsPath = path.join(claudeDir, 'scripts', 'runtime', 'cc.js').replace(/\\/g, '/');
-
-  const ALIASES = [
-    { name: 'ccc',  provider: 'claude'   },
-    { name: 'ccds', provider: 'deepseek' },
-  ];
-
-  const MARKER = '# claude-code-alias';
-
-  for (const { name, provider } of ALIASES) {
-    if (isWindows) {
-      const cmdContent = `@echo off\nrem claude-code-alias\nnode "${ccJsPath}" ${provider} %*\n`;
-      writeIfChanged(path.join(claudeBin, `${name}.cmd`), cmdContent, `${name}.cmd`, 'claude-code-alias');
-    }
-
-    const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${ccJsPath}" ${provider} "$@"\n`;
-    const shPath = path.join(claudeBin, name);
-    const result = writeIfChanged(shPath, shContent, name, MARKER);
-    // chmod whenever the file is ours (written or already up-to-date), not for skipped third-party files
-    if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
-  }
-
-  console.log('      ccc     - Claude (official subscription)');
-  console.log('      ccds    - DeepSeek API (Foundry mode, direct)');
-
-  // TraceMe CLI alias — dynamic launcher survives plugin version updates
-  const tracemeLauncher = path.join(sourceDir, 'scripts', 'runtime', 'traceme-launcher.mjs').replace(/\\/g, '/');
-  if (isWindows) {
-    const cmdContent = `@echo off\nrem claude-code-alias\nnode "${tracemeLauncher}" %*\n`;
-    writeIfChanged(path.join(claudeBin, 'traceme.cmd'), cmdContent, 'traceme.cmd', 'claude-code-alias');
-  }
-  const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${tracemeLauncher}" "$@"\n`;
-  const shPath = path.join(claudeBin, 'traceme');
-  const result = writeIfChanged(shPath, shContent, 'traceme', MARKER);
-  if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
-
-  console.log('      traceme - Claude Code observability (token/cost reports)');
-
-  // Todo CLI alias — task management
-  const todoLauncher = path.join(sourceDir, 'scripts', 'runtime', 'todo-launcher.mjs').replace(/\\/g, '/');
-  if (isWindows) {
-    const cmdContent = `@echo off\nrem claude-code-alias\nnode "${todoLauncher}" %*\n`;
-    writeIfChanged(path.join(claudeBin, 'todo.cmd'), cmdContent, 'todo.cmd', 'claude-code-alias');
-  }
-  const todoShContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${todoLauncher}" "$@"\n`;
-  const todoShPath = path.join(claudeBin, 'todo');
-  const todoResult = writeIfChanged(todoShPath, todoShContent, 'todo', MARKER);
-  if (!isWindows && todoResult !== 'skipped') fs.chmodSync(todoShPath, 0o755);
-
-  console.log('      todo    - Task management CLI');
-  console.log(`      installed to: ${claudeBin}`);
-
-  if (isWindows) installPowerShellProfileAliasSource();
-}
-
-function installPowerShellProfileAliasSource() {
-  const profilePath = path.join(os.homedir(), 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
-  const oldSource = '. ~/.claude/scripts/shell/aliases.ps1';
-  const sourceLine = '. ~/.claude/scripts/runtime/aliases.ps1';
-
-  fs.mkdirSync(path.dirname(profilePath), { recursive: true });
-  const existing = fs.existsSync(profilePath) ? fs.readFileSync(profilePath, 'utf8') : '';
-  const normalized = existing.replace(/\r\n/g, '\n');
-
-  let next = normalized;
-  if (next.includes(oldSource)) {
-    next = next.replaceAll(oldSource, sourceLine);
-  } else if (!next.includes(sourceLine)) {
-    const prefix = next.trimEnd();
-    next = `${prefix}${prefix ? '\n\n' : ''}# Claude Code aliases\n${sourceLine}\n`;
-  }
-
-  if (next !== normalized) {
-    fs.writeFileSync(profilePath, next.replace(/\n/g, os.EOL));
-    console.log(`WRITE PowerShell profile - ${profilePath}`);
-  } else {
-    console.log('OK    PowerShell profile - already up to date');
-  }
-}
-
-// Returns 'written' | 'ok' | 'skipped'
-function writeIfChanged(filePath, content, label, marker) {
-  const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
-  if (existing === null) {
-    fs.writeFileSync(filePath, content);
-    console.log(`WRITE ${label} - ${filePath}`);
-    return 'written';
-  } else if (existing === content) {
-    console.log(`OK    ${label} - already up to date`);
-    return 'ok';
-  } else if (marker && !existing.includes(marker)) {
-    console.log(`SKIP  ${label} - file exists and was not created by this setup (remove manually to replace)`);
-    return 'skipped';
-  } else {
-    fs.writeFileSync(filePath, content);
-    console.log(`WRITE ${label} - updated`);
-    return 'written';
-  }
 }
 
 if (path.resolve(process.argv[1] || '') === path.resolve(__dirname, 'setup.js')) {
