@@ -5,6 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
 import { execFileSync, spawn } from 'child_process';
 
 // ── Native OS notification ──
@@ -49,7 +50,7 @@ function sendNativeNotification(title, message, workspaceRoot, enableSound) {
     }
   } else if (platform === 'win32') {
     const vscodeUri = getVscodeUri(workspaceRoot);
-    const tmpScript = path.join(os.tmpdir(), `claude-notif-${Date.now()}-${process.pid}.ps1`);
+    const tmpScript = path.join(os.tmpdir(), `claude-notif-${crypto.randomUUID()}.ps1`);
     const toastLaunch = vscodeUri
       ? `activationType="protocol" launch="${xmlEscape(vscodeUri)}"`
       : 'activationType="background"';
@@ -78,6 +79,10 @@ try {
 `;
     try {
       fs.writeFileSync(tmpScript, psScript, 'utf8');
+      // Schedule fallback cleanup from Node side: if PowerShell crashes before its
+      // finally block, the temp .ps1 would persist. Best-effort deletion after 30s.
+      const cleanupTimer = setTimeout(() => { try { fs.unlinkSync(tmpScript); } catch {} }, 30_000);
+      cleanupTimer.unref();
       // Launch via `cmd /c start "" /B` so the toast process breaks away from
       // Claude Code's hook job object and SURVIVES the hook teardown — a plain
       // detached spawn gets killed before the ~1-2s WinRT load + toast register

@@ -177,8 +177,7 @@ const MANAGED_GITIGNORE_LINES = new Set([
 const REPO_SKIP_DIRS = new Set(['node_modules', '.git', 'dist']);
 
 function git(repoDir, ...args) {
-  // execFileSync (no shell) — avoids `cmd.exe /c` on Windows.
-  return execFileSync('git', args, { cwd: repoDir, stdio: 'pipe' }).toString();
+  return execFileSync('git', args, { cwd: repoDir, stdio: 'pipe', windowsHide: true }).toString();
 }
 
 function isGitRepo(dir) {
@@ -286,9 +285,13 @@ async function promptGitignoreMode(repoLabels) {
   if (!process.stdin.isTTY) return 'overwrite';
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const list = repoLabels.map(r => `      - ${r}/.gitignore`).join('\n');
-  const answer = await new Promise(res => rl.question(
-    `\n${repoLabels.length} repo(s) differ from the .claude gitignore template:\n${list}\n` +
-    `  [O]verwrite (default) / [A]I edit (skip writing, leave for manual fix) / [S]kip: `, res));
+  const prompt = `\n${repoLabels.length} repo(s) differ from the .claude gitignore template:\n${list}\n` +
+    `  [O]verwrite (default) / [A]I edit (skip writing, leave for manual fix) / [S]kip: `;
+  const answer = await Promise.race([
+    new Promise(res => rl.question(prompt, res)),
+    // Timeout after 30s (e.g. SSH without PTY): default to overwrite
+    new Promise(res => setTimeout(() => { rl.write('o'); res('o'); }, 30_000)),
+  ]);
   rl.close();
   const c = answer.trim().toLowerCase();
   if (c === 's' || c === 'skip') return 'skip';

@@ -44,7 +44,7 @@ function getLiveVersions() {
       // Use -like (not -match) — wildcard avoids regex backslash-escaping hell.
       // $pid excludes the scanner PowerShell process itself.
       const ps = "Get-WmiObject Win32_Process | Where-Object { $_.ProcessId -ne $pid -and $_.CommandLine -like '*plugins*cache*' } | ForEach-Object { $_.CommandLine }";
-      output = execFileSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024, windowsHide: true });
+      output = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024, windowsHide: true });
     } else {
       // Run `ps` directly and filter in JS — no shell pipeline needed.
       const raw = execFileSync('ps', ['aux'], { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 });

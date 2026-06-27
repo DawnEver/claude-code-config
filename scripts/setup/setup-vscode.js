@@ -21,6 +21,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import os from 'os';
 import { fileURLToPath } from 'url';
 
@@ -55,17 +56,6 @@ const termEnvKey = isWindows
   : process.platform === 'darwin'
     ? 'terminal.integrated.env.osx'
     : 'terminal.integrated.env.linux';
-
-const PROVIDER_KEYS = [
-  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',
-  'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
-  'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-  'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_EFFORT_LEVEL',
-  'CLAUDE_CODE_USE_FOUNDRY', 'ANTHROPIC_FOUNDRY_BASE_URL', 'ANTHROPIC_FOUNDRY_API_KEY',
-  'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES',
-  'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
-  'ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES',
-];
 
 let changed = false;
 

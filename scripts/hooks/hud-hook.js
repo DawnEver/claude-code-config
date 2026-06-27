@@ -44,8 +44,8 @@ function getLatestPluginPath() {
     return latestPath;
 }
 
-const cols = process.stdout.columns || 120;
-process.env.COLUMNS = (cols > 4 ? cols - 4 : 1).toString();
+const cols = process.stdout.columns || process.stderr.columns || 120;
+process.env.COLUMNS = String(Math.max(cols > 4 ? cols - 4 : cols, 40));
 
 const pluginEntry = getLatestPluginPath();
 
