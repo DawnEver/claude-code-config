@@ -2,16 +2,19 @@
 // Run on SessionStart to prevent version bloat.
 //
 // Strategy: keep the latest version + any version currently referenced by a
-// live process. Live-process detection scans command lines across all
-// processes (cross-platform) to avoid deleting versions still loaded by
-// running Claude Code sessions or MCP servers.
+// live process. Live-process detection scans command lines across all processes
+// (cross-platform) to avoid deleting versions still loaded by running Claude Code
+// sessions or MCP servers. The scan runs in a detached background child process
+// and writes results to a cache file; the current run reads the PREVIOUS scan's
+// cache so SessionStart is never blocked by process enumeration.
 
-import { readdirSync, rmSync, statSync } from 'fs';
-import { execFileSync } from 'child_process';
-import { join } from 'path';
+import { readdirSync, rmSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { execFileSync, spawn } from 'child_process';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 
 const CACHE_ROOT = join(homedir(), '.claude', 'plugins', 'cache');
+const LIVE_CACHE = join(homedir(), '.claude', 'plugins', '.prune-live-cache.json');
 
 function compareVersion(a, b) {
   const ap = a.split('.').map(Number);
@@ -32,43 +35,64 @@ function countFiles(dir) {
   return n;
 }
 
-function getLiveVersions() {
-  const inUse = {};
+// Read the cached live-version map from the previous background scan.
+function readCachedLiveVersions() {
   try {
-    const isWin = process.platform === 'win32';
-    // execFileSync (no shell) — Node spawns the target directly, so on Windows
-    // it never goes through `cmd.exe /c` (avoids EDR child_process+cmd.exe alerts).
-    let output;
-    if (isWin) {
-      // Get-WmiObject (not Get-CimInstance) — CIM returns null CommandLine for some processes.
-      // Use -like (not -match) — wildcard avoids regex backslash-escaping hell.
-      // $pid excludes the scanner PowerShell process itself.
-      const ps = "Get-WmiObject Win32_Process | Where-Object { $_.ProcessId -ne $pid -and $_.CommandLine -like '*plugins*cache*' } | ForEach-Object { $_.CommandLine }";
-      output = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024, windowsHide: true });
-    } else {
-      // Run `ps` directly and filter in JS — no shell pipeline needed.
-      const raw = execFileSync('ps', ['aux'], { encoding: 'utf8', timeout: 5000, maxBuffer: 1024 * 1024 });
-      output = raw.split('\n').filter(line => line.includes('plugins/cache')).join('\n');
-    }
-    const regex = /[\\/]cache[\\/]([^\\/]+)[\\/]([^\\/]+)[\\/](\d+\.\d+\.\d+)/g;
-    let match;
-    while ((match = regex.exec(output)) !== null) {
-      const [, mp, name, version] = match;
-      const key = mp + '/' + name;
-      if (!inUse[key]) inUse[key] = new Set();
-      inUse[key].add(version);
-    }
-    if (Object.keys(inUse).length > 0) {
-      console.error(`[prune-cache-hook] live versions: ${JSON.stringify(Object.fromEntries(Object.entries(inUse).map(([k, v]) => [k, [...v]])))}`);
-    }
-  } catch (e) {
-    console.error(`[prune-cache-hook] live scan failed: ${e.message}`);
+    if (!existsSync(LIVE_CACHE)) return {};
+    return JSON.parse(readFileSync(LIVE_CACHE, 'utf8'));
+  } catch {
+    return {};
   }
-  return inUse;
+}
+
+// Launch a non-blocking background scan for live versions. Results are written
+// to LIVE_CACHE and picked up by the NEXT SessionStart run — the current run
+// uses the previous cache, so session startup is never delayed by scanning.
+function spawnLiveVersionScan() {
+  const script = `
+import { execFileSync } from 'child_process';
+import { writeFileSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
+
+const CACHE_ROOT = ${JSON.stringify(CACHE_ROOT)};
+const LIVE_CACHE = ${JSON.stringify(LIVE_CACHE)};
+const isWin = ${JSON.stringify(process.platform === 'win32')};
+
+const inUse = {};
+try {
+  let output;
+  if (isWin) {
+    const ps = "Get-WmiObject Win32_Process | Where-Object { $_.ProcessId -ne $pid -and $_.CommandLine -like '*plugins*cache*' } | ForEach-Object { $_.CommandLine }";
+    output = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8', timeout: 5000, maxBuffer: 1048576, windowsHide: true });
+  } else {
+    const raw = execFileSync('ps', ['aux'], { encoding: 'utf8', timeout: 5000, maxBuffer: 1048576 });
+    output = raw.split('\\n').filter(line => line.includes('plugins/cache')).join('\\n');
+  }
+  const regex = /[\\\\/]cache[\\\\/]([^\\\\/]+)[\\\\/]([^\\\\/]+)[\\\\/](\\d+\\.\\d+\\.\\d+)/g;
+  let match;
+  while ((match = regex.exec(output)) !== null) {
+    const [, mp, name, version] = match;
+    const key = mp + '/' + name;
+    if (!inUse[key]) inUse[key] = [];
+    if (!inUse[key].includes(version)) inUse[key].push(version);
+  }
+} catch {}  // scan failure is non-fatal — next run just has no live cache
+
+mkdirSync(dirname(LIVE_CACHE), { recursive: true });
+writeFileSync(LIVE_CACHE, JSON.stringify(inUse), 'utf8');
+`;
+  try {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+  } catch {}  // spawn failure is non-fatal
 }
 
 let totalRemoved = 0;
-const liveVersions = getLiveVersions();
+const liveVersions = readCachedLiveVersions();
 
 try {
   for (const mp of readdirSync(CACHE_ROOT)) {
@@ -85,7 +109,7 @@ try {
       versions.sort(compareVersion);
       const latest = versions.pop();
       const key = mp + '/' + plugin;
-      const keepLive = liveVersions[key] || new Set();
+      const keepLive = new Set(liveVersions[key] || []);
       const keep = new Set([latest, ...keepLive]);
 
       for (const old of versions) {
@@ -106,6 +130,9 @@ try {
   if (totalRemoved > 0) {
     console.error(`[prune-cache-hook] done — removed ${totalRemoved} stale files`);
   }
+
+  // Kick off the background scan for next time AFTER pruning completes.
+  spawnLiveVersionScan();
 } catch (e) {
   if (e.code !== 'ENOENT') console.error(`[prune-cache-hook] error: ${e.message}`);
 }
