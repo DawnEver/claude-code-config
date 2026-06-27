@@ -35,13 +35,15 @@ Report: total commits, which look like WIP (`wip`, `fix`, `temp`, `xxx`, single 
 
 ### 2. Propose
 
-Read `git diff origin/main..HEAD`. Choose a target shape based on how much is on the branch:
+Read `git diff origin/main..HEAD`. Analyze the diff and commit messages to identify logical units.
 
-- **Few commits (≤5) or one cohesive change** → propose a single squash commit. This is the default.
-- **Many commits (>5) or clearly separable concerns** → propose splitting into a few logical
-  commits, one per concern (e.g. feature vs. test vs. docs vs. unrelated fix). Group by what the
-  diff touches, not by the original commit boundaries. Keep the count small — aim for the fewest
-  commits that keep unrelated changes apart.
+- **Few commits (≤5) or one cohesive change** → propose a single squash commit. This is the default for small branches.
+- **Many commits (>5)** → split into logical commits by default, not squash. Identify
+  boundaries from the diff: different modules/packages/directories, different features, or
+  otherwise independent changes. Group by what changed (module, feature), not by change type
+  (feat/test/docs). A feature's implementation and its tests belong together — don't split
+  them. Aim for the fewest commits that keep unrelated modules and features apart. If unsure,
+  keep them separate.
 
 Each proposed commit uses:
 
@@ -67,10 +69,10 @@ This squashes everything — including any WIP commit from Step 0 — into one c
 ```bash
 git reset --soft origin/main   # unstage everything, keep working tree
 git restore --staged .         # move all changes to unstaged
-git add <files for concern 1>
-git commit -m "feat: ..."
-git add <files for concern 2>
-git commit -m "test: ..."
+git add <files for module/feature A>
+git commit -m "feat(scope-a): ..."
+git add <files for module/feature B>
+git commit -m "fix(scope-b): ..."
 # repeat per concern
 ```
 
@@ -90,7 +92,8 @@ Push only on request:
 ## Rules
 
 - Never rewrite without confirmation.
-- Default to one commit; split into a few logical commits when the branch has many commits (>5)
-  or clearly separable concerns. Keep the split minimal.
+- Default to one commit for small branches (≤5 commits); split by module/feature for many commits
+  (>5). Split by what changed, not by change type — a feature's code and its tests go together.
+  Keep the split minimal.
 - Rebase, don't merge.
 - Prefer `git reset --soft` over interactive rebase for simple squashes — works identically on all platforms.

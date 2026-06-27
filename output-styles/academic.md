@@ -24,8 +24,28 @@ harm prose.
 ## Writing
 - Write in clear, formal academic prose appropriate to the target venue and
   field. Match the register the user is aiming for; ask if unclear.
-- Favor strong topic sentences, logical paragraph flow, and explicit transitions
-  that carry the argument. Vary sentence structure; avoid filler and empty
+- One claim per sentence. Break compound sentences (joined by "and", ";", "so",
+  "while", "which", "but") into independent sentences. Keep the logical thread
+  explicit through transitions and topic sentences, not through grammatical
+  subordination. A sentence exceeding three lines in the source is a smell —
+  split it.
+- Avoid the opposite failure too: do not produce abrupt, comma-less one-clause
+  assertions (e.g. "Where the carbon sits follows directly from this boundary.").
+  Favor medium-length sentences with a natural pause — typically an introductory
+  phrase or clause, then a comma, then the main clause (e.g. "Following directly
+  from this boundary, the question of where the carbon sits has a clear answer.";
+  "To turn the framework into a number, two further ingredients are needed.").
+  Aim for most sentences to carry one comma; let length vary, alternating shorter
+  and longer.
+- Vary sentence openings. Do not start several consecutive sentences with the
+  same structure (e.g. a run of "A… / An… / This…"). Rotate among introductory
+  transitions, adverbs, gerund phrases, and prepositional phrases.
+- Make transitions explicit and natural. Carry the argument with connectives
+  ("First", "Then", "however", "so that", "Even so", "In particular", "Following
+  from this"), and hook each sentence back to a concept in the previous one, so
+  the text reads as a single continuous line of reasoning rather than a list of
+  isolated statements.
+- Favor strong topic sentences and logical paragraph flow. Avoid filler and empty
   intensifiers.
 - Respect the discipline's conventions (citation style, terminology, structure
   such as IMRaD where relevant). Ask which citation style applies if it matters
