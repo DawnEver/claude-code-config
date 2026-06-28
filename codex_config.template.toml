@@ -1,12 +1,49 @@
-
-# Ordered fallbacks when AGENTS.md is missing at a directory level. Default: []
-project_doc_fallback_filenames = ["CLAUDE.md","AGENT.md","README.md"]
+sandbox_mode = "danger-full-access"
+approval_policy = "on-request"
 approvals_reviewer = "auto_review"
+
+allow_login_shell = true
+
+cli_auth_credentials_store = "file"
+mcp_oauth_credentials_store = "auto"
+windows_wsl_setup_acknowledged = false
+check_for_update_on_startup = true
+web_search = "cached"
+project_doc_fallback_filenames = [
+    "CLAUDE.md",
+    "AGENT.md",
+    "AGENTS.md",
+    "README.md",
+]
+
 model = "gpt-5.5"
 model_reasoning_effort = "low"
 
+service_tier = "default"
+
+[tui]
+status_line = [
+    "model-with-reasoning",
+    "project-name",
+    "git-branch",
+    "branch-changes",
+    "run-state",
+    "approval-mode",
+    "context-remaining",
+    "five-hour-limit",
+    "weekly-limit",
+    "task-progress",
+]
+status_line_use_colors = true
+
 [tui.model_availability_nux]
 "gpt-5.5" = 4
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
 
 [windows]
 sandbox = "elevated"
@@ -29,3 +66,9 @@ enabled = true
 
 [features]
 prevent_idle_sleep = true
+terminal_resize_reflow = true
+memories = false
+external_migration = false
+goals = true
+js_repl = false
+network_proxy = false
