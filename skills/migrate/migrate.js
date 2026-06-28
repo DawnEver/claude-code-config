@@ -16,7 +16,7 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, CODEX_LINKS, KNOWN_ALIAS_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
+import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_ALIAS_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
 import {
   findGitRepos,
   ensureGitignoreTemplate,
@@ -73,7 +73,7 @@ export function migrateRepoLinks({ dryRun } = {}) {
   const removed = [];
   for (const { baseDir, links, label } of [
     { baseDir: claudeDir, links: CLAUDE_LINKS, label: 'Claude' },
-    { baseDir: codexDir, links: CODEX_LINKS, label: 'Codex' },
+    { baseDir: codexDir, links: getCodexLinks(), label: 'Codex' },
   ]) {
     for (const { rel, full } of findOrphanedLinks({ baseDir, links, sourceDir })) {
       if (dryRun) {

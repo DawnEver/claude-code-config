@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { CLAUDE_LINKS, CODEX_LINKS } from '../../scripts/setup/setup.js';
+import { CLAUDE_LINKS, CODEX_LINKS, discoverCodexSkillLinks, getCodexLinks } from '../../scripts/setup/setup.js';
 import { findOrphanedLinks, discoverProjectMigrators, ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './migrate.js';
 
 describe('findOrphanedLinks', () => {
@@ -123,9 +123,29 @@ describe('discoverProjectMigrators', () => {
 });
 
 describe('setup link tables', () => {
-  test('skills are linked for both Claude and Codex', () => {
+  test('skills are linked as a directory for Claude only', () => {
     assert.ok(CLAUDE_LINKS.some((link) => link.src === 'skills' && link.dest === 'skills'));
-    assert.ok(CODEX_LINKS.some((link) => link.src === 'skills' && link.dest === 'skills'));
+    assert.ok(!CODEX_LINKS.some((link) => link.src === 'skills' && link.dest === 'skills'));
+  });
+
+  test('Codex links project skills inside its own skills directory', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-skills-'));
+    try {
+      fs.mkdirSync(path.join(tmpDir, 'skills', 'alpha'), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, 'skills', '.system'), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, 'linked-skill'), { recursive: true });
+      fs.symlinkSync(path.join(tmpDir, 'linked-skill'), path.join(tmpDir, 'skills', 'linked'));
+      fs.writeFileSync(path.join(tmpDir, 'skills', 'note.md'), 'not a skill');
+
+      assert.deepEqual(discoverCodexSkillLinks(tmpDir).sort((a, b) => a.dest.localeCompare(b.dest)), [
+        { src: path.join('skills', 'alpha'), dest: path.join('skills', 'alpha'), type: 'dir' },
+        { src: path.join('skills', 'linked'), dest: path.join('skills', 'linked'), type: 'dir' },
+      ]);
+      assert.ok(getCodexLinks(tmpDir).some(link => link.dest === path.join('skills', 'alpha')));
+      assert.ok(getCodexLinks(tmpDir).some(link => link.dest === path.join('skills', 'linked')));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

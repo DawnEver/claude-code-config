@@ -18,6 +18,9 @@ node scripts/setup/setup.js --replace  # overwrite existing files
 ```
 
 Creates symlinks from `~/.claude/` and `~/.codex/` to this repo. Re-run to verify - won't overwrite.
+Claude links `skills/` as one directory. Codex keeps its own `~/.codex/skills`
+directory for built-in `.system` skills, so setup links each repo skill from
+`./skills/<name>` into `~/.codex/skills/<name>`.
 
 If `claude_settings.json` or `claude_env_settings.json` are missing, setup copies the `.template.json` versions automatically. Fill in your API keys.
 

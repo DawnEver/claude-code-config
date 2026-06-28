@@ -30,13 +30,39 @@ export const CLAUDE_LINKS = [
 
 export const CODEX_LINKS = [
   { src: 'codex_config.toml', dest: 'config.toml', type: 'file' },
-  { src: 'skills', dest: 'skills', type: 'dir' },
   // Codex's global instructions file is $CODEX_HOME/AGENTS.md (mirrors ~/.claude/CLAUDE.md
   // for Claude). Same single source — GLOBAL-AGENTS.md — linked to both hosts.
   { src: 'GLOBAL-AGENTS.md', dest: 'AGENTS.md', type: 'file' },
 ];
 
 const isWindows = process.platform === 'win32';
+
+export function discoverCodexSkillLinks(baseSourceDir = sourceDir) {
+  const skillsDir = path.join(baseSourceDir, 'skills');
+  if (!fs.existsSync(skillsDir)) return [];
+
+  return fs.readdirSync(skillsDir, { withFileTypes: true })
+    .filter(entry => {
+      if (entry.name.startsWith('.')) return false;
+      if (entry.isDirectory()) return true;
+      if (!entry.isSymbolicLink()) return false;
+
+      try {
+        return fs.statSync(path.join(skillsDir, entry.name)).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+    .map(entry => ({
+      src: path.join('skills', entry.name),
+      dest: path.join('skills', entry.name),
+      type: 'dir',
+    }));
+}
+
+export function getCodexLinks(baseSourceDir = sourceDir) {
+  return [...CODEX_LINKS, ...discoverCodexSkillLinks(baseSourceDir)];
+}
 
 export function removeExisting(destPath) {
   const stat = fs.lstatSync(destPath, { throwIfNoEntry: false });
@@ -138,7 +164,7 @@ export function setup() {
 
   // Process Codex links
   console.log('\n--- Codex ---');
-  for (const link of CODEX_LINKS) {
+  for (const link of getCodexLinks()) {
     const srcPath = path.join(sourceDir, link.src);
     const destPath = path.join(codexDir, link.dest);
 
