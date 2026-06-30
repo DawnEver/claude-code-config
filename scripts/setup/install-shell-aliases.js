@@ -53,17 +53,33 @@ function installPowerShellProfileAliasSource(claudeDir) {
   }
 }
 
+// Locate the bin directory of a command on PATH, or null if not found.
+export function locateBinDir(cmd, run = (c) => execFileSync(isWindows ? 'where' : 'which', [c], { stdio: 'pipe' }).toString()) {
+  try {
+    const first = run(cmd).trim().split(/\r?\n/)[0].trim();
+    return first ? path.dirname(first) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Decide where to drop the CLI wrappers. Provider-independent tools (todo,
+// traceme) only need *some* bin dir on PATH; the claude-bound launchers
+// (ccc/ccds) additionally need the claude binary. Prefer the claude dir so all
+// wrappers stay together, but fall back to codex when only Codex is installed.
+export function resolveAliasBinDirs(locate = locateBinDir) {
+  const claudeBin = locate('claude');
+  const targetBin = claudeBin || locate('codex');
+  return { claudeBin, targetBin };
+}
+
 export function installShellAliases(claudeDir, sourceDir) {
-  // Find the directory where `claude` is installed and place wrappers alongside it.
+  // Place wrappers alongside an installed host binary so they land on PATH.
   // On Windows: write .cmd (CMD/PowerShell) + no-extension script (Git Bash).
   // On macOS/Linux: write no-extension shell script only.
-  let claudeBin;
-  try {
-    const raw = execFileSync(isWindows ? 'where' : 'which', ['claude'], { stdio: 'pipe' })
-      .toString().trim().split(/\r?\n/)[0].trim();
-    claudeBin = path.dirname(raw);
-  } catch {
-    console.log('SKIP  aliases - could not locate claude executable');
+  const { claudeBin, targetBin } = resolveAliasBinDirs();
+  if (!targetBin) {
+    console.log('SKIP  aliases - could not locate claude or codex executable');
     return;
   }
 
@@ -71,35 +87,42 @@ export function installShellAliases(claudeDir, sourceDir) {
   const ccJsPath = path.join(claudeDir, 'scripts', 'runtime', 'cc.js').replace(/\\/g, '/');
   const resolveRepo = (rel) => path.join(sourceDir, rel).replace(/\\/g, '/');
 
-  const ALIASES = [
-    { name: 'ccc',  provider: 'claude'   },
-    { name: 'ccds', provider: 'deepseek' },
-  ];
+  // ccc/ccds launch the `claude` binary (see cc.js), so install them only when
+  // claude is present — they are inert under a Codex-only install.
+  if (claudeBin) {
+    const ALIASES = [
+      { name: 'ccc',  provider: 'claude'   },
+      { name: 'ccds', provider: 'deepseek' },
+    ];
 
-  for (const { name, provider } of ALIASES) {
-    if (isWindows) {
-      const cmdContent = `@echo off\nrem claude-code-alias\nnode "${ccJsPath}" ${provider} %*\n`;
-      writeIfChanged(path.join(claudeBin, `${name}.cmd`), cmdContent, `${name}.cmd`);
+    for (const { name, provider } of ALIASES) {
+      if (isWindows) {
+        const cmdContent = `@echo off\nrem claude-code-alias\nnode "${ccJsPath}" ${provider} %*\n`;
+        writeIfChanged(path.join(claudeBin, `${name}.cmd`), cmdContent, `${name}.cmd`);
+      }
+
+      const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${ccJsPath}" ${provider} "$@"\n`;
+      const shPath = path.join(claudeBin, name);
+      const result = writeIfChanged(shPath, shContent, name);
+      // chmod whenever the file is ours (written or already up-to-date), not for skipped third-party files
+      if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
     }
 
-    const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${ccJsPath}" ${provider} "$@"\n`;
-    const shPath = path.join(claudeBin, name);
-    const result = writeIfChanged(shPath, shContent, name);
-    // chmod whenever the file is ours (written or already up-to-date), not for skipped third-party files
-    if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
+    console.log('      ccc     - Claude (official subscription)');
+    console.log('      ccds    - DeepSeek API (Foundry mode, direct)');
+  } else {
+    console.log('      ccc/ccds - skipped (claude binary not found; Codex-only install)');
   }
 
-  console.log('      ccc     - Claude (official subscription)');
-  console.log('      ccds    - DeepSeek API (Foundry mode, direct)');
-
+  // Provider-independent tools install to whichever host bin dir we found.
   // TraceMe CLI alias — dynamic launcher survives plugin version updates
   const tracemeLauncher = resolveRepo('scripts/runtime/traceme-launcher.mjs');
   if (isWindows) {
     const cmdContent = `@echo off\nrem claude-code-alias\nnode "${tracemeLauncher}" %*\n`;
-    writeIfChanged(path.join(claudeBin, 'traceme.cmd'), cmdContent, 'traceme.cmd');
+    writeIfChanged(path.join(targetBin, 'traceme.cmd'), cmdContent, 'traceme.cmd');
   }
   const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${tracemeLauncher}" "$@"\n`;
-  const shPath = path.join(claudeBin, 'traceme');
+  const shPath = path.join(targetBin, 'traceme');
   const result = writeIfChanged(shPath, shContent, 'traceme');
   if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
 
@@ -109,15 +132,15 @@ export function installShellAliases(claudeDir, sourceDir) {
   const todoLauncher = resolveRepo('scripts/runtime/todo-launcher.mjs');
   if (isWindows) {
     const cmdContent = `@echo off\nrem claude-code-alias\nnode "${todoLauncher}" %*\n`;
-    writeIfChanged(path.join(claudeBin, 'todo.cmd'), cmdContent, 'todo.cmd');
+    writeIfChanged(path.join(targetBin, 'todo.cmd'), cmdContent, 'todo.cmd');
   }
   const todoShContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${todoLauncher}" "$@"\n`;
-  const todoShPath = path.join(claudeBin, 'todo');
+  const todoShPath = path.join(targetBin, 'todo');
   const todoResult = writeIfChanged(todoShPath, todoShContent, 'todo');
   if (!isWindows && todoResult !== 'skipped') fs.chmodSync(todoShPath, 0o755);
 
   console.log('      todo    - Task management CLI');
-  console.log(`      installed to: ${claudeBin}`);
+  console.log(`      installed to: ${targetBin}`);
 
   if (isWindows) installPowerShellProfileAliasSource(claudeDir);
 }

@@ -6,6 +6,7 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { CLAUDE_LINKS, CODEX_LINKS, discoverCodexSkillLinks, getCodexLinks, ensureRealDir } from '../../scripts/setup/setup.js';
 import { findOrphanedLinks, discoverProjectMigrators, ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './migrate.js';
+import { locateBinDir, resolveAliasBinDirs } from '../../scripts/setup/install-shell-aliases.js';
 
 describe('findOrphanedLinks', () => {
   let tmpDir, sourceDir, baseDir;
@@ -284,5 +285,41 @@ describe('migrateGitignore (integration)', () => {
     assert.equal(res.templated, false);
     assert.equal(res.wouldTemplate, true);   // still reports it differs
     assert.equal(fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8'), before);
+  });
+});
+
+describe('resolveAliasBinDirs', () => {
+  const sep = path.sep;
+
+  test('prefers the claude bin dir for both target and claude when claude exists', () => {
+    const locate = (cmd) => (cmd === 'claude' ? `${sep}opt${sep}claude${sep}bin` : `${sep}opt${sep}codex${sep}bin`);
+    const { claudeBin, targetBin } = resolveAliasBinDirs(locate);
+    assert.equal(claudeBin, `${sep}opt${sep}claude${sep}bin`);
+    assert.equal(targetBin, `${sep}opt${sep}claude${sep}bin`);
+  });
+
+  test('falls back to codex bin dir when only codex is installed', () => {
+    const locate = (cmd) => (cmd === 'codex' ? `${sep}opt${sep}codex${sep}bin` : null);
+    const { claudeBin, targetBin } = resolveAliasBinDirs(locate);
+    assert.equal(claudeBin, null);
+    assert.equal(targetBin, `${sep}opt${sep}codex${sep}bin`);
+  });
+
+  test('returns null target when neither host is installed', () => {
+    const { claudeBin, targetBin } = resolveAliasBinDirs(() => null);
+    assert.equal(claudeBin, null);
+    assert.equal(targetBin, null);
+  });
+});
+
+describe('locateBinDir', () => {
+  test('returns the dirname of the first matched path', () => {
+    const run = () => `${path.sep}usr${path.sep}local${path.sep}bin${path.sep}codex\n${path.sep}other${path.sep}codex`;
+    assert.equal(locateBinDir('codex', run), `${path.sep}usr${path.sep}local${path.sep}bin`);
+  });
+
+  test('returns null when the locator throws (command not found)', () => {
+    const run = () => { throw new Error('not found'); };
+    assert.equal(locateBinDir('nope', run), null);
   });
 });

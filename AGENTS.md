@@ -40,7 +40,7 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `ccc` / `ccds` — Claude Code launchers (official / DeepSeek), config in `claude_env_settings.json`
 - `todo` — Task management: `todo` (list), `todo <text>` (add), `todo rm <id>` (remove), `todo help`
 - `traceme` — Personal observability: token/cost reports, multi-device sync
-- `aliases.ps1` / `aliases.sh` — Shell integration; `setup.js` installs `.cmd` wrappers on Windows
+- `aliases.ps1` / `aliases.sh` — Shell integration; `setup.js` installs `.cmd` wrappers on Windows. Wrappers land next to the `claude` binary; on a Codex-only machine (no `claude`) they fall back to the `codex` binary's dir, installing the provider-independent `todo`/`traceme` (the claude-bound `ccc`/`ccds` are skipped)
 
 ### Workflows
 - Hooks in `claude_settings.json` trigger `notify-hook.js` for `TaskCompleted`, `PostToolUseFailure`, `Notification`
