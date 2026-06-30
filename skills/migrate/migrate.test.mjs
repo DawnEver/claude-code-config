@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { CLAUDE_LINKS, CODEX_LINKS, discoverCodexSkillLinks, getCodexLinks } from '../../scripts/setup/setup.js';
+import { CLAUDE_LINKS, CODEX_LINKS, discoverCodexSkillLinks, getCodexLinks, ensureRealDir } from '../../scripts/setup/setup.js';
 import { findOrphanedLinks, discoverProjectMigrators, ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './migrate.js';
 
 describe('findOrphanedLinks', () => {
@@ -36,6 +36,31 @@ describe('findOrphanedLinks', () => {
     const links = [{ src: 'CURRENT.md', dest: 'CLAUDE.md', type: 'file' }];
     const orphans = findOrphanedLinks({ baseDir, links, sourceDir });
     assert.deepEqual(orphans.map(o => o.rel), ['OLD.md']);
+  });
+
+  test('converts a legacy junction at the skills dir into a real directory', () => {
+    // Simulate `~/.codex/skills -> repo/skills` (legacy whole-dir link).
+    const repoSkills = path.join(sourceDir, 'skills');
+    fs.mkdirSync(path.join(repoSkills, 'migrate'), { recursive: true });
+    fs.writeFileSync(path.join(repoSkills, 'migrate', 'SKILL.md'), 'real');
+    const codexSkills = path.join(baseDir, 'skills');
+    fs.symlinkSync(repoSkills, codexSkills, 'junction');
+
+    ensureRealDir(codexSkills);
+
+    assert.equal(fs.lstatSync(codexSkills).isSymbolicLink(), false);
+    assert.equal(fs.lstatSync(codexSkills).isDirectory(), true);
+    // Repo skill dir must be untouched (no self-referential clobber).
+    assert.equal(fs.readFileSync(path.join(repoSkills, 'migrate', 'SKILL.md'), 'utf8'), 'real');
+    assert.equal(fs.lstatSync(path.join(repoSkills, 'migrate')).isSymbolicLink(), false);
+  });
+
+  test('ensureRealDir is a no-op when the dir already exists as a real directory', () => {
+    const dir = path.join(baseDir, 'skills');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'keep'), 'x');
+    ensureRealDir(dir);
+    assert.equal(fs.readFileSync(path.join(dir, 'keep'), 'utf8'), 'x');
   });
 
   test('ignores symlinks pointing outside sourceDir', () => {

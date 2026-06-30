@@ -64,6 +64,19 @@ export function getCodexLinks(baseSourceDir = sourceDir) {
   return [...CODEX_LINKS, ...discoverCodexSkillLinks(baseSourceDir)];
 }
 
+// Legacy installs linked the whole skills dir (`~/.codex/skills -> repo/skills`).
+// We now link skills individually, but if the directory is still a junction, the
+// per-skill link destinations resolve *through* it back into the repo, producing
+// self-referential junctions inside repo/skills. Convert the legacy link to a
+// real directory first so per-skill links land in ~/.codex, not the repo.
+export function ensureRealDir(dirPath) {
+  const stat = fs.lstatSync(dirPath, { throwIfNoEntry: false });
+  if (stat && stat.isSymbolicLink()) {
+    fs.unlinkSync(dirPath);
+  }
+  fs.mkdirSync(dirPath, { recursive: true });
+}
+
 export function removeExisting(destPath) {
   const stat = fs.lstatSync(destPath, { throwIfNoEntry: false });
   if (!stat) return false;
@@ -164,6 +177,9 @@ export function setup() {
 
   // Process Codex links
   console.log('\n--- Codex ---');
+  // Convert any legacy `~/.codex/skills` junction into a real directory before
+  // creating per-skill links (otherwise they self-reference into the repo).
+  ensureRealDir(path.join(codexDir, 'skills'));
   for (const link of getCodexLinks()) {
     const srcPath = path.join(sourceDir, link.src);
     const destPath = path.join(codexDir, link.dest);
