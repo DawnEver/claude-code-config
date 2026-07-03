@@ -119,6 +119,7 @@
     "verbose": true,
     "preferredNotifChannel": "auto",
     "autoCompactEnabled": true,
+    "showTurnDuration": true,
     "terminalProgressBarEnabled": true,
     "teammateMode": "auto",
     "remoteControlAtStartup": true,

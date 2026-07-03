@@ -4,6 +4,7 @@
     "setup": "node scripts/setup/setup.js",
     "setup_vscode": "node scripts/setup/setup-vscode.js",
     "replace_setup": "node scripts/setup/setup.js --replace",
-    "migrate": "node skills/migrate/migrate.js"
+    "migrate": "node skills/migrate/migrate.js",
+    "test": "node --test skills/migrate/*.test.mjs"
   }
 }
