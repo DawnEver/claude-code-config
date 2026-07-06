@@ -31,6 +31,8 @@ const CLAUDE_GITIGNORE_TEMPLATE = [
   '!**/.claude/rules/**',
   '!**/.claude/memory/',
   '!**/.claude/memory/**',
+  '!**/.claude/docs/',
+  '!**/.claude/docs/**',
   '**/.claude/rules/MEMORY.md',
   '**/_meta.json',
 ];

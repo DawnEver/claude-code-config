@@ -189,6 +189,7 @@ describe('ensureGitignoreTemplate', () => {
     '!**/.claude/output-styles/', '!**/.claude/output-styles/**',
     '!**/.claude/rules/', '!**/.claude/rules/**',
     '!**/.claude/memory/', '!**/.claude/memory/**',
+    '!**/.claude/docs/', '!**/.claude/docs/**',
     '**/.claude/rules/MEMORY.md',
     '**/_meta.json',
   ];

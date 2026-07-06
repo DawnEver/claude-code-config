@@ -31,7 +31,7 @@ This does three things, all idempotent (safe to re-run, no-op once current):
 2. **Gitignore hygiene** — across the current repo and every nested git repo:
    (a) normalizes `.gitignore` to the depth-agnostic `.claude/` template this skill
    owns (`CLAUDE_GITIGNORE_TEMPLATE` — base `**/.claude/**` exclusion plus the
-   `agents`/`skills`/`commands`/`workflows`/`settings`/`rules`/`memory` re-includes,
+   `agents`/`skills`/`commands`/`workflows`/`settings`/`output-styles`/`rules`/`memory`/`docs` re-includes,
    with `MEMORY.md` + `_meta.json` ignored last), preserving all unrelated lines;
    (b) untracks (via `git rm --cached`, keeping files on disk) anything the refreshed
    rules now ignore but is still committed; (c) deletes stray `.gitignore` files
