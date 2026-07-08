@@ -10,6 +10,7 @@
         "DISABLE_ERROR_REPORTING": "1",
         "DISABLE_FEEDBACK_COMMAND": "1",
         "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+        "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1",
         "TRACEME_SYNC_REMOTE": "Your TRACEME Git Repo"
     },
     "includeCoAuthoredBy": false,
@@ -31,6 +32,8 @@
             "PowerShell(Test-Path *)",
             "PowerShell(Get-Command *)",
             "PowerShell(Get-Process *)",
+            "Skill(update-config)",
+
             "Skill(rem:rem)",
             "Skill(rem:todo)",
             "Skill(sharp-review)",
@@ -80,20 +83,23 @@
     "worktree": {
         "baseRef": "fresh"
     },
+  "enableArtifact": false,
+
     "statusLine": {
         "type": "command",
         "command": "node ~/.claude/scripts/hooks/hud-hook.js"
     },
     "enabledPlugins": {
-        "skill-creator@claude-plugins-official": true,
-        "claude-hud@claude-hud": true,
+        "skill-creator@claude-plugins-official": false,
+        "claude-hud@claude-hud": false,
         "takeover@cc-market": true,
         "typescript-lsp@claude-plugins-official": true,
         "pyright-lsp@claude-plugins-official": true,
         "rem@cc-market": true,
         "sharp-review@cc-market": true,
         "evolve@cc-market": true,
-        "traceme@cc-market": true
+        "traceme@cc-market": true,
+        "fabric@cc-market": true
     },
     "extraKnownMarketplaces": {
         "claude-hud": {
@@ -112,6 +118,8 @@
         }
     },
     "effortLevel": "low",
+  "askUserQuestionTimeout": "10m",
+
     "tui": "fullscreen",
     "skipWorkflowUsageWarning": true,
     "theme": "auto",
