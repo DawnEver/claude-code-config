@@ -58,10 +58,10 @@ enabled = true
 [plugins."sharp-review@cc-market"]
 enabled = true
 
-[plugins."takeover@cc-market"]
+[plugins."rem@cc-market"]
 enabled = true
 
-[plugins."rem@cc-market"]
+[plugins."fabric@cc-market"]
 enabled = true
 
 [features]
