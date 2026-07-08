@@ -147,6 +147,60 @@ export {
   promptGitignoreMode,
 } from './gitignore-hygiene.js';
 
+// ── E. Retired-plugin settings migration ──
+// Plugins merged or removed over time leave stale entries in claude_settings.json — both an
+// `enabledPlugins` key and permission-allow entries for their skills/MCP tools. Remove them
+// (idempotent, self-detecting) and ensure the replacement is enabled. `settingsPath` is the
+// repo's claude_settings.json, which is symlinked into ~/.claude.
+export const RETIRED_PLUGINS = [
+  {
+    id: 'takeover@cc-market',
+    replacement: 'fabric@cc-market',        // merged into fabric (one `call` primitive)
+    permPrefixes: ['Skill(takeover:', 'mcp__plugin_takeover_takeover__'],
+    // Trust the user already granted the retired plugin, transferred to the replacement so
+    // its skills/tools don't re-prompt. Added only when a stale entry was actually present.
+    addPerms: [
+      'Skill(fabric:continue)', 'Skill(fabric:models)', 'Skill(fabric:summary)',
+      'mcp__plugin_fabric_fabric__call', 'mcp__plugin_fabric_fabric__list_providers',
+    ],
+  },
+];
+
+export function migrateRetiredPlugins({ dryRun, settingsPath = path.join(sourceDir, 'claude_settings.json') } = {}) {
+  if (!fs.existsSync(settingsPath)) return [];
+  let settings;
+  try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { return []; }
+
+  const retired = [];
+  let changed = false;
+  const enabled = settings.enabledPlugins || (settings.enabledPlugins = {});
+  const allow = settings.permissions?.allow;
+
+  for (const { id, replacement, permPrefixes = [], addPerms = [] } of RETIRED_PLUGINS) {
+    const hasEntry = id in enabled;
+    const stalePerms = Array.isArray(allow) && allow.some(p => permPrefixes.some(pre => p.startsWith(pre)));
+    if (!hasEntry && !stalePerms) continue;
+
+    if (dryRun) {
+      console.log(`WOULD RETIRE  ${id}${replacement ? ` → ${replacement}` : ''} in claude_settings.json`);
+    } else {
+      if (hasEntry) delete enabled[id];
+      if (replacement && !(replacement in enabled)) enabled[replacement] = true;
+      if (Array.isArray(allow)) {
+        const kept = allow.filter(p => !permPrefixes.some(pre => p.startsWith(pre)));
+        for (const p of addPerms) if (!kept.includes(p)) kept.push(p);
+        settings.permissions.allow = kept;
+      }
+      changed = true;
+      console.log(`RETIRE  ${id}${replacement ? ` → ${replacement}` : ''} - swapped stale settings entries`);
+    }
+    retired.push(id);
+  }
+
+  if (changed && !dryRun) fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+  return retired;
+}
+
 // ── D. cc-market project migration ──
 
 export function discoverProjectMigrators(ccMarketDir) {
@@ -186,6 +240,10 @@ async function main() {
   console.log('\n--- CLI aliases ---');
   const aliasRemoved = migrateOrphanedAliases({ dryRun });
   if (aliasRemoved.length === 0) console.log('OK    no orphaned CLI aliases');
+
+  console.log('\n--- Retired plugins ---');
+  const retired = migrateRetiredPlugins({ dryRun });
+  if (retired.length === 0) console.log('OK    no retired plugin entries in claude_settings.json');
 
   if (!dryRun) {
     console.log('\n--- Re-link & re-alias (current layout) ---');

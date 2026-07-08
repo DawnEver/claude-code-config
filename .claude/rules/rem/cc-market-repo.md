@@ -1,7 +1,7 @@
 # cc-market is a Separate Git Repo
 
 `cc-market/` is gitignored by this repo and is its own standalone git repository
-(`DawnEver/cc-market`). When making changes to plugins (watch, rem, sharp-review, takeover,
+(`DawnEver/cc-market`). When making changes to plugins (watch, rem, sharp-review, fabric,
 traceme), commit them inside `cc-market/`:
 
 ```bash

@@ -248,38 +248,10 @@ export function setup() {
       errors++;
     }
   }
-  // Ensure takeover is enabled in claude_settings.json (migrate existing installs)
-  if (fs.existsSync(settingsPath)) {
-    try {
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      let changed = false;
-
-      if (!settings.enabledPlugins) settings.enabledPlugins = {};
-      if (!('takeover@cc-market' in settings.enabledPlugins)) {
-        settings.enabledPlugins['takeover@cc-market'] = true;
-        changed = true;
-      }
-
-      if (!settings.extraKnownMarketplaces) settings.extraKnownMarketplaces = {};
-      if (!settings.extraKnownMarketplaces['cc-market']) {
-        settings.extraKnownMarketplaces['cc-market'] = {
-          source: { source: 'github', repo: 'DawnEver/cc-market' }
-        };
-        changed = true;
-      }
-
-      if (changed) {
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-        console.log('OK    takeover plugin - added to claude_settings.json');
-      } else if (settings.enabledPlugins['takeover@cc-market']) {
-        console.log('OK    takeover plugin - already enabled');
-      } else {
-        console.log('OK    takeover plugin - disabled (user preference preserved)');
-      }
-    } catch (err) {
-      console.log(`WARN  could not update claude_settings.json - ${err.message}`);
-    }
-  }
+  // Note: plugin enablement + the cc-market marketplace live in claude_settings.template.json,
+  // which setup copies to claude_settings.json on a fresh install. Existing-install deltas
+  // (enabling a new plugin, retiring a merged one) are migrate's job — see
+  // skills/migrate/migrate.js `migrateRetiredPlugins()`. setup does not mutate enabledPlugins.
 
   // Fix LSP commands on Windows (.cmd extension required)
   fixLspWindows();

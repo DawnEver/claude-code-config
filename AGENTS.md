@@ -10,7 +10,7 @@
 - `npm run setup` - Initial setup
 - `node scripts/setup/setup.js` - Manual setup
 - Re-run setup to verify (checks existing symlinks)
-- `npm run migrate` - Bring `~/.claude`/`~/.codex` symlinks and the current project's `.claude/` (cc-market plugin files) up to the latest format. `npm run migrate -- --dry-run` previews orphaned-symlink removal only. See `/migrate` skill.
+- `npm run migrate` - Bring `~/.claude`/`~/.codex` symlinks, retired-plugin settings entries (e.g. takeover→fabric), and the current project's `.claude/` (cc-market plugin files) up to the latest format. `npm run migrate -- --dry-run` previews link/settings changes without writing. See `/migrate` skill.
 
 ## Architecture
 Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links to `~/.claude/` and `~/.codex/`.

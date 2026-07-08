@@ -22,7 +22,7 @@ Run this command **from the directory of the project you want to migrate**
 `migrate.js` itself lives. From within this config repo's own root, `npm run
 migrate` is a shortcut for the same command.
 
-This does three things, all idempotent (safe to re-run, no-op once current):
+This does the following, all idempotent (safe to re-run, no-op once current):
 
 1. **Repo links** — removes any `~/.claude` / `~/.codex` symlinks that point
    into this repo but no longer correspond to an entry in `CLAUDE_LINKS` /
@@ -58,7 +58,12 @@ This does three things, all idempotent (safe to re-run, no-op once current):
 
    When running this skill for the user, dry-run first, show which repos would change,
    and confirm the mode before applying.
-3. **Project `.claude/`** — for every cc-market plugin that provides a
+3. **Retired plugins** — removes stale entries in `claude_settings.json` for plugins
+   that were merged or removed (`RETIRED_PLUGINS` in `migrate.js`): drops the old
+   `enabledPlugins` key and its permission-allow entries, enables the replacement, and
+   transfers the trusted skill/MCP permissions to it. E.g. `takeover@cc-market` →
+   `fabric@cc-market` (takeover was merged into fabric). No-op once already swapped.
+4. **Project `.claude/`** — for every cc-market plugin that provides a
    `migrations/migrate.mjs` (e.g. rem's memory/frontmatter normalization,
    sharp-review's legacy finding-file consolidation), runs it against the
    current project.
@@ -69,10 +74,10 @@ Preview repo-link changes only, without touching anything:
 node ~/.claude/skills/migrate/migrate.js --dry-run
 ```
 
-(`--dry-run` covers steps 1 and 2 fully — it prints which files *would* be
-untracked and which nested ignores *would* be deleted, without touching them;
-for step 3 it lists which plugins have migrations but does not run them, since
-they are write-only and self-detecting.)
+(`--dry-run` covers steps 1–3 fully — it prints which links/files *would* be
+removed/untracked and which retired-plugin entries *would* be swapped, without
+touching them; for step 4 it lists which plugins have migrations but does not run
+them, since they are write-only and self-detecting.)
 
 If a plugin's migration reports `changed: true`, read its summary lines —
 they describe exactly what was moved/rewritten.

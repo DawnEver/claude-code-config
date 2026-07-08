@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { CLAUDE_LINKS, CODEX_LINKS, discoverCodexSkillLinks, getCodexLinks, ensureRealDir } from '../../scripts/setup/setup.js';
-import { findOrphanedLinks, discoverProjectMigrators, ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './migrate.js';
+import { findOrphanedLinks, discoverProjectMigrators, ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate, migrateRetiredPlugins } from './migrate.js';
 import { locateBinDir, resolveAliasBinDirs } from '../../scripts/setup/install-shell-aliases.js';
 
 describe('findOrphanedLinks', () => {
@@ -322,5 +322,64 @@ describe('locateBinDir', () => {
   test('returns null when the locator throws (command not found)', () => {
     const run = () => { throw new Error('not found'); };
     assert.equal(locateBinDir('nope', run), null);
+  });
+});
+
+describe('migrateRetiredPlugins', () => {
+  let tmpDir, settingsPath;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'retire-test-'));
+    settingsPath = path.join(tmpDir, 'claude_settings.json');
+  });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  const write = (obj) => fs.writeFileSync(settingsPath, JSON.stringify(obj, null, 2));
+  const read = () => JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+
+  test('retires takeover → fabric: swaps enabledPlugins + permission entries', () => {
+    write({
+      permissions: { allow: ['Bash(ls)', 'Skill(takeover:continue)', 'mcp__plugin_takeover_takeover__call_model', 'Skill(rem:rem)'] },
+      enabledPlugins: { 'takeover@cc-market': true, 'rem@cc-market': true },
+    });
+    const retired = migrateRetiredPlugins({ settingsPath });
+    assert.deepEqual(retired, ['takeover@cc-market']);
+    const s = read();
+    assert.ok(!('takeover@cc-market' in s.enabledPlugins), 'takeover entry removed');
+    assert.equal(s.enabledPlugins['fabric@cc-market'], true, 'fabric enabled');
+    assert.equal(s.enabledPlugins['rem@cc-market'], true, 'unrelated plugin untouched');
+    // stale takeover perms gone; unrelated perms kept; fabric perms transferred
+    assert.ok(!s.permissions.allow.some(p => p.includes('takeover')), 'no takeover perms remain');
+    assert.ok(s.permissions.allow.includes('Bash(ls)') && s.permissions.allow.includes('Skill(rem:rem)'));
+    assert.ok(s.permissions.allow.includes('mcp__plugin_fabric_fabric__call'), 'fabric call perm added');
+    assert.ok(s.permissions.allow.includes('Skill(fabric:continue)'));
+  });
+
+  test('idempotent: no-op when already migrated', () => {
+    write({ permissions: { allow: ['mcp__plugin_fabric_fabric__call'] }, enabledPlugins: { 'fabric@cc-market': true } });
+    const before = read();
+    assert.deepEqual(migrateRetiredPlugins({ settingsPath }), []);
+    assert.deepEqual(read(), before, 'file unchanged');
+  });
+
+  test('dry-run reports without writing', () => {
+    write({ enabledPlugins: { 'takeover@cc-market': true } });
+    const before = fs.readFileSync(settingsPath, 'utf8');
+    const retired = migrateRetiredPlugins({ settingsPath, dryRun: true });
+    assert.deepEqual(retired, ['takeover@cc-market']);
+    assert.equal(fs.readFileSync(settingsPath, 'utf8'), before, 'not written in dry-run');
+  });
+
+  test('does not add fabric to enabledPlugins if user had disabled it', () => {
+    // Only a stale permission lingers; no enabledPlugins entry for takeover.
+    write({ permissions: { allow: ['Skill(takeover:models)'] }, enabledPlugins: { 'fabric@cc-market': false } });
+    migrateRetiredPlugins({ settingsPath });
+    const s = read();
+    assert.equal(s.enabledPlugins['fabric@cc-market'], false, 'user disable preserved');
+    assert.ok(!s.permissions.allow.some(p => p.includes('takeover')));
+  });
+
+  test('missing settings file is a no-op', () => {
+    assert.deepEqual(migrateRetiredPlugins({ settingsPath: path.join(tmpDir, 'nope.json') }), []);
   });
 });
