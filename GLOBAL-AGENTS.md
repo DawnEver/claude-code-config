@@ -7,12 +7,12 @@
 ## Code Style
 - Adhere to first principles.
 - Write clean, minimal, elegant code with necessary comments.
+- Consider cross-platform compatibility and team collaboration during design, implementation, and documentation.
 - Prefer editing existing files over creating new ones.
 
 ## Workflow
 - Use LSP if available.
-- Aggressively use subagents for high-token-cost operations or when multiple tasks to do.
-- Consider cross-platform compatibility and team collaboration during design, implementation, and documentation.
+- Aggressively use subagents for large plan implementment or when multiple tasks to do.
 - Practice test-driven development (TDD): write a failing test first, make it pass with the simplest change, then refactor. Add or update tests alongside any behavioral change.
 
 ## Git Hygiene
