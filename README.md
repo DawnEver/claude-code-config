@@ -39,7 +39,8 @@ Setup installs provider wrappers alongside the `claude` executable (CMD, PowerSh
 
 ```sh
 ccc   # official Claude subscription
-ccds  # DeepSeek API (Foundry mode, direct to api.deepseek.com)
+ccds  # DeepSeek API (Anthropic-compatible, direct to api.deepseek.com/anthropic)
+cckm  # Kimi API (Anthropic-compatible, direct to api.kimi.com/coding)
 ```
 
 Add providers by editing `claude_env_settings.json` (see template) and adding an alias entry in `scripts/setup/setup.js`.

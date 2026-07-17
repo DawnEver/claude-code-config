@@ -33,7 +33,6 @@
             "PowerShell(Get-Command *)",
             "PowerShell(Get-Process *)",
             "Skill(update-config)",
-
             "Skill(rem:rem)",
             "Skill(rem:todo)",
             "Skill(sharp-review)",
@@ -83,8 +82,7 @@
     "worktree": {
         "baseRef": "fresh"
     },
-  "enableArtifact": false,
-
+    "enableArtifact": false,
     "statusLine": {
         "type": "command",
         "command": "node ~/.claude/scripts/hooks/hud-hook.js"
@@ -117,8 +115,8 @@
         }
     },
     "effortLevel": "low",
-  "askUserQuestionTimeout": "10m",
-
+    "askUserQuestionTimeout": "10m",
+    "autoUpdatesChannel": "latest",
     "tui": "fullscreen",
     "skipWorkflowUsageWarning": true,
     "theme": "auto",

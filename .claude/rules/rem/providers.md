@@ -19,11 +19,14 @@ and Sonnet during execution. For critical plan sessions, run `/effort high` befo
 Sharp-review hook delegates to `/sharp-review` skill — the hook only handles classification
 (none/once/triple) and state tracking; all review logic lives in the skill.
 
-## DeepSeek via Foundry Mode
+## Direct Anthropic-compatible providers (DeepSeek, Kimi)
 
-DeepSeek connects via Foundry mode (`CLAUDE_CODE_USE_FOUNDRY=1`), configured with
-`ANTHROPIC_FOUNDRY_BASE_URL` and `ANTHROPIC_FOUNDRY_API_KEY` in `claude_env_settings.json`.
-No local proxy needed — `cc.js` passes Foundry env vars directly to Claude Code.
+Both DeepSeek (`ccds`) and Kimi (`cckm`) connect through Claude Code's native
+Anthropic-compatible endpoint — `ANTHROPIC_BASE_URL` + `ANTHROPIC_API_KEY` plus the
+`ANTHROPIC_*_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL` overrides in `claude_env_settings.json`.
+No Foundry mode, no local proxy — `cc.js` just injects the profile's env vars into Claude Code.
+DeepSeek was migrated off Foundry mode (`CLAUDE_CODE_USE_FOUNDRY` / `ANTHROPIC_FOUNDRY_*`) to
+this simpler direct style so both providers share one config shape.
 
 ## ChatGPT Bridge — REMOVED, do NOT re-add
 

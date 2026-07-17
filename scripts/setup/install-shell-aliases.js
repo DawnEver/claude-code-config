@@ -93,6 +93,7 @@ export function installShellAliases(claudeDir, sourceDir) {
     const ALIASES = [
       { name: 'ccc',  provider: 'claude'   },
       { name: 'ccds', provider: 'deepseek' },
+      { name: 'cckm', provider: 'kimi'     },
     ];
 
     for (const { name, provider } of ALIASES) {
@@ -109,9 +110,10 @@ export function installShellAliases(claudeDir, sourceDir) {
     }
 
     console.log('      ccc     - Claude (official subscription)');
-    console.log('      ccds    - DeepSeek API (Foundry mode, direct)');
+    console.log('      ccds    - DeepSeek API (Anthropic-compatible, direct)');
+    console.log('      cckm    - Kimi API (Anthropic-compatible, direct)');
   } else {
-    console.log('      ccc/ccds - skipped (claude binary not found; Codex-only install)');
+    console.log('      ccc/ccds/cckm - skipped (claude binary not found; Codex-only install)');
   }
 
   // Provider-independent tools install to whichever host bin dir we found.

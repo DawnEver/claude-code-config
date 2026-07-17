@@ -5,4 +5,5 @@ $claudeRuntime = Join-Path $HOME ".claude/scripts/runtime"
 
 function ccc { node (Join-Path $claudeRuntime "cc.js") claude @args }
 function ccds { node (Join-Path $claudeRuntime "cc.js") deepseek @args }
+function cckm { node (Join-Path $claudeRuntime "cc.js") kimi @args }
 function todo { node (Join-Path $claudeRuntime "todo-launcher.mjs") @args }

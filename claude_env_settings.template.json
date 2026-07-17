@@ -2,16 +2,23 @@
     "env:claude": {},
     "env:codex": {},
     "env:deepseek": {
-        "CLAUDE_CODE_USE_FOUNDRY": "1",
-        "ANTHROPIC_FOUNDRY_BASE_URL": "https://api.deepseek.com/anthropic",
-        "ANTHROPIC_FOUNDRY_API_KEY": "sk-your-deepseek-api-key",
+        "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+        "ANTHROPIC_API_KEY": "sk-your-deepseek-api-key",
+        "ANTHROPIC_MODEL": "deepseek-v4-pro[1m]",
         "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-pro[1m]",
-        "ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking,temperature,effort,max_effort",
         "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking,temperature,effort,max_effort",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro[1m]",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking,temperature,effort,max_effort",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES": "thinking,adaptive_thinking,temperature,effort,max_effort"
+        "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-pro[1m]"
+    },
+    "env:kimi": {
+        "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
+        "ANTHROPIC_API_KEY": "sk-your-kimi-api-key",
+        "ANTHROPIC_MODEL": "k3[1m]",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL": "k3[1m]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3[1m]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3[1m]",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
+        "CLAUDE_CODE_SUBAGENT_MODEL": "k3[1m]"
     }
 }

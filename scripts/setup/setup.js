@@ -13,7 +13,7 @@ export const sourceDir = path.resolve(__dirname, '../..');
 export const claudeDir = path.join(os.homedir(), '.claude');
 export const codexDir = path.join(os.homedir(), '.codex');
 
-export const KNOWN_ALIAS_NAMES = ['cco', 'ccds', 'todo', 'traceme'];
+export const KNOWN_ALIAS_NAMES = ['cco', 'ccds', 'cckm', 'todo', 'traceme'];
 
 export const CLAUDE_LINKS = [
   { src: 'GLOBAL-AGENTS.md', dest: 'CLAUDE.md', type: 'file' },
