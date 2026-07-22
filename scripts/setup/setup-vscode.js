@@ -7,6 +7,7 @@
  *
  * Examples:
  *   node scripts/setup/setup-vscode.js deepseek
+ *   node scripts/setup/setup-vscode.js kimi
  *   node scripts/setup/setup-vscode.js claude      # revert to official
  *
  * What it does:
