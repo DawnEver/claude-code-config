@@ -14,11 +14,11 @@
     "env:kimi": {
         "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
         "ANTHROPIC_API_KEY": "sk-your-kimi-api-key",
-        "ANTHROPIC_MODEL": "k3[1m]",
+        "ANTHROPIC_MODEL": "k3-256k",
         "ANTHROPIC_DEFAULT_FABLE_MODEL": "k3[1m]",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3[1m]",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3[1m]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3-256k",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3-256k",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
-        "CLAUDE_CODE_SUBAGENT_MODEL": "k3[1m]"
+        "CLAUDE_CODE_SUBAGENT_MODEL": "k3-256k"
     }
 }

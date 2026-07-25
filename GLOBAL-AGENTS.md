@@ -23,5 +23,6 @@ Via the Bash tool, never use PowerShell `@'...'@` here-strings (they leak `@`); 
 
 ## Memory
 - Always manage memory with the project's `.claude/memory`; never use auto memory stored in the user directory.
+- All one-shot scripts and experience should be saved and archived in the project's `.claude/memory`.
 - Full conventions (format, scripts, eviction) are in the `/rem` skill — loaded only when needed.
 - Manage TODO tasks via the `rem:todo` skill and the `rem` task system; do not track TODOs ad hoc.
