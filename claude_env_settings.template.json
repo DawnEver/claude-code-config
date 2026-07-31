@@ -28,7 +28,10 @@
         },
         "serve": {
             "port": 7677,
-            "projects": { "example-alias": "C:/path/to/project" }
+            "projects": { "example-alias": "C:/path/to/project" },
+            "byHost": {
+                "example-hostname": { "projects": { "example-alias": "D:/other/path" } }
+            }
         }
     }
 }
