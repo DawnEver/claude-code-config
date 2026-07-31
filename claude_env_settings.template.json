@@ -20,5 +20,15 @@
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3-256k",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
         "CLAUDE_CODE_SUBAGENT_MODEL": "k3-256k"
+    },
+    "fabric": {
+        "token": "shared-secret-for-fabric-lan-nodes",
+        "nodes": {
+            "example-desktop": { "host": "192.168.1.10", "port": 7677 }
+        },
+        "serve": {
+            "port": 7677,
+            "projects": { "example-alias": "C:/path/to/project" }
+        }
     }
 }
