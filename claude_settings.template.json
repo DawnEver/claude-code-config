@@ -138,5 +138,7 @@
     },
     "metadata": {
         "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
-    }
+    },
+  "autoCompactWindow": 720000
+
 }
