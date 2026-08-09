@@ -77,10 +77,22 @@ body carries the persona (post/academic); `true` layers on top.
   symlink to GLOBAL-AGENTS.md) → project AGENTS/CLAUDE.md (fallback).
 - codex has NO cross-process prompt cache (tokens used constant across
   identical runs) — the injection is a correctness lever, not a cost lever.
-- fabric's per-call `systemPrompt` still lands in the user message; it does not
-  overlap codex-base (platform text in system) — avoid restating the same
-  content in both.
 - No tool presets on codex: the tool set is fixed (shell/apply_patch/web_search).
+
+## Instruction layering (all providers, systematic)
+
+One model, three layers — enforced by code, not convention:
+
+| layer | content | channel |
+|-------|---------|---------|
+| system (persistent) | GLOBAL principles (via CLAUDE.md/AGENTS.md symlinks) + platform base (claude-base/codex-base) + style | `--system-prompt-file` / `model_instructions_file` / `body.system` (API providers read `fabric.systemPromptFile` — added 2026-08-10) |
+| per-call (user message) | mode template (`prompts/*.md` — mode-specific ONLY; the overlap guard test forbids restating GLOBAL phrases) + explicit `customSystem` + user prompt | mcp-server prepends the mode template to the user prompt on every provider |
+| project | CLAUDE.md / AGENTS.md | auto-injection |
+
+`prompts/task.md` was de-duplicated against GLOBAL (2026-08-10): universal
+principles live in exactly one place. The guard test
+(`fabric/tests/prompts-overlap.test.mjs`) fails any future edit that reintroduces
+dual-source instructions.
 
 ## Official-update tracking
 
