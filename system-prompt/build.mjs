@@ -28,7 +28,7 @@ export function validateStatic(text, name) {
 }
 
 export function buildStyle(style, baseText) {
-  const body = style.file ? parseFrontmatter(readFileSync(style.file, "utf8")).body : "";
+  const body = style.body ?? (style.file ? parseFrontmatter(readFileSync(style.file, "utf8")).body : "");
   const text = `${baseText.trimEnd()}\n\n${body.trim()}\n`;
   return { text, style };
 }

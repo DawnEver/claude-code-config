@@ -47,7 +47,7 @@ export function parseFrontmatter(text) {
       meta[kv[1]] = v;
     }
   }
-  return { body: text.slice(m[0][0].length), meta };
+  return { body: text.slice(m[0].length), meta };
 }
 
 /** Discover styles across all search dirs; nearest dir wins on name conflicts. */
@@ -60,7 +60,8 @@ export function discoverStyles(searchDirs = DEFAULT_SEARCH_DIRS()) {
       const file = join(dir, f);
       const { body, meta } = parseFrontmatter(readFileSync(file, "utf8"));
       const name = meta.name || f.replace(/\.md$/, "");
-      // nearest dir wins → overwrite earlier (farther) entries
+      // Search dirs are ordered near → far; the FIRST (nearest) entry wins.
+      if (found.has(name)) continue;
       found.set(name, {
         name,
         description: meta.description || "",
