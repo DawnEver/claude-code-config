@@ -20,6 +20,7 @@
 Via the Bash tool, never use PowerShell `@'...'@` here-strings (they leak `@`); use a Bash HEREDOC for multi-line messages.
 - Never force-push shared branches; use `--force-with-lease` if unavoidable.
 - Always run tests before `commit` and `push`; never commit or push with failing or unrun tests.
+- Retry every git operation 3 times before reporting it blocked. 
 
 ## Memory
 - Always manage memory with the project's `.claude/memory`; never use auto memory stored in the user directory.
