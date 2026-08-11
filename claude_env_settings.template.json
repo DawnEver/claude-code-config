@@ -22,7 +22,9 @@
         "CLAUDE_CODE_SUBAGENT_MODEL": "k3-256k"
     },
     "fabric": {
+        "sessionDefaults": { "provider": "deepseek", "model": "deepseek-v4-flash[1m]", "effort": "max" },
         "token": "shared-secret-for-fabric-lan-nodes",
+        "systemPromptFile": "~/.claude/system-prompt/claude-base.md",
         "nodes": {
             "example-desktop": { "host": "192.168.1.10", "port": 7677 }
         },

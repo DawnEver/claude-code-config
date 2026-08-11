@@ -26,6 +26,10 @@ export const CLAUDE_LINKS = [
   { src: '.claude/workflows', dest: 'workflows', type: 'dir' },
   { src: 'claude_env_settings.json', dest: 'claude_env_settings.json', type: 'file' },
   { src: 'keybindings.json', dest: 'keybindings.json', type: 'file' },
+  // Platform prompts: the shared configs reference `~/.claude/system-prompt/...` and
+  // `~/.codex/system-prompt/...` (see fabric.systemPromptFile / codex model_instructions_file),
+  // so every machine resolves them through THIS link regardless of its OneDrive username.
+  { src: 'system-prompt', dest: 'system-prompt', type: 'dir' },
 ];
 
 export const CODEX_LINKS = [
@@ -33,6 +37,8 @@ export const CODEX_LINKS = [
   // Codex's global instructions file is $CODEX_HOME/AGENTS.md (mirrors ~/.claude/CLAUDE.md
   // for Claude). Same single source — GLOBAL-AGENTS.md — linked to both hosts.
   { src: 'GLOBAL-AGENTS.md', dest: 'AGENTS.md', type: 'file' },
+  // Platform prompts for codex (`model_instructions_file = "~/.codex/system-prompt/codex-base.md"`).
+  { src: 'system-prompt', dest: 'system-prompt', type: 'dir' },
 ];
 
 const isWindows = process.platform === 'win32';
