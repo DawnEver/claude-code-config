@@ -23,6 +23,7 @@
 import fs from 'fs';
 import path from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
+import { readMergedEnvSettings } from '../shared/config.mjs';
 import os from 'os';
 import { fileURLToPath } from 'url';
 
@@ -98,8 +99,8 @@ if (provider === 'claude') {
   }
 
   let profiles;
-  try { profiles = JSON.parse(fs.readFileSync(envSettingsPath, 'utf8')); } catch {
-    console.error('ERROR Could not parse claude_env_settings.json');
+  try { profiles = readMergedEnvSettings({ sharedPath: envSettingsPath }); } catch {
+    console.error('ERROR Could not parse claude_env_settings.json (or claude_env_settings.local.json)');
     process.exit(1);
   }
 

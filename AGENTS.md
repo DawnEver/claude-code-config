@@ -28,8 +28,9 @@ Cross-platform Claude Code & Codex config sync: centralizes in OneDrive, links t
 - `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) — see `cc-market/AGENTS.md`
 - `claude_settings.json`: Env vars, permissions, hooks (gitignored, secrets not tracked)
 - `claude_settings.template.json`: Template for new clones -> auto-copied to `claude_settings.json` by setup
-- `claude_env_settings.json`: API keys per provider (gitignored, secrets not tracked)
+- `claude_env_settings.json`: Non-secret provider config (base URLs, model pins) — synced via OneDrive, gitignored. NO API keys
 - `claude_env_settings.template.json`: Desensitized provider template -> auto-copied to `claude_env_settings.json` by setup
+- `claude_env_settings.local.template.json`: Desensitized per-machine secrets template -> copied by setup to `~/.claude/claude_env_settings.local.json` (a REAL machine-local dir, never OneDrive-synced). Each host fills in its own API keys there; all readers deep-merge local over shared
 - `keybindings.json`: Claude Code keybindings -> synced to `~/.claude/keybindings.json`
 - `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory. Single source linked to both `~/.claude/CLAUDE.md` (Claude) and `~/.codex/AGENTS.md` (Codex global instructions)
 - `.claude/rules/rem/`: All rules loaded every session (git-tracked), managed by REM plugin lifecycle. `.claude/rules/MEMORY.md` is the device-local generated index (gitignored).

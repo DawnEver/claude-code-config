@@ -129,6 +129,17 @@ export function setup() {
     console.log('COPY  claude_env_settings.template.json - claude_env_settings.json');
   }
 
+  // Ensure the MACHINE-LOCAL secrets file exists (copied from a desensitized template).
+  // Lives in ~/.claude — a REAL per-machine dir (only specific children are junctions into
+  // the repo) — so it never syncs via OneDrive. Each machine fills in its own API keys here;
+  // the shared claude_env_settings.json carries no secrets.
+  const localEnvSettingsPath = path.join(claudeDir, 'claude_env_settings.local.json');
+  const localEnvSettingsTemplatePath = path.join(sourceDir, 'claude_env_settings.local.template.json');
+  if (!fs.existsSync(localEnvSettingsPath) && fs.existsSync(localEnvSettingsTemplatePath)) {
+    fs.copyFileSync(localEnvSettingsTemplatePath, localEnvSettingsPath);
+    console.log('COPY  claude_env_settings.local.template.json - ~/.claude/claude_env_settings.local.json');
+  }
+
   let created = 0, skipped = 0, errors = 0;
 
   // Process Claude links

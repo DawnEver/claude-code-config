@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
+import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
+import { readMergedEnvSettings } from '../shared/config.mjs';
 
-// claude_env_settings.json contains API keys — keep permissions 0600.
+// claude_env_settings.json carries non-secret provider config (shared via OneDrive);
+// API keys live machine-locally in ~/.claude/claude_env_settings.local.json, merged here.
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envSettingsPath = join(__dirname, '..', '..', 'claude_env_settings.json');
 
@@ -21,7 +23,7 @@ if (provider !== 'claude') {
     console.error(`Missing: ${envSettingsPath}`);
     process.exit(1);
   }
-  profiles = JSON.parse(readFileSync(envSettingsPath, 'utf8'));
+  profiles = readMergedEnvSettings({ sharedPath: envSettingsPath });
   const profile = profiles[`env:${provider}`];
   if (!profile) {
     const available = Object.keys(profiles).filter(k => k.startsWith('env:')).map(k => k.slice(4)).join(', ');

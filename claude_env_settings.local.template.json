@@ -1,0 +1,8 @@
+{
+  "env:deepseek": {
+    "ANTHROPIC_API_KEY": "sk-your-deepseek-api-key"
+  },
+  "env:kimi": {
+    "ANTHROPIC_API_KEY": "sk-your-kimi-api-key"
+  }
+}

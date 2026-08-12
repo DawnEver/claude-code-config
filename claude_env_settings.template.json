@@ -3,7 +3,6 @@
     "env:codex": {},
     "env:deepseek": {
         "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
-        "ANTHROPIC_API_KEY": "sk-your-deepseek-api-key",
         "ANTHROPIC_MODEL": "deepseek-v4-flash[1m]",
         "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-pro[1m]",
         "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-flash[1m]",
@@ -13,7 +12,6 @@
     },
     "env:kimi": {
         "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
-        "ANTHROPIC_API_KEY": "sk-your-kimi-api-key",
         "ANTHROPIC_MODEL": "k3-256k",
         "ANTHROPIC_DEFAULT_FABLE_MODEL": "k3[1m]",
         "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3-256k",
