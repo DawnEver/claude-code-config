@@ -20,11 +20,15 @@
         "CLAUDE_CODE_SUBAGENT_MODEL": "k3-256k"
     },
     "fabric": {
-        "sessionDefaults": { "provider": "deepseek", "model": "deepseek-v4-flash[1m]", "effort": "xhigh" },
+        "sessionDefaults": { "provider": "deepseek", "model": "deepseek-v4-flash[1m]", "effort": "low" },
         "token": "shared-secret-for-fabric-lan-nodes",
         "systemPromptFile": "~/.claude/system-prompt/claude-base.md",
         "nodes": {
-            "example-desktop": { "host": "192.168.1.10", "port": 7677 }
+            "example-desktop": {
+                "host": "192.168.1.10",
+                "port": 7677,
+                "fingerprint": "ed25519:paste-the-node-identity-fingerprint-here"
+            }
         },
         "serve": {
             "port": 7677,
