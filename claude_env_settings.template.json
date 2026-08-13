@@ -5,7 +5,7 @@
         "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
         "ANTHROPIC_MODEL": "deepseek-v4-flash[1m]",
         "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-pro[1m]",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-flash[1m]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-pro[1m]",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1m]",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash[1m]",
         "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-flash[1m]"
@@ -14,13 +14,13 @@
         "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding/",
         "ANTHROPIC_MODEL": "k3-256k",
         "ANTHROPIC_DEFAULT_FABLE_MODEL": "k3[1m]",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3-256k",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3[1m]",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3-256k",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
         "CLAUDE_CODE_SUBAGENT_MODEL": "k3-256k"
     },
     "fabric": {
-        "sessionDefaults": { "provider": "deepseek", "model": "deepseek-v4-flash[1m]", "effort": "max" },
+        "sessionDefaults": { "provider": "deepseek", "model": "deepseek-v4-flash[1m]", "effort": "xhigh" },
         "token": "shared-secret-for-fabric-lan-nodes",
         "systemPromptFile": "~/.claude/system-prompt/claude-base.md",
         "nodes": {
