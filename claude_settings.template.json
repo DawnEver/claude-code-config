@@ -14,43 +14,30 @@
         "TRACEME_SYNC_REMOTE": "Your TRACEME Git Repo"
     },
     "includeCoAuthoredBy": false,
-    "permissions": {
-        "allow": [
-            "Bash(git *)",
-            "Bash(node *)",
-            "Bash(npm *)",
-            "Bash(npx *)",
-            "Bash(ln *)",
-            "Bash(chmod +x *)",
-            "Bash(cmd *)",
-            "Bash(where *)",
-            "Bash(which *)",
-            "PowerShell(where *)",
-            "WebSearch",
-            "PowerShell(Get-Item *)",
-            "PowerShell(Get-ChildItem *)",
-            "PowerShell(Test-Path *)",
-            "PowerShell(Get-Command *)",
-            "PowerShell(Get-Process *)",
-            "Skill(update-config)",
-            "Skill(rem:rem)",
-            "Skill(rem:todo)",
-            "Skill(sharp-review)",
-            "Skill(fabric:continue)",
-            "Skill(fabric:models)",
-            "Skill(fabric:summary)",
-            "mcp__plugin_fabric_fabric__call",
-            "mcp__plugin_fabric_fabric__list_providers",
-            "mcp__ide__getDiagnostics",
-            "mcp__ide__executeCode"
-        ],
-        "deny": [
-            "Bash(rm -rf *)",
-            "Bash(sudo *)",
-            "Bash(curl * | bash)"
-        ],
-        "defaultMode": "auto"
-    },
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "PowerShell",
+      "WebSearch",
+      "Skill(update-config)",
+      "Skill(rem:rem)",
+      "Skill(rem:todo)",
+      "Skill(fabric:continue)",
+      "Skill(fabric:models)",
+      "Skill(fabric:summary)",
+      "mcp__plugin_fabric_fabric__call",
+      "mcp__plugin_fabric_fabric__list_providers"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(sudo *)",
+      "Bash(curl * | bash)"
+    ],
+    "defaultMode": "auto"
+  },
     "hooks": {
         "SessionStart": [
             {
@@ -139,6 +126,6 @@
     "metadata": {
         "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
     },
-  "autoCompactWindow": 640000
+  "autoCompactWindow": 720000
 
 }
