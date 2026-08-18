@@ -77,7 +77,13 @@ Writes `terminal.integrated.env.*` and `claudeCode.environmentVariables` to loca
 
 ### Troubleshooting
 
-**Windows permissions:** Enable Developer Mode or run as Administrator if symlink creation fails.
+**Windows permissions:** File symlinks need `SeCreateSymbolicLinkPrivilege` (Developer Mode, or an
+elevated shell); directory entries use junctions and never need it. Without the privilege, setup
+falls back to **hard links** for files and logs `(hard link)`. Hard links are two-way like symlinks,
+but only while both names point at the same file record - a writer that *replaces* the file
+(OneDrive sync-down, `git checkout`, an atomic save) silently breaks the link. Setup reports a broken
+one as `plain file, not linked`; re-run `npm run setup -- -r` to re-link. If the unlinked copy had
+drifted from the repo it is kept alongside as `<name>.setup-bak` rather than discarded.
 
 
 ## Hooks

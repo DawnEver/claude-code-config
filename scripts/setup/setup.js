@@ -95,6 +95,150 @@ export function removeExisting(destPath) {
   return true;
 }
 
+// Windows paths are case-insensitive, and the drive letter's case follows how the script was
+// invoked (`node c:\...` vs `C:\...`), so an exact compare re-links links that were fine.
+function samePath(a, b) {
+  const x = path.resolve(a), y = path.resolve(b);
+  return isWindows ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+function filesMatch(a, b) {
+  try {
+    return fs.readFileSync(a).equals(fs.readFileSync(b));
+  } catch {
+    return false;
+  }
+}
+
+// A hard link is the fallback when a file symlink is not permitted (see createLink). It is
+// indistinguishable from a plain file by lstat, so identify one by file identity instead:
+// same volume (dev) and same file record (ino).
+export function isHardLinked(srcPath, destPath) {
+  try {
+    const a = fs.statSync(srcPath);
+    const b = fs.statSync(destPath);
+    return a.ino !== 0 && a.ino === b.ino && a.dev === b.dev;
+  } catch {
+    return false;
+  }
+}
+
+// Windows only grants file symlinks to holders of SeCreateSymbolicLinkPrivilege (Developer
+// Mode, or an elevated shell). Directory links use junctions, which need no privilege, so
+// only `type: 'file'` entries can fail this way. Hard links need no privilege either and are
+// genuinely two-way like a symlink -- but only while both names keep pointing at the same
+// file record: a writer that REPLACES rather than edits (OneDrive sync-down, `git checkout`,
+// an atomic save) breaks the link and silently leaves a stale copy behind. Re-run setup with
+// --replace to re-link when that happens; unlinked entries are reported on every run.
+function createLink(srcPath, destPath, type) {
+  const symlinkType = isWindows ? (type === 'dir' ? 'junction' : 'file') : undefined;
+  try {
+    fs.symlinkSync(srcPath, destPath, symlinkType);
+    return 'symlink';
+  } catch (err) {
+    if (!(isWindows && type === 'file' && err.code === 'EPERM')) throw err;
+    fs.linkSync(srcPath, destPath);
+    return 'hardlink';
+  }
+}
+
+// Link destPath -> srcPath without ever destroying what is already there: an existing entry
+// is moved aside first and moved back if linking throws. (Deleting up front is what cost a
+// live ~/.claude/settings.json once the symlink behind it started failing.)
+export function linkEntry(srcPath, destPath, link, replace) {
+  if (!fs.existsSync(srcPath)) {
+    return { status: 'skip', message: `source not found: ${srcPath}` };
+  }
+
+  fs.mkdirSync(path.dirname(destPath), { recursive: true });
+
+  const stat = fs.lstatSync(destPath, { throwIfNoEntry: false });
+
+  if (stat) {
+    if (stat.isSymbolicLink()) {
+      const existingTarget = fs.readlinkSync(destPath);
+      if (samePath(path.resolve(path.dirname(destPath), existingTarget), srcPath)) {
+        return { status: 'ok', message: 'already linked' };
+      }
+    } else if (link.type === 'file' && isHardLinked(srcPath, destPath)) {
+      return { status: 'ok', message: 'already linked (hard link)' };
+    }
+
+    if (!replace) {
+      return {
+        status: 'skip',
+        message: link.type === 'file' && stat.isFile()
+          ? 'plain file, not linked - re-run with --replace to re-link'
+          : 'already exists (remove manually to re-link, or use --replace)',
+      };
+    }
+  }
+
+  const notes = [];
+  let backupPath = null;
+  if (stat) {
+    backupPath = `${destPath}.setup-bak`;
+    fs.rmSync(backupPath, { recursive: true, force: true });
+    fs.renameSync(destPath, backupPath);
+  }
+
+  let kind;
+  try {
+    kind = createLink(srcPath, destPath, link.type);
+  } catch (err) {
+    if (backupPath) fs.renameSync(backupPath, destPath);
+    throw err;
+  }
+
+  if (backupPath) {
+    // An unlinked plain file may hold edits the repo never saw -- a hard link that broke
+    // and drifted. Keep that one; anything matching the source is safe to drop.
+    if (stat.isFile() && !stat.isSymbolicLink() && !filesMatch(srcPath, backupPath)) {
+      notes.push(`replaced existing - kept unlinked copy at ${path.basename(backupPath)}`);
+    } else {
+      fs.rmSync(backupPath, { recursive: true, force: true });
+      notes.push('removed existing');
+    }
+  }
+
+  return { status: 'link', kind, notes };
+}
+
+function processLinks(links, baseDir, counters) {
+  for (const link of links) {
+    const srcPath = path.join(sourceDir, link.src);
+    const destPath = path.join(baseDir, link.dest);
+
+    let result;
+    try {
+      result = linkEntry(srcPath, destPath, link, counters.replace);
+    } catch (err) {
+      result = { status: 'error', message: err.message, code: err.code };
+    }
+
+    for (const note of result.notes || []) console.log(`REMV  ${link.dest} - ${note}`);
+
+    if (result.status === 'link') {
+      console.log(`LINK  ${link.dest} - ${srcPath}${result.kind === 'hardlink' ? ' (hard link)' : ''}`);
+      counters.created++;
+    } else if (result.status === 'ok') {
+      console.log(`OK    ${link.dest} - ${result.message}`);
+      counters.skipped++;
+    } else if (result.status === 'skip') {
+      console.log(`SKIP  ${link.dest} - ${result.message}`);
+      counters.skipped++;
+    } else {
+      console.log(`ERR   ${link.dest} - ${result.message}`);
+      if (isWindows && result.code === 'EXDEV') {
+        console.log('      Hint: the hard-link fallback needs source and target on one volume');
+      } else if (isWindows && result.code === 'EPERM') {
+        console.log('      Hint: Enable Developer Mode in Windows Settings, or run as Administrator');
+      }
+      counters.errors++;
+    }
+  }
+}
+
 export function setup() {
   const args = process.argv.slice(2);
   const replace = args.includes('--replace') || args.includes('-r');
@@ -140,109 +284,16 @@ export function setup() {
     console.log('COPY  claude_env_settings.local.template.json - ~/.claude/claude_env_settings.local.json');
   }
 
-  let created = 0, skipped = 0, errors = 0;
+  const counters = { created: 0, skipped: 0, errors: 0, replace };
 
-  // Process Claude links
   console.log('--- Claude ---');
-  for (const link of CLAUDE_LINKS) {
-    const srcPath = path.join(sourceDir, link.src);
-    const baseDir = claudeDir;
-    const destPath = path.join(baseDir, link.dest);
+  processLinks(CLAUDE_LINKS, claudeDir, counters);
 
-    if (!fs.existsSync(srcPath)) {
-      console.log(`SKIP  ${link.dest} - source not found: ${srcPath}`);
-      skipped++;
-      continue;
-    }
-
-    fs.mkdirSync(path.dirname(destPath), { recursive: true });
-
-    try {
-      const stat = fs.lstatSync(destPath, { throwIfNoEntry: false });
-      if (stat) {
-        if (stat.isSymbolicLink()) {
-          const existingTarget = fs.readlinkSync(destPath);
-          const normalizedExisting = path.resolve(path.dirname(destPath), existingTarget);
-          if (normalizedExisting === path.resolve(srcPath)) {
-            console.log(`OK    ${link.dest} - already linked`);
-            skipped++;
-            continue;
-          }
-        }
-        if (replace) {
-          removeExisting(destPath);
-          console.log(`REMV  ${link.dest} - removed existing`);
-        } else {
-          console.log(`SKIP  ${link.dest} - already exists (remove manually to re-link, or use --replace)`);
-          skipped++;
-          continue;
-        }
-      }
-
-      const symlinkType = isWindows ? (link.type === 'dir' ? 'junction' : 'file') : undefined;
-      fs.symlinkSync(srcPath, destPath, symlinkType);
-      console.log(`LINK  ${link.dest} - ${srcPath}`);
-      created++;
-    } catch (err) {
-      console.log(`ERR   ${link.dest} - ${err.message}`);
-      if (isWindows && err.message.includes('privilege')) {
-        console.log('      Hint: Enable Developer Mode in Windows Settings, or run as Administrator');
-      }
-      errors++;
-    }
-  }
-
-  // Process Codex links
   console.log('\n--- Codex ---');
   // Convert any legacy `~/.codex/skills` junction into a real directory before
   // creating per-skill links (otherwise they self-reference into the repo).
   ensureRealDir(path.join(codexDir, 'skills'));
-  for (const link of getCodexLinks()) {
-    const srcPath = path.join(sourceDir, link.src);
-    const destPath = path.join(codexDir, link.dest);
-
-    if (!fs.existsSync(srcPath)) {
-      console.log(`SKIP  ${link.dest} - source not found: ${srcPath}`);
-      skipped++;
-      continue;
-    }
-
-    fs.mkdirSync(path.dirname(destPath), { recursive: true });
-
-    try {
-      const stat = fs.lstatSync(destPath, { throwIfNoEntry: false });
-      if (stat) {
-        if (stat.isSymbolicLink()) {
-          const existingTarget = fs.readlinkSync(destPath);
-          const normalizedExisting = path.resolve(path.dirname(destPath), existingTarget);
-          if (normalizedExisting === path.resolve(srcPath)) {
-            console.log(`OK    ${link.dest} - already linked`);
-            skipped++;
-            continue;
-          }
-        }
-        if (replace) {
-          removeExisting(destPath);
-          console.log(`REMV  ${link.dest} - removed existing`);
-        } else {
-          console.log(`SKIP  ${link.dest} - already exists (remove manually to re-link, or use --replace)`);
-          skipped++;
-          continue;
-        }
-      }
-
-      const symlinkType = isWindows ? (link.type === 'dir' ? 'junction' : 'file') : undefined;
-      fs.symlinkSync(srcPath, destPath, symlinkType);
-      console.log(`LINK  ${link.dest} - ${srcPath}`);
-      created++;
-    } catch (err) {
-      console.log(`ERR   ${link.dest} - ${err.message}`);
-      if (isWindows && err.message.includes('privilege')) {
-        console.log('      Hint: Enable Developer Mode in Windows Settings, or run as Administrator');
-      }
-      errors++;
-    }
-  }
+  processLinks(getCodexLinks(), codexDir, counters);
 
   // Clone or update cc-market (community plugin marketplace)
   console.log('\n--- Plugins (cc-market) ---');
@@ -262,7 +313,7 @@ export function setup() {
       console.log('OK    cc-market - cloned from https://github.com/DawnEver/cc-market');
     } catch (err) {
       console.log(`ERR   cc-market - ${err.stderr?.toString().trim() || err.message}`);
-      errors++;
+      counters.errors++;
     }
   }
   // Note: plugin enablement + the cc-market marketplace live in claude_settings.template.json,
@@ -276,14 +327,14 @@ export function setup() {
   // Check macOS notification helper
   if (process.platform === 'darwin') {
     console.log('\n--- macOS Notifications ---');
-    if (!checkMacNotify()) errors++;
+    if (!checkMacNotify()) counters.errors++;
   }
 
   // Install shell aliases
   console.log('\n--- Shell Aliases ---');
   installShellAliases(claudeDir, sourceDir);
 
-  console.log(`\nDone: ${created} linked, ${skipped} skipped, ${errors} errors`);
+  console.log(`\nDone: ${counters.created} linked, ${counters.skipped} skipped, ${counters.errors} errors`);
 }
 
 if (path.resolve(process.argv[1] || '') === path.resolve(__dirname, 'setup.js')) {
