@@ -18,11 +18,6 @@ project_doc_fallback_filenames = [
 
 model = "gpt-5.6-sol"
 model_reasoning_effort = "low"
-
-# Platform system prompt for codex — resolved via the ~/.codex/system-prompt symlink
-# setup.js creates (points at the synced repo's system-prompt/), so this shared config
-# never carries a machine-specific OneDrive path. Codex expands `~/` and `./` against
-# ~/.codex/. Leave unset to use codex's built-in base instructions.
 model_instructions_file = "~/.codex/system-prompt/codex-base.md"
 
 service_tier = "default"
@@ -41,6 +36,7 @@ status_line = [
     "task-progress",
 ]
 status_line_use_colors = true
+theme = "github"
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4
@@ -70,6 +66,9 @@ enabled = true
 
 [plugins."fabric@cc-market"]
 enabled = true
+
+[plugins."cc-latex@cc-market"]
+enabled = false
 
 [features]
 prevent_idle_sleep = true
