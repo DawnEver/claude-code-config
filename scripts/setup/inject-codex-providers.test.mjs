@@ -59,6 +59,8 @@ test('generate: emits a [model_providers.*] block per provider with codexPath', 
   assert.match(out, /base_url = "https:\/\/api\.deepseek\.com\/v1"/);
   assert.match(out, /env_key = "DEEPSEEK_API_KEY"/);
   assert.match(out, /wire_api = "responses"/);
+  // codex needs model_catalog_json to list the providers' models in the picker
+  assert.match(out, /model_catalog_json = "~\/\.codex\/models\.json"/);
   assert.match(out, new RegExp(CODEX_TOML_START_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(out, new RegExp(CODEX_TOML_END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
@@ -180,7 +182,7 @@ test('codexModelFrom: strips the [1m] context suffix and honors an explicit code
   assert.equal(codexModelFrom({}), '');
 });
 
-test('generateModelsJson: emits a catalog entry per codex-facing model (deepseek vision gets image modality)', () => {
+test('generateModelsJson: catalogs every distinct role model with the full schema', () => {
   const out = generateModelsJson({
     providers: {
       deepseek: {
@@ -194,31 +196,51 @@ test('generateModelsJson: emits a catalog entry per codex-facing model (deepseek
   });
   const parsed = JSON.parse(out);
   assert.ok(Array.isArray(parsed.models));
-  // Only the codex-facing base model is cataloged — fable/opus are Claude-only roles.
-  assert.equal(parsed.models.length, 1);
-  const flash = parsed.models[0];
-  assert.equal(flash.slug, 'deepseek-v4-flash');
+  // base/fable/opus → flash, pro, vision all appear in the picker
+  assert.deepEqual(parsed.models.map(m => m.slug).sort(), [
+    'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp', 'deepseek-v4-pro',
+  ]);
+  const flash = parsed.models.find(m => m.slug === 'deepseek-v4-flash');
+  // Schema-complete fields Codex needs to accept the catalog
   assert.equal(flash.context_window, 1048576);
-  assert.deepEqual(flash.input_modalities, ['text']);
+  assert.equal(flash.max_context_window, 1048576);
+  assert.equal(flash.visibility, 'list');
+  assert.equal(flash.minimal_client_version, '0.144.0');
+  assert.equal(flash.default_reasoning_level, 'high');
   assert.ok(flash.supported_reasoning_levels.some(r => r.effort === 'max'));
+  assert.deepEqual(flash.truncation_policy, { mode: 'tokens', limit: 10000 });
+  assert.equal(flash.supports_parallel_tool_calls, true);
 });
 
-test('generateModelsJson: a vision base model catalogs image input', () => {
+test('generateModelsJson: a vision role model catalogs image input', () => {
   const out = generateModelsJson({
     providers: { deepseek: { models: { base: 'deepseek-v4-flash-vision-exp[1m]' } } },
   });
   const [entry] = JSON.parse(out).models;
   assert.deepEqual(entry.input_modalities, ['text', 'image']);
+  assert.equal(entry.supports_image_detail_original, true);
 });
 
-test('generateModelsJson: unknown model gets a generic entry (still usable)', () => {
+test('generateModelsJson: unknown model gets a generic, schema-complete entry', () => {
   const out = generateModelsJson({
     providers: { gmi: { models: { base: 'MiniMaxAI/MiniMax-M3[1m]' } } },
   });
   const [entry] = JSON.parse(out).models;
   assert.equal(entry.slug, 'MiniMaxAI/MiniMax-M3');
-  assert.equal(entry.input_modalities.length, 1);
+  assert.deepEqual(entry.input_modalities, ['text']);
+  assert.equal(entry.visibility, 'list');
   assert.equal(typeof entry.context_window, 'number');
+  assert.equal(entry.supports_image_detail_original, false);
+});
+
+test('generateModelsJson: dedupes models shared across providers', () => {
+  const out = generateModelsJson({
+    providers: {
+      a: { models: { base: 'shared[1m]' } },
+      b: { models: { base: 'shared[1m]', fable: 'other' } },
+    },
+  });
+  assert.equal(JSON.parse(out).models.length, 2); // shared + other
 });
 
 test('generateModelsJson: returns empty when no provider has a codex model', () => {

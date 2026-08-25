@@ -65,10 +65,11 @@ test('codex.js deepseek derives --model from models.base (strips [1m])', () => {
   // Must not leak Claude-side env vars
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
   assert.equal(env.ANTHROPIC_BASE_URL, undefined);
-  // Args order: --config key=value, --model <model>. The [1m] context-window
-  // suffix is Claude-side; codex gets the bare model id.
+  // Args order: --config model_provider=<name> (selects the provider's
+  // [model_providers.*] block from config.toml), --model <model>. The [1m]
+  // context-window suffix is Claude-side; codex gets the bare model id.
   assert.deepEqual(args, [
-    '--config', 'openai_base_url=https://api.deepseek.com/v1',
+    '--config', 'model_provider=deepseek',
     '--model', 'deepseek-v4-flash',
   ]);
 });
@@ -112,7 +113,7 @@ test('codex.js gmi uses ANTHROPIC_AUTH_TOKEN via codexApiKeyEnv and the M3 model
   assert.equal(error, null);
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'gmi-secret');
   assert.deepEqual(args, [
-    '--config', 'openai_base_url=https://api.gmi-serving.com/v1',
+    '--config', 'model_provider=gmi',
     '--model', 'MiniMaxAI/MiniMax-M3',
   ]);
 });
@@ -150,7 +151,7 @@ test('codex.js unknown provider returns an error listing available', () => {
   assert.deepEqual(available, ['deepseek', 'gmi']);
 });
 
-test('codex.js provider without url/codexPath/codexModel emits no --config / --model', () => {
+test('codex.js selects the provider even with no models (emits model_provider but no --model)', () => {
   const { shared, local } = fixture();
   writeFileSync(shared, JSON.stringify({
     providers: { minimal: { codexApiKeyEnv: 'K' } },
@@ -161,7 +162,9 @@ test('codex.js provider without url/codexPath/codexModel emits no --config / --m
   });
   assert.equal(error, null);
   assert.equal(env.K, 'k');
-  assert.equal(args.includes('--config'), false);
+  // Always select the provider's [model_providers.minimal] block; --model only
+  // when the provider declares a models map.
+  assert.deepEqual(args, ['--config', 'model_provider=minimal']);
   assert.equal(args.includes('--model'), false);
 });
 

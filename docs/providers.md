@@ -138,13 +138,22 @@ style so both providers share one config shape.
 
 - `env[<codexApiKeyEnv>] = apiKey` (the literal env-var name configured via
   `model_providers.<id>.env_key` in `codex_config.toml`)
-- `args += ['--config', 'openai_base_url=<url><codexPath>']` — note: `OPENAI_BASE_URL`
-  env var is **silently ignored in codex v0.118+** (openai/codex#16719), so the
-  launcher uses `--config` instead.
+- `args += ['--config', 'model_provider=<name>']` — selects the provider's
+  `[model_providers.<name>]` block in `codex_config.toml`, which resolves its
+  `base_url` + `env_key` + `wire_api = "responses"`. (An earlier design overrode
+  the OPENAI provider's URL with `--config openai_base_url=...`; that hijacked
+  the request to openai/chatgpt auth and the openai model list instead of using
+  the provider's own auth/wire_api — see `.claude/memory/2026/08/25/…` for the
+  DeepSeek setup script's rationale, which deletes any global `openai_base_url`.)
 - `args += ['--model', <codex model>]` — codex has no model env var, only a
   `--model` CLI flag. The model derives from `models.codex ?? models.base`
   with the `[1m]` suffix stripped (`deepseek-v4-flash[1m]` → `deepseek-v4-flash`),
   so it tracks the same `models` source as the Claude side.
+- Setup also writes `model_catalog_json = "~/.codex/models.json"` and generates a
+  schema-complete `models.json` (with `base_instructions` = the repo's
+  `system-prompt/codex-base.md`). Without `model_catalog_json`, codex 0.149 queries
+  the provider's `/v1/models` and, failing to parse it, shows the built-in openai
+  list in the `--model` picker instead of the providers' models.
 
 **Precondition the user maintains:** `codex_config.toml` must have a
 `[model_providers.<id>]` block per provider (e.g. `model_providers.deepseek =

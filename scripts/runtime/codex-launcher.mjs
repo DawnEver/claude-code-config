@@ -3,11 +3,11 @@
 // Projects a single `providers.<name>` block from claude_env_settings.json into
 // the env + CLI flags the `codex` binary needs. Mirrors `cc-launcher.mjs` in
 // shape (same single source of truth, same provider-projection pattern) but
-// targets codex's different surface: codex reads provider keys via per-provider
-// `env_key` in `codex_config.toml`, takes base URLs through `--config
-// openai_base_url=...` (not env — `OPENAI_BASE_URL` is silently ignored in
-// v0.118+, see openai/codex#16719), and model is a `--model` CLI flag (no env
-// var exists).
+// targets codex's different surface: codex selects the provider via
+// `--config model_provider=<name>` (which resolves base_url / env_key / wire_api
+// from the `[model_providers.<name>]` block setup writes into `codex_config.toml`),
+// the API key through the provider's `env_key` env var, and the model is a
+// `--model` CLI flag (no env var exists).
 
 import { existsSync } from 'fs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
@@ -92,9 +92,13 @@ export function buildCodexInvocation({
   if (profile.codexApiKeyEnv && profile.apiKey) {
     env[profile.codexApiKeyEnv] = profile.apiKey;
   }
-  if (profile.url) {
-    const baseUrl = profile.url + (profile.codexPath ?? '');
-    args.push('--config', `openai_base_url=${baseUrl}`);
+  // Select the provider's `[model_providers.<name>]` block (base_url, env_key,
+  // wire_api) from config.toml. Previously the launcher overrode the OPENAI
+  // provider's base_url with `--config openai_base_url=...`; that hijacked the
+  // request (openai/chatgpt auth + openai model list) instead of using the
+  // provider's own auth and wire_api — see docs/providers.md § Codex side.
+  if (provider) {
+    args.push('--config', `model_provider=${provider}`);
   }
   if (profile.models?.codex || profile.models?.base) {
     args.push('--model', codexModel(profile.models));
