@@ -294,21 +294,24 @@ describe('resolveAliasBinDirs', () => {
 
   test('prefers the claude bin dir for both target and claude when claude exists', () => {
     const locate = (cmd) => (cmd === 'claude' ? `${sep}opt${sep}claude${sep}bin` : `${sep}opt${sep}codex${sep}bin`);
-    const { claudeBin, targetBin } = resolveAliasBinDirs(locate);
+    const { claudeBin, codexBin, targetBin } = resolveAliasBinDirs(locate);
     assert.equal(claudeBin, `${sep}opt${sep}claude${sep}bin`);
+    assert.equal(codexBin, `${sep}opt${sep}codex${sep}bin`);
     assert.equal(targetBin, `${sep}opt${sep}claude${sep}bin`);
   });
 
   test('falls back to codex bin dir when only codex is installed', () => {
     const locate = (cmd) => (cmd === 'codex' ? `${sep}opt${sep}codex${sep}bin` : null);
-    const { claudeBin, targetBin } = resolveAliasBinDirs(locate);
+    const { claudeBin, codexBin, targetBin } = resolveAliasBinDirs(locate);
     assert.equal(claudeBin, null);
+    assert.equal(codexBin, `${sep}opt${sep}codex${sep}bin`);
     assert.equal(targetBin, `${sep}opt${sep}codex${sep}bin`);
   });
 
   test('returns null target when neither host is installed', () => {
-    const { claudeBin, targetBin } = resolveAliasBinDirs(() => null);
+    const { claudeBin, codexBin, targetBin } = resolveAliasBinDirs(() => null);
     assert.equal(claudeBin, null);
+    assert.equal(codexBin, null);
     assert.equal(targetBin, null);
   });
 });

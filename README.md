@@ -1,4 +1,4 @@
-﻿# Claude Code & Codex Cross-Platform Config Sync
+# Claude Code & Codex Cross-Platform Config Sync
 
 Syncs Claude Code and Codex configuration across devices via OneDrive.
 
@@ -8,13 +8,14 @@ Syncs Claude Code and Codex configuration across devices via OneDrive.
 
 - [Node.js](https://nodejs.org/en/download)
 - [Claude Code](https://code.claude.com/docs/en/setup): `npm install -g @anthropic-ai/claude-code`
-- [Codex](https://github.com/openai/codex-plugin-cc): `npm install -g @openai/codex && codex login`
+- [Codex](https://github.com/openai/codex): `npm install -g @openai/codex && codex login`
 
 ## Setup
 
 ```sh
-node scripts/setup/setup.js          # create symlinks
-node scripts/setup/setup.js --replace  # overwrite existing files
+npm run setup                  # create symlinks
+npm run setup -- --replace     # overwrite existing files
+npm test                       # unit tests
 ```
 
 Creates symlinks from `~/.claude/` and `~/.codex/` to this repo. Re-run to verify - won't overwrite.
@@ -35,15 +36,68 @@ rustup component add rust-analyzer
 
 ### Provider Switching
 
-Setup installs provider wrappers alongside the `claude` executable (CMD, PowerShell, Git Bash):
+Setup installs provider wrappers alongside the host executable (CMD, PowerShell, Git Bash).
+`claude_env_settings.json` is the **single source of truth** for both hosts — one
+`providers.<name>` block per provider, one URL + one API key, with per-host
+fields (`*ApiKeyEnv`, `*Path`, `*Model`, optional `claudeExtras`) for the bits
+that genuinely differ between the Anthropic and OpenAI namespaces.
 
 ```sh
+# Claude Code
 ccc   # official Claude subscription
-ccds  # DeepSeek API (Anthropic-compatible, direct to api.deepseek.com/anthropic)
-cckm  # Kimi API (Anthropic-compatible, direct to api.kimi.com/coding)
+ccds  # DeepSeek  (Anthropic-compatible, direct)
+cckm  # Kimi      (Anthropic-compatible, direct)
+ccgmi # GMI Cloud (Anthropic-compatible, direct)
+
+# Codex — same providers.<name> block, different launcher
+cods  # DeepSeek  via codex (--config openai_base_url=… --model deepseek-chat)
+cogmi # GMI Cloud via codex (--config openai_base_url=… --model …)
 ```
 
-Add providers by editing `claude_env_settings.json` (see template) and adding an alias entry in `scripts/setup/setup.js`.
+#### Provider shape
+
+```jsonc
+{
+  "providers": {
+    "deepseek": {
+      "url": "https://api.deepseek.com",
+      "claudeApiKeyEnv": "ANTHROPIC_API_KEY",
+      "claudePath":       "/anthropic",
+      "claudeModel":      "deepseek-v4-flash[1m]",
+      "claudeExtras": {
+        "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-pro[1m]",
+        "CLAUDE_CODE_SUBAGENT_MODEL":     "deepseek-v4-flash[1m]"
+      },
+      "codexApiKeyEnv":   "DEEPSEEK_API_KEY",
+      "codexPath":        "/v1",
+      "codexModel":       "deepseek-chat"
+    }
+  }
+}
+```
+
+URL and the API key (from `~/.claude/claude_env_settings.local.json`) are
+declared **once**. `cc.js` and `codex.js` read the same block and project to
+their binary's env/args.
+
+Add a provider by adding a `providers.<name>` block and (optionally) an alias
+entry in `scripts/setup/install-shell-aliases.js`. See
+`.claude/rules/rem/providers.md` for the full schema.
+
+**Caveat for codex-side aliases:** Two preconditions have to be true before
+`cods` / `cogmi` will actually reach their provider:
+
+1. **Missing TOML block.** You also need a `[model_providers.<id>]` block per
+   provider in `~/.codex/codex_config.toml` (with `env_key` and
+   `wire_api = "responses"`). Without it, codex exits with
+   "model provider not found in config.toml" before the network call is even
+   attempted. See `.claude/rules/rem/providers.md` § Codex side for the full
+   shape.
+2. **Endpoint protocol.** DeepSeek's public OpenAI-compat endpoint is
+   chat/completions, not Responses — codex needs Responses. `cods` spawns codex
+   correctly with the right env/config but the network call will fail until
+   either a translation proxy is fronted or DeepSeek ships a Responses endpoint.
+   Same caveat applies to `cogmi` (GMI's OpenAI-compat surface is not documented).
 
 #### Output styles (non-coding personas)
 
@@ -85,6 +139,31 @@ but only while both names point at the same file record - a writer that *replace
 one as `plain file, not linked`; re-run `npm run setup -- -r` to re-link. If the unlinked copy had
 drifted from the repo it is kept alongside as `<name>.setup-bak` rather than discarded.
 
+**The `claude-hud` config is always hard-linked by design** (not a Windows fallback). `claude-hud`
+>= 0.8.0 refuses to load a symlinked `config.json`, so `CLAUDE_LINKS` unconditionally marks
+`claude_plugins/claude-hud/config.json` as `hardlink: true`. Hard links require source and target
+on the same volume (Windows: same drive letter); on EXDEV the setup script logs the hint and
+continues. A OneDrive sync-down that *replaces* the file rather than editing it will break the
+hard link silently — re-run `npm run setup -- -r` to re-link. This is the entry most likely to need
+periodic re-linking.
+
+### Upgrading an existing install
+
+```sh
+npm run migrate                 # one-shot: bring links + retired-plugin entries up to date
+npm run migrate -- --dry-run    # preview link/settings changes without writing
+```
+
+`migrate` removes orphaned `~/.claude` / `~/.codex` symlinks whose destination is no longer in this
+repo's layout, then re-runs `setup()`. It also runs any per-plugin `migrations/migrate.mjs` for
+installed cc-market plugins against the current project. Re-run after any repo layout change.
+
+`npm run setup` also auto-converts a legacy `env:<provider>` local secrets file to
+`providers.<name>.apiKey` (one-time, idempotent). The pre-migration file is backed up to
+`~/.claude/claude_env_settings.local.json.setup-bak` — the recovery path if the rewrite is
+wrong. See `.claude/rules/rem/providers.md` § "Migrating from the legacy `env:<provider>` shape"
+for the exact shape conversion.
+
 
 ## Hooks
 
@@ -92,22 +171,34 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 
 | Event | Script | Purpose |
 |---|---|---|
+| `SessionStart` | `fix-lsp-windows.js` | Windows-only: patches LSP binary names in `marketplace.json` to append `.cmd` |
+| `SessionStart` | `prune-cache-hook.js` | Prunes stale plugin cache entries on session start |
+| `SessionStart` | `setup-check-hook.js` | Self-heal: verifies/heals `~/.claude` symlinks via `scripts/setup/check-links.js` (recreates missing links, converts the `claude-hud` config symlink to a hard link, warns on drifted plain files) |
 | `Notification` | `notify-hook.js` | Native OS notification |
 | `Stop` | `sharp-review` plugin | Post-task sharp review (3 parallel reviewers) |
 | `statusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 
-The `rem` and `sharp-review` plugins (Stop hooks for memory consolidation and code review) are auto-registered via `enabledPlugins` - no manual wiring needed.
+The `rem` and `sharp-review` plugins (Stop hooks for memory consolidation and code review) are auto-registered via `enabledPlugins` — this is set on **fresh install** (the template `claude_settings.template.json` is copied to `claude_settings.json` on first run). Existing installs pick up plugin enablement deltas via `npm run migrate`.
 
-The REM hook gates on session depth (鈮? stops, 鈮? min). Runs `/rem` skill. State tracked in `.claude/.rem-state.json`.
+The REM hook gates on session depth (>= 2 stops, >= 2 min). Runs `/rem` skill. State tracked in `.claude/.rem-state.json`.
 
 Hook wiring in `claude_settings.json`:
 
 ```json
 "hooks": {
+  "SessionStart": [
+    { "hooks": [
+      { "type": "command", "command": "node ~/.claude/scripts/setup/fix-lsp-windows.js" },
+      { "type": "command", "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js" },
+      { "type": "command", "command": "node ~/.claude/scripts/hooks/setup-check-hook.js" }
+    ] }
+  ],
   "Notification": [{ "hooks": [{ "type": "command", "command": "node ~/.claude/scripts/hooks/notify-hook.js" }] }]
 },
 "statusLine": { "type": "command", "command": "node ~/.claude/scripts/hooks/hud-hook.js" }
 ```
+
+Codex has no SessionStart hook, so `codex.js` (the launcher) runs the same link self-heal at startup — see `scripts/setup/check-links.js`.
 
 ## Notifications
 
@@ -132,18 +223,18 @@ claude --bare --model haiku "please read ~/.claude/CLAUDE.md to test claude perm
 
 ## Memory & Rules
 
-| Directory | Purpose | Loaded |
-|---|---|---|
-| `.claude/rules/` | `MEMORY.md` index + distilled rule files | Every session |
-| `.claude/memory/` | Append-only archive with date prefixes | On demand via index |
+| Directory | Purpose | Loaded | Git |
+|---|---|---|---|
+| `.claude/rules/` | Distilled rule files (always-loaded) | Every session | Tracked |
+| `.claude/rules/MEMORY.md` | Generated index of memory entries | Every session | **Gitignored** (device-local) |
+| `.claude/memory/YYYY/MM/DD/<topic>.md` | Append-only memory archive | On demand via index | Tracked |
+| `.claude/memory/YYYY/MM/DD/_meta.json` | Access metadata for the date dir | — | **Gitignored** (device-local) |
 
-`@.claude/rules/MEMORY.md` is auto-loaded by Claude Code as a `.claude/rules/` file each session. When a topic matches, Claude reads the relevant memory file on demand.
+`.gitignore` uses a `**/.claude/**` pattern with `!.claude/rules/` and `!.claude/memory/` exceptions — content is git-tracked, but the per-device `MEMORY.md` indexes and `_meta.json` files are gitignored so each machine's view of the archive is independent.
 
-After a session, add entries to `.claude/memory/YYYY/MM/DD/<topic>.md` and prepend a one-line pointer to `MEMORY.md` (keep 鈮?0 entries, newest-first). If the session changed project architecture or setup, update `AGENTS.md` too.
+After a session, add entries to `.claude/memory/YYYY/MM/DD/<topic>.md` and prepend a one-line pointer to `MEMORY.md` (keep >= 20 entries, newest-first). If the session changed project architecture or setup, update `AGENTS.md` too.
 
 When `MEMORY.md` hits 20 entries, the REM hook triggers a **crystallize**: distill all memory into `.claude/rules/` rule files, then clear the index. Memory files are never deleted.
-
-Both directories are git-tracked (`.gitignore` uses `.claude/*` with `!.claude/rules/` and `!.claude/memory/` exceptions).
 
 ## Remote Control
 

@@ -7,23 +7,25 @@ import { fileURLToPath } from 'url';
 import { fixLspWindows } from './fix-lsp-windows.js';
 import { checkMacNotify } from './check-mac-notify.js';
 import { installShellAliases } from './install-shell-aliases.js';
+import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
+import { generateModelProvidersBlock, injectModelProviders } from './inject-codex-providers.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const sourceDir = path.resolve(__dirname, '../..');
 export const claudeDir = path.join(os.homedir(), '.claude');
 export const codexDir = path.join(os.homedir(), '.codex');
 
-export const KNOWN_ALIAS_NAMES = ['cco', 'ccds', 'cckm', 'todo', 'traceme'];
+export const KNOWN_ALIAS_NAMES = ['ccc', 'ccds', 'cckm', 'ccgmi', 'cods', 'cogmi', 'todo', 'traceme'];
 
 export const CLAUDE_LINKS = [
   { src: 'GLOBAL-AGENTS.md', dest: 'CLAUDE.md', type: 'file' },
   { src: 'claude_settings.json', dest: 'settings.json', type: 'file' },
-  { src: path.join('claude_plugins', 'claude-hud', 'config.json'), dest: path.join('plugins', 'claude-hud', 'config.json'), type: 'file' },
+  // claude-hud >= 0.8.0 refuses to load a symlinked config.json (its readConfigFile
+  // lstat-checks and ignores non-regular files), so this one must be a HARD link.
+  { src: path.join('claude_plugins', 'claude-hud', 'config.json'), dest: path.join('plugins', 'claude-hud', 'config.json'), type: 'file', hardlink: true },
   { src: 'skills', dest: 'skills', type: 'dir' },
   { src: 'output-styles', dest: 'output-styles', type: 'dir' },
-  { src: 'agents', dest: 'agents', type: 'dir' },
   { src: 'scripts', dest: 'scripts', type: 'dir' },
-  { src: '.claude/workflows', dest: 'workflows', type: 'dir' },
   { src: 'claude_env_settings.json', dest: 'claude_env_settings.json', type: 'file' },
   { src: 'keybindings.json', dest: 'keybindings.json', type: 'file' },
   // Platform prompts: the shared configs reference `~/.claude/system-prompt/...` and
@@ -130,7 +132,11 @@ export function isHardLinked(srcPath, destPath) {
 // file record: a writer that REPLACES rather than edits (OneDrive sync-down, `git checkout`,
 // an atomic save) breaks the link and silently leaves a stale copy behind. Re-run setup with
 // --replace to re-link when that happens; unlinked entries are reported on every run.
-function createLink(srcPath, destPath, type) {
+function createLink(srcPath, destPath, type, hardlink) {
+  if (hardlink) {
+    fs.linkSync(srcPath, destPath);
+    return 'hardlink';
+  }
   const symlinkType = isWindows ? (type === 'dir' ? 'junction' : 'file') : undefined;
   try {
     fs.symlinkSync(srcPath, destPath, symlinkType);
@@ -157,8 +163,14 @@ export function linkEntry(srcPath, destPath, link, replace) {
   if (stat) {
     if (stat.isSymbolicLink()) {
       const existingTarget = fs.readlinkSync(destPath);
-      if (samePath(path.resolve(path.dirname(destPath), existingTarget), srcPath)) {
+      const onTarget = samePath(path.resolve(path.dirname(destPath), existingTarget), srcPath);
+      // A hardlink-required entry already satisfied by a symlink is converted without
+      // --replace: the target is identical, so swapping link kinds loses nothing.
+      if (onTarget && !link.hardlink) {
         return { status: 'ok', message: 'already linked' };
+      }
+      if (onTarget && link.hardlink) {
+        replace = true;
       }
     } else if (link.type === 'file' && isHardLinked(srcPath, destPath)) {
       return { status: 'ok', message: 'already linked (hard link)' };
@@ -184,7 +196,7 @@ export function linkEntry(srcPath, destPath, link, replace) {
 
   let kind;
   try {
-    kind = createLink(srcPath, destPath, link.type);
+    kind = createLink(srcPath, destPath, link.type, link.hardlink);
   } catch (err) {
     if (backupPath) fs.renameSync(backupPath, destPath);
     throw err;
@@ -284,6 +296,26 @@ export function setup() {
     console.log('COPY  claude_env_settings.local.template.json - ~/.claude/claude_env_settings.local.json');
   }
 
+  // One-time local-file migration: pre-2026-08-25 local files held
+  // `env:<provider>: { ANTHROPIC_API_KEY: "sk-..." }` blocks. The new shape is
+  // `providers: { <provider>: { apiKey: "..." } }` (see .claude/rules/rem/providers.md).
+  // setup.js auto-migrates on first run after the refactor — backup is written
+  // to `claude_env_settings.local.json.setup-bak` (same convention as linkEntry).
+  const migration = migrateLocalEnvSettings({ localPath: localEnvSettingsPath });
+  if (migration.status === 'migrated') {
+    console.log(`MIGR  claude_env_settings.local.json — ${migration.providers.length} provider(s) converted to providers.<name>.apiKey (backup: ${path.basename(migration.backupPath)})`);
+  } else if (migration.status === 'malformed') {
+    console.log(`NOTE  could not migrate local file (malformed JSON): ${migration.error}`);
+  } else if (migration.status === 'mixed') {
+    const legacy = migration.legacyKeys.map(k => k.replace(/^env:/, '')).join(', ');
+    const news = migration.newKeys.join(', ');
+    console.log(`NOTE  local file is in mixed shape (both env: and providers: present); left untouched.`);
+    console.log(`      legacy env: keys still present: ${legacy}`);
+    console.log(`      already in providers.*:         ${news}`);
+    console.log(`      Move the apiKey from each env:<x> into providers.<x>.apiKey, then delete the env:<x> block.`);
+    console.log(`      See .claude/rules/rem/providers.md § Migrating from the legacy env:<provider> shape.`);
+  }
+
   const counters = { created: 0, skipped: 0, errors: 0, replace };
 
   console.log('--- Claude ---');
@@ -323,6 +355,26 @@ export function setup() {
 
   // Fix LSP commands on Windows (.cmd extension required)
   fixLspWindows();
+
+  // Inject [model_providers.*] blocks into codex_config.toml from the shared
+  // providers registry. Without this, `cods` / `cogmi` fail with "model provider
+  // not found" on fresh installs (the template ships no provider blocks). The
+  // generated section lives between two setup-managed markers; user edits above
+  // the markers are preserved verbatim. See scripts/setup/inject-codex-providers.mjs.
+  if (fs.existsSync(codexConfigPath)) {
+    try {
+      const sharedSettings = JSON.parse(fs.readFileSync(path.join(sourceDir, 'claude_env_settings.json'), 'utf8'));
+      const generated = generateModelProvidersBlock(sharedSettings);
+      const result = injectModelProviders(codexConfigPath, generated);
+      if (result.status === 'updated') {
+        console.log(`INJECT codex_config.toml — ${result.providers} [model_providers.*] block(s) generated from providers.<name>`);
+      } else if (result.status === 'empty') {
+        console.log('NOTE   codex_config.toml — no provider has a codex-side declaration; nothing to inject');
+      }
+    } catch (err) {
+      console.log(`NOTE   could not inject model_providers into codex_config.toml: ${err.message}`);
+    }
+  }
 
   // Check macOS notification helper
   if (process.platform === 'darwin') {

@@ -23,7 +23,7 @@ export function isPlainObject(v) {
 
 // Override-wins deep merge: plain objects recurse key-by-key; every other value (scalars,
 // arrays) is replaced wholesale by the override. The local file's shape mirrors the shared
-// registry, so this is safe for env:<provider> blocks and the fabric block alike.
+// registry, so this is safe for providers.<name> blocks and the fabric block alike.
 export function deepMerge(base, override) {
   const out = { ...base };
   for (const [key, value] of Object.entries(override || {})) {

@@ -51,6 +51,11 @@
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
                         "timeout": 10
+                    },
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/hooks/setup-check-hook.js",
+                        "timeout": 5
                     }
                 ]
             }

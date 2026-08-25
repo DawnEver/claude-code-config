@@ -18,6 +18,7 @@
         "showModel": true,
         "modelSource": "auto",
         "showEffortLevel":true,
+        "effortFormat":"full",
         "showAddedDirs": true,
         "addedDirsLayout": "inline",
         "showContextBar": true,
