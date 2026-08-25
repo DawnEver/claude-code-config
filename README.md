@@ -82,7 +82,7 @@ their binary's env/args.
 
 Add a provider by adding a `providers.<name>` block and (optionally) an alias
 entry in `scripts/setup/install-shell-aliases.js`. See
-`.claude/rules/rem/providers.md` for the full schema.
+`docs/providers.md` for the full schema.
 
 **Caveat for codex-side aliases:** Two preconditions have to be true before
 `cods` / `cogmi` will actually reach their provider:
@@ -91,7 +91,7 @@ entry in `scripts/setup/install-shell-aliases.js`. See
    provider in `~/.codex/codex_config.toml` (with `env_key` and
    `wire_api = "responses"`). Without it, codex exits with
    "model provider not found in config.toml" before the network call is even
-   attempted. See `.claude/rules/rem/providers.md` § Codex side for the full
+   attempted. See `docs/providers.md` § Codex side for the full
    shape.
 2. **Endpoint protocol.** DeepSeek's public OpenAI-compat endpoint is
    chat/completions, not Responses — codex needs Responses. `cods` spawns codex
@@ -161,7 +161,7 @@ installed cc-market plugins against the current project. Re-run after any repo l
 `npm run setup` also auto-converts a legacy `env:<provider>` local secrets file to
 `providers.<name>.apiKey` (one-time, idempotent). The pre-migration file is backed up to
 `~/.claude/claude_env_settings.local.json.setup-bak` — the recovery path if the rewrite is
-wrong. See `.claude/rules/rem/providers.md` § "Migrating from the legacy `env:<provider>` shape"
+wrong. See `docs/providers.md` § "Migrating from the legacy `env:<provider>` shape"
 for the exact shape conversion.
 
 

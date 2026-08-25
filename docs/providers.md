@@ -1,5 +1,10 @@
 # Provider Configuration
 
+Reference doc for the `providers.<name>` schema in `claude_env_settings.json` (the
+single source of truth shared by the Claude Code and Codex launchers). This content
+lived under `.claude/rules/rem/` — it is reference material, not a rule loaded every
+session, so it now lives here in `docs/`.
+
 ## Secrets are machine-local (`claude_env_settings.local.json`)
 
 The shared `claude_env_settings.json` rides OneDrive, so it must NOT carry API keys. Each
@@ -73,24 +78,33 @@ binary:
       "url": "https://api.deepseek.com",        // declared once
       "claudeApiKeyEnv": "ANTHROPIC_API_KEY",    // claude side
       "claudePath":       "/anthropic",          //   composes url + path → ANTHROPIC_BASE_URL
-      "claudeModel":      "deepseek-v4-flash[1m]",
-      "claudeExtras": {                          //   optional per-class model overrides
-        "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-pro[1m]",
-        "CLAUDE_CODE_SUBAGENT_MODEL":     "deepseek-v4-flash[1m]"
-      },
       "codexApiKeyEnv":   "DEEPSEEK_API_KEY",    // codex side
       "codexPath":        "/v1",                 //   composes url + path → --config openai_base_url=…
-      "codexModel":       "deepseek-chat"        //   → --model <codexModel>
+      "models": {                                //   single source of truth for the model set
+        "base":  "deepseek-v4-flash[1m]",        //     → ANTHROPIC_MODEL (+ codex --model, minus [1m])
+        "fable": "deepseek-v4-pro[1m]",          //     → ANTHROPIC_DEFAULT_FABLE_MODEL
+        "opus":  "deepseek-v4-flash-vision-exp[1m]"  // → ANTHROPIC_DEFAULT_OPUS_MODEL
+        // optional per-class keys: sonnet / haiku / subagent / codex — else derived from base
+      }
     }
   }
 }
 ```
 
-- `url` and the API key are declared **once** per provider — both launchers
-  (`cc.js`, `codex.js`) read from the same `providers.<name>` block.
-- Per-host fields (`*ApiKeyEnv`, `*Path`, `*Model`, optional `claudeExtras`) are
-  the only thing that differs — they're explicit because the Anthropic namespace
-  and the OpenAI namespace are genuinely different.
+- `url`, the API key, and the `models` map are declared **once** per provider —
+  both launchers (`cc.js`, `codex.js`) read from the same `providers.<name>`
+  block. There is no `claudeModel` / `codexModel` / `claudeExtras` duplication —
+  the model set lives in `models` and each host projects from it.
+- Per-host fields (`*ApiKeyEnv`, `*Path`) are the only thing that differs —
+  they're explicit because the Anthropic namespace and the OpenAI namespace are
+  genuinely different.
+- `models` is a single object keyed by Claude-class role. `base` is canonical:
+  it maps to `ANTHROPIC_MODEL`, the codex `--model` (with the `[1m]` suffix
+  stripped), and the default for `sonnet`/`haiku`/`subagent`. Optional role keys
+  override a specific class (e.g. `fable`, `opus`, `haiku`, `subagent`); an
+  explicit `codex` key overrides the derived codex model when a provider's codex
+  id differs from its Claude `base`. Both launchers derive their projection, so
+  the two hosts cannot drift.
 - The `apiKey` value comes from the machine-local
   `~/.claude/claude_env_settings.local.json` overlay (see "Secrets are
   machine-local" above).
@@ -103,12 +117,15 @@ and projects:
 
 - `env[<claudeApiKeyEnv>] = apiKey`
 - `env['ANTHROPIC_BASE_URL'] = <url><claudePath>`
-- `env['ANTHROPIC_MODEL']    = <claudeModel>`
-- `env[k] = v` for every `(k, v)` in `claudeExtras` (preserves per-class
-  Fable/Opus/Sonnet/Haiku/subagent overrides — these are arbitrary **string**
-  key→value pairs the user has fine-tuned. Non-string entries in
-  `claudeExtras` — booleans, numbers — are silently dropped by
-  `cc-launcher.mjs`.)
+- `env['ANTHROPIC_MODEL']    = models.base`
+- `env['ANTHROPIC_DEFAULT_FABLE_MODEL']  = models.fable ?? models.base`
+- `env['ANTHROPIC_DEFAULT_OPUS_MODEL']   = models.opus  ?? models.base`
+- `env['ANTHROPIC_DEFAULT_SONNET_MODEL'] = models.sonnet ?? models.base`
+- `env['ANTHROPIC_DEFAULT_HAIKU_MODEL']  = models.haiku ?? models.base`
+- `env['CLAUDE_CODE_SUBAGENT_MODEL']     = models.subagent ?? models.base`
+
+All six Claude model vars project from the single `models` map — there is no
+freeform `claudeExtras` bag to keep in sync.
 
 No Foundry mode, no local proxy — `cc.js` just injects the projected env into
 Claude Code. DeepSeek was migrated off Foundry mode
@@ -124,19 +141,23 @@ style so both providers share one config shape.
 - `args += ['--config', 'openai_base_url=<url><codexPath>']` — note: `OPENAI_BASE_URL`
   env var is **silently ignored in codex v0.118+** (openai/codex#16719), so the
   launcher uses `--config` instead.
-- `args += ['--model', <codexModel>]` — codex has no model env var, only a
-  `--model` CLI flag.
+- `args += ['--model', <codex model>]` — codex has no model env var, only a
+  `--model` CLI flag. The model derives from `models.codex ?? models.base`
+  with the `[1m]` suffix stripped (`deepseek-v4-flash[1m]` → `deepseek-v4-flash`),
+  so it tracks the same `models` source as the Claude side.
 
 **Precondition the user maintains:** `codex_config.toml` must have a
 `[model_providers.<id>]` block per provider (e.g. `model_providers.deepseek =
 { base_url = "...", env_key = "DEEPSEEK_API_KEY", wire_api = "responses" }`).
 The launcher does NOT auto-inject this — see "Out of scope" below.
 
-**End-to-end caveat:** DeepSeek's public OpenAI-compat endpoint is
-chat/completions, not Responses. Codex requires Responses. So `cods` will spawn
-codex correctly with the right env/config, but the network call will fail until
-either a translation proxy is fronted or DeepSeek ships a Responses endpoint.
-GMI's OpenAI-compat surface is not documented — same caveat applies to `cogmi`.
+**End-to-end caveat:** DeepSeek natively supports the Responses API (`wire_api =
+"responses"`), and its `deepseek-v4-*` models need a `~/.codex/models.json`
+catalog (context window, reasoning levels, image input for the vision model) for
+Codex to accept them. The launcher supplies the right env/config/`--model`; the
+`models.json` catalog is generated by `scripts/setup/inject-codex-providers.mjs`
+(see "Auto-rewriting `codex_config.toml`" below). GMI's OpenAI-compat surface is
+not documented — same caveat applies to `cogmi`.
 
 ### Out of scope (follow-ups)
 
