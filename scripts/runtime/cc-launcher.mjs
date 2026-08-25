@@ -74,13 +74,19 @@ export function buildClaudeInvocation({
   if (profile.url) {
     env.ANTHROPIC_BASE_URL = profile.url + (profile.claudePath ?? '');
   }
-  if (profile.claudeModel) {
-    env.ANTHROPIC_MODEL = profile.claudeModel;
-  }
-  if (profile.claudeExtras && typeof profile.claudeExtras === 'object') {
-    for (const [k, v] of Object.entries(profile.claudeExtras)) {
-      if (typeof v === 'string') env[k] = v;
-    }
+  // Project the Claude model env vars from the single `models` source of truth.
+  // `models.base` is the canonical model (→ ANTHROPIC_MODEL); optional role keys
+  // (fable/opus/sonnet/haiku/subagent) override the per-class default, falling
+  // back to base. Codex's model derives from the same `models` map in
+  // codex-launcher.mjs — so the two hosts cannot drift.
+  const m = profile.models || {};
+  if (m.base) {
+    env.ANTHROPIC_MODEL = m.base;
+    env.ANTHROPIC_DEFAULT_FABLE_MODEL = m.fable ?? m.base;
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = m.opus ?? m.base;
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = m.sonnet ?? m.base;
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = m.haiku ?? m.base;
+    env.CLAUDE_CODE_SUBAGENT_MODEL = m.subagent ?? m.base;
   }
 
   return { env, args: [...extraArgs], provider, available, error: null };

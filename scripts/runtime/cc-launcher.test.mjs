@@ -36,7 +36,7 @@ test('default Claude (provider=null) leaves env untouched beyond PROVIDER_KEYS s
   }
 });
 
-test('cc.js deepseek projects url+claudePath → ANTHROPIC_BASE_URL, apiKey → claudeApiKeyEnv, claudeExtras merged', () => {
+test('cc.js deepseek projects url+claudePath → ANTHROPIC_BASE_URL, apiKey → claudeApiKeyEnv, models → per-class env vars', () => {
   const { shared, local } = fixture();
   writeFileSync(shared, JSON.stringify({
     providers: {
@@ -44,10 +44,10 @@ test('cc.js deepseek projects url+claudePath → ANTHROPIC_BASE_URL, apiKey → 
         url: 'https://api.deepseek.com',
         claudeApiKeyEnv: 'ANTHROPIC_API_KEY',
         claudePath: '/anthropic',
-        claudeModel: 'deepseek-v4-flash[1m]',
-        claudeExtras: {
-          ANTHROPIC_DEFAULT_FABLE_MODEL: 'deepseek-v4-pro[1m]',
-          CLAUDE_CODE_SUBAGENT_MODEL: 'deepseek-v4-flash[1m]',
+        models: {
+          base: 'deepseek-v4-flash[1m]',
+          fable: 'deepseek-v4-pro[1m]',
+          opus: 'deepseek-v4-flash-vision-exp[1m]',
         },
       },
     },
@@ -61,6 +61,10 @@ test('cc.js deepseek projects url+claudePath → ANTHROPIC_BASE_URL, apiKey → 
   assert.equal(env.ANTHROPIC_API_KEY, 'sk-secret');
   assert.equal(env.ANTHROPIC_MODEL, 'deepseek-v4-flash[1m]');
   assert.equal(env.ANTHROPIC_DEFAULT_FABLE_MODEL, 'deepseek-v4-pro[1m]');
+  assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-flash-vision-exp[1m]');
+  // sonnet/haiku/subagent fall back to `base` when not declared explicitly
+  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'deepseek-v4-flash[1m]');
+  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'deepseek-v4-flash[1m]');
   assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, 'deepseek-v4-flash[1m]');
 });
 
@@ -72,7 +76,7 @@ test('cc.js gmi uses ANTHROPIC_AUTH_TOKEN (not ANTHROPIC_API_KEY) via claudeApiK
         url: 'https://api.gmi-serving.com',
         claudeApiKeyEnv: 'ANTHROPIC_AUTH_TOKEN',
         claudePath: '',
-        claudeModel: 'MiniMaxAI/MiniMax-M3[1m]',
+        models: { base: 'MiniMaxAI/MiniMax-M3[1m]' },
       },
     },
   }));
@@ -119,7 +123,7 @@ test('cc.js local overlay merges apiKey over the shared providers block', () => 
 test('cc.js provider with no claudeExtras still works (extras map is optional)', () => {
   const { shared, local } = fixture();
   writeFileSync(shared, JSON.stringify({
-    providers: { minimal: { url: 'https://x.test', claudeApiKeyEnv: 'ANTHROPIC_API_KEY', claudeModel: 'm' } },
+    providers: { minimal: { url: 'https://x.test', claudeApiKeyEnv: 'ANTHROPIC_API_KEY', models: { base: 'm' } } },
   }));
   writeFileSync(local, JSON.stringify({ providers: { minimal: { apiKey: 'k' } } }));
   const { env, error } = buildClaudeInvocation({
@@ -153,7 +157,7 @@ test('cc.js provider without claudeApiKeyEnv does not require an apiKey', () => 
   // upstream) shouldn't fail just because apiKey is empty.
   const { shared, local } = fixture();
   writeFileSync(shared, JSON.stringify({
-    providers: { proxy: { url: 'https://proxy.test', claudePath: '', claudeModel: 'm' } },
+    providers: { proxy: { url: 'https://proxy.test', claudePath: '', models: { base: 'm' } } },
   }));
   writeFileSync(local, JSON.stringify({}));
   const { env, error } = buildClaudeInvocation({

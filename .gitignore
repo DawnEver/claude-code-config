@@ -28,5 +28,6 @@ dist/
 claude_env_settings.json
 claude_settings.json
 codex_config.toml
+models.json
 cc-market/
 system-prompt/dist/

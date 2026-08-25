@@ -44,7 +44,7 @@ test('default Codex (provider=null) leaves env untouched beyond strip sets and a
   }
 });
 
-test('codex.js deepseek projects url+codexPath → --config openai_base_url, codexModel → --model, apiKey → env', () => {
+test('codex.js deepseek derives --model from models.base (strips [1m])', () => {
   const { shared, local } = fixture();
   writeFileSync(shared, JSON.stringify({
     providers: {
@@ -52,7 +52,7 @@ test('codex.js deepseek projects url+codexPath → --config openai_base_url, cod
         url: 'https://api.deepseek.com',
         codexApiKeyEnv: 'DEEPSEEK_API_KEY',
         codexPath: '/v1',
-        codexModel: 'deepseek-chat',
+        models: { base: 'deepseek-v4-flash[1m]' },
       },
     },
   }));
@@ -65,11 +65,32 @@ test('codex.js deepseek projects url+codexPath → --config openai_base_url, cod
   // Must not leak Claude-side env vars
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
   assert.equal(env.ANTHROPIC_BASE_URL, undefined);
-  // Args order: --config key=value, --model <model>
+  // Args order: --config key=value, --model <model>. The [1m] context-window
+  // suffix is Claude-side; codex gets the bare model id.
   assert.deepEqual(args, [
     '--config', 'openai_base_url=https://api.deepseek.com/v1',
-    '--model', 'deepseek-chat',
+    '--model', 'deepseek-v4-flash',
   ]);
+});
+
+test('codex.js models.codex override wins over the base derivation', () => {
+  const { shared, local } = fixture();
+  writeFileSync(shared, JSON.stringify({
+    providers: {
+      deepseek: {
+        url: 'https://api.deepseek.com',
+        codexApiKeyEnv: 'DEEPSEEK_API_KEY',
+        codexPath: '/v1',
+        models: { base: 'deepseek-v4-flash[1m]', codex: 'deepseek-v4-pro' },
+      },
+    },
+  }));
+  writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'sk-secret' } } }));
+  const { args, error } = buildCodexInvocation({
+    provider: 'deepseek', envSettingsPath: shared, localPath: local,
+  });
+  assert.equal(error, null);
+  assert.equal(args[args.length - 1], 'deepseek-v4-pro');
 });
 
 test('codex.js gmi uses ANTHROPIC_AUTH_TOKEN via codexApiKeyEnv and the M3 model', () => {
@@ -80,7 +101,7 @@ test('codex.js gmi uses ANTHROPIC_AUTH_TOKEN via codexApiKeyEnv and the M3 model
         url: 'https://api.gmi-serving.com',
         codexApiKeyEnv: 'ANTHROPIC_AUTH_TOKEN',
         codexPath: '/v1',
-        codexModel: 'MiniMaxAI/MiniMax-M3[1m]',
+        models: { base: 'MiniMaxAI/MiniMax-M3[1m]' },
       },
     },
   }));
@@ -92,14 +113,14 @@ test('codex.js gmi uses ANTHROPIC_AUTH_TOKEN via codexApiKeyEnv and the M3 model
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'gmi-secret');
   assert.deepEqual(args, [
     '--config', 'openai_base_url=https://api.gmi-serving.com/v1',
-    '--model', 'MiniMaxAI/MiniMax-M3[1m]',
+    '--model', 'MiniMaxAI/MiniMax-M3',
   ]);
 });
 
 test('codex.js extraArgs are appended after launcher-injected flags', () => {
   const { shared, local } = fixture();
   writeFileSync(shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com', codexApiKeyEnv: 'K', codexPath: '/v1', codexModel: 'm' } },
+    providers: { deepseek: { url: 'https://api.deepseek.com', codexApiKeyEnv: 'K', codexPath: '/v1', models: { base: 'm' } } },
   }));
   writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'k' } } }));
   const { args } = buildCodexInvocation({
@@ -147,7 +168,7 @@ test('codex.js provider without url/codexPath/codexModel emits no --config / --m
 test('codex.js local overlay merges apiKey over the shared providers block', () => {
   const { shared, local } = fixture();
   writeFileSync(shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com', codexApiKeyEnv: 'DEEPSEEK_API_KEY', codexModel: 'deepseek-chat' } },
+    providers: { deepseek: { url: 'https://api.deepseek.com', codexApiKeyEnv: 'DEEPSEEK_API_KEY', models: { base: 'deepseek-v4-flash' } } },
   }));
   writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'sk-only-in-local' } } }));
   const { env, error } = buildCodexInvocation({

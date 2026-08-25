@@ -23,6 +23,17 @@ const CODEX_STRIP_KEYS = [
 ];
 
 /**
+ * Derive codex's model id from the shared `models` source of truth (the same
+ * object `cc-launcher.mjs` reads). `models.codex` wins when set explicitly;
+ * otherwise codex uses `models.base` with the `[1m]` context-window suffix
+ * stripped — the suffix is a Claude-side request, codex uses the bare model id.
+ */
+function codexModel(models) {
+  if (models.codex) return models.codex;
+  return String(models.base).replace(/\s*\[\s*\w+\s*\]\s*$/, '');
+}
+
+/**
  * Build the env + args for spawning the `codex` CLI with a given provider.
  *
  * @param {object} opts
@@ -85,8 +96,8 @@ export function buildCodexInvocation({
     const baseUrl = profile.url + (profile.codexPath ?? '');
     args.push('--config', `openai_base_url=${baseUrl}`);
   }
-  if (profile.codexModel) {
-    args.push('--model', profile.codexModel);
+  if (profile.models?.codex || profile.models?.base) {
+    args.push('--model', codexModel(profile.models));
   }
 
   return { env, args: [...args, ...extraArgs], provider, available, error: null };

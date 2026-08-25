@@ -19,6 +19,55 @@ import fs from 'fs';
 export const CODEX_TOML_START_MARKER = '# === setup-managed: model_providers (do not edit below this line) ===';
 export const CODEX_TOML_END_MARKER = '# === setup-managed: model_providers end ===';
 
+// Per-model capability catalog for the generated `~/.codex/models.json`, keyed by
+// the BARE codex model id (e.g. `deepseek-v4-flash` — the `[1m]` suffix is a
+// Claude-side context-window request). Fields mirror the DeepSeek docs' catalog.
+// `base_instructions` is intentionally omitted: this repo replaces the codex
+// system prompt via `model_instructions_file` (`system-prompt/codex-base.md`).
+// Models without a catalog entry get a GENERIC fallback so every codex-facing
+// provider still produces a valid, usable entry.
+const MODEL_CATALOG = {
+  'deepseek-v4-flash': {
+    display_name: 'DeepSeek-V4-Flash',
+    description: 'Latest frontier agentic coding model.',
+    context_window: 1048576,
+    input_modalities: ['text'],
+    priority: 1,
+  },
+  'deepseek-v4-pro': {
+    display_name: 'DeepSeek-V4-Pro',
+    description: 'Most capable frontier agentic coding model.',
+    context_window: 1048576,
+    input_modalities: ['text'],
+    priority: 2,
+  },
+  'deepseek-v4-flash-vision-exp': {
+    display_name: 'DeepSeek-V4-Flash-Vision',
+    description: 'Latest frontier agentic coding model with image input.',
+    context_window: 1048576,
+    input_modalities: ['text', 'image'],
+    priority: 3,
+  },
+};
+
+const GENERIC_MODEL = {
+  display_name: null,
+  description: '',
+  context_window: 1000000,
+  input_modalities: ['text'],
+  priority: 0,
+};
+
+/**
+ * Derive the bare codex model id from a provider's `models` map (same rule as
+ * codex-launcher.mjs: `models.codex` wins, else `models.base` with the `[1m]`
+ * context-window suffix stripped).
+ */
+export function codexModelFrom(models) {
+  if (models?.codex) return models.codex;
+  return String(models?.base ?? '').replace(/\s*\[\s*\w+\s*\]\s*$/, '');
+}
+
 /**
  * Build the generated model_providers section from a parsed `claude_env_settings.json`
  * (the shared registry, NOT the machine-local overlay — `apiKey` is not needed
@@ -95,4 +144,56 @@ export function injectModelProviders(codexConfigPath, generatedBlock) {
     status: 'updated',
     providers: (generatedBlock.match(/\[model_providers\./g) || []).length,
   };
+}
+
+/**
+ * Build the full `~/.codex/models.json` catalog from the shared providers
+ * registry — one entry per codex-facing model. Every provider with a
+ * `models.base` contributes its codex model id; capability metadata comes from
+ * `MODEL_CATALOG` (deepseek-v4 family) or `GENERIC_MODEL` (unknown models).
+ *
+ * @param {object} settings  Parsed `claude_env_settings.json`.
+ * @returns {string}  JSON catalog string, or '' if no provider has a codex model.
+ */
+export function generateModelsJson(settings) {
+  const providers = settings?.providers || {};
+  const entries = [];
+  for (const [name, profile] of Object.entries(providers)) {
+    const codexId = codexModelFrom(profile?.models);
+    if (!codexId) continue; // no codex-facing model
+    const meta = MODEL_CATALOG[codexId] ?? GENERIC_MODEL;
+    entries.push({
+      slug: codexId,
+      display_name: meta.display_name ?? codexId,
+      description: meta.description,
+      input_modalities: meta.input_modalities,
+      supports_parallel_tool_calls: true,
+      supported_reasoning_levels: [
+        { effort: 'low', description: 'Fast responses with lighter reasoning' },
+        { effort: 'high', description: 'Extra high reasoning depth for complex problems' },
+        { effort: 'max', description: 'Maximum reasoning depth for the hardest problems' },
+      ],
+      context_window: meta.context_window,
+      max_context_window: meta.context_window,
+      priority: meta.priority,
+    });
+  }
+  if (entries.length === 0) return '';
+  return JSON.stringify({ models: entries }, null, 2) + '\n';
+}
+
+/**
+ * Write the generated catalog to `models.json` (the repo file linked to
+ * `~/.codex/models.json`). Idempotent — no-op when the content already matches.
+ *
+ * @param {string} codexModelsPath  Path to the repo's `models.json`.
+ * @param {string} generated        Output of `generateModelsJson`.
+ * @returns {{ status: 'no-change' | 'updated' | 'empty', models?: number }}
+ */
+export function injectModelsJson(codexModelsPath, generated) {
+  if (!generated) return { status: 'empty' };
+  const existing = fs.existsSync(codexModelsPath) ? fs.readFileSync(codexModelsPath, 'utf8') : null;
+  if (existing === generated) return { status: 'no-change' };
+  fs.writeFileSync(codexModelsPath, generated);
+  return { status: 'updated', models: (generated.match(/"slug":/g) || []).length };
 }
