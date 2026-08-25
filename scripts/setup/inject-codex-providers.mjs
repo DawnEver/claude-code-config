@@ -37,6 +37,7 @@ export function generateModelProvidersBlock(settings) {
     const baseUrl = profile.url + (profile.codexPath ?? '');
     const envKey = profile.codexApiKeyEnv || 'API_KEY';
     blocks.push(`[model_providers.${name}]
+name = "${name}"
 base_url = "${baseUrl}"
 env_key = "${envKey}"
 wire_api = "responses"

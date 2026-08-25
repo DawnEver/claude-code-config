@@ -52,6 +52,7 @@ const SHARED_DEEPSEEK_AND_GMI = {
 test('generate: emits a [model_providers.*] block per provider with codexPath', () => {
   const out = generateModelProvidersBlock(SHARED_DEEPSEEK_ONLY);
   assert.match(out, /\[model_providers\.deepseek\]/);
+  assert.match(out, /name = "deepseek"/);
   assert.match(out, /base_url = "https:\/\/api\.deepseek\.com\/v1"/);
   assert.match(out, /env_key = "DEEPSEEK_API_KEY"/);
   assert.match(out, /wire_api = "responses"/);
@@ -152,7 +153,9 @@ test('inject: regenerates when providers change (add deepseek + gmi)', () => {
   assert.equal(result.providers, 2);
   const after = readFileSync(path, 'utf8');
   assert.match(after, /\[model_providers\.deepseek\]/);
+  assert.match(after, /name = "deepseek"/);
   assert.match(after, /\[model_providers\.gmi\]/);
+  assert.match(after, /name = "gmi"/);
 });
 
 test('inject: handles a malformed existing block (start marker without end) by replacing to EOF', () => {
