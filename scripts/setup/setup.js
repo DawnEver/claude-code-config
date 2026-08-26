@@ -8,7 +8,7 @@ import { fixLspWindows } from './fix-lsp-windows.js';
 import { checkMacNotify } from './check-mac-notify.js';
 import { installShellAliases } from './install-shell-aliases.js';
 import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
-import { generateModelProvidersBlock, injectModelProviders, generateModelsJson, injectModelsJson } from './inject-codex-providers.mjs';
+import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const sourceDir = path.resolve(__dirname, '../..');
@@ -321,6 +321,44 @@ export function setup() {
 
   const counters = { created: 0, skipped: 0, errors: 0, replace };
 
+  // Regenerate the derivable codex artifacts from the shared providers registry:
+  // the [model_providers.*] section of codex_config.toml (only when that file
+  // exists) AND the gitignored repo models.json (unconditionally — models.json
+  // derives purely from providers.<name>.models and is unrelated to
+  // codex_config.toml). Without this, `cods` / `cogmi` fail with "model provider
+  // not found" on fresh installs. The generated section lives between two
+  // setup-managed markers; user edits above the markers are preserved verbatim.
+  // See scripts/setup/inject-codex-providers.mjs.
+  //
+  // This runs BEFORE link creation on purpose: models.json is gitignored, so on a
+  // fresh clone the repo file does not exist when links are processed. Generating
+  // it first lets the `~/.codex/models.json` link be created in the same run.
+  const artifacts = regenerateCodexArtifacts({
+    settingsPath: envSettingsPath,
+    codexConfigPath,
+    modelsPath: path.join(sourceDir, 'models.json'),
+  });
+
+  if (artifacts.settings === 'unparseable' || artifacts.settings === 'missing') {
+    console.log(`ERR   claude_env_settings.json - ${artifacts.settings === 'unparseable'
+      ? `could not parse JSON: ${artifacts.error.message}`
+      : 'not found; skipping codex artifact generation'}`);
+    counters.errors++;
+  } else {
+    if (artifacts.providers.status === 'updated') {
+      console.log(`INJECT codex_config.toml — ${artifacts.providers.providers} [model_providers.*] block(s) generated from providers.<name>`);
+    } else if (artifacts.providers.status === 'empty') {
+      console.log('NOTE   codex_config.toml — no provider has a codex-side declaration; nothing to inject');
+    } else if (artifacts.providers.status === 'no-config') {
+      console.log('NOTE   codex_config.toml — not present; skipped [model_providers.*] injection (models.json still generated)');
+    }
+    if (artifacts.models.status === 'updated') {
+      console.log(`INJECT models.json — ${artifacts.models.models} model catalog entr(y/ies) generated from providers.<name>.models`);
+    } else if (artifacts.models.status === 'empty') {
+      console.log('NOTE   models.json — no provider declares a codex model; nothing to inject');
+    }
+  }
+
   console.log('--- Claude ---');
   processLinks(CLAUDE_LINKS, claudeDir, counters);
 
@@ -358,38 +396,6 @@ export function setup() {
 
   // Fix LSP commands on Windows (.cmd extension required)
   fixLspWindows();
-
-  // Inject [model_providers.*] blocks into codex_config.toml from the shared
-  // providers registry. Without this, `cods` / `cogmi` fail with "model provider
-  // not found" on fresh installs (the template ships no provider blocks). The
-  // generated section lives between two setup-managed markers; user edits above
-  // the markers are preserved verbatim. See scripts/setup/inject-codex-providers.mjs.
-  if (fs.existsSync(codexConfigPath)) {
-    try {
-      const sharedSettings = JSON.parse(fs.readFileSync(path.join(sourceDir, 'claude_env_settings.json'), 'utf8'));
-
-      const generated = generateModelProvidersBlock(sharedSettings);
-      const result = injectModelProviders(codexConfigPath, generated);
-      if (result.status === 'updated') {
-        console.log(`INJECT codex_config.toml — ${result.providers} [model_providers.*] block(s) generated from providers.<name>`);
-      } else if (result.status === 'empty') {
-        console.log('NOTE   codex_config.toml — no provider has a codex-side declaration; nothing to inject');
-      }
-
-      // Also generate ~/.codex/models.json (linked to repo models.json) so Codex
-      // accepts the providers' models (context window, reasoning levels, image
-      // input). Same single source: `providers.<name>.models`.
-      const modelsGenerated = generateModelsJson(sharedSettings);
-      const modelsResult = injectModelsJson(path.join(sourceDir, 'models.json'), modelsGenerated);
-      if (modelsResult.status === 'updated') {
-        console.log(`INJECT models.json — ${modelsResult.models} model catalog entr(y/ies) generated from providers.<name>.models`);
-      } else if (modelsResult.status === 'empty') {
-        console.log('NOTE   models.json — no provider declares a codex model; nothing to inject');
-      }
-    } catch (err) {
-      console.log(`NOTE   could not inject codex provider config: ${err.message}`);
-    }
-  }
 
   // Check macOS notification helper
   if (process.platform === 'darwin') {

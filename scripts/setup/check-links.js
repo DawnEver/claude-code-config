@@ -18,6 +18,7 @@ import {
   ensureRealDir,
   linkEntry,
 } from './setup.js';
+import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 
 // Works from any cwd because ~/.claude/scripts is itself a link into the repo.
 export const SETUP_FIX_CMD = 'node ~/.claude/scripts/setup/setup.js --replace';
@@ -25,6 +26,32 @@ export const SETUP_FIX_CMD = 'node ~/.claude/scripts/setup/setup.js --replace';
 export function checkLinks() {
   const repaired = [];
   const warnings = [];
+
+  // Regenerate the derivable codex artifacts BEFORE verifying links, so a repo
+  // that synced without re-running setup (or that lost the gitignored
+  // models.json) still heals: ~/.codex/models.json points at repo models.json,
+  // which only exists if we generate it here. Idempotent — no write when the
+  // generated content already matches. Never blocks the session: any failure is
+  // surfaced as a warning, never thrown (setup-check-hook.js has no try/catch
+  // around this call).
+  try {
+    const artifacts = regenerateCodexArtifacts({
+      settingsPath: path.join(sourceDir, 'claude_env_settings.json'),
+      codexConfigPath: path.join(sourceDir, 'codex_config.toml'),
+      modelsPath: path.join(sourceDir, 'models.json'),
+    });
+    if (artifacts.settings === 'unparseable') {
+      warnings.push(`claude_env_settings.json: unparseable JSON (${artifacts.error.message})`);
+    } else if (artifacts.settings === 'ok' && artifacts.models.status === 'updated') {
+      repaired.push('models.json (regenerated)');
+    }
+    // settings === 'missing': pre-setup state — the link loop below silently
+    // skips the codex artifact sources ('source not found'), consistent with the
+    // existing silent-skip behavior. providers.status 'no-change'/'no-config'/
+    // 'empty' are also intentionally silent.
+  } catch (err) {
+    warnings.push(`codex artifact regeneration: ${err.message}`);
+  }
 
   const check = (links, baseDir) => {
     for (const link of links) {

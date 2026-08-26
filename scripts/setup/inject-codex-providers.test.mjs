@@ -15,13 +15,19 @@ import {
   generateModelsJson,
   injectModelsJson,
   codexModelFrom,
+  regenerateCodexArtifacts,
+  codexSuffixIsEmpty,
   CODEX_TOML_START_MARKER,
   CODEX_TOML_END_MARKER,
 } from './inject-codex-providers.mjs';
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'inject-codex-'));
-  return { path: join(dir, 'codex_config.toml'), modelsPath: join(dir, 'models.json') };
+  return {
+    path: join(dir, 'codex_config.toml'),
+    modelsPath: join(dir, 'models.json'),
+    settingsPath: join(dir, 'claude_env_settings.json'),
+  };
 }
 
 const SHARED_DEEPSEEK_ONLY = {
@@ -262,4 +268,98 @@ test('injectModelsJson: returns empty when there is nothing to catalog', () => {
   const { modelsPath } = fixture();
   assert.equal(injectModelsJson(modelsPath, '').status, 'empty');
   assert.equal(existsSync(modelsPath), false);
+});
+
+// --- regenerateCodexArtifacts (SR-001: models.json is independent of codex_config.toml) ---
+
+test('regenerate: writes models.json even when codex_config.toml is absent', () => {
+  const { path, modelsPath, settingsPath } = fixture();
+  writeFileSync(settingsPath, JSON.stringify(SHARED_DEEPSEEK_ONLY));
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  assert.equal(r.settings, 'ok');
+  assert.equal(r.providers.status, 'no-config');
+  assert.equal(r.models.status, 'updated');
+  assert.equal(existsSync(path), false); // regeneration never creates the config
+  assert.equal(existsSync(modelsPath), true);
+  assert.deepEqual(JSON.parse(readFileSync(modelsPath, 'utf8')).models.map(m => m.slug), ['deepseek-v4-flash']);
+});
+
+test('regenerate: injects providers when codex_config.toml is present and also writes models.json', () => {
+  const { path, modelsPath, settingsPath } = fixture();
+  writeFileSync(settingsPath, JSON.stringify(SHARED_DEEPSEEK_ONLY));
+  writeFileSync(path, 'model = "gpt-5.6-sol"\n');
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  assert.equal(r.settings, 'ok');
+  assert.equal(r.providers.status, 'updated');
+  assert.equal(r.providers.providers, 1);
+  assert.match(readFileSync(path, 'utf8'), /\[model_providers\.deepseek\]/);
+  assert.equal(r.models.status, 'updated');
+  assert.equal(existsSync(modelsPath), true);
+});
+
+test('regenerate: idempotent — second call is a no-change and rewrites nothing', () => {
+  const { path, modelsPath, settingsPath } = fixture();
+  writeFileSync(settingsPath, JSON.stringify(SHARED_DEEPSEEK_AND_GMI));
+  writeFileSync(path, 'model = "gpt-5.6-sol"\n');
+  const first = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  assert.equal(first.providers.status, 'updated');
+  assert.equal(first.models.status, 'updated');
+  const cfgBefore = readFileSync(path, 'utf8');
+  const modelsBefore = readFileSync(modelsPath, 'utf8');
+  const second = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  assert.equal(second.providers.status, 'no-change');
+  assert.equal(second.models.status, 'no-change');
+  assert.equal(readFileSync(path, 'utf8'), cfgBefore);
+  assert.equal(readFileSync(modelsPath, 'utf8'), modelsBefore);
+});
+
+test('regenerate: missing settings returns missing and writes nothing', () => {
+  const { path, modelsPath, settingsPath } = fixture();
+  writeFileSync(path, 'model = "gpt-5.6-sol"\n');
+  const cfgBefore = readFileSync(path, 'utf8');
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  assert.equal(r.settings, 'missing');
+  assert.equal(r.models.status, 'empty');
+  assert.equal(r.providers.status, 'empty');
+  assert.equal(existsSync(modelsPath), false);
+  assert.equal(readFileSync(path, 'utf8'), cfgBefore); // last-known-good config preserved
+});
+
+test('regenerate: unparseable settings returns unparseable with an error and writes nothing', () => {
+  const { path, modelsPath, settingsPath } = fixture();
+  writeFileSync(settingsPath, '{ this is not json');
+  writeFileSync(path, 'model = "gpt-5.6-sol"\n');
+  const cfgBefore = readFileSync(path, 'utf8');
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  assert.equal(r.settings, 'unparseable');
+  assert.ok(r.error instanceof Error);
+  assert.equal(existsSync(modelsPath), false);
+  assert.equal(readFileSync(path, 'utf8'), cfgBefore);
+});
+
+// --- SR-003: the no-marker/append branch must be treated as suffix-empty ---
+
+test('codexSuffixIsEmpty: no-marker append branch is suffix-empty explicitly (SR-003)', () => {
+  // A long no-marker file: the old `slice(-1 + END.length)` would land mid-file
+  // and read as non-empty.
+  const longNoMarker = 'model = "gpt-5.6-sol"\n'.repeat(10);
+  assert.equal(codexSuffixIsEmpty(longNoMarker, -1), true);
+  // Markers present: the suffix is whatever follows the END marker.
+  assert.equal(codexSuffixIsEmpty('abc' + CODEX_TOML_END_MARKER, 3), true);
+  assert.equal(codexSuffixIsEmpty('abc' + CODEX_TOML_END_MARKER + '\n', 3), false);
+  assert.equal(codexSuffixIsEmpty('abc' + CODEX_TOML_END_MARKER + '\nsection', 3), false);
+});
+
+test('inject: no-marker append is byte-stable across two injections with exactly one trailing newline', () => {
+  const { path } = fixture();
+  // No markers, and longer than the END marker so a mid-file slice would be non-empty.
+  writeFileSync(path, 'model = "gpt-5.6-sol"\n'.repeat(10));
+  const generated = generateModelProvidersBlock(SHARED_DEEPSEEK_ONLY);
+  const first = injectModelProviders(path, generated);
+  assert.equal(first.status, 'updated');
+  const afterFirst = readFileSync(path, 'utf8');
+  assert.match(afterFirst, /[^\n]\n$/); // exactly one trailing newline
+  const second = injectModelProviders(path, generated);
+  assert.equal(second.status, 'no-change');
+  assert.equal(readFileSync(path, 'utf8'), afterFirst);
 });

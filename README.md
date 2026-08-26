@@ -39,8 +39,9 @@ rustup component add rust-analyzer
 Setup installs provider wrappers alongside the host executable (CMD, PowerShell, Git Bash).
 `claude_env_settings.json` is the **single source of truth** for both hosts — one
 `providers.<name>` block per provider, one URL + one API key, with per-host
-fields (`*ApiKeyEnv`, `*Path`, `*Model`, optional `claudeExtras`) for the bits
-that genuinely differ between the Anthropic and OpenAI namespaces.
+fields (`*ApiKeyEnv`, `*Path`) plus a single `models` map that both launchers
+project from (the only thing that differs between the Anthropic and OpenAI
+namespaces).
 
 ```sh
 # Claude Code
@@ -50,8 +51,8 @@ cckm  # Kimi      (Anthropic-compatible, direct)
 ccgmi # GMI Cloud (Anthropic-compatible, direct)
 
 # Codex — same providers.<name> block, different launcher
-cods  # DeepSeek  via codex (--config openai_base_url=… --model deepseek-chat)
-cogmi # GMI Cloud via codex (--config openai_base_url=… --model …)
+cods  # DeepSeek  via codex (--config model_provider=deepseek --model deepseek-v4-flash)
+cogmi # GMI Cloud via codex (--config model_provider=gmi --model MiniMaxAI/MiniMax-M3)
 ```
 
 #### Provider shape
@@ -63,14 +64,13 @@ cogmi # GMI Cloud via codex (--config openai_base_url=… --model …)
       "url": "https://api.deepseek.com",
       "claudeApiKeyEnv": "ANTHROPIC_API_KEY",
       "claudePath":       "/anthropic",
-      "claudeModel":      "deepseek-v4-flash[1m]",
-      "claudeExtras": {
-        "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-pro[1m]",
-        "CLAUDE_CODE_SUBAGENT_MODEL":     "deepseek-v4-flash[1m]"
-      },
       "codexApiKeyEnv":   "DEEPSEEK_API_KEY",
       "codexPath":        "/v1",
-      "codexModel":       "deepseek-chat"
+      "models": {
+        "base":  "deepseek-v4-flash[1m]",
+        "fable": "deepseek-v4-pro[1m]",
+        "opus":  "deepseek-v4-flash-vision-exp[1m]"
+      }
     }
   }
 }
@@ -84,20 +84,15 @@ Add a provider by adding a `providers.<name>` block and (optionally) an alias
 entry in `scripts/setup/install-shell-aliases.js`. See
 `docs/providers.md` for the full schema.
 
-**Caveat for codex-side aliases:** Two preconditions have to be true before
-`cods` / `cogmi` will actually reach their provider:
-
-1. **Missing TOML block.** You also need a `[model_providers.<id>]` block per
-   provider in `~/.codex/codex_config.toml` (with `env_key` and
-   `wire_api = "responses"`). Without it, codex exits with
-   "model provider not found in config.toml" before the network call is even
-   attempted. See `docs/providers.md` § Codex side for the full
-   shape.
-2. **Endpoint protocol.** DeepSeek's public OpenAI-compat endpoint is
-   chat/completions, not Responses — codex needs Responses. `cods` spawns codex
-   correctly with the right env/config but the network call will fail until
-   either a translation proxy is fronted or DeepSeek ships a Responses endpoint.
-   Same caveat applies to `cogmi` (GMI's OpenAI-compat surface is not documented).
+**Codex-side requirements:** `setup.js` generates what `cods` / `cogmi` need from
+`providers.<name>` automatically — the `[model_providers.<id>]` block (base_url,
+`env_key`, `wire_api = "responses"`) injected into `~/.codex/config.toml`, and the
+schema-complete `~/.codex/models.json` model catalog (Codex 0.149 rejects the
+deepseek-v4-* models without it). Both self-heal on every session (the
+SessionStart/launch link check regenerates them from `providers.<name>`), so a
+machine that syncs without re-running setup repairs itself; only a missing
+`codex_config.toml` itself still needs `npm run setup`. See `docs/providers.md`
+§ Codex side for the full shape and caveats.
 
 #### Output styles (non-coding personas)
 

@@ -4,49 +4,35 @@
             "url": "https://api.deepseek.com",
             "claudeApiKeyEnv": "ANTHROPIC_API_KEY",
             "claudePath": "/anthropic",
-            "claudeModel": "deepseek-v4-flash[1m]",
-            "claudeExtras": {
-                "ANTHROPIC_DEFAULT_FABLE_MODEL": "deepseek-v4-pro[1m]",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-v4-flash-vision-exp[1m]",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-flash[1m]",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash[1m]",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-v4-flash[1m]"
-            },
             "codexApiKeyEnv": "DEEPSEEK_API_KEY",
             "codexPath": "/v1",
-            "codexModel": "deepseek-chat"
+            "models": {
+                "base": "deepseek-v4-flash[1m]",
+                "fable": "deepseek-v4-pro[1m]",
+                "opus": "deepseek-v4-flash-vision-exp[1m]"
+            }
         },
         "kimi": {
             "url": "https://api.kimi.com",
             "claudeApiKeyEnv": "ANTHROPIC_API_KEY",
             "claudePath": "/coding/",
-            "claudeModel": "k3-256k",
-            "claudeExtras": {
-                "ANTHROPIC_DEFAULT_FABLE_MODEL": "k3[1m]",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "k3[1m]",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "k3[1m]",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "k3-256k"
-            },
             "codexApiKeyEnv": "KIMI_API_KEY",
             "codexPath": "/coding/v1",
-            "codexModel": "kimi-for-coding"
+            "models": {
+                "base": "k3[1m]",
+                "haiku": "kimi-for-coding",
+                "subagent": "k3-256k"
+            }
         },
         "gmi": {
             "url": "https://api.gmi-serving.com",
             "claudeApiKeyEnv": "ANTHROPIC_AUTH_TOKEN",
             "claudePath": "",
-            "claudeModel": "MiniMaxAI/MiniMax-M3[1m]",
-            "claudeExtras": {
-                "ANTHROPIC_DEFAULT_FABLE_MODEL": "MiniMaxAI/MiniMax-M3[1m]",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMaxAI/MiniMax-M3[1m]",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMaxAI/MiniMax-M3[1m]",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMaxAI/MiniMax-M3[1m]",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "MiniMaxAI/MiniMax-M3[1m]"
-            },
             "codexApiKeyEnv": "GMI_API_KEY",
             "codexPath": "/v1",
-            "codexModel": "MiniMaxAI/MiniMax-M3[1m]"
+            "models": {
+                "base": "MiniMaxAI/MiniMax-M3[1m]"
+            }
         }
     },
     "fabric": {

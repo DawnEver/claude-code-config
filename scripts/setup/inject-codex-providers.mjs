@@ -39,6 +39,18 @@ function codexBasePrompt() {
 export const CODEX_TOML_START_MARKER = '# === setup-managed: model_providers (do not edit below this line) ===';
 export const CODEX_TOML_END_MARKER = '# === setup-managed: model_providers end ===';
 
+/**
+ * Whether the content after the END marker is empty. In the no-marker/append
+ * branch (`endIdx === -1`) treat the suffix as empty explicitly — indexing the
+ * string at `-1 + END.length` would land mid-file and make the comparison
+ * meaningless (SR-003).
+ */
+export function codexSuffixIsEmpty(existing, endIdx) {
+  return endIdx === -1
+    ? true
+    : existing.slice(endIdx + CODEX_TOML_END_MARKER.length) === '';
+}
+
 // Per-model capability catalog for the generated `~/.codex/models.json`, keyed by
 // the BARE codex model id (e.g. `deepseek-v4-flash` — the `[1m]` suffix is a
 // Claude-side context-window request). Each cataloged model is a candidate in the
@@ -195,7 +207,7 @@ export function injectModelProviders(codexConfigPath, generatedBlock) {
   // apples to apples regardless of which branch produced the file the first
   // time. If the post-marker suffix is non-empty, the user already has trailing
   // content; leave it alone. Otherwise guarantee exactly one trailing newline.
-  if (existing.slice(endIdx + CODEX_TOML_END_MARKER.length) === '') {
+  if (codexSuffixIsEmpty(existing, endIdx)) {
     next = next.replace(/\n*$/, '') + '\n';
   } else {
     next = next.replace(/\n+$/, '\n');
@@ -283,4 +295,53 @@ export function injectModelsJson(codexModelsPath, generated) {
   if (existing === generated) return { status: 'no-change' };
   fs.writeFileSync(codexModelsPath, generated);
   return { status: 'updated', models: (generated.match(/"slug":/g) || []).length };
+}
+
+/**
+ * Read the shared providers registry ONCE and (re)generate the derivable codex
+ * artifacts from it:
+ *   - repo `models.json` (linked to ~/.codex/models.json) — ALWAYS, regardless
+ *     of whether codex_config.toml exists, because it derives purely from
+ *     `providers.<name>.models`;
+ *   - the `[model_providers.*]` section of `codex_config.toml` — only when that
+ *     file exists (`injectModelProviders` self-guards and returns 'no-config').
+ *
+ * Idempotent: no file write when the generated content already matches. When
+ * settings are missing/unparseable, both injectors receive '' and return
+ * 'empty' WITHOUT touching any pre-existing artifact, so a last-known-good
+ * models.json / codex_config.toml is preserved.
+ *
+ * Shared by setup.js (full install) and check-links.js (SessionStart / codex
+ * launch self-heal), so a machine that syncs the repo without re-running setup
+ * still gets a healable models.json source for the ~/.codex link.
+ *
+ * @param {{ settingsPath: string, codexConfigPath: string, modelsPath: string }} paths
+ * @returns {{
+ *   settings: 'missing' | 'unparseable' | 'ok',
+ *   error?: Error,
+ *   providers: { status: 'no-config' | 'empty' | 'no-change' | 'updated', providers?: number },
+ *   models:    { status: 'empty' | 'no-change' | 'updated', models?: number },
+ * }}
+ */
+export function regenerateCodexArtifacts({ settingsPath, codexConfigPath, modelsPath }) {
+  let settings;
+  let status = 'missing';
+  let error;
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+      status = 'ok';
+    } catch (err) {
+      error = err;
+      status = 'unparseable';
+    }
+  }
+
+  const generatedBlock = status === 'ok' ? generateModelProvidersBlock(settings) : '';
+  const generatedModels = status === 'ok' ? generateModelsJson(settings) : '';
+
+  const providers = injectModelProviders(codexConfigPath, generatedBlock);
+  const models = injectModelsJson(modelsPath, generatedModels);
+
+  return { settings: status, ...(error ? { error } : {}), providers, models };
 }
