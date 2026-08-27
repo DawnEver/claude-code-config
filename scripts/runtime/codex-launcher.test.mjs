@@ -13,8 +13,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { buildCodexInvocation } from './codex-launcher.mjs';
+
+// Provider launches scope the codex model catalog to the absolute
+// ~/.codex/models.json (global config would leak 3rd-party models into plain
+// `codex`). Computed the same way the launcher does so the assertion is robust.
+const CATALOG_FLAG = `model_catalog_json=${join(homedir(), '.codex', 'models.json')}`;
 
 const CODEX_STRIP_KEYS = [
   'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_API_KEY', 'OPENAI_BASE_URL',
@@ -70,6 +75,7 @@ test('codex.js deepseek derives --model from models.base (strips [1m])', () => {
   // context-window suffix is Claude-side; codex gets the bare model id.
   assert.deepEqual(args, [
     '--config', 'model_provider=deepseek',
+    '--config', CATALOG_FLAG,
     '--model', 'deepseek-v4-flash',
   ]);
 });
@@ -114,6 +120,7 @@ test('codex.js gmi uses ANTHROPIC_AUTH_TOKEN via codexApiKeyEnv and the M3 model
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'gmi-secret');
   assert.deepEqual(args, [
     '--config', 'model_provider=gmi',
+    '--config', CATALOG_FLAG,
     '--model', 'MiniMaxAI/MiniMax-M3',
   ]);
 });
@@ -132,7 +139,7 @@ test('codex.js extraArgs are appended after launcher-injected flags', () => {
   assert.equal(args[args.length - 1], 'hello');
   // Launcher-injected flags come first
   assert.equal(args[0], '--config');
-  assert.equal(args[2], '--model');
+  assert.equal(args[4], '--model');
 });
 
 test('codex.js missing shared file returns a clear error', () => {
@@ -164,7 +171,7 @@ test('codex.js selects the provider even with no models (emits model_provider bu
   assert.equal(env.K, 'k');
   // Always select the provider's [model_providers.minimal] block; --model only
   // when the provider declares a models map.
-  assert.deepEqual(args, ['--config', 'model_provider=minimal']);
+  assert.deepEqual(args, ['--config', 'model_provider=minimal', '--config', CATALOG_FLAG]);
   assert.equal(args.includes('--model'), false);
 });
 

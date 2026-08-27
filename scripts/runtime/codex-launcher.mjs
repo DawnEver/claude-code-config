@@ -10,6 +10,8 @@
 // `--model` CLI flag (no env var exists).
 
 import { existsSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 
@@ -97,8 +99,14 @@ export function buildCodexInvocation({
   // provider's base_url with `--config openai_base_url=...`; that hijacked the
   // request (openai/chatgpt auth + openai model list) instead of using the
   // provider's own auth and wire_api — see docs/providers.md § Codex side.
+  //
+  // model_catalog_json is scoped HERE (per-provider) rather than in the global
+  // codex_config.toml so plain `codex` keeps OpenAI's built-in model list. The
+  // catalog is resolved to an absolute path (model_catalog_json is applied on
+  // startup only and does not accept `~`).
   if (provider) {
     args.push('--config', `model_provider=${provider}`);
+    args.push('--config', `model_catalog_json=${join(homedir(), '.codex', 'models.json')}`);
   }
   if (profile.models?.codex || profile.models?.base) {
     args.push('--model', codexModel(profile.models));

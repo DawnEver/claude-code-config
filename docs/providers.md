@@ -149,11 +149,19 @@ style so both providers share one config shape.
   `--model` CLI flag. The model derives from `models.codex ?? models.base`
   with the `[1m]` suffix stripped (`deepseek-v4-flash[1m]` → `deepseek-v4-flash`),
   so it tracks the same `models` source as the Claude side.
-- Setup also writes `model_catalog_json = "~/.codex/models.json"` and generates a
-  schema-complete `models.json` (with `base_instructions` = the repo's
-  `system-prompt/codex-base.md`). Without `model_catalog_json`, codex 0.149 queries
-  the provider's `/v1/models` and, failing to parse it, shows the built-in openai
-  list in the `--model` picker instead of the providers' models.
+- `args += ['--config', 'model_catalog_json=<abs ~/.codex/models.json>']` — scoped
+  to provider launches only (see below), so plain `codex` keeps OpenAI's built-in
+  model list instead of showing the 3rd-party catalog.
+- Setup generates a schema-complete `models.json` (with `base_instructions` = the
+  repo's `system-prompt/codex-base.md`). Without `model_catalog_json`, codex 0.149
+  queries the provider's `/v1/models` and, failing to parse it, shows the built-in
+  openai list in the `--model` picker instead of the providers' models.
+
+`model_catalog_json` is intentionally NOT written to the global `codex_config.toml`.
+It is a startup-only top-level key that takes an absolute path; set globally it would
+force plain `codex` (OpenAI backend) to load the 3rd-party `models.json` too, hiding
+OpenAI's models in the picker. The `cods`/`cogmi` launcher passes it via `--config`
+only when a provider is selected.
 
 **Precondition the user maintains:** `codex_config.toml` must have a
 `[model_providers.<id>]` block per provider (e.g. `model_providers.deepseek =
