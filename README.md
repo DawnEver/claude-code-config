@@ -1,6 +1,13 @@
 # Claude Code & Codex Cross-Platform Config Sync
 
-Syncs Claude Code and Codex configuration across devices via OneDrive.
+Syncs Claude Code and Codex configuration across devices. The working tree travels via git;
+only a three-file config payload rides cloud storage (OneDrive, Dropbox, whatever you point it
+at — or nothing at all, which is the zero-config default). See
+[`docs/sync-architecture.md`](docs/sync-architecture.md).
+
+> **The working tree must not live inside a cloud-synced folder.** A sync daemon replicating
+> `.git/` corrupts the index and overwrites the reflog. This repo was migrated out of OneDrive
+> on 2026-08-29 after exactly that.
 
 > This repo is publicly available, but it is primarily intended for personal use and rapid iteration — backward compatibility is not a concern. Rename, restructure, or remove anything outdated rather than adding shims or compat layers.
 
@@ -130,7 +137,7 @@ Writes `terminal.integrated.env.*` and `claudeCode.environmentVariables` to loca
 elevated shell); directory entries use junctions and never need it. Without the privilege, setup
 falls back to **hard links** for files and logs `(hard link)`. Hard links are two-way like symlinks,
 but only while both names point at the same file record - a writer that *replaces* the file
-(OneDrive sync-down, `git checkout`, an atomic save) silently breaks the link. Setup reports a broken
+(`git checkout`, an atomic save, a cloud sync-down) silently breaks the link. Setup reports a broken
 one as `plain file, not linked`; re-run `npm run setup -- -r` to re-link. If the unlinked copy had
 drifted from the repo it is kept alongside as `<name>.setup-bak` rather than discarded.
 
@@ -138,9 +145,12 @@ drifted from the repo it is kept alongside as `<name>.setup-bak` rather than dis
 >= 0.8.0 refuses to load a symlinked `config.json`, so `CLAUDE_LINKS` unconditionally marks
 `claude_plugins/claude-hud/config.json` as `hardlink: true`. Hard links require source and target
 on the same volume (Windows: same drive letter); on EXDEV the setup script logs the hint and
-continues. A OneDrive sync-down that *replaces* the file rather than editing it will break the
-hard link silently — re-run `npm run setup -- -r` to re-link. This is the entry most likely to need
-periodic re-linking.
+continues. Since the working tree moved out of cloud storage this file is git-tracked, so the
+frequent breaking writer is now **`git pull`/`git checkout`** rather than a cloud sync-down —
+any pull that touches it replaces the inode and silently unlinks it. `check-links.js` repairs it
+on SessionStart; `npm run setup -- -r` does it manually. This is the entry most likely to need
+periodic re-linking, and the honest fix would be to ship a `config.template.json` and gitignore
+the real one (a per-machine tuned file should not be tracked at all).
 
 ### Upgrading an existing install
 
