@@ -66,7 +66,7 @@ const TARGETS = flag('--old', null)
       name: 'claude-config',
       old: OLD_ROOT,
       repo: 'https://github.com/DawnEver/claude-code-config.git',
-      ref: path.join(os.homedir(), 'Projects', 'claude-config'),
+      ref: path.join(os.homedir(), 'Documents', 'Code', 'AI', 'claude-config'),
       // The config repo's payload files are gitignored and are migrated separately by
       // migrate-host.mjs; ls-files --exclude-standard already leaves them out.
     },
@@ -74,7 +74,7 @@ const TARGETS = flag('--old', null)
       name: 'cc-market',
       old: path.join(OLD_ROOT, 'cc-market'),
       repo: 'https://github.com/DawnEver/cc-market',
-      ref: path.join(os.homedir(), 'Projects', 'claude-config', 'cc-market'),
+      ref: path.join(os.homedir(), 'Documents', 'Code', 'AI', 'claude-config', 'cc-market'),
     },
   ].filter(t => !only || t.name === only);
 

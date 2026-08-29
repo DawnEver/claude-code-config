@@ -55,7 +55,7 @@
 
 ## What to expect it to do
 
-Phase 0 salvage → clone to `~/Projects/claude-config` (or `%USERPROFILE%\Projects\...`) →
+Phase 0 salvage → clone to `~/Documents/Code/AI/claude-config` (or `%USERPROFILE%\Documents\Code\AI\...`) →
 `setup.js --sync-dir <payload> --replace` → verification checklist → cc-market salvage pass.
 
 Nothing is deleted. The old tree stays as the rollback.
@@ -65,7 +65,7 @@ Nothing is deleted. The old tree stays as the rollback.
 Later sessions on that machine should start in the NEW working tree:
 
 ```
-cd %USERPROFILE%\Projects\claude-config
+cd %USERPROFILE%\Documents\Code\AI\claude-config
 claude
 ```
 

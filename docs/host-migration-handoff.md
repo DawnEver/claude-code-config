@@ -116,8 +116,8 @@ git -C "<old path>" push origin HEAD:refs/heads/rescue-<repo>-<hostname>
 Rescued branches land in your new clone; review and publish them at leisure:
 
 ```
-git -C ~/Projects/claude-config/cc-market log --oneline origin/main..rescue/<branch>
-git -C ~/Projects/claude-config/cc-market push origin rescue/<branch>
+git -C ~/Documents/Code/AI/claude-config/cc-market log --oneline origin/main..rescue/<branch>
+git -C ~/Documents/Code/AI/claude-config/cc-market push origin rescue/<branch>
 ```
 
 ---
@@ -130,8 +130,8 @@ node migrate-host.mjs --dry-run
 node migrate-host.mjs
 ```
 
-Default clone target is `~/Projects/claude-config`
-(`%USERPROFILE%\Projects\claude-config` on Windows). Override with
+Default clone target is `~/Documents/Code/AI/claude-config`
+(`%USERPROFILE%\Documents\Code\AI\claude-config` on Windows). Override with
 `--target "D:\dev\claude-config"` — any **non-cloud** path; the script refuses anything
 containing `OneDrive`, `Dropbox`, `CloudStorage`, `iCloud`, `Google Drive`.
 
@@ -156,6 +156,53 @@ verify → run the cc-market salvage pass.
 root**. The repo-root fallback keeps a no-cloud install zero-config; there is deliberately
 no cloud auto-detection (this repo is public, and Dropbox/iCloud/Syncthing/nothing are all
 valid).
+
+---
+
+## 2b. The OTHER repo — `ai-agents`
+
+`<OneDrive>/Sync/agents` had the same disease and gets the same treatment. On the macOS
+host its index held 393 entries against 284 real files, reported `reviewer-discovery/` as
+untracked and three committed memory files as staged deletions — **all present on the
+remote**. Verified `SAFE`: 0 unpushed commits, 0 orphans.
+
+```
+cd "<OneDrive>/Sync/claude-config"
+node rescue-clone.mjs --old "<OneDrive>/Sync/agents" \
+  --repo https://github.com/DawnEver/ai-agents.git \
+  --new ~/Documents/Code/AI/ai-agents
+```
+
+If `SAFE`, clone it and relink its bulk data:
+
+```
+git clone https://github.com/DawnEver/ai-agents.git ~/Documents/Code/AI/ai-agents
+cd ~/Documents/Code/AI/ai-agents
+./scripts/link-agent-data.sh
+```
+
+### Why that repo needs a second step
+
+Most of what lived under `Sync/agents` was never in git and never will be — 215M of
+archives plus the PII-bearing `cc-docx/workspace`. That data wants **backup**, not version
+control, so it now lives at `<OneDrive>/Sync/agent-data/` and is joined back to the working
+tree by six gitignored symlinks. `link-agent-data.sh` recreates them; it resolves the data
+dir from an argument, `$AGENT_DATA_DIR`, or the `~/.claude/sync-dir` payload's sibling.
+
+Dropped on purpose, not moved: `literature-review/ongoing` (668M of re-downloadable
+papers) and `cc-lab/node_modules`.
+
+**This is the general principle of the restructure:** `Sync/` used to hold three things
+with incompatible needs — git working trees, small shared config, and large local-only
+data — under one mechanism. They are now separated:
+
+| | Lives in | Transport |
+| --- | --- | --- |
+| working trees | `~/Documents/Code/AI/` | git |
+| config payload | `<OneDrive>/Sync/claude-config/` | cloud sync |
+| bulk data | `<OneDrive>/Sync/agent-data/` | cloud sync (backup) |
+
+No `.git` directory exists anywhere under `Sync/` any more. That is the invariant to keep.
 
 ---
 
@@ -264,4 +311,4 @@ Tell the macOS host if you hit any of:
 - `~/.codex/config.toml` losing your project trust entries
 - `npm test` failing
 
-Run `git pull` in `~/Projects/claude-config` before reporting a bug — fixes land there.
+Run `git pull` in `~/Documents/Code/AI/claude-config` before reporting a bug — fixes land there.
