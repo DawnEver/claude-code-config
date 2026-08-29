@@ -1,9 +1,10 @@
 ---
 name: sharp-review-2026-08-29
-description: Sharp review findings — 15 total
+description: Sharp review findings — 33 total
 metadata:
   type: project
 ---
+
 
 ## Review 2026-08-29 (session) — architecture survey (架构锐评) + diff review
 
@@ -180,3 +181,219 @@ No chicken-and-egg: ~/.claude is a real per-machine directory (setup.js only lin
 - **Suggestion:** Add the five cases above. Write the findOrphanedLinks and check-links tests BEFORE the setup.js change — they are the two places where this design fails silently rather than loudly.
 
 The listed tests cover resolveSyncDir's precedence table thoroughly — the obviously-correct part. Nothing covers: check-links.js resolving Tier B under syncDir; migrateRetiredPlugins finding claude_settings.json; findOrphanedLinks leaving base:'sync' links alone (worth a test precisely because a future refactor of the realpath filter would start deleting live config); regenerateCodexArtifacts receiving a syncDir codexConfigPath and a sourceDir modelsPath in the same call; the --sync-dir move being crash-safe and refusing to clobber. Also scripts/setup/setup.test.mjs does not exist — §7 describes it as if extending a file, and setup.js has no test coverage today, so a 415-line module full of destructive filesystem branches is being modified blind.
+
+
+## Review 2026-08-29 (follow-up)
+
+## Review 2026-08-29 (session) — diff review + architecture survey (架构锐评)
+
+### Reviewer Status
+- Reviewer claude (claude): OK
+- Reviewer codex (codex): FAILED
+- Warning: only 1/2 reviewers succeeded
+
+### Confirmed findings
+
+---
+
+### [SR-20260829-016] [HIGH] scripts/setup/setup.js — The empty-sync-dir seeding guard is per-directory but seeding is per-file, so a partially-downloaded payload dir still gets template-seeded into cloud storage — SR-004 is only half fixed
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Make the guard per-file: replace `payloadPresent = SYNC_PAYLOAD_FILES.some(...)` with a per-file check inside each copy block, i.e. only seed file F when `!usingSyncDir || args.includes('--init-sync-dir')`. `payloadPresent` should not authorize seeding a *different* file. Better still: treat "using a sync dir" as "never seed unless --init-sync-dir", full stop.
+
+`seedTemplates = !usingSyncDir || payloadPresent || args.includes('--init-sync-dir')` where `payloadPresent = SYNC_PAYLOAD_FILES.some(f => fs.existsSync(path.join(syncDir, f)))`. But the three copy blocks below are each guarded only by `seedTemplates && !fs.existsSync(<that file>)`. A cloud client downloads files one at a time, so a dir containing claude_settings.json but not yet codex_config.toml is the *normal transient state* during the very migration this commit describes. In that state `payloadPresent` is true, `seedTemplates` is true, and setup copies `codex_config.template.toml` into the cloud dir. OneDrive then reconciles that local write against the incoming real codex_config.toml — the conflict copy the guard was written to prevent, plus a host running on a desensitized template with no providers. Same for a machine whose payload dir legitimately holds only two of the three files. The guard's own comment ("an empty shared dir usually means the cloud client has not finished syncing") describes exactly the case it fails to cover: partial sync, not zero sync.
+
+---
+
+### [SR-20260829-017] [HIGH] scripts/setup/codex-config-compose.mjs — splitCodexConfig silently drops content it cannot classify, and the result is written back over the cloud payload — a multi-line TOML string or an [[array-of-tables]] causes permanent, fleet-wide data loss and can emit unterminated TOML
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Add a losslessness invariant: reconstruct `preamble + shared + generated + local` and refuse to rewrite the payload (or compose) unless it equals the input modulo whitespace. Track multi-line basic/literal string state (`"""` / `'''`) and open bracket depth so header detection is suppressed inside them. Recognise `[[name]]` explicitly and route it like a table. Long-term: use a real TOML parser (`smol-toml`/`@iarna/toml`) instead of a line sectioner on a file you overwrite in place.
+
+Verified by running the module directly.
+
+(a) Multi-line string: input `instructions = """\n[projects.fake]\nstill in string\n"""\nmodel = "x"\n\n[tui]\ntheme="a"\n` → `sharedHeadOf` returns `instructions = """\n\n[tui]\ntheme = "a"\n`. The string body, the closing `"""` and the `model` key are all gone, the head is now *syntactically invalid TOML*, and `[projects.fake]` was misclassified as machine state. `composeCodexConfigFile` then writes that head over the cloud payload and into `~/.codex/config.toml`, breaking Codex on every host.
+
+(b) Array-of-tables: input `model="x"\n[notice]\na=1\n\n[[mcp_servers]]\nname="z"\n` → head is just `model = "x"`. `[[mcp_servers]]` does not match `/^\s*\[([^\]]+)\]\s*$/` (the second `]` defeats `\s*$`), so it is absorbed as *content of the preceding section*; because that section was `[notice]` (local), the whole array-of-tables is stripped and deleted from the shared payload. Generally: any unclassifiable line inherits the local/shared verdict of whatever table happens to precede it.
+
+There is no round-trip assertion anywhere; `splitCodexConfig` has no test that the parts reconstruct the input. The whole file passes through this on every setup run *and* every SessionStart via check-links.js.
+
+---
+
+### [SR-20260829-018] [HIGH] scripts/setup/setup.js — composeCodexConfigFile discards this host's own Codex project-trust list on the first upgrade run, even though it is holding those sections in a local variable at the time
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Recover locals from the payload when the target is a symlink into the (now-moved) payload: `if (stat.isSymbolicLink()) localSections = localSectionsOf(payloadText)` — you already parsed it, `leaked` is literally its count. Only start clean when the symlink resolves somewhere unrelated. At minimum, log how many trust blocks are being dropped instead of dropping them silently.
+
+`if (!stat.isSymbolicLink()) localSections = localSectionsOf(...)` — on every pre-migration host `~/.codex/config.toml` IS a symlink (it was in CODEX_LINKS until this commit), pointing at the repo's own `codex_config.toml`. The comment justifies discarding with "its local sections belong to the fleet, not this host" — but in the zero-config single-machine case (syncDir === repoRoot, the default this module advertises as "byte-identical to before") that symlink points at *this host's own* accumulated config. The 30 `[projects.*]` blocks the commit message cites are then read as `leaked`, counted, stripped from the payload, and thrown away. Result of a routine `npm run setup` after upgrading: Codex re-prompts trust for every project directory on the machine, with no warning that it happened and no backup to recover from. The data is in `payloadText`, five lines above, and is deliberately not used.
+
+---
+
+### [SR-20260829-019] [HIGH] scripts/setup/setup.js — composeCodexConfigFile overwrites both the cloud payload and ~/.codex/config.toml with non-atomic writeFileSync, no backup and no validation — the opposite of the care linkEntry takes
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Write to `<path>.tmp` + `fs.renameSync` for both writes so a crash cannot truncate a cloud-replicated file. Before the first destructive rewrite of the payload, copy it to `codex_config.toml.pre-split-bak` (linkEntry already does exactly this with `.setup-bak`). Refuse to write a head that is empty/whitespace when the input was not.
+
+Two unguarded whole-file writes: `fs.writeFileSync(payloadPath, head)` (a cloud-synced file, replicated to every machine) and `fs.writeFileSync(target, next)` (~/.codex/config.toml). Both are `open(O_TRUNC)` + write; a crash, a full disk, or an EPERM from the cloud client mid-write leaves a truncated config that then replicates. There is no `.bak` of the payload before the one-way strip, so if the sectioner mangles the file (see the splitCodexConfig finding) there is no recovery path — the pre-split content exists only in whatever the cloud client's version history happens to retain. Contrast `linkEntry` in the same file, which explicitly renames aside, restores on throw, and keeps drifted copies, with a comment about the time a live `~/.claude/settings.json` was lost. The newer, more destructive code got none of that discipline. Degenerate case: a payload whose head parses to nothing yields `head === '\n'`, which is duly written over the shared file, permanently blanking the fleet's Codex settings.
+
+---
+
+### [SR-20260829-020] [MEDIUM] scripts/setup/setup.js — adoptSyncDir writes the pointer BEFORE the move and uses a bare renameSync — EXDEV/EPERM leaves a configured pointer, files stranded in the repo, and a half-moved payload with no rollback
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Do it in the order the prior review specified: copy each file to the destination, fsync/verify, unlink the source, and write the pointer LAST, only after all three are confirmed. Catch `EXDEV` and fall back to copyFile+unlink. On any per-file failure, roll back the files already moved and do not write the pointer.
+
+`writeSyncDirPointer(target, home)` runs before the rename loop. `fs.renameSync` throws `EXDEV` across volumes — moving from `~/Projects/claude-config` to a OneDrive folder on another drive letter (Windows) or an external/network volume (macOS) is a realistic layout for exactly the user this feature targets — and `EPERM`/`EBUSY` when the cloud client has the destination locked. Failure modes: (1) the throw escapes `setup()` with a raw stack trace after the pointer is already committed; (2) files 1 and 2 moved, file 3 not, no rollback; (3) next plain `npm run setup` now resolves to a sync dir that is empty or partial, which lands in the seeding hole described above. SR-20260829-022 spelled out "write the pointer file LAST after every file is confirmed at the destination" and "copy+verify+unlink for EXDEV"; neither was implemented, and there is no test — `adoptSyncDir` has zero coverage.
+
+---
+
+### [SR-20260829-021] [MEDIUM] scripts/setup/setup-vscode.js — setup-vscode.js still resolves claude_env_settings.json against sourceDir, so `npm run setup_vscode <provider>` hard-fails on any machine that has adopted a sync dir
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** `const envSettingsPath = path.join(os.homedir(), '.claude', 'claude_env_settings.json');` — the same one-line fix already applied to cc.js and codex.js, reading through the link setup materialized.
+
+Line 95: `const envSettingsPath = path.join(sourceDir, 'claude_env_settings.json');` followed by `if (!fs.existsSync(...)) { console.error('ERROR Missing: ...'); process.exit(1); }`. The commit's own message claims it swept the repo-relative payload consumers, and the prior review's SR-20260829-018 suggestion was literally "Grep every join(sourceDir, ...) naming a Tier B file before implementing." This one was missed. It is a documented, package.json-wired entry point (`"setup_vscode": "node scripts/setup/setup-vscode.js"`, listed in AGENTS.md), so the feature is simply dead after migration. It fails loudly rather than silently, which is the only thing keeping this out of HIGH.
+
+---
+
+### [SR-20260829-022] [MEDIUM] scripts/setup/setup.js — setup() still argv-sniffs, so `node skills/migrate/migrate.js --sync-dir /x` triggers a destructive file move from a tool that advertises link cleanup — SR-010 was not fixed and the leaked flag is now destructive
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Change the signature to `setup({ replace = false, syncDir = null, initSyncDir = false } = {})` and parse argv only in the `import.meta`-main guard at the bottom of the file. `migrate.js` then calls `setup({})` and cannot inherit anything. Better: make the pointer-write + move a separate subcommand — "moves user data" and "creates symlinks idempotently" should not share an entry point.
+
+`setup()` still opens with `const args = process.argv.slice(2)` and reads `--sync-dir`, `--init-sync-dir` and `--replace` from it. `skills/migrate/migrate.js` main() calls bare `setup()` after its own arg parsing. The prior review flagged this when the only leakable flag was `--replace`; this commit added two more, one of which writes a machine-local pointer and MOVES three config files. It also means `composeCodexConfigFile`/`adoptSyncDir` cannot be driven from a test without mutating `process.argv`, which is a large part of why neither has any coverage.
+
+---
+
+### [SR-20260829-023] [MEDIUM] scripts/setup/check-links.js — The SessionStart hook and every codex launch now rewrite a cloud-synced file and the live ~/.codex/config.toml, ignore the result, and race a running Codex process
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Split composeCodexConfigFile into a pure `computeCodexConfig()` and a writer. In check-links, only write `~/.codex/config.toml` when it differs (it already does) and NEVER write the payload from a hook — make payload normalization a setup-only action. Surface the return value: push a warning on `'no-head'` and on `strippedFromPayload > 0`. Wrap the write so a concurrent Codex append cannot be clobbered (or at least re-read + re-compose immediately before writing).
+
+check-links.js is documented as "Auto-repairs the lossless cases ... A drifted plain file is reported, never touched." It now calls `composeCodexConfigFile`, which can `fs.writeFileSync(payloadPath, head)` — a destructive in-place rewrite of a cloud-replicated file — from a SessionStart hook that fires on every Claude Code session on every machine. Two hosts doing that normalization independently is precisely the two-writers pattern this commit exists to eliminate. Second: `~/.codex/config.toml` is read-modify-written while a `codex` process may be appending its own `[projects.*]` trust block; whichever write lands second wins and the other's change is lost. Third: the return value is discarded entirely, so `status: 'no-head'` (payload dir unmounted / cloud offline) produces no warning at all — the self-heal quietly does nothing, which is the exact failure class SR-20260829-017 was filed about.
+
+---
+
+### [SR-20260829-024] [MEDIUM] scripts/setup/setup.js — composeCodexConfigFile is called unguarded in setup(), so an unreadable payload (Files-On-Demand placeholder, EACCES, offline cloud) throws and aborts setup before a single link is created
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Wrap the call in try/catch, count it into `counters.errors`, and continue to link creation — the same treatment `regenerateCodexArtifacts` gets in check-links.js. Also read the payload with a helper that distinguishes 'absent' from 'unreadable' so a dehydrated OneDrive placeholder produces an actionable message rather than an ENOENT/EIO stack trace.
+
+`const composed = composeCodexConfigFile({ syncDir, envSettingsPath });` sits bare in `setup()` between artifact regeneration and `processLinks`. `fs.readFileSync(payloadPath, 'utf8')` on a Files-On-Demand placeholder can fail offline (`EIO`/`ENOENT` after the hydration attempt), and `fs.existsSync` cannot distinguish that from a real file — the exact scenario SR-20260829-026 raised and this commit does not address anywhere. The consequence is worse than a skipped codex config: setup dies before creating ANY of the `~/.claude` links, so a user running setup on a laptop with the cloud folder unavailable gets a stack trace and no config at all. check-links.js does wrap it; setup.js does not.
+
+---
+
+### [SR-20260829-025] [MEDIUM] scripts/setup/codex-config-compose.mjs — LOCAL_SECTION_PREFIXES claims 'hooks' wholesale while the surrounding comment says '[hooks.state.*]' — user-authored Codex hook config is silently deleted from the shared head
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Narrow the prefix to the actual state tables: match `hooks.state` (and `notice`, `projects`) rather than every `hooks.*`. If the intent really is all of `hooks`, fix the comment and the test, and say so in docs/sync-architecture.md, because it means Codex hooks can never be shared across machines.
+
+The module header says Codex writes `[hooks.state.*]` runtime state, and the test asserts `hooks.state` / `hooks.state."rem@cc-market:..."` as the observed local sections. But `LOCAL_SECTION_PREFIXES = new Set(['projects', 'hooks', 'notice'])` and `topLevelName()` truncates at the first dot, so ANY `[hooks.*]` table is machine-local. Verified: `sharedHeadOf('model = "x"\n\n[hooks.session_start]\ncommand = "echo hi"\n')` returns just `model = "x"`. A user-configured hook in the shared head is stripped on the first setup run and written back over the cloud payload, so it is gone from every machine — silently, since nothing reports what was removed beyond a section count. `[hooks]` is user configuration in Codex, not purely state; the code and its own comment disagree about which.
+
+---
+
+### [SR-20260829-026] [MEDIUM] scripts/shared/sync-dir.mjs — The sync-dir pointer is never validated and setup unconditionally mkdir -p's whatever it names, so a typo'd, renamed or unmounted path silently becomes a brand-new empty config dir
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Have `resolveSyncDir` (or setup) hard-fail when a pointer/env var is set but the target directory does not exist: 'sync dir <path> from ~/.claude/sync-dir does not exist — fix the pointer or re-run with --sync-dir'. Reserve create-if-missing for the explicit `--sync-dir`/`--init-sync-dir` path, where the user asked for it.
+
+`readSyncDirPointer` does `readFileSync().trim()` and returns whatever it finds; nothing checks the path is a directory, exists, or is even absolute. `setup()` then does `fs.mkdirSync(syncDir, { recursive: true })` before the emptiness check, so a mistyped `~/OneDrve/Sync/claude-config` or a cloud folder that the client has not mounted yet gets *created* as a fresh empty directory. The new guard then correctly refuses to seed it — but a subsequent `--init-sync-dir` (the flag the error message itself recommends) will happily seed templates into the wrong place, and a relative pointer resolves against the cwd. This is SR-20260829-029's concrete recommendation, restated: the banner line is human-eyeball mitigation for a machine-checkable condition. A blank pointer is handled; a wrong one is not.
+
+---
+
+### [SR-20260829-027] [MEDIUM] scripts/setup/codex-config-compose.mjs — A [model_providers.*] table outside the markers is classified as SHARED, gets baked into the cloud payload head, and then collides with the regenerated block — duplicate TOML tables, fleet-wide
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Treat `model_providers` as a third, dropped category alongside local: it is always generated, so it should never survive into `shared` regardless of marker presence. One line in the `flush()`/classification branch.
+
+Verified: `sharedHeadOf('model = "x"\n\n[model_providers.custom]\nname = "custom"\n')` returns the `[model_providers.custom]` table verbatim in the head. `composeCodexConfigFile` writes that head into the cloud payload and then `composeCodexConfig` appends the freshly generated marker block below it. If any generated provider shares a name, `~/.codex/config.toml` contains the same table twice — a TOML duplicate-key error, so Codex refuses to start. Reachable whenever the markers are absent or corrupted: a hand-added provider, a truncated file, a marker string change in a future version, or a merge from a host running a different setup revision. And it is sticky: once in the shared head it propagates to every machine and survives every subsequent run, since `sharedHeadOf` is idempotent on it.
+
+---
+
+### [SR-20260829-028] [LOW] scripts/setup/setup.js — earlyErrors reaches counters.errors but setup never sets process.exitCode, so the refuse-to-seed guard reports success to the shell
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** `if (counters.errors) process.exitCode = 1;` next to the final Done line — the `--sync-dir` missing-argument path already does exactly this, so the two error paths currently disagree.
+
+`const counters = { ..., errors: earlyErrors, ... }` correctly folds the guard's error in, and it shows up in `Done: X linked, Y skipped, 1 errors`. But nothing ever assigns `process.exitCode` from `counters.errors`, so `npm run setup` exits 0 after refusing to configure anything. The ERR block is printed near the *top* of a long, chatty run whose last line reads like a success. Since the whole point of the guard is to stop a user who is mid-migration and not reading carefully, the one signal a wrapper or the user's shell prompt could act on is missing. Note the inconsistency: `--sync-dir` with no path sets `process.exitCode = 1` fifteen lines earlier.
+
+---
+
+### [SR-20260829-029] [LOW] scripts/setup/codex-config-compose.mjs — A table header with a trailing comment is not recognised, which both leaks machine-local [projects.*] paths into the cloud payload and collapses the rest of the file into the preamble
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Relax the header regex to allow a trailing comment: `/^\s*\[([^\]]+)\]\s*(?:#.*)?$/`. Cheap, and it removes an entire class of misclassification.
+
+The regex is `/^\s*\[([^\]]+)\]\s*$/`. Verified: `model="x"\n\n[tui]  # theme\ntheme="a"\n\n[projects.a] # trust\ntrust_level="t"\n` yields `shared: []`, `local: []`, and a head containing the *entire file* including `[projects.a]`. Two bad outcomes in one: (1) a human writing `[tui] # my theme` causes everything after it to be lumped into the preamble, so any Codex-appended machine state below leaks verbatim into the cloud payload — absolute per-host paths shared to every machine, the exact pollution the split exists to stop; (2) the head is no longer separable, so the sectioning silently degrades to a pass-through with no signal.
+
+---
+
+### [SR-20260829-030] [LOW] scripts/setup/setup.js — None of the risky new code paths are tested — the two new test files cover only the pure helpers, and setup.test.mjs still does not exist
+
+- **Category:** Feature
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Add scripts/setup/setup.test.mjs with tmpdir fixtures for: composeCodexConfigFile against (a) a real non-symlink ~/.codex/config.toml, (b) a symlink, (c) an absent payload, (d) twice in a row for idempotency; adoptSyncDir with a pre-existing destination file and with a rename failure; the four-way seedTemplates truth table including the partial-payload case; linkSourceRoot for base:'sync' vs unmarked. This requires the setup(opts) refactor above, which is a further argument for it.
+
+121 tests pass, but `codex-config-compose.test.mjs` exercises only `splitCodexConfig`/`sharedHeadOf`/`composeCodexConfig` on well-formed input (its one adversarial case, the unterminated marker block, is the least dangerous one), and `sync-dir.test.mjs` covers only the resolution precedence table — the obviously-correct part, which is precisely what SR-20260829-030 predicted would happen. Everything that touches the filesystem destructively — `composeCodexConfigFile` (rewrites a cloud file and ~/.codex/config.toml), `adoptSyncDir` (moves user data), the seeding guard, `linkSourceRoot` — has zero coverage. The migrate.test.mjs additions are the exception and are genuinely good: the base:'sync' and dangling-link cases are real regression guards.
+
+---
+
+### [SR-20260829-031] [LOW] scripts/setup/setup.js — regenerateCodexArtifacts still builds the providers block only to hand it to injectModelProviders(null), which discards it; the block is then generated a second time in composeCodexConfigFile
+
+- **Category:** Performance
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Give regenerateCodexArtifacts a `models`-only mode (or call `generateModelsCatalog` directly) and drop the null-path escape hatch from injectModelProviders. Then compose can be the single owner of the providers block, with one generation per run. Also delete or fix the now-false comment block above the call, which still describes marker injection into codex_config.toml.
+
+`regenerateCodexArtifacts({ codexConfigPath: null, ... })` generates the provider block, passes it to `injectModelProviders`, which returns `{status:'no-config'}` and drops it on the floor. `composeCodexConfigFile` then calls `generateModelProvidersBlock` again, and round-trips its output back through `splitCodexConfig` just to strip the markers that `composeCodexConfig` immediately re-adds — a generate/parse/re-emit cycle to move a string. `artifacts.providers` is now dead: the three log branches that consumed it were deleted, and nothing else reads it. Meanwhile the 12-line comment above the call still says "the [model_providers.*] section of codex_config.toml (only when that file exists) ... The generated section lives between two setup-managed markers; user edits above the markers are preserved verbatim", which is no longer true of this call site at all.
+
+---
+
+### [SR-20260829-032] [INFO] scripts/setup/setup.js — setup.js is at 600 lines and now mixes symlink management, destructive user-data migration, and TOML composition in one module
+
+- **Category:** Feature
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Move `composeCodexConfigFile` into codex-config-compose.mjs (it is the only I/O-aware function of that concern and the pure helpers already live there) and `adoptSyncDir` + `expandHome` into scripts/shared/sync-dir.mjs (which already exports `expandTilde` — `expandHome` in setup.js is a byte-for-byte duplicate of it). That drops setup.js by ~90 lines, removes the duplicate, and makes both functions testable without importing the whole link machinery.
+
+The repo's own guidance flags >300 lines for scrutiny; setup.js is 600 and this commit added 217. It now owns: OS detection, the link tables, linkEntry's careful backup/restore protocol, cc-market git operations, alias installation, sync-dir adoption (moves files), and Codex TOML composition (rewrites two files). `expandHome(p, home)` at the bottom of setup.js is an exact reimplementation of `expandTilde(p, home)` already exported from sync-dir.mjs and imported into the same file — two copies of the same three-line function, only one of which is tested.
+
+---
+
+### [SR-20260829-033] [INFO] scripts/runtime/cc.js — Launchers now hard-depend on ~/.claude/claude_env_settings.json existing, so ccc/cods fail before the first setup run where the repo-relative path used to work
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Fall back to `resolveSyncDir({repoRoot})` (or the repo path) when the link is absent, or emit a one-line 'run npm run setup first' message instead of whatever readMergedEnvSettings does with ENOENT.
+
+Switching to `join(homedir(), '.claude', 'claude_env_settings.json')` is the right call — it is what SR-20260829-027 asked for and it keeps resolveSyncDir out of the hot path. The cost, unmentioned in the comment: the old repo-relative path worked on a fresh clone before setup had ever run, and the new one does not. Combined with `linkEntry`'s silent `skip: source not found` when the payload has not synced yet, a user can end up with no link and a launcher that fails on a missing file with no hint that setup is the fix. Related doc drift: `scripts/shared/config.mjs` line 3 still asserts "claude_env_settings.json rides the OneDrive-synced repo, so every machine sees the same file", which this commit made false.

@@ -7,15 +7,28 @@
 // `ccgmi` aliases; those wrappers exec this script with the provider name.
 
 import { spawn } from 'child_process';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { buildClaudeInvocation } from './cc-launcher.mjs';
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // Read the shared registry through the link setup already materialized, not a repo-relative
 // path: claude_env_settings.json lives in the sync payload, which may sit outside the repo.
 // `~/.claude/claude_env_settings.json` is the per-host indirection that exists for exactly
 // this — the same convention as ~/.claude/system-prompt.
-const envSettingsPath = join(homedir(), '.claude', 'claude_env_settings.json');
+
+// Prefer the link setup materializes; fall back to the repo-relative path so the launcher
+// still works BEFORE the first setup run (where the old repo-relative resolution used to).
+function resolveEnvSettingsPath() {
+  const linked = join(homedir(), '.claude', 'claude_env_settings.json');
+  if (existsSync(linked)) return linked;
+  return join(REPO_ROOT, 'claude_env_settings.json');
+}
+
+const envSettingsPath = resolveEnvSettingsPath();
 
 const argv = process.argv.slice(2);
 const provider = argv[0] && !argv[0].startsWith('-') ? argv.shift() : '';

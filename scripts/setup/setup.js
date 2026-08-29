@@ -8,17 +8,13 @@ import { fixLspWindows } from './fix-lsp-windows.js';
 import { checkMacNotify } from './check-mac-notify.js';
 import { installShellAliases } from './install-shell-aliases.js';
 import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
-import { regenerateCodexArtifacts, generateModelProvidersBlock } from './inject-codex-providers.mjs';
-import {
-  sharedHeadOf,
-  localSectionsOf,
-  splitCodexConfig,
-  composeCodexConfig,
-} from './codex-config-compose.mjs';
+import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
+import { composeCodexConfigFile } from './codex-config-file.mjs';
 import {
   resolveSyncDir,
   syncDirSource,
   writeSyncDirPointer,
+  validateSyncDir,
   SYNC_PAYLOAD_FILES,
 } from '../shared/sync-dir.mjs';
 
@@ -33,6 +29,8 @@ export const codexDir = path.join(os.homedir(), '.codex');
 export function getSyncDir() {
   return resolveSyncDir({ repoRoot: sourceDir });
 }
+
+export { composeCodexConfigFile } from './codex-config-file.mjs';
 
 export const KNOWN_ALIAS_NAMES = ['ccc', 'ccds', 'cckm', 'ccgmi', 'cods', 'cogmi', 'todo', 'traceme'];
 
@@ -293,88 +291,40 @@ function processLinks(links, baseDir, counters, syncDir) {
 export function adoptSyncDir(dir, { repoRoot = sourceDir, home = os.homedir() } = {}) {
   const target = path.resolve(expandHome(dir, home));
   fs.mkdirSync(target, { recursive: true });
-  writeSyncDirPointer(target, home);
 
   const moved = [];
+  const skipped = [];
   if (path.resolve(repoRoot) !== target) {
     for (const name of SYNC_PAYLOAD_FILES) {
       const from = path.join(repoRoot, name);
       const to = path.join(target, name);
       if (!fs.existsSync(from)) continue;
-      if (fs.existsSync(to)) continue;
-      fs.renameSync(from, to);
+      if (fs.existsSync(to)) {
+        // The sync copy is authoritative. Never clobber it; report the stale repo copy.
+        skipped.push(name);
+        continue;
+      }
+      // rename() fails with EXDEV across volumes (a real case here: repo on C:, cloud
+      // folder on another mount). Fall back to copy + verify + unlink so a partial move
+      // can never lose the only copy of a config file.
+      try {
+        fs.renameSync(from, to);
+      } catch (err) {
+        if (err.code !== 'EXDEV') throw err;
+        fs.copyFileSync(from, to);
+        if (fs.readFileSync(from).equals(fs.readFileSync(to))) fs.unlinkSync(from);
+        else { fs.rmSync(to, { force: true }); throw new Error(`copy of ${name} did not verify`); }
+      }
       moved.push(name);
     }
   }
-  return { target, moved };
-}
 
-/**
- * Compose this host's `~/.codex/config.toml`.
- *
- * Three inputs, three owners:
- *   - the shared head, from the sync payload (hand-edited, cross-machine)
- *   - the `[model_providers.*]` block, derived from claude_env_settings.json
- *   - `[projects.*]` / `[hooks.*]` / `[notice]`, read back from the host's OWN existing
- *     config so Codex's accumulated trust decisions survive regeneration
- *
- * The payload file is rewritten with its head only, so any machine state that leaked in
- * before this split (or from a host running an older setup) is stripped rather than shared.
- */
-export function composeCodexConfigFile({ syncDir, envSettingsPath, codexConfigDir = codexDir } = {}) {
-  const payloadPath = path.join(syncDir, 'codex_config.toml');
-  if (!fs.existsSync(payloadPath)) return { status: 'no-head' };
+  // Pointer LAST. If a move throws, this host keeps its previous (working) resolution
+  // instead of being left pointing at a half-populated dir that the next plain setup run
+  // would then template-seed.
+  writeSyncDirPointer(target, home);
 
-  const payloadText = fs.readFileSync(payloadPath, 'utf8');
-  const head = sharedHeadOf(payloadText);
-
-  // Normalize the payload in place when it still carries machine state.
-  const leaked = splitCodexConfig(payloadText).local.length;
-  if (leaked > 0 && head !== payloadText) fs.writeFileSync(payloadPath, head);
-
-  let providersBlock = '';
-  let providers = 0;
-  if (fs.existsSync(envSettingsPath)) {
-    try {
-      const settings = JSON.parse(fs.readFileSync(envSettingsPath, 'utf8'));
-      // generateModelProvidersBlock returns the block WITH its markers; composeCodexConfig
-      // re-adds them, so take the body back out via the same parser the tests cover.
-      providersBlock = splitCodexConfig(generateModelProvidersBlock(settings)).generated;
-      providers = (providersBlock.match(/^\[model_providers\./gm) || []).length;
-    } catch {
-      // A malformed shared file is already reported by regenerateCodexArtifacts above.
-    }
-  }
-
-  const target = path.join(codexConfigDir, 'config.toml');
-  let localSections = '';
-  if (fs.existsSync(target)) {
-    const stat = fs.lstatSync(target);
-    // A pre-migration install has this as a symlink INTO the old repo; its local sections
-    // belong to the fleet, not this host, so start clean rather than importing 30 dead paths.
-    if (!stat.isSymbolicLink()) localSections = localSectionsOf(fs.readFileSync(target, 'utf8'));
-  }
-
-  const next = composeCodexConfig({ head, providersBlock, localSections });
-
-  fs.mkdirSync(codexConfigDir, { recursive: true });
-  // Replace a symlink left by the pre-split layout with a real file. Re-check existence
-  // AFTER the unlink — the old stat describes a path that no longer exists.
-  const before = fs.lstatSync(target, { throwIfNoEntry: false });
-  if (before && before.isSymbolicLink()) fs.unlinkSync(target);
-
-  let currentText = null;
-  if (fs.existsSync(target)) {
-    try { currentText = fs.readFileSync(target, 'utf8'); } catch { currentText = null; }
-  }
-  if (currentText !== next) fs.writeFileSync(target, next);
-
-  return {
-    status: 'written',
-    providers,
-    localSections: localSections ? splitCodexConfig(next).local.length : 0,
-    strippedFromPayload: leaked,
-  };
+  return { target, moved, skipped };
 }
 
 function expandHome(p, home) {
@@ -383,23 +333,33 @@ function expandHome(p, home) {
   return p;
 }
 
-export function setup() {
-  const args = process.argv.slice(2);
-  const replace = args.includes('--replace') || args.includes('-r');
+/**
+ * Parse setup's CLI flags. The ONLY argv reader — setup() itself takes options, so a
+ * programmatic caller (migrate.js calls setup()) cannot accidentally inherit a
+ * destructive `--sync-dir` from its own command line.
+ */
+export function parseSetupArgs(argv = []) {
+  const idx = argv.indexOf('--sync-dir');
+  return {
+    replace: argv.includes('--replace') || argv.includes('-r'),
+    initSyncDir: argv.includes('--init-sync-dir'),
+    syncDir: idx !== -1 ? argv[idx + 1] : undefined,
+    syncDirFlagPresent: idx !== -1,
+  };
+}
 
-  // `--sync-dir <path>` points this machine at the shared config payload and migrates
-  // any payload file still living in the repo into it.
-  const syncDirFlag = args.indexOf('--sync-dir');
-  if (syncDirFlag !== -1) {
-    const requested = args[syncDirFlag + 1];
-    if (!requested || requested.startsWith('-')) {
+export function setup(options = {}) {
+  const { replace = false, initSyncDir = false, syncDir: requestedSyncDir, syncDirFlagPresent = false } = options;
+  if (syncDirFlagPresent) {
+    if (!requestedSyncDir || requestedSyncDir.startsWith('-')) {
       console.error('ERR   --sync-dir requires a path argument');
       process.exitCode = 1;
       return;
     }
-    const { target, moved } = adoptSyncDir(requested);
+    const { target, moved, skipped } = adoptSyncDir(requestedSyncDir);
     console.log(`SYNC  pointer written: ~/.claude/sync-dir - ${target}`);
     for (const name of moved) console.log(`MOVE  ${name} - repo -> sync dir`);
+    for (const name of skipped) console.log(`WARN  ${name} - exists in BOTH; kept the sync copy, delete the repo one`);
   }
 
   const syncDir = getSyncDir();
@@ -419,15 +379,32 @@ export function setup() {
   // reconciles against the incoming real files — conflict copies of all three, and a host
   // running on template config meanwhile. Refuse and say so.
   const usingSyncDir = path.resolve(syncDir) !== path.resolve(sourceDir);
-  const payloadPresent = SYNC_PAYLOAD_FILES.some(f => fs.existsSync(path.join(syncDir, f)));
-  const seedTemplates = !usingSyncDir || payloadPresent || args.includes('--init-sync-dir');
+  const present = SYNC_PAYLOAD_FILES.filter(f => fs.existsSync(path.join(syncDir, f)));
+  const missing = SYNC_PAYLOAD_FILES.filter(f => !present.includes(f));
+
+  // All-or-nothing. Seeding is per-file, so a per-directory "is anything here?" check let a
+  // PARTIALLY downloaded payload seed templates for the files that had not arrived yet —
+  // which the cloud client then reconciles against the real incoming file, producing
+  // conflict copies. Only seed when the payload is empty AND explicitly initialised, or
+  // when there is no sync dir at all.
+  const seedTemplates = !usingSyncDir
+    || (present.length === 0 && initSyncDir)
+    || present.length === SYNC_PAYLOAD_FILES.length;
 
   let earlyErrors = 0;
   if (!seedTemplates) {
-    console.log(`ERR   sync dir is empty: ${syncDir}`);
-    console.log('      Nothing was seeded — an empty shared dir usually means the cloud');
-    console.log('      client has not finished syncing. Wait for it, or pass --init-sync-dir');
-    console.log('      to seed this dir from the repo templates (first machine only).');
+    if (present.length === 0) {
+      console.log(`ERR   sync dir is empty: ${syncDir}`);
+      console.log('      An empty shared dir usually means the cloud client has not finished');
+      console.log('      syncing. Wait for it, or pass --init-sync-dir to seed this dir from');
+      console.log('      the repo templates (FIRST machine only).');
+    } else {
+      console.log(`ERR   sync dir is only partially present: ${syncDir}`);
+      console.log(`      have:    ${present.join(', ')}`);
+      console.log(`      missing: ${missing.join(', ')}`);
+      console.log('      Refusing to seed the missing ones from templates — that would race');
+      console.log('      the cloud client and create conflict copies. Wait for sync to finish.');
+    }
     earlyErrors++;
   }
 
@@ -513,9 +490,9 @@ export function setup() {
   // it first lets the `~/.codex/models.json` link be created in the same run.
   const artifacts = regenerateCodexArtifacts({
     settingsPath: envSettingsPath,
-    // The shared head never carries a generated block — the composition step below owns
-    // ~/.codex/config.toml. Passing the payload file here would write machine-derived
-    // content into a cloud-synced file.
+    // The shared head never carries a generated block — composeCodexConfigFile owns
+    // ~/.codex/config.toml and generates the providers block itself. Passing the payload
+    // file here would write machine-derived content into a cloud-synced file.
     codexConfigPath: null,
     modelsPath: path.join(sourceDir, 'models.json'),
   });
@@ -534,14 +511,40 @@ export function setup() {
   // Compose ~/.codex/config.toml = shared head (payload) + generated [model_providers.*]
   // + this host's own [projects.*]/[hooks.*]/[notice]. Also normalizes the payload file
   // itself, so machine state that leaked in before the split gets stripped out.
-  const composed = composeCodexConfigFile({ syncDir, envSettingsPath });
+  // Never let a codex-config problem abort setup before a single link is created: an
+  // unreadable payload (Files-On-Demand placeholder, offline cloud, EACCES) is a warning,
+  // not a fatal error.
+  let composed;
+  try {
+    composed = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir });
+  } catch (err) {
+    composed = { status: 'threw', error: err };
+  }
+
   if (composed.status === 'written') {
-    console.log(`GEN   ~/.codex/config.toml — head + ${composed.providers} provider block(s) + ${composed.localSections} machine-local section(s)`);
+    console.log(`GEN   ~/.codex/config.toml — head + ${composed.providers} provider block(s) + ${composed.localSections} machine-local section(s)${composed.changed ? '' : ' (unchanged)'}`);
     if (composed.strippedFromPayload) {
-      console.log(`STRIP codex_config.toml — removed ${composed.strippedFromPayload} machine-written section(s) from the shared head`);
+      console.log(`STRIP codex_config.toml — removed ${composed.strippedFromPayload} machine-written section(s) from the shared head (backup: codex_config.toml.pre-split-bak)`);
+    }
+    if (composed.importedFromFleet) {
+      console.log(`KEEP  ~/.codex/config.toml — carried over ${composed.importedFromFleet} project-trust entr(y/ies) that exist on this host`);
+    }
+    if (composed.droppedDeadPaths) {
+      console.log(`DROP  ~/.codex/config.toml — discarded ${composed.droppedDeadPaths} project entr(y/ies) whose path does not exist here`);
     }
   } else if (composed.status === 'no-head') {
     console.log('NOTE  codex_config.toml — no shared head in the sync dir; skipped composing ~/.codex/config.toml');
+  } else if (composed.status === 'unreadable') {
+    console.log(`ERR   codex_config.toml — could not read the payload: ${composed.error.message}`);
+    console.log('      If this is a cloud placeholder, pin the folder to "Always keep on this device".');
+    counters.errors++;
+  } else if (composed.status === 'unsafe') {
+    console.log(`ERR   codex_config.toml — ${composed.error.message}`);
+    console.log('      Left untouched. Fix the file by hand, then re-run setup.');
+    counters.errors++;
+  } else if (composed.status === 'threw') {
+    console.log(`ERR   ~/.codex/config.toml — composition failed: ${composed.error.message}`);
+    counters.errors++;
   }
 
   console.log('--- Claude ---');
@@ -593,8 +596,13 @@ export function setup() {
   installShellAliases(claudeDir, sourceDir);
 
   console.log(`\nDone: ${counters.created} linked, ${counters.skipped} skipped, ${counters.errors} errors`);
+
+  // Surface failure to the shell. The refuse-to-seed guard counted an error but still
+  // exited 0, so migrate-host.mjs (and CI) read a failed run as success.
+  if (counters.errors > 0) process.exitCode = 1;
+  return counters;
 }
 
 if (path.resolve(process.argv[1] || '') === path.resolve(__dirname, 'setup.js')) {
-  setup();
+  setup(parseSetupArgs(process.argv.slice(2)));
 }

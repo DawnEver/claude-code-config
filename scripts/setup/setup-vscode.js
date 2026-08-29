@@ -26,9 +26,11 @@ import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings } from '../shared/config.mjs';
 import os from 'os';
 import { fileURLToPath } from 'url';
+import { resolveSyncDir } from '../shared/sync-dir.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourceDir = path.resolve(__dirname, '../..');
+const getSyncDir = () => resolveSyncDir({ repoRoot: sourceDir });
 const isWindows = process.platform === 'win32';
 
 const provider = process.argv[2] || 'claude';
@@ -92,7 +94,8 @@ if (provider === 'claude') {
   }
 } else {
   // Apply provider
-  const envSettingsPath = path.join(sourceDir, 'claude_env_settings.json');
+  // The payload may live outside the repo; resolve it the same way setup does.
+  const envSettingsPath = path.join(getSyncDir(), 'claude_env_settings.json');
   if (!fs.existsSync(envSettingsPath)) {
     console.error(`ERROR Missing: ${envSettingsPath}`);
     process.exit(1);

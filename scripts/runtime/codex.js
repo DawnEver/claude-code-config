@@ -7,15 +7,26 @@
 // those wrappers exec this script with the provider name.
 
 import { spawn } from 'child_process';
-import { statSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { statSync, writeFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { buildCodexInvocation } from './codex-launcher.mjs';
 import { checkLinks, SETUP_FIX_CMD } from '../setup/check-links.js';
 
 // Read the shared registry through the link setup already materialized, not a repo-relative
 // path: claude_env_settings.json lives in the sync payload, which may sit outside the repo.
-const envSettingsPath = join(homedir(), '.claude', 'claude_env_settings.json');
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// Prefer the link setup materializes; fall back to the repo-relative path so the launcher
+// still works BEFORE the first setup run (where the old repo-relative resolution used to).
+function resolveEnvSettingsPath() {
+  const linked = join(homedir(), '.claude', 'claude_env_settings.json');
+  if (existsSync(linked)) return linked;
+  return join(REPO_ROOT, 'claude_env_settings.json');
+}
+
+const envSettingsPath = resolveEnvSettingsPath();
 
 // Throttle the link-health check: on a OneDrive-backed Windows FS, a cold-cache
 // `stat` per link can block for hundreds of ms. The check is essential after

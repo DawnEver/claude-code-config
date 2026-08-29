@@ -11,13 +11,21 @@
 //
 //   head       hand-edited, SHARED  -> lives in the sync payload as codex_config.toml
 //   generated  derived from claude_env_settings.json providers -> rebuilt every setup run
-//   local      [projects.*] / [hooks.*] / [notice], MACHINE-ONLY -> never leaves the host
+//   local      [projects.*] / [hooks.state.*] / [notice], MACHINE-ONLY -> never leaves the host
 //
 // `~/.codex/config.toml` is consequently a real file composed per host, not a symlink into
 // the payload. See docs/sync-architecture.md § 3.
+//
+// SAFETY. The output of this splitter is written back over a CLOUD-SYNCED file, so a
+// misparse is not a local annoyance — it is fleet-wide data loss. Two defences:
+//   1. The line scanner tracks TOML multi-line strings (""" / '''), so a line that merely
+//      LOOKS like a table header inside a string is not treated as one. Without this, a
+//      `[projects.x]` line inside a multi-line string split the file mid-string and
+//      emitted unterminated TOML.
+//   2. `partition()` assigns EVERY input line to exactly one bucket, so reconstruction is
+//      lossless by construction, and `assertLossless()` verifies it before any caller
+//      overwrites a file.
 
-// Re-exported so the marker protocol has exactly one definition; inject-codex-providers.mjs
-// owns the strings.
 export {
   CODEX_TOML_START_MARKER,
   CODEX_TOML_END_MARKER,
@@ -29,111 +37,168 @@ import {
 } from './inject-codex-providers.mjs';
 
 /**
- * Top-level table names Codex writes by itself. Anything under these prefixes is machine
- * state and must never reach the sync payload.
+ * Dotted table prefixes Codex writes by itself. Anything under these is machine state and
+ * must never reach the sync payload.
  *
- * If Codex grows a new state table, add it here — the failure mode of missing one is that
- * host-specific junk starts syncing, which setup reports as a drifting shared head.
+ * `hooks.state` — NOT `hooks`. Codex's hook *state* is machine-local, but `[hooks]` and
+ * any user-authored `[hooks.<something-else>]` is real configuration that belongs in the
+ * shared head; claiming the whole `hooks` namespace silently deleted it.
  */
-export const LOCAL_SECTION_PREFIXES = new Set(['projects', 'hooks', 'notice']);
+export const LOCAL_SECTION_PREFIXES = ['projects', 'notice', 'hooks.state'];
 
-function topLevelName(header) {
-  // `plugins."rem@cc-market"` -> `plugins`; `projects.'c:\x'` -> `projects`
-  const m = /^[A-Za-z0-9_-]+/.exec(header);
-  return m ? m[0] : header;
+/** Tables owned by the generator; never shared, even if found outside the markers. */
+const GENERATED_PREFIXES = ['model_providers'];
+
+function matchesPrefix(header, prefixes) {
+  return prefixes.some(p => header === p || header.startsWith(p + '.'));
 }
 
 /**
- * Split a codex config into its three parts.
- *
- * @returns {{
- *   preamble: string,                              // scalars before the first table
- *   shared:   Array<{header: string, text: string}>,
- *   generated: string,                             // body between the markers, exclusive
- *   local:    Array<{header: string, text: string}>,
- * }}
+ * Parse a table header, tolerating a trailing comment (`[tui]  # theme`) and surrounding
+ * whitespace. Returns null for anything else — notably `[[array.of.tables]]`, which is
+ * left as ordinary content of the preceding section rather than mis-split.
  */
-export function splitCodexConfig(text = '') {
+export function parseHeader(line) {
+  const m = /^\s*\[([^[\]]+)\]\s*(?:#.*)?$/.exec(line);
+  return m ? m[1].trim() : null;
+}
+
+/**
+ * Assign every line of `text` to exactly one bucket.
+ *
+ * @returns {{lines: string[], kind: string[]}} kind[i] is one of
+ *   'preamble' | 'shared' | 'generated' | 'local' | 'marker'
+ */
+export function partition(text = '') {
   const lines = String(text).split('\n');
+  const kind = new Array(lines.length).fill('preamble');
 
-  const preamble = [];
-  const shared = [];
-  const local = [];
-  const generated = [];
-
-  let current = null;      // {header, lines, isLocal}
+  let current = 'preamble';
   let inGenerated = false;
+  let openDelim = null; // '"""' or "'''" while inside a multi-line string
 
-  const flush = () => {
-    if (!current) return;
-    const entry = { header: current.header, text: current.lines.join('\n').replace(/\s+$/, '') + '\n' };
-    (current.isLocal ? local : shared).push(entry);
-    current = null;
-  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
 
-  for (const line of lines) {
-    if (line.trim() === START) {
-      flush();
-      inGenerated = true;
+    // ── multi-line string tracking ────────────────────────────────────────────
+    // Inside a multi-line string nothing is a header. Count delimiters on the line;
+    // an odd count toggles the state.
+    if (openDelim) {
+      kind[i] = current;
+      if ((line.split(openDelim).length - 1) % 2 === 1) openDelim = null;
       continue;
     }
-    if (line.trim() === END) {
-      inGenerated = false;
-      continue;
+    for (const d of ['"""', "'''"]) {
+      if ((line.split(d).length - 1) % 2 === 1) { openDelim = d; break; }
     }
 
-    const header = /^\s*\[([^\]]+)\]\s*$/.exec(line)?.[1];
+    const trimmed = line.trim();
+    if (trimmed === START) { kind[i] = 'marker'; inGenerated = true; current = 'generated'; continue; }
+    if (trimmed === END) { kind[i] = 'marker'; inGenerated = false; current = 'preamble'; continue; }
 
-    // A table header while inside the generated block ends it when the table is not a
-    // model_providers one: an unterminated block (truncated file, lost end marker) must
-    // not swallow this host's [projects.*] list.
-    if (inGenerated && header && topLevelName(header) !== 'model_providers') {
-      inGenerated = false;
-    }
-
-    if (inGenerated) {
-      generated.push(line);
-      continue;
-    }
+    const header = parseHeader(line);
 
     if (header) {
-      flush();
-      current = { header, lines: [line], isLocal: LOCAL_SECTION_PREFIXES.has(topLevelName(header)) };
-      continue;
+      if (matchesPrefix(header, GENERATED_PREFIXES)) {
+        // A model_providers table anywhere — inside the markers or stranded outside them
+        // by a lost end marker — belongs to the generator. Treating a stray one as shared
+        // baked it into the payload and then collided with the regenerated block.
+        current = 'generated';
+      } else if (matchesPrefix(header, LOCAL_SECTION_PREFIXES)) {
+        current = 'local';
+        inGenerated = false;
+      } else {
+        current = 'shared';
+        inGenerated = false;
+      }
+    } else if (inGenerated && current !== 'generated') {
+      current = 'generated';
     }
 
-    if (current) current.lines.push(line);
-    else preamble.push(line);
+    kind[i] = current;
   }
-  flush();
+
+  return { lines, kind };
+}
+
+function collect(lines, kind, want) {
+  return lines.filter((_, i) => kind[i] === want).join('\n').replace(/\s+$/, '');
+}
+
+/**
+ * Split a codex config into its parts. `shared` includes the preamble scalars.
+ */
+export function splitCodexConfig(text = '') {
+  const { lines, kind } = partition(text);
+
+  const sectionsOf = (want) => {
+    const out = [];
+    let cur = null;
+    for (let i = 0; i < lines.length; i++) {
+      if (kind[i] !== want) { cur = null; continue; }
+      const header = parseHeader(lines[i]);
+      if (header) { cur = { header, lines: [lines[i]] }; out.push(cur); }
+      else if (cur) cur.lines.push(lines[i]);
+    }
+    return out.map(s => ({ header: s.header, text: s.lines.join('\n').replace(/\s+$/, '') + '\n' }));
+  };
+
+  const preamble = collect(lines, kind, 'preamble');
+  const generatedBody = lines
+    .filter((_, i) => kind[i] === 'generated')
+    .join('\n')
+    .replace(/^\s*\n/, '')
+    .replace(/\s+$/, '');
 
   return {
-    preamble: preamble.join('\n').replace(/\s+$/, '') + '\n',
-    shared,
-    generated: generated.join('\n').trim() ? generated.join('\n').replace(/^\s*\n/, '').replace(/\s+$/, '') + '\n' : '',
-    local,
+    preamble: preamble ? preamble + '\n' : '\n',
+    shared: sectionsOf('shared'),
+    generated: generatedBody ? generatedBody + '\n' : '',
+    local: sectionsOf('local'),
   };
 }
 
 /**
- * The shareable head: preamble + hand-edited tables, with all machine state and the
- * generated block removed. This is what gets written to the sync payload.
+ * Every non-local, non-generated line of `text`, in order — the shareable head.
  */
 export function sharedHeadOf(text = '') {
-  const { preamble, shared } = splitCodexConfig(text);
-  const parts = [preamble.trim(), ...shared.map(s => s.text.trim())].filter(Boolean);
-  return parts.join('\n\n') + '\n';
+  const { lines, kind } = partition(text);
+  const keep = lines.filter((_, i) => kind[i] === 'preamble' || kind[i] === 'shared');
+  return keep.join('\n').replace(/\s+$/, '') + '\n';
 }
 
 /** The machine-only tables, as text. */
 export function localSectionsOf(text = '') {
-  return splitCodexConfig(text).local.map(s => s.text.trim()).filter(Boolean).join('\n\n');
+  const { lines, kind } = partition(text);
+  return lines.filter((_, i) => kind[i] === 'local').join('\n').replace(/\s+$/, '');
+}
+
+/**
+ * Throw if splitting `text` would lose content. Callers MUST run this before overwriting
+ * a file with a derived head — the payload is cloud-synced, so a silent drop propagates.
+ */
+export function assertLossless(text = '') {
+  const { lines, kind } = partition(text);
+  const seen = lines.filter((_, i) => kind[i] !== 'marker').length;
+  const expected = lines.length - kind.filter(k => k === 'marker').length;
+  if (seen !== expected) throw new Error('codex config partition lost lines');
+
+  const open = /"""|'''/g;
+  for (const bucket of ['preamble', 'shared', 'local']) {
+    const body = lines.filter((_, i) => kind[i] === bucket).join('\n');
+    const count = (body.match(open) || []).length;
+    if (count % 2 !== 0) {
+      throw new Error(
+        `codex config: a multi-line string is split across the ${bucket} boundary; ` +
+        'refusing to rewrite (this would emit unterminated TOML)',
+      );
+    }
+  }
+  return true;
 }
 
 /**
  * Build the per-host `~/.codex/config.toml`.
- *
- * @param {{head: string, providersBlock: string, localSections: string}} parts
  */
 export function composeCodexConfig({ head = '', providersBlock = '', localSections = '' } = {}) {
   const chunks = [head.trim()];

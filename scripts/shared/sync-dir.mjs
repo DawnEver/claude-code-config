@@ -108,3 +108,32 @@ export function syncDirSource({ env = process.env, home = os.homedir() } = {}) {
   if (readSyncDirPointer(home)) return `~/.claude/${SYNC_DIR_POINTER_NAME}`;
   return 'repo (no sync dir configured)';
 }
+
+/**
+ * Check a configured sync dir before anything is written to it.
+ *
+ * A pointer is never validated on read, and setup used to `mkdir -p` whatever it named —
+ * so a typo'd, renamed or not-yet-mounted path silently became a brand-new EMPTY config
+ * dir, and the host came up on template config having apparently succeeded. Creating the
+ * directory is only ever correct on the explicit `--sync-dir` path.
+ *
+ * @returns {{ok: true} | {ok: false, reason: string}}
+ */
+export function validateSyncDir(syncDir, { repoRoot, env = process.env, home = os.homedir() } = {}) {
+  if (repoRoot && path.resolve(syncDir) === path.resolve(repoRoot)) return { ok: true };
+
+  const source = syncDirSource({ env, home });
+  if (!fs.existsSync(syncDir)) {
+    return {
+      ok: false,
+      reason: `sync dir does not exist: ${syncDir}\n`
+        + `      (configured via ${source})\n`
+        + '      If the path is wrong, fix or delete ~/.claude/sync-dir.\n'
+        + '      If the cloud folder is not mounted yet, wait — do NOT let setup create it.',
+    };
+  }
+  if (!fs.statSync(syncDir).isDirectory()) {
+    return { ok: false, reason: `sync dir is not a directory: ${syncDir}` };
+  }
+  return { ok: true };
+}

@@ -5,6 +5,8 @@ import {
   splitCodexConfig,
   composeCodexConfig,
   sharedHeadOf,
+  assertLossless,
+  partition,
   LOCAL_SECTION_PREFIXES,
   CODEX_TOML_START_MARKER,
   CODEX_TOML_END_MARKER,
@@ -68,7 +70,70 @@ test('splitCodexConfig: separates preamble, shared sections, generated block and
 test('LOCAL_SECTION_PREFIXES covers every machine-written section Codex appends', () => {
   // Guard against silently sharing a new state section: these are the ones observed
   // in a live config (30 projects, 8 hooks.state, 1 notice).
-  assert.deepEqual([...LOCAL_SECTION_PREFIXES].sort(), ['hooks', 'notice', 'projects']);
+  assert.deepEqual([...LOCAL_SECTION_PREFIXES].sort(), ['hooks.state', 'notice', 'projects']);
+});
+
+test('[hooks] and user hook tables stay SHARED; only [hooks.state.*] is machine-local', () => {
+  // Claiming the whole `hooks` namespace silently deleted user-authored Codex hook
+  // config from the shared head.
+  const src = '[hooks]\nenabled = true\n\n[hooks.on_start]\ncmd = "x"\n\n[hooks.state]\nseen = 1\n';
+  const head = sharedHeadOf(src);
+  assert.match(head, /\[hooks\]/);
+  assert.match(head, /\[hooks\.on_start\]/);
+  assert.doesNotMatch(head, /\[hooks\.state\]/);
+});
+
+test('a [model_providers.*] table OUTSIDE the markers is not baked into the shared head', () => {
+  // Otherwise it lands in the cloud payload and then collides with the regenerated
+  // block — duplicate TOML tables, fleet-wide.
+  const src = 'model = "x"\n\n[model_providers.stray]\nname = "stray"\n\n[tui]\na = 1\n';
+  const head = sharedHeadOf(src);
+  assert.doesNotMatch(head, /model_providers/);
+  assert.match(head, /\[tui\]/);
+});
+
+test('a table header with a trailing comment is recognised', () => {
+  const src = "model = \"x\"\n\n[projects.'/tmp/a']  # trusted earlier\ntrust_level = \"trusted\"\n";
+  const head = sharedHeadOf(src);
+  // Previously unrecognised: the machine-local path leaked into the payload AND the
+  // rest of the file collapsed into the preamble.
+  assert.doesNotMatch(head, /projects/);
+  assert.doesNotMatch(head, /trust_level/);
+});
+
+test('a header-looking line INSIDE a multi-line string is not treated as a header', () => {
+  // The worst case: this used to split the file mid-string, drop the closing delimiter,
+  // and write unterminated TOML back over the cloud payload.
+  const src = 'notes = """\n[projects.evil]\n"""\n\n[tui]\ntheme = "x"\n';
+  const head = sharedHeadOf(src);
+  assert.match(head, /\[projects\.evil\]/, 'string body must be preserved verbatim');
+  assert.equal((head.match(/"""/g) || []).length, 2, 'delimiters must stay balanced');
+  assert.match(head, /\[tui\]/);
+});
+
+test("the same holds for ''' multi-line strings", () => {
+  const src = "notes = '''\n[notice]\n'''\n\n[tui]\na = 1\n";
+  const head = sharedHeadOf(src);
+  assert.match(head, /\[notice\]/);
+  assert.equal((head.match(/'''/g) || []).length, 2);
+});
+
+test('array-of-tables [[x]] is left as content, never mis-split', () => {
+  const src = 'model = "x"\n\n[[mcp_servers]]\nname = "one"\n\n[[mcp_servers]]\nname = "two"\n';
+  const head = sharedHeadOf(src);
+  assert.equal((head.match(/\[\[mcp_servers\]\]/g) || []).length, 2);
+  assert.match(head, /name = "one"/);
+  assert.match(head, /name = "two"/);
+});
+
+test('assertLossless accepts well-formed input', () => {
+  assert.equal(assertLossless(SAMPLE), true);
+});
+
+test('partition assigns every line exactly once', () => {
+  const { lines, kind } = partition(SAMPLE);
+  assert.equal(lines.length, kind.length);
+  assert.equal(kind.filter(k => !k).length, 0);
 });
 
 test('sharedHeadOf: strips local sections and the generated block, keeps hand-edited content', () => {

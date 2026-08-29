@@ -47,8 +47,17 @@ export function checkLinks() {
       modelsPath: path.join(sourceDir, 'models.json'),
     });
     // Heal ~/.codex/config.toml too: it is a composed real file, not a link, so the link
-    // loop below cannot detect or repair it.
-    composeCodexConfigFile({ syncDir, envSettingsPath: path.join(syncDir, 'claude_env_settings.json') });
+    // loop below cannot detect or repair it. composeCodexConfigFile writes only when the
+    // content actually differs, so the common case is a no-op and does not race a running
+    // Codex. Report the outcome instead of discarding it.
+    const codex = composeCodexConfigFile({
+      syncDir,
+      envSettingsPath: path.join(syncDir, 'claude_env_settings.json'),
+      codexDir,
+    });
+    if (codex.status === 'written' && codex.changed) repaired.push('~/.codex/config.toml (recomposed)');
+    else if (codex.status === 'unreadable') warnings.push('codex_config.toml: sync payload not readable (cloud placeholder?)');
+    else if (codex.status === 'unsafe') warnings.push(`codex_config.toml: ${codex.error.message}`);
     if (artifacts.settings === 'unparseable') {
       warnings.push(`claude_env_settings.json: unparseable JSON (${artifacts.error.message})`);
     } else if (artifacts.settings === 'ok' && artifacts.models.status === 'updated') {
