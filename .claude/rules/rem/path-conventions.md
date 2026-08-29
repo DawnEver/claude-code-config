@@ -32,6 +32,11 @@ Layout:
 | API keys | `~/.claude/claude_env_settings.local.json` — machine-local, never synced |
 | `models.json`, `system-prompt/dist/` | generated per machine |
 
+Bulk local-only data (archives, PII transcripts) is a THIRD tenant: it belongs in neither
+git nor the config payload. It lives in `<cloud>/Sync/agent-data/` and is joined back to a
+working tree by gitignored symlinks — it needs backup, not version control. See the
+`sync-restructure-three-tenancies` memory entry.
+
 `resolveSyncDir()` (`scripts/shared/sync-dir.mjs`): `$CLAUDE_SYNC_DIR` → `~/.claude/sync-dir`
 pointer → **repo root**. The repo-root default is what keeps a no-cloud install zero-config;
 do not add cloud auto-detection.

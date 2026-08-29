@@ -2,12 +2,12 @@
 
 ## Before you start the session
 
-1. **Pin the folders.** Right-click `<OneDrive>\Sync\claude` **and**
-   `<OneDrive>\Sync\cc-config` → **"Always keep on this device"**. Wait for both to
-   finish downloading. Placeholders are the one thing no tool can verify remotely, and the
-   salvage step depends on reading real files.
+1. **Pin the folders.** Right-click `<OneDrive>\Sync\cc-config` **and**
+   `<OneDrive>\Sync\agent-data` → **"Always keep on this device"**. Wait for both to
+   finish. Placeholders block on first read and the launchers read the payload on every
+   invocation.
 
-2. **Start the session in the payload dir, NOT in the old repo:**
+2. **Start the session in the payload dir:**
 
    ```
    cd "%OneDriveCommercial%\Sync\cc-config"
@@ -16,27 +16,25 @@
 
    (macOS/Linux: `cd ~/Library/CloudStorage/OneDrive-*/Sync/cc-config && claude`)
 
-   **This matters.** `<OneDrive>\Sync\claude\AGENTS.md` still describes the OLD architecture
-   — "centralizes in OneDrive" — and Claude Code loads it automatically as project
-   instructions when the cwd is inside that tree. An agent started there will read stale
-   guidance that directly contradicts the migration it is supposed to perform. The payload
-   dir has no `AGENTS.md`, so the context stays clean.
+   That directory has no `AGENTS.md`, so the agent starts with clean context. Do not start
+   it inside `<OneDrive>\Sync\claude` if that folder still exists on your machine — its
+   `AGENTS.md` describes the retired architecture and Claude Code loads it automatically as
+   project instructions.
 
-3. Have ready: this host's API keys (in case
-   `~/.claude/claude_env_settings.local.json` turns out to be missing), and the ability to
-   push to `github.com/DawnEver/{claude-code-config,cc-market}`.
+3. Have ready: this host's API keys (in case `~/.claude/claude_env_settings.local.json` is
+   missing), and push access to `github.com/DawnEver/{claude-code-config,ai-agents}`.
 
 ## The prompt — paste this verbatim
 
-> Read `HANDOFF.md` in the current directory and carry out the migration it describes for
-> THIS machine. It is self-contained; follow it in order.
+> Read `HANDOFF.md` in the current directory and set THIS machine up on the layout it
+> describes. It is self-contained; follow it in order.
 >
 > Critical constraints:
 >
-> - The `AGENTS.md` in `../claude/` describes the OLD architecture and is wrong. Ignore it.
->   `HANDOFF.md` and, after cloning, `docs/sync-architecture.md` in the new repo are the
->   current truth.
-> - Do Phase 0 (salvage) FIRST and do not skip it. It is the only step that can lose work.
+> - If `../claude/` still exists on this machine it is the RETIRED tree; its `AGENTS.md`
+>   describes the old architecture and is wrong. `HANDOFF.md` and, after cloning,
+>   `docs/sync-architecture.md` are the current truth.
+> - Do §2 (salvage) FIRST if `../claude/` or `../agents/` still exist. It is the only step that can lose work.
 >   `git status` cannot be trusted in the old tree — the handoff explains the four ways it
 >   lies. Use `node rescue-clone.mjs`.
 > - Do NOT delete anything under `../claude/` in this session, whatever the verdict. Report
@@ -55,8 +53,8 @@
 
 ## What to expect it to do
 
-Phase 0 salvage → clone to `~/Documents/Code/AI/cc-config` (or `%USERPROFILE%\Documents\Code\AI\...`) →
-`setup.js --sync-dir <payload> --replace` → verification checklist → cc-market salvage pass.
+§2 salvage (only if the old trees are still there) → clone to `~/Documents/Code/AI/cc-config` AND `~/Documents/Code/AI/ai-agents` →
+`setup.js --sync-dir <payload> --replace` → `link-agent-data.sh` → verification checklist.
 
 Nothing is deleted. The old tree stays as the rollback.
 
