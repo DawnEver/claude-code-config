@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
@@ -8,6 +8,9 @@ import {
   parseSetupArgs,
   adoptSyncDir,
   linkSourceRoot,
+  linkEntry,
+  sameVolume,
+  isHardLinked,
   CLAUDE_LINKS,
   CODEX_LINKS,
 } from './setup.js';
@@ -130,4 +133,95 @@ test('adoptSyncDir: is idempotent', () => {
 
   assert.deepEqual(second.moved, [], 'nothing left to move');
   assert.equal(fs.readFileSync(path.join(target, 'claude_settings.json'), 'utf8'), 'x');
+});
+
+// ── hard links vs cross-volume copies ────────────────────────────────────────
+
+// A working tree on D: with ~/.claude on C: cannot be hard linked. Find a writable
+// root on a different volume so that case can be exercised for real; returns null
+// on a single-volume host (macOS), where these tests are skipped.
+function secondVolumeTmp() {
+  if (process.platform !== 'win32') return null;
+  const baseDev = fs.statSync(os.tmpdir()).dev;
+  for (const letter of ['D', 'E', 'F', 'C']) {
+    const root = `${letter}:/`;
+    try {
+      if (!fs.existsSync(root)) continue;
+      const dir = fs.mkdtempSync(path.join(root, 'setup-xvol-'));
+      if (fs.statSync(dir).dev !== baseDev) return dir;
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Root not writable — try the next one.
+    }
+  }
+  return null;
+}
+
+const XVOL = secondVolumeTmp();
+const xvolSkip = XVOL ? false : 'needs a second writable volume';
+// XVOL sits at a volume root rather than under os.tmpdir(), so nothing else will sweep it.
+if (XVOL) after(() => fs.rmSync(XVOL, { recursive: true, force: true }));
+const HARDLINK = { src: 'config.json', dest: 'config.json', type: 'file', hardlink: true };
+
+test('sameVolume: true within one volume, false across two', { skip: xvolSkip }, () => {
+  const a = tmp('vol');
+  assert.equal(sameVolume(a, a), true);
+  assert.equal(sameVolume(a, XVOL), false);
+});
+
+test('linkEntry: a hardlink entry on one volume really is hard linked', () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(tmp('dest'), 'config.json');
+  fs.writeFileSync(src, '{"a":1}');
+
+  const r = linkEntry(src, dest, HARDLINK, false);
+  assert.equal(r.kind, 'hardlink');
+  assert.ok(isHardLinked(src, dest));
+});
+
+test('linkEntry: across volumes a hardlink entry falls back to a copy, not an error', { skip: xvolSkip }, () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(fs.mkdtempSync(path.join(XVOL, 'dest-')), 'config.json');
+  fs.writeFileSync(src, '{"a":1}');
+
+  const r = linkEntry(src, dest, HARDLINK, false);
+  assert.equal(r.kind, 'copy');
+  // The consumer rejects symlinks, so the fallback must be a genuine regular file.
+  assert.ok(fs.lstatSync(dest).isFile() && !fs.lstatSync(dest).isSymbolicLink());
+  assert.equal(fs.readFileSync(dest, 'utf8'), '{"a":1}');
+});
+
+test('linkEntry: an up-to-date cross-volume copy is satisfied, not re-reported', { skip: xvolSkip }, () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(fs.mkdtempSync(path.join(XVOL, 'dest-')), 'config.json');
+  fs.writeFileSync(src, '{"a":1}');
+  linkEntry(src, dest, HARDLINK, false);
+
+  const second = linkEntry(src, dest, HARDLINK, false);
+  assert.equal(second.status, 'ok', 'a matching copy is the satisfied state');
+  assert.match(second.message, /copy/);
+});
+
+test('linkEntry: a drifted cross-volume copy is never overwritten without --replace', { skip: xvolSkip }, () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(fs.mkdtempSync(path.join(XVOL, 'dest-')), 'config.json');
+  fs.writeFileSync(src, '{"a":1}');
+  fs.writeFileSync(dest, '{"edited-live":true}');
+
+  const r = linkEntry(src, dest, HARDLINK, false);
+  assert.equal(r.status, 'skip');
+  assert.match(r.message, /drifted/);
+  assert.equal(fs.readFileSync(dest, 'utf8'), '{"edited-live":true}', 'live edits survive');
+});
+
+test('linkEntry: --replace re-syncs a drifted copy and keeps the old one', { skip: xvolSkip }, () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(fs.mkdtempSync(path.join(XVOL, 'dest-')), 'config.json');
+  fs.writeFileSync(src, '{"a":1}');
+  fs.writeFileSync(dest, '{"edited-live":true}');
+
+  const r = linkEntry(src, dest, HARDLINK, true);
+  assert.equal(r.kind, 'copy');
+  assert.equal(fs.readFileSync(dest, 'utf8'), '{"a":1}');
+  assert.equal(fs.readFileSync(`${dest}.setup-bak`, 'utf8'), '{"edited-live":true}');
 });

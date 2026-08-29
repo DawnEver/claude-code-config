@@ -142,6 +142,17 @@ function filesMatch(a, b) {
 // A hard link is the fallback when a file symlink is not permitted (see createLink). It is
 // indistinguishable from a plain file by lstat, so identify one by file identity instead:
 // same volume (dev) and same file record (ino).
+// Hard links cannot cross volumes. Knowing that up front is what lets a hardlink-required
+// entry fall back to a copy instead of failing (see createLink), and lets an up-to-date copy
+// be recognised as satisfied rather than re-reported as unlinked on every run.
+export function sameVolume(srcPath, destDir) {
+  try {
+    return fs.statSync(srcPath).dev === fs.statSync(destDir).dev;
+  } catch {
+    return false;
+  }
+}
+
 export function isHardLinked(srcPath, destPath) {
   try {
     const a = fs.statSync(srcPath);
@@ -161,8 +172,17 @@ export function isHardLinked(srcPath, destPath) {
 // --replace to re-link when that happens; unlinked entries are reported on every run.
 function createLink(srcPath, destPath, type, hardlink) {
   if (hardlink) {
-    fs.linkSync(srcPath, destPath);
-    return 'hardlink';
+    try {
+      fs.linkSync(srcPath, destPath);
+      return 'hardlink';
+    } catch (err) {
+      // A working tree on another volume than ~/.claude (D: vs C:) makes a hard link
+      // impossible. Copy instead: the consumer only refuses *symlinks*, so a real file is
+      // still valid -- it just stops tracking the repo until the next setup run.
+      if (err.code !== 'EXDEV') throw err;
+      fs.copyFileSync(srcPath, destPath);
+      return 'copy';
+    }
   }
   const symlinkType = isWindows ? (type === 'dir' ? 'junction' : 'file') : undefined;
   try {
@@ -203,11 +223,21 @@ export function linkEntry(srcPath, destPath, link, replace) {
       return { status: 'ok', message: 'already linked (hard link)' };
     }
 
+    // A hardlink-required entry across volumes can only ever be a copy, so an identical
+    // file IS the satisfied state -- not an unlinked one to nag about every run.
+    const copyOnly = link.hardlink && !sameVolume(srcPath, path.dirname(destPath));
+    if (copyOnly && stat.isFile() && !stat.isSymbolicLink() && filesMatch(srcPath, destPath)) {
+      return { status: 'ok', message: 'already synced (copy - cross-volume, cannot hard link)' };
+    }
+
     if (!replace) {
       return {
         status: 'skip',
         message: link.type === 'file' && stat.isFile()
-          ? 'plain file, not linked - re-run with --replace to re-link'
+          ? (copyOnly
+            // Never overwrite silently: the live file may hold edits the consumer wrote.
+            ? 'copy has drifted from the repo - re-run with --replace to re-sync (a backup is kept)'
+            : 'plain file, not linked - re-run with --replace to re-link')
           : 'already exists (remove manually to re-link, or use --replace)',
       };
     }
@@ -262,7 +292,10 @@ function processLinks(links, baseDir, counters, syncDir) {
     for (const note of result.notes || []) console.log(`REMV  ${link.dest} - ${note}`);
 
     if (result.status === 'link') {
-      console.log(`LINK  ${link.dest} - ${srcPath}${result.kind === 'hardlink' ? ' (hard link)' : ''}`);
+      const kindNote = result.kind === 'hardlink' ? ' (hard link)'
+        : result.kind === 'copy' ? ' (copy - cross-volume, re-run setup after editing the repo)'
+        : '';
+      console.log(`${result.kind === 'copy' ? 'COPY' : 'LINK'}  ${link.dest} - ${srcPath}${kindNote}`);
       counters.created++;
     } else if (result.status === 'ok') {
       console.log(`OK    ${link.dest} - ${result.message}`);
