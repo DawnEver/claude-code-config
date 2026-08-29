@@ -12,6 +12,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { buildCodexInvocation } from './codex-launcher.mjs';
+import { prepareSpawn } from './win-spawn.mjs';
 import { checkLinks, SETUP_FIX_CMD } from '../setup/check-links.js';
 
 // Read the shared registry through the link setup already materialized, not a repo-relative
@@ -79,6 +80,8 @@ if (error) {
 
 console.log(provider ? `[codex] Using provider: ${provider}` : '[codex] Using default Codex');
 
-const isWindows = process.platform === 'win32';
-const child = spawn('codex', args, { env, stdio: 'inherit', shell: isWindows });
+// Not `shell: true`: that concatenates args unescaped, so `cods exec "a prompt with spaces"`
+// reached Codex as separate words. `prepareSpawn` resolves the npm shim and quotes for us.
+const launch = prepareSpawn('codex', args, { env });
+const child = spawn(launch.command, launch.args, { ...launch.options, env, stdio: 'inherit' });
 child.on('exit', code => process.exit(code ?? 0));

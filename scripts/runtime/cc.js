@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { buildClaudeInvocation } from './cc-launcher.mjs';
+import { prepareSpawn } from './win-spawn.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -47,6 +48,8 @@ if (error) {
 
 console.log(provider ? `[cc] Using provider: ${provider}` : '[cc] Using Claude (official subscription)');
 
-const isWindows = process.platform === 'win32';
-const child = spawn('claude', args, { env, stdio: 'inherit', shell: isWindows });
+// Not `shell: true`: that concatenates args unescaped, so any argument containing a space
+// or a cmd metacharacter is mangled. `prepareSpawn` resolves the npm shim and quotes for us.
+const launch = prepareSpawn('claude', args, { env });
+const child = spawn(launch.command, launch.args, { ...launch.options, env, stdio: 'inherit' });
 child.on('exit', code => process.exit(code ?? 0));
