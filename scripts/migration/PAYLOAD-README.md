@@ -1,5 +1,8 @@
 # Read me first
 
+> **Migrating this machine?** Start with `AGENT-PROMPT.md` (how to brief an agent, and
+> which directory to start the session in — it matters), then `HANDOFF.md`.
+
 This folder is the **sync payload** for `claude-code-config`. It holds only the three
 hand-edited config files that have to reach every machine:
 
