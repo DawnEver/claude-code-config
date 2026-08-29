@@ -3,7 +3,7 @@
 //
 // Thin spawn wrapper around `codex-launcher.mjs`. Same single source of truth as
 // the Claude side (`cc.js`): `providers.<name>` in `claude_env_settings.json`.
-// Run `node scripts/setup/setup.js` to install the `cods` / `cogmi` aliases;
+// Run `node scripts/setup/setup.js` to install the `cods` alias;
 // those wrappers exec this script with the provider name.
 
 import { spawn } from 'child_process';

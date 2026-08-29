@@ -54,7 +54,7 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
 
 ### CLI Tools
 - `ccc` / `ccds` / `cckm` / `ccgmi` — Claude Code launchers (official / DeepSeek / Kimi / GMI Cloud), config in `claude_env_settings.json` under `providers.<name>`
-- `cods` / `cogmi` — Codex launchers (DeepSeek / GMI), same `providers.<name>` block. `claude_env_settings.json` is the single source of truth for both hosts — see `docs/providers.md`.
+- `cods` — Codex launcher (DeepSeek), same `providers.<name>` block. `claude_env_settings.json` is the single source of truth for both hosts — see `docs/providers.md`. GMI is Claude-only (Anthropic protocol); there is no `cogmi`.
 - `todo` — Task management: `todo` (list), `todo <text>` (add), `todo rm <id>` (remove), `todo help`
 - `traceme` — Personal observability: token/cost reports, multi-device sync
 - `aliases.ps1` / `aliases.sh` — Shell integration; `setup.js` installs `.cmd` wrappers on Windows. Wrappers land next to the matching host binary (`ccc*` next to `claude`, `co*` next to `codex`); on a single-host install the other host's wrappers are skipped. `todo`/`traceme` go to whichever host's bin dir is on PATH (or to `codex`'s dir on a Codex-only install).

@@ -125,14 +125,52 @@ gitignored symlinks into `agent-data/`; it resolves that directory from an argum
 
 ## 5. Windows gotchas
 
+All of these were hit for real while onboarding `duip622037` on 2026-08-29. The first is
+the one that will cost you data if you skip it.
+
+- **`ln -s` in Git Bash makes a COPY, not a link — and `link-agent-data.sh` reported `LINK`
+  anyway.** Git Bash silently deep-copies a directory unless `MSYS=winsymlinks:nativestrict`
+  is set, so every run duplicated **215M of agent-data into the working tree** while printing
+  success. Those paths are gitignored, so `git status` stayed clean and hid it completely.
+  A copy is worse than a failure here: it drifts from the cloud original, and
+  `cc-docx/workspace` holds PII that is meant to exist in exactly one place.
+
+  Fixed in `ai-agents@92a582a` — the script now forces `nativestrict`, falls back to a
+  `mklink /J` junction, and **asserts the result is a link** before reporting one. On an
+  older checkout, verify by hand rather than trusting the output:
+
+  ```
+  ./scripts/link-agent-data.sh --status     # every path must say "linked ->"
+  du -sh .                                  # ~2M, not ~220M
+  ```
+
+  If you find copies, compare them against `<Sync>/agent-data` by file count and byte size
+  **before** deleting — that is how the duplicates here were cleared safely.
+
 - **Symlink privilege.** Windows grants file symlinks only with Developer Mode on or an
   elevated shell. Otherwise setup falls back to **hard links**, which break whenever a
   writer *replaces* the file — and `git checkout` is exactly such a writer. If you see
   `EPERM` hints, enable Developer Mode and re-run with `--replace`.
-- **Hard links cannot cross volumes** (`EXDEV`). Cloning to `D:` while `~/.claude` is on
-  `C:` breaks the hard-link fallback for `claude_plugins/claude-hud/config.json`.
-- **Alias install may need elevation.** On macOS the `cods`/`cogmi` wrappers wanted
-  `/usr/local/bin` and hit `EACCES`.
+
+- **Hard links cannot cross volumes** (`EXDEV`), and `claude_plugins/claude-hud/config.json`
+  *requires* one (claude-hud rejects a symlinked config). A tree on `D:` with `~/.claude` on
+  `C:` therefore cannot hard-link it. Setup now falls back to a copy and says so instead of
+  exiting 1, but the file stops tracking the repo until the next setup run. **Put the tree on
+  the same volume as `~/.claude` — i.e. `C:` — and this never arises.**
+
+- **Moving the tree across volumes dereferences symlinks.** `mv C:\... D:\...` copies what
+  the agent-data links point at into the destination. Remove those links first, move, then
+  re-run `link-agent-data.sh`. (This is *not* what caused the 215M duplication above — that
+  was `ln -s` — but it produces the same mess.)
+
+- **Alias install may need elevation.** On macOS the `cods` wrapper wanted `/usr/local/bin`
+  and hit `EACCES`.
+
+- **`traceme` / `todo` from CMD or PowerShell.** Their `.cmd` wrappers used to bake in an
+  absolute repo path, *and* setup could never rewrite them — it mistook its own `.cmd` files
+  for third-party ones — so they silently pointed at whatever path the repo had on install
+  day. Both now resolve through `~/.claude/scripts`. If yours still names a repo path,
+  `npm run setup -- --replace` fixes it.
 
 ## 6. Do NOT
 

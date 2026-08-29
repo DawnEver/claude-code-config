@@ -65,7 +65,7 @@ test('generate: emits a [model_providers.*] block per provider with codexPath', 
   assert.match(out, /base_url = "https:\/\/api\.deepseek\.com\/v1"/);
   assert.match(out, /env_key = "DEEPSEEK_API_KEY"/);
   assert.match(out, /wire_api = "responses"/);
-  // model_catalog_json is applied per-provider by the cods/cogmi launcher, NOT
+  // model_catalog_json is applied per-provider by the cods launcher, NOT
   // globally, so plain `codex` keeps OpenAI's built-in model list.
   assert.doesNotMatch(out, /model_catalog_json\s*=/);
   assert.match(out, new RegExp(CODEX_TOML_START_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));

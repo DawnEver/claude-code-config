@@ -11,5 +11,4 @@ function ccds  { node (Join-Path $claudeRuntime "cc.js") deepseek @args }
 function cckm  { node (Join-Path $claudeRuntime "cc.js") kimi @args }
 function ccgmi { node (Join-Path $claudeRuntime "cc.js") gmi @args }
 function cods  { node (Join-Path $claudeRuntime "codex.js") deepseek @args }
-function cogmi { node (Join-Path $claudeRuntime "codex.js") gmi @args }
 function todo  { node (Join-Path $claudeRuntime "todo-launcher.mjs") @args }

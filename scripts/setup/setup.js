@@ -32,7 +32,7 @@ export function getSyncDir() {
 
 export { composeCodexConfigFile } from './codex-config-file.mjs';
 
-export const KNOWN_ALIAS_NAMES = ['ccc', 'ccds', 'cckm', 'ccgmi', 'cods', 'cogmi', 'todo', 'traceme'];
+export const KNOWN_ALIAS_NAMES = ['ccc', 'ccds', 'cckm', 'ccgmi', 'cods', 'todo', 'traceme'];
 
 // `base: 'sync'` marks an entry whose source lives in the sync payload directory rather
 // than the repo (see getSyncDir). Unmarked entries resolve against sourceDir as before.
@@ -513,7 +513,7 @@ export function setup(options = {}) {
   // the [model_providers.*] section of codex_config.toml (only when that file
   // exists) AND the gitignored repo models.json (unconditionally — models.json
   // derives purely from providers.<name>.models and is unrelated to
-  // codex_config.toml). Without this, `cods` / `cogmi` fail with "model provider
+  // codex_config.toml). Without this, `cods` fails with "model provider
   // not found" on fresh installs. The generated section lives between two
   // setup-managed markers; user edits above the markers are preserved verbatim.
   // See scripts/setup/inject-codex-providers.mjs.

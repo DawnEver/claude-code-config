@@ -59,8 +59,10 @@ ccgmi # GMI Cloud (Anthropic-compatible, direct)
 
 # Codex — same providers.<name> block, different launcher
 cods  # DeepSeek  via codex (--config model_provider=deepseek --model deepseek-v4-flash)
-cogmi # GMI Cloud via codex (--config model_provider=gmi --model MiniMaxAI/MiniMax-M3)
 ```
+
+GMI is Claude-side only. It serves the Anthropic protocol and Codex speaks only OpenAI
+wire formats, so no `wire_api` value can bridge them — use `ccgmi`, not a Codex launcher.
 
 #### Provider shape
 
@@ -91,7 +93,7 @@ Add a provider by adding a `providers.<name>` block and (optionally) an alias
 entry in `scripts/setup/install-shell-aliases.js`. See
 `docs/providers.md` for the full schema.
 
-**Codex-side requirements:** `setup.js` generates what `cods` / `cogmi` need from
+**Codex-side requirements:** `setup.js` generates what `cods` needs from
 `providers.<name>` automatically — the `[model_providers.<id>]` block (base_url,
 `env_key`, `wire_api = "responses"`) injected into `~/.codex/config.toml`, and the
 schema-complete `~/.codex/models.json` model catalog (Codex 0.149 rejects the
@@ -144,8 +146,11 @@ drifted from the repo it is kept alongside as `<name>.setup-bak` rather than dis
 **The `claude-hud` config is always hard-linked by design** (not a Windows fallback). `claude-hud`
 >= 0.8.0 refuses to load a symlinked `config.json`, so `CLAUDE_LINKS` unconditionally marks
 `claude_plugins/claude-hud/config.json` as `hardlink: true`. Hard links require source and target
-on the same volume (Windows: same drive letter); on EXDEV the setup script logs the hint and
-continues. Since the working tree moved out of cloud storage this file is git-tracked, so the
+on the same volume (Windows: same drive letter). When they are not — a working tree on `D:` with
+`~/.claude` on `C:` — setup falls back to a **copy** and says so: `claude-hud` rejects symlinks,
+not copies, so the file still loads; it just stops tracking the repo until the next setup run.
+An identical copy reports `ok`; a drifted one is never overwritten without `--replace`, which
+keeps the old contents at `.setup-bak`. Since the working tree moved out of cloud storage this file is git-tracked, so the
 frequent breaking writer is now **`git pull`/`git checkout`** rather than a cloud sync-down —
 any pull that touches it replaces the inode and silently unlinks it. `check-links.js` repairs it
 on SessionStart; `npm run setup -- -r` does it manually. This is the entry most likely to need

@@ -61,6 +61,42 @@ describe('findOrphanedLinks', () => {
     assert.equal(orphans[0].dangling, true);
   });
 
+  test('recurses into a nested container and finds an orphan there', () => {
+    // dest comes from path.join, so on Windows it is 'skills\\git-tidy' while the scanner
+    // builds rel as 'skills/git-tidy'. Comparing the raw forms left containerPrefixes
+    // EMPTY, so ~/.codex/skills/ was never scanned and leftovers there needed manual
+    // cleanup. This test fails on Windows before the normalisation.
+    const nested = path.join(baseDir, 'skills');
+    fs.mkdirSync(nested, { recursive: true });
+    fs.mkdirSync(path.join(sourceDir, 'skills', 'git-tidy'), { recursive: true });
+    fs.mkdirSync(path.join(sourceDir, 'skills', 'retired'), { recursive: true });
+    const linkType = process.platform === 'win32' ? 'junction' : undefined;
+    fs.symlinkSync(path.join(sourceDir, 'skills', 'git-tidy'), path.join(nested, 'git-tidy'), linkType);
+    fs.symlinkSync(path.join(sourceDir, 'skills', 'retired'), path.join(nested, 'retired'), linkType);
+
+    const links = [{ src: path.join('skills', 'git-tidy'), dest: path.join('skills', 'git-tidy'), type: 'dir' }];
+    const orphans = findOrphanedLinks({ baseDir, links, sourceDir });
+    assert.deepEqual(orphans.map(o => o.rel), ['skills/retired']);
+  });
+
+  test('a healthy nested link is never mistaken for an orphan', () => {
+    // The dangerous half of the same bug: once the scan recursed, a good link would not
+    // match goodDests either, and migrate would delete a live link.
+    const nested = path.join(baseDir, 'plugins', 'claude-hud');
+    fs.mkdirSync(nested, { recursive: true });
+    fs.mkdirSync(path.join(sourceDir, 'claude_plugins', 'claude-hud'), { recursive: true });
+    const src = path.join(sourceDir, 'claude_plugins', 'claude-hud', 'config.json');
+    fs.writeFileSync(src, '{}');
+    fs.symlinkSync(src, path.join(nested, 'config.json'));
+
+    const links = [{
+      src: path.join('claude_plugins', 'claude-hud', 'config.json'),
+      dest: path.join('plugins', 'claude-hud', 'config.json'),
+      type: 'file',
+    }];
+    assert.deepEqual(findOrphanedLinks({ baseDir, links, sourceDir }), []);
+  });
+
   test('leaves a DANGLING link alone when it is still a current link target', () => {
     // models.json is generated; before the first setup run its link legitimately dangles.
     // check-links re-creates it — migrate must not delete it.

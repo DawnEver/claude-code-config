@@ -17,6 +17,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_ALIAS_NAMES, removeExisting, setup, getSyncDir } from '../../scripts/setup/setup.js';
+import { isAliasWrapper } from '../../scripts/setup/install-shell-aliases.js';
 import {
   findGitRepos,
   ensureGitignoreTemplate,
@@ -32,7 +33,14 @@ import {
 export function findOrphanedLinks({ baseDir, links, sourceDir }) {
   if (!fs.existsSync(baseDir)) return [];
 
-  const goodDests = new Set(links.map(l => l.dest));
+  // Link tables build `dest` with path.join, so on Windows it is backslash-separated while
+  // the scanner below builds `rel` with '/'. Comparing the two forms directly meant nested
+  // dests never matched: containerPrefixes came out EMPTY (split('/') on 'plugins\x' yields
+  // one element), so the scan never recursed into plugins/ or skills/ and leftovers there
+  // had to be cleaned by hand. Worse, had it recursed, goodDests.has(rel) would have missed
+  // every healthy nested link and deleted it as an orphan. Normalise both sides to '/'.
+  const norm = p => p.split(path.sep).join('/');
+  const goodDests = new Set(links.map(l => norm(l.dest)));
   // All proper prefixes of every dest (e.g. 'plugins', 'plugins/claude-hud' for
   // 'plugins/claude-hud/config.json') — directories worth recursing into.
   const containerPrefixes = new Set();
@@ -100,7 +108,11 @@ export function migrateRepoLinks({ dryRun } = {}) {
 
 // ── B. Orphaned CLI alias cleanup ──
 
-const MARKER = '# claude-code-alias';
+// `isAliasWrapper` is imported from the installer rather than re-declared here: this file
+// used to carry its own `# claude-code-alias`-only copy, which silently excluded every
+// `.cmd` wrapper (the `.cmd` form spells it `rem claude-code-alias`). So `cogmi` was swept
+// up and `cogmi.cmd` was left behind, even though the `.cmd`-stripping below exists for
+// exactly this case.
 
 function findClaudeBin() {
   const isWindows = os.platform() === 'win32';
@@ -127,7 +139,7 @@ export function migrateOrphanedAliases({ dryRun } = {}) {
     // Check if it's one of our managed alias files (has the marker)
     let content;
     try { content = fs.readFileSync(full, 'utf8'); } catch { continue; }
-    if (!content.includes(MARKER)) continue;
+    if (!isAliasWrapper(content)) continue;
 
     // Extract the base name (strip .cmd extension on Windows)
     const baseName = entry.name.endsWith('.cmd') ? entry.name.slice(0, -4) : entry.name;

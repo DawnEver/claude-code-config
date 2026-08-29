@@ -7,6 +7,14 @@ import { execFileSync } from 'child_process';
 
 const isWindows = process.platform === 'win32';
 const MARKER = '# claude-code-alias';
+// The .cmd wrappers carry the same marker as a batch comment. Recognising only the `#`
+// form meant setup treated every .cmd it had written itself as a third-party file and
+// refused to update it — `traceme.cmd` kept pointing at a repo path deleted months
+// earlier, so the CMD/PowerShell alias was dead while the Git Bash one worked.
+const CMD_MARKER = 'rem claude-code-alias';
+// Exported so migrate's orphan sweep asks the same question — it had its own copy of the
+// `#`-only check, which is why `cogmi` was removed but `cogmi.cmd` was left behind.
+export const isAliasWrapper = (content) => content.includes(MARKER) || content.includes(CMD_MARKER);
 
 // Returns 'written' | 'ok' | 'skipped'
 function writeIfChanged(filePath, content, label) {
@@ -18,7 +26,7 @@ function writeIfChanged(filePath, content, label) {
   } else if (existing === content) {
     console.log(`OK    ${label} - already up to date`);
     return 'ok';
-  } else if (!existing.includes(MARKER)) {
+  } else if (!isAliasWrapper(existing)) {
     console.log(`SKIP  ${label} - file exists and was not created by this setup (remove manually to replace)`);
     return 'skipped';
   } else {
@@ -65,8 +73,8 @@ export function locateBinDir(cmd, run = (c) => execFileSync(isWindows ? 'where' 
 
 // Decide where to drop the CLI wrappers. Provider-independent tools (todo,
 // traceme) only need *some* bin dir on PATH; the claude-bound launchers
-// (ccc/ccds) additionally need the claude binary, and the codex-bound launchers
-// (cods/cogmi) need the codex binary. `targetBin` is the fallback for the
+// (ccc/ccds) additionally need the claude binary, and the codex-bound launcher
+// (cods) needs the codex binary. `targetBin` is the fallback for the
 // provider-independent tools — prefer claude, fall back to codex.
 export function resolveAliasBinDirs(locate = locateBinDir) {
   const claudeBin = locate('claude');
@@ -96,7 +104,11 @@ export function installShellAliases(claudeDir, sourceDir) {
   // shipping a separate copy of codex.js — both are heavier than the current
   // shared-root design. The single-`scripts`-root is intentional.
   const codexJsPath = path.join(claudeDir, 'scripts', 'runtime', 'codex.js').replace(/\\/g, '/');
-  const resolveRepo = (rel) => path.join(sourceDir, rel).replace(/\\/g, '/');
+  // Route through ~/.claude/scripts for the same reason as cc.js/codex.js above: that is a
+  // symlink setup maintains, so the wrapper survives the repo moving. Baking sourceDir in
+  // meant every relocation silently broke `traceme` and `todo` until setup was re-run --
+  // and unlike the provider launchers, nothing else would have hinted at why.
+  const resolveScript = (rel) => path.join(claudeDir, 'scripts', rel).replace(/\\/g, '/');
 
   // ccc/ccds launch the `claude` binary (see cc.js), so install them only when
   // claude is present — they are inert under a Codex-only install.
@@ -129,12 +141,16 @@ export function installShellAliases(claudeDir, sourceDir) {
     console.log('      ccc/ccds/cckm/ccgmi - skipped (claude binary not found; Codex-only install)');
   }
 
-  // cods/cogmi launch the `codex` binary (see codex.js), so install them only
-  // when codex is present — they are inert under a Claude-only install.
+  // cods launches the `codex` binary (see codex.js), so install it only when codex is
+  // present — it is inert under a Claude-only install.
+  //
+  // There is deliberately no `cogmi`. GMI Cloud serves the Anthropic protocol, and Codex
+  // speaks only OpenAI wire formats (`responses` / `chat`), so no wire_api setting can
+  // bridge them — the alias existed and returned 422 on every call. GMI is reachable
+  // through `ccgmi` (Claude Code, Anthropic-compatible) instead.
   if (codexBin) {
     const CODEX_ALIASES = [
       { name: 'cods',  provider: 'deepseek' },
-      { name: 'cogmi', provider: 'gmi' },
     ];
 
     for (const { name, provider } of CODEX_ALIASES) {
@@ -150,14 +166,13 @@ export function installShellAliases(claudeDir, sourceDir) {
     }
 
     console.log('      cods    - Codex + DeepSeek (single-source-of-truth: providers.deepseek)');
-    console.log('      cogmi   - Codex + GMI Cloud (single-source-of-truth: providers.gmi)');
   } else {
-    console.log('      cods/cogmi - skipped (codex binary not found)');
+    console.log('      cods    - skipped (codex binary not found)');
   }
 
   // Provider-independent tools install to whichever host bin dir we found.
   // TraceMe CLI alias — dynamic launcher survives plugin version updates
-  const tracemeLauncher = resolveRepo('scripts/runtime/traceme-launcher.mjs');
+  const tracemeLauncher = resolveScript('runtime/traceme-launcher.mjs');
   if (isWindows) {
     const cmdContent = `@echo off\nrem claude-code-alias\nnode "${tracemeLauncher}" %*\n`;
     writeIfChanged(path.join(targetBin, 'traceme.cmd'), cmdContent, 'traceme.cmd');
@@ -170,7 +185,7 @@ export function installShellAliases(claudeDir, sourceDir) {
   console.log('      traceme - Claude Code observability (token/cost reports)');
 
   // Todo CLI alias — task management
-  const todoLauncher = resolveRepo('scripts/runtime/todo-launcher.mjs');
+  const todoLauncher = resolveScript('runtime/todo-launcher.mjs');
   if (isWindows) {
     const cmdContent = `@echo off\nrem claude-code-alias\nnode "${todoLauncher}" %*\n`;
     writeIfChanged(path.join(targetBin, 'todo.cmd'), cmdContent, 'todo.cmd');
