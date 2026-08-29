@@ -31,3 +31,10 @@ codex_config.toml
 models.json
 cc-market/
 system-prompt/dist/
+
+**/.claude/memo/
+**/.claude/watch/**
+!**/.claude/watch/
+!**/.claude/watch/components/
+!**/.claude/watch/components/*.py
+!**/.claude/watch/config.yaml

@@ -1,6 +1,5 @@
 ---
 name: deepseek-context-window-1m
-created: 2026-08-01
 ---
 
 # DeepSeek context window: `[1m]` suffix is the only lever for third-party models

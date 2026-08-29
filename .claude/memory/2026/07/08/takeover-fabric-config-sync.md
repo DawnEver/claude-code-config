@@ -1,7 +1,5 @@
 ---
 name: takeover-fabric-config-sync
-tier: short
-created: 2026-07-08
 ---
 
 # takeover→fabric config sync (parent repo)

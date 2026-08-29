@@ -1,6 +1,5 @@
 ---
 name: multi-device-fabric-direction
-created: 2026-07-31
 ---
 
 # Multi-device direction: message-passing teammates, no shared FS

@@ -1,7 +1,6 @@
 ---
 name: system-prompt-paths-symlink
 description: Platform prompt paths are now machine-independent — setup.js links ~/.claude/system-prompt and ~/.codex/system-prompt to the synced repo; shared configs reference prompts by symlink path, never a OneDrive absolute path
-created: 2026-08-11
 tags: [system-prompt, fabric, codex, setup, paths]
 ---
 
