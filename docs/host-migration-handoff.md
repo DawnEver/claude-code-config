@@ -79,7 +79,7 @@ That is the entire reason this phase exists. **Assume you have some too.**
 
 ### Before you run anything: pin the folders
 
-Right-click `<OneDrive>/Sync/claude` **and** `<OneDrive>/Sync/claude-config` → **"Always
+Right-click `<OneDrive>/Sync/claude` **and** `<OneDrive>/Sync/cc-config` → **"Always
 keep on this device"**, and wait for the download to finish.
 
 A placeholder is the one class of file no tool can verify from a host that never downloaded
@@ -88,11 +88,11 @@ it — and if a placeholder holds *your* uncommitted edit, only *your* machine c
 ### Run the salvage tool
 
 ```
-cd "<OneDrive>/Sync/claude-config"
+cd "<OneDrive>/Sync/cc-config"
 node rescue-clone.mjs
 ```
 
-It checks **both** repos — `claude-config` and `cc-market` — and for each:
+It checks **both** repos — `cc-config` and `cc-market` — and for each:
 
 - lists unpushed commits on the checked-out branch (reads `.git` only, so placeholders
   cannot hide them);
@@ -116,8 +116,8 @@ git -C "<old path>" push origin HEAD:refs/heads/rescue-<repo>-<hostname>
 Rescued branches land in your new clone; review and publish them at leisure:
 
 ```
-git -C ~/Documents/Code/AI/claude-config/cc-market log --oneline origin/main..rescue/<branch>
-git -C ~/Documents/Code/AI/claude-config/cc-market push origin rescue/<branch>
+git -C ~/Documents/Code/AI/cc-config/cc-market log --oneline origin/main..rescue/<branch>
+git -C ~/Documents/Code/AI/cc-config/cc-market push origin rescue/<branch>
 ```
 
 ---
@@ -125,14 +125,14 @@ git -C ~/Documents/Code/AI/claude-config/cc-market push origin rescue/<branch>
 ## 2. Phase 1 — migrate
 
 ```
-cd "<OneDrive>/Sync/claude-config"
+cd "<OneDrive>/Sync/cc-config"
 node migrate-host.mjs --dry-run
 node migrate-host.mjs
 ```
 
-Default clone target is `~/Documents/Code/AI/claude-config`
-(`%USERPROFILE%\Documents\Code\AI\claude-config` on Windows). Override with
-`--target "D:\dev\claude-config"` — any **non-cloud** path; the script refuses anything
+Default clone target is `~/Documents/Code/AI/cc-config`
+(`%USERPROFILE%\Documents\Code\AI\cc-config` on Windows). Override with
+`--target "D:\dev\cc-config"` — any **non-cloud** path; the script refuses anything
 containing `OneDrive`, `Dropbox`, `CloudStorage`, `iCloud`, `Google Drive`.
 
 The script locates the payload and the old tree **relative to itself**, so it needs no
@@ -148,7 +148,7 @@ verify → run the cc-market salvage pass.
 | Tier | What | Where | Transport |
 | --- | --- | --- | --- |
 | A | scripts, skills, prompts, templates, memory, docs | the repo | **git** |
-| B | `claude_settings.json`, `claude_env_settings.json`, `codex_config.toml` (**head only**) | `<OneDrive>/Sync/claude-config/` | **OneDrive** |
+| B | `claude_settings.json`, `claude_env_settings.json`, `codex_config.toml` (**head only**) | `<OneDrive>/Sync/cc-config/` | **OneDrive** |
 | C | `claude_env_settings.local.json` (**all API keys**), `sync-dir` pointer | `~/.claude/` | never synced |
 | D | `models.json`, `codex_config.toml`'s `[model_providers.*]`, `system-prompt/dist/` | generated | rebuilt per machine |
 
@@ -167,7 +167,7 @@ untracked and three committed memory files as staged deletions — **all present
 remote**. Verified `SAFE`: 0 unpushed commits, 0 orphans.
 
 ```
-cd "<OneDrive>/Sync/claude-config"
+cd "<OneDrive>/Sync/cc-config"
 node rescue-clone.mjs --old "<OneDrive>/Sync/agents" \
   --repo https://github.com/DawnEver/ai-agents.git \
   --new ~/Documents/Code/AI/ai-agents
@@ -199,7 +199,7 @@ data — under one mechanism. They are now separated:
 | | Lives in | Transport |
 | --- | --- | --- |
 | working trees | `~/Documents/Code/AI/` | git |
-| config payload | `<OneDrive>/Sync/claude-config/` | cloud sync |
+| config payload | `<OneDrive>/Sync/cc-config/` | cloud sync |
 | bulk data | `<OneDrive>/Sync/agent-data/` | cloud sync (backup) |
 
 No `.git` directory exists anywhere under `Sync/` any more. That is the invariant to keep.
@@ -311,4 +311,4 @@ Tell the macOS host if you hit any of:
 - `~/.codex/config.toml` losing your project trust entries
 - `npm test` failing
 
-Run `git pull` in `~/Documents/Code/AI/claude-config` before reporting a bug — fixes land there.
+Run `git pull` in `~/Documents/Code/AI/cc-config` before reporting a bug — fixes land there.

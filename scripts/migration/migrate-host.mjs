@@ -50,7 +50,7 @@ const targetFlag = args.indexOf('--target');
 const TARGET = path.resolve(
   targetFlag !== -1 && args[targetFlag + 1]
     ? args[targetFlag + 1]
-    : path.join(os.homedir(), 'Documents', 'Code', 'AI', 'claude-config'),
+    : path.join(os.homedir(), 'Documents', 'Code', 'AI', 'cc-config'),
 );
 
 let failed = 0;
@@ -103,7 +103,7 @@ const CLOUD_MARKERS = ['onedrive', 'dropbox', 'cloudstorage', 'icloud', 'google 
 const hit = CLOUD_MARKERS.find(m => TARGET.toLowerCase().includes(m));
 if (hit) {
   fail(`target path looks cloud-synced (matched "${hit}"): ${TARGET}`);
-  fail('  pick a local path, e.g. --target "%USERPROFILE%\\Documents\\Code\\AI\\claude-config"');
+  fail('  pick a local path, e.g. --target "%USERPROFILE%\\Documents\\Code\\AI\\cc-config"');
 }
 
 if (failed) {

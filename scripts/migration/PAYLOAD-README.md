@@ -36,7 +36,7 @@ node migrate-host.mjs --dry-run     # inspect first
 node migrate-host.mjs               # do it
 ```
 
-Optional: `--target <path>` to clone somewhere other than `~/Documents/Code/AI/claude-config`.
+Optional: `--target <path>` to clone somewhere other than `~/Documents/Code/AI/cc-config`.
 
 The script locates the payload and the old tree relative to itself, so it needs no
 per-machine configuration — it works across the fleet's mixed usernames (`linxu`,

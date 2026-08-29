@@ -3,18 +3,18 @@
 ## Before you start the session
 
 1. **Pin the folders.** Right-click `<OneDrive>\Sync\claude` **and**
-   `<OneDrive>\Sync\claude-config` → **"Always keep on this device"**. Wait for both to
+   `<OneDrive>\Sync\cc-config` → **"Always keep on this device"**. Wait for both to
    finish downloading. Placeholders are the one thing no tool can verify remotely, and the
    salvage step depends on reading real files.
 
 2. **Start the session in the payload dir, NOT in the old repo:**
 
    ```
-   cd "%OneDriveCommercial%\Sync\claude-config"
+   cd "%OneDriveCommercial%\Sync\cc-config"
    claude
    ```
 
-   (macOS/Linux: `cd ~/Library/CloudStorage/OneDrive-*/Sync/claude-config && claude`)
+   (macOS/Linux: `cd ~/Library/CloudStorage/OneDrive-*/Sync/cc-config && claude`)
 
    **This matters.** `<OneDrive>\Sync\claude\AGENTS.md` still describes the OLD architecture
    — "centralizes in OneDrive" — and Claude Code loads it automatically as project
@@ -55,7 +55,7 @@
 
 ## What to expect it to do
 
-Phase 0 salvage → clone to `~/Documents/Code/AI/claude-config` (or `%USERPROFILE%\Documents\Code\AI\...`) →
+Phase 0 salvage → clone to `~/Documents/Code/AI/cc-config` (or `%USERPROFILE%\Documents\Code\AI\...`) →
 `setup.js --sync-dir <payload> --replace` → verification checklist → cc-market salvage pass.
 
 Nothing is deleted. The old tree stays as the rollback.
@@ -65,7 +65,7 @@ Nothing is deleted. The old tree stays as the rollback.
 Later sessions on that machine should start in the NEW working tree:
 
 ```
-cd %USERPROFILE%\Documents\Code\AI\claude-config
+cd %USERPROFILE%\Documents\Code\AI\cc-config
 claude
 ```
 

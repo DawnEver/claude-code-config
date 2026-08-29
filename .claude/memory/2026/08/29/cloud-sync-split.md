@@ -71,7 +71,7 @@ pre-migration behaviour — there is a regression test guarding exactly that.
 
 ## Migration state as of 2026-08-29
 
-- macOS host done; tree at `~/Projects/claude-config`, payload at `<OneDrive>/Sync/claude-config/`.
+- macOS host done; tree at `~/Documents/Code/AI/cc-config`, payload at `<OneDrive>/Sync/cc-config/`.
 - `<OneDrive>/Sync/claude/` deliberately retained as the rollback.
 - G and WS1 (`duip622037`) not yet migrated. Tooling for them lives in the payload dir:
   `migrate-host.mjs`, `rescue-cc-market.mjs`, `HANDOFF.md`, `READ-ME-FIRST.md`.

@@ -16,7 +16,7 @@ operator runbook.
 **This directory is the canonical copy** — it is version-controlled, so it survives the
 cloud storage it exists to retire.
 
-A working copy also lives in the sync payload dir (`<cloud>/Sync/claude-config/`), because
+A working copy also lives in the sync payload dir (`<cloud>/Sync/cc-config/`), because
 an un-migrated host must run `migrate-host.mjs` *before* it has cloned this repo. That copy
 is the bootstrap; this one is the source of truth. After changing anything here, refresh it:
 

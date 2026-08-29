@@ -27,7 +27,7 @@ Layout:
 
 | What | Where |
 | --- | --- |
-| working tree + `.git` | `~/Documents/Code/AI/claude-config` — **never** a synced folder |
+| working tree + `.git` | `~/Documents/Code/AI/cc-config` — **never** a synced folder |
 | sync payload — `claude_settings.json`, `claude_env_settings.json`, `codex_config.toml` | the sync dir |
 | API keys | `~/.claude/claude_env_settings.local.json` — machine-local, never synced |
 | `models.json`, `system-prompt/dist/` | generated per machine |

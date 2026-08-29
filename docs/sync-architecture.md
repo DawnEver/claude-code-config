@@ -171,11 +171,11 @@ Tier B file still sitting in the repo into it (never copies — two copies of
 GitHub: DawnEver/claude-code-config
    │  git pull / push
    ▼
-~/Documents/Code/AI/claude-config/            ← working tree + .git, NEVER cloud-synced
+~/Documents/Code/AI/cc-config/            ← working tree + .git, NEVER cloud-synced
    ├── scripts/ skills/ system-prompt/ …      (Tier A)
    └── models.json                            (Tier D, generated, gitignored)
 
-<cloud>/Sync/claude-config/          ← sync payload, 3 files, no .git   (Tier B)
+<cloud>/Sync/cc-config/          ← sync payload, 3 files, no .git   (Tier B)
    ├── claude_settings.json
    ├── claude_env_settings.json
    └── codex_config.toml
@@ -183,18 +183,18 @@ GitHub: DawnEver/claude-code-config
 ~/.claude/                           ← real per-machine dir
    ├── sync-dir                              (Tier C: points at the payload dir)
    ├── claude_env_settings.local.json        (Tier C: API keys)
-   ├── settings.json              -> <cloud>/Sync/claude-config/claude_settings.json
-   ├── claude_env_settings.json   -> <cloud>/Sync/claude-config/claude_env_settings.json
-   ├── CLAUDE.md                  -> ~/Documents/Code/AI/claude-config/GLOBAL-AGENTS.md
-   ├── skills/ scripts/ output-styles/ system-prompt/  -> ~/Documents/Code/AI/claude-config/…
-   └── keybindings.json           -> ~/Documents/Code/AI/claude-config/keybindings.json
+   ├── settings.json              -> <cloud>/Sync/cc-config/claude_settings.json
+   ├── claude_env_settings.json   -> <cloud>/Sync/cc-config/claude_env_settings.json
+   ├── CLAUDE.md                  -> ~/Documents/Code/AI/cc-config/GLOBAL-AGENTS.md
+   ├── skills/ scripts/ output-styles/ system-prompt/  -> ~/Documents/Code/AI/cc-config/…
+   └── keybindings.json           -> ~/Documents/Code/AI/cc-config/keybindings.json
 
 ~/.codex/
    ├── config.toml                COMPOSED real file (shared head + generated + local)
-   ├── models.json                -> ~/Documents/Code/AI/claude-config/models.json
-   ├── AGENTS.md                  -> ~/Documents/Code/AI/claude-config/GLOBAL-AGENTS.md
-   ├── system-prompt/             -> ~/Documents/Code/AI/claude-config/system-prompt
-   └── skills/<name>/             -> ~/Documents/Code/AI/claude-config/skills/<name>  (per-skill)
+   ├── models.json                -> ~/Documents/Code/AI/cc-config/models.json
+   ├── AGENTS.md                  -> ~/Documents/Code/AI/cc-config/GLOBAL-AGENTS.md
+   ├── system-prompt/             -> ~/Documents/Code/AI/cc-config/system-prompt
+   └── skills/<name>/             -> ~/Documents/Code/AI/cc-config/skills/<name>  (per-skill)
 ```
 
 With `resolveSyncDir()` returning the repo root (the no-cloud default), this collapses
@@ -296,12 +296,12 @@ no-cloud user (`syncDir === repoRoot`) still materializes them there.
 ## 8. Migration runbook
 
 ### This machine (macOS, done first)
-1. `git clone https://github.com/DawnEver/claude-code-config.git ~/Documents/Code/AI/claude-config` ✅
-2. Create `<OneDrive>/Sync/claude-config/`, **move** the 3 Tier B files there.
+1. `git clone https://github.com/DawnEver/claude-code-config.git ~/Documents/Code/AI/cc-config` ✅
+2. Create `<OneDrive>/Sync/cc-config/`, **move** the 3 Tier B files there.
 3. Implement §6 on the new clone; `npm test`; commit; push.
-4. `node scripts/setup/setup.js --sync-dir "<OneDrive>/Sync/claude-config" --replace`
-5. Verify every `~/.claude` / `~/.codex` link resolves to `~/Documents/Code/AI/claude-config`
-   or `<OneDrive>/Sync/claude-config` — and **nothing** to `<OneDrive>/Sync/claude`.
+4. `node scripts/setup/setup.js --sync-dir "<OneDrive>/Sync/cc-config" --replace`
+5. Verify every `~/.claude` / `~/.codex` link resolves to `~/Documents/Code/AI/cc-config`
+   or `<OneDrive>/Sync/cc-config` — and **nothing** to `<OneDrive>/Sync/claude`.
 6. Smoke-test `ccc`, `ccds`, `cods`, `todo`.
 
 `<OneDrive>/Sync/claude/` is left in place for now, deliberately: it is the rollback
@@ -310,11 +310,11 @@ only after step 7 completes everywhere, because while it exists it keeps replica
 poisoned `.git` between hosts.
 
 ### Each other machine (G, WS1/`duip622037`)
-1. Let OneDrive settle, confirm `<OneDrive>/Sync/claude-config/` has arrived **with all
+1. Let OneDrive settle, confirm `<OneDrive>/Sync/cc-config/` has arrived **with all
    three files**. Do not run setup against an empty payload dir — it now refuses, but
    check anyway.
-2. `git clone … ~/Documents/Code/AI/claude-config` (Windows: any non-synced path).
-3. `node scripts/setup/setup.js --sync-dir "<OneDrive>/Sync/claude-config" --replace`
+2. `git clone … ~/Documents/Code/AI/cc-config` (Windows: any non-synced path).
+3. `node scripts/setup/setup.js --sync-dir "<OneDrive>/Sync/cc-config" --replace`
 4. Confirm `~/.claude/claude_env_settings.local.json` still holds that host's API keys
    (it is Tier C — untouched by the migration, but verify before deleting anything).
 5. **Stop using `<OneDrive>/Sync/claude` immediately.** Before that host forgets, check
@@ -341,7 +341,7 @@ old dir is the rollback, but it is a rollback with a running cost.
 
 Nothing is destroyed until step 7. To revert: remove `~/.claude/sync-dir`, re-run
 `setup.js --replace` from `<OneDrive>/Sync/claude`, and the old topology returns.
-Tier B files are *moved*, so restore them from `<OneDrive>/Sync/claude-config/` if
+Tier B files are *moved*, so restore them from `<OneDrive>/Sync/cc-config/` if
 rolling back before step 7.
 
 ## 10. Residual risks
