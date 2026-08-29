@@ -16,7 +16,7 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_ALIAS_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
+import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_ALIAS_NAMES, removeExisting, setup, getSyncDir } from '../../scripts/setup/setup.js';
 import {
   findGitRepos,
   ensureGitignoreTemplate,
@@ -56,7 +56,17 @@ export function findOrphanedLinks({ baseDir, links, sourceDir }) {
 
       if (stat.isSymbolicLink()) {
         let target;
-        try { target = fs.realpathSync(full); } catch { continue; }
+        try {
+          target = fs.realpathSync(full);
+        } catch {
+          // Dangling link: the target is gone. Before the sync-dir split every link
+          // pointed into the repo, so an unresolvable one was unreachable in practice.
+          // Now a link can point at a payload dir or an old repo location that has since
+          // been deleted, and skipping it here made those permanently uncleanable.
+          // Entries still in goodDests are left alone — check-links re-creates those.
+          if (!goodDests.has(rel)) orphans.push({ rel, full, dangling: true });
+          continue;
+        }
         if (target !== sourceResolved && !target.startsWith(sourceResolved + path.sep)) continue;
         if (!goodDests.has(rel)) orphans.push({ rel, full });
       } else if (stat.isDirectory() && containerPrefixes.has(rel)) {
@@ -166,8 +176,14 @@ export const RETIRED_PLUGINS = [
   },
 ];
 
-export function migrateRetiredPlugins({ dryRun, settingsPath = path.join(sourceDir, 'claude_settings.json') } = {}) {
-  if (!fs.existsSync(settingsPath)) return [];
+// claude_settings.json lives in the sync payload, which is usually NOT the repo dir.
+// Resolving it against sourceDir made this a permanent silent no-op that still reported
+// "no retired plugin entries" — an actively false result. Default to the resolved sync dir.
+export function migrateRetiredPlugins({ dryRun, settingsPath = path.join(getSyncDir(), 'claude_settings.json') } = {}) {
+  if (!fs.existsSync(settingsPath)) {
+    console.log(`SKIP  retired-plugin migration - claude_settings.json not found at ${settingsPath}`);
+    return [];
+  }
   let settings;
   try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { return []; }
 

@@ -7,12 +7,15 @@
 // `ccgmi` aliases; those wrappers exec this script with the provider name.
 
 import { spawn } from 'child_process';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
+import { homedir } from 'os';
 import { buildClaudeInvocation } from './cc-launcher.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const envSettingsPath = join(__dirname, '..', '..', 'claude_env_settings.json');
+// Read the shared registry through the link setup already materialized, not a repo-relative
+// path: claude_env_settings.json lives in the sync payload, which may sit outside the repo.
+// `~/.claude/claude_env_settings.json` is the per-host indirection that exists for exactly
+// this — the same convention as ~/.claude/system-prompt.
+const envSettingsPath = join(homedir(), '.claude', 'claude_env_settings.json');
 
 const argv = process.argv.slice(2);
 const provider = argv[0] && !argv[0].startsWith('-') ? argv.shift() : '';

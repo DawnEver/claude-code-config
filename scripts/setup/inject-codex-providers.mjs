@@ -185,7 +185,10 @@ ${blocks.join('\n')}${CODEX_TOML_END_MARKER}
  * @returns {{ status: 'no-config' | 'no-change' | 'updated' | 'empty', providers?: number }}
  */
 export function injectModelProviders(codexConfigPath, generatedBlock) {
-  if (!fs.existsSync(codexConfigPath)) return { status: 'no-config' };
+  // `null` is a caller opting out entirely: since the codex config split, setup composes
+  // ~/.codex/config.toml itself and must not write a generated block into the shared head
+  // that lives in the cloud payload. See scripts/setup/codex-config-compose.mjs.
+  if (!codexConfigPath || !fs.existsSync(codexConfigPath)) return { status: 'no-config' };
   if (!generatedBlock) return { status: 'empty' };
 
   const existing = fs.readFileSync(codexConfigPath, 'utf8');

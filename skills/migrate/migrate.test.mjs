@@ -39,6 +39,36 @@ describe('findOrphanedLinks', () => {
     assert.deepEqual(orphans.map(o => o.rel), ['OLD.md']);
   });
 
+  test('leaves a link into an outside sync payload alone', () => {
+    // base:'sync' entries resolve outside the repo. Deleting them would destroy the live
+    // config, so they must never be reported — this guards that filter against refactors.
+    const payload = path.join(tmpDir, 'payload');
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, 'claude_settings.json'), '{}');
+    fs.symlinkSync(path.join(payload, 'claude_settings.json'), path.join(baseDir, 'settings.json'));
+
+    const links = [{ src: 'claude_settings.json', dest: 'settings.json', type: 'file', base: 'sync' }];
+    assert.deepEqual(findOrphanedLinks({ baseDir, links, sourceDir }), []);
+  });
+
+  test('detects a DANGLING link that is no longer in the link tables', () => {
+    // The real case this fixes: ~/.claude/models.md pointed into a repo location that was
+    // deleted. realpathSync throws, and the old code skipped it, so nothing could clean it.
+    fs.symlinkSync(path.join(tmpDir, 'gone', 'models.md'), path.join(baseDir, 'models.md'));
+    const links = [{ src: 'CURRENT.md', dest: 'CLAUDE.md', type: 'file' }];
+    const orphans = findOrphanedLinks({ baseDir, links, sourceDir });
+    assert.deepEqual(orphans.map(o => o.rel), ['models.md']);
+    assert.equal(orphans[0].dangling, true);
+  });
+
+  test('leaves a DANGLING link alone when it is still a current link target', () => {
+    // models.json is generated; before the first setup run its link legitimately dangles.
+    // check-links re-creates it — migrate must not delete it.
+    fs.symlinkSync(path.join(sourceDir, 'models.json'), path.join(baseDir, 'models.json'));
+    const links = [{ src: 'models.json', dest: 'models.json', type: 'file' }];
+    assert.deepEqual(findOrphanedLinks({ baseDir, links, sourceDir }), []);
+  });
+
   test('converts a legacy junction at the skills dir into a real directory', () => {
     // Simulate `~/.codex/skills -> repo/skills` (legacy whole-dir link).
     const repoSkills = path.join(sourceDir, 'skills');

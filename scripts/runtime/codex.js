@@ -8,14 +8,14 @@
 
 import { spawn } from 'child_process';
 import { statSync, writeFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 import { homedir } from 'os';
 import { buildCodexInvocation } from './codex-launcher.mjs';
 import { checkLinks, SETUP_FIX_CMD } from '../setup/check-links.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const envSettingsPath = join(__dirname, '..', '..', 'claude_env_settings.json');
+// Read the shared registry through the link setup already materialized, not a repo-relative
+// path: claude_env_settings.json lives in the sync payload, which may sit outside the repo.
+const envSettingsPath = join(homedir(), '.claude', 'claude_env_settings.json');
 
 // Throttle the link-health check: on a OneDrive-backed Windows FS, a cold-cache
 // `stat` per link can block for hundreds of ms. The check is essential after

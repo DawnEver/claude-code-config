@@ -17,6 +17,9 @@ import {
   getCodexLinks,
   ensureRealDir,
   linkEntry,
+  getSyncDir,
+  linkSourceRoot,
+  composeCodexConfigFile,
 } from './setup.js';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 
@@ -35,11 +38,17 @@ export function checkLinks() {
   // surfaced as a warning, never thrown (setup-check-hook.js has no try/catch
   // around this call).
   try {
+    const syncDir = getSyncDir();
     const artifacts = regenerateCodexArtifacts({
-      settingsPath: path.join(sourceDir, 'claude_env_settings.json'),
-      codexConfigPath: path.join(sourceDir, 'codex_config.toml'),
+      settingsPath: path.join(syncDir, 'claude_env_settings.json'),
+      // setup composes ~/.codex/config.toml; never write a generated block into the
+      // shared head that lives in the cloud payload.
+      codexConfigPath: null,
       modelsPath: path.join(sourceDir, 'models.json'),
     });
+    // Heal ~/.codex/config.toml too: it is a composed real file, not a link, so the link
+    // loop below cannot detect or repair it.
+    composeCodexConfigFile({ syncDir, envSettingsPath: path.join(syncDir, 'claude_env_settings.json') });
     if (artifacts.settings === 'unparseable') {
       warnings.push(`claude_env_settings.json: unparseable JSON (${artifacts.error.message})`);
     } else if (artifacts.settings === 'ok' && artifacts.models.status === 'updated') {
@@ -54,8 +63,11 @@ export function checkLinks() {
   }
 
   const check = (links, baseDir) => {
+    const syncDir = getSyncDir();
     for (const link of links) {
-      const srcPath = path.join(sourceDir, link.src);
+      // `base: 'sync'` entries live in the payload dir, not the repo — resolving them
+      // against sourceDir made the three most important links permanently unverifiable.
+      const srcPath = path.join(linkSourceRoot(link, { repoRoot: sourceDir, syncDir }), link.src);
       const destPath = path.join(baseDir, link.dest);
       try {
         const r = linkEntry(srcPath, destPath, link, false);
