@@ -31,11 +31,15 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
 - `scripts/runtime/`: `cc.js` / `codex.js` (provider launchers), `cc-launcher.mjs` / `codex-launcher.mjs` (pure env+args projection helpers), `aliases.sh`, `aliases.ps1`, `todo-launcher.mjs`, `traceme-launcher.mjs`
 - `scripts/shared/`: cross-host config helpers — `config.mjs` (`readMergedEnvSettings`, two-layer shared+local merge), `provider-keys.js` (single source of truth for the `ANTHROPIC_*` env-var strip list)
 - ~~`scripts/migration/`~~: retired 2026-08-30 — all three hosts are on the split layout, so the one-time tooling (`migrate-host.mjs`, `rescue-clone.mjs`, the runbook, and the payload bootstrap copies) was archived to `.claude/memory/2026/08/30/.archive/`. See `.claude/memory/2026/08/30/host-migration-retired.md`; `docs/sync-architecture.md` still documents the layout itself.
-- `scripts/hooks/`: `notify-hook.js` (cross-platform notifications), `hud-hook.js`, `setup-check-hook.js` (SessionStart: verifies/heals setup links — recreates missing links, converts claude-hud config symlink→hard link, warns on drifted plain files with the `--replace` fix command; shared logic in `scripts/setup/check-links.js`, also run by `codex.js` since Codex has no session hooks)
+- `scripts/hooks/`: `loop-guard-hook.js` (PreToolUse anti-spin guard — see Workflows),
+  `notify-hook.js` (cross-platform notifications), `hud-hook.js`, `setup-check-hook.js` (SessionStart: verifies/heals setup links — recreates missing links, converts claude-hud config symlink→hard link, warns on drifted plain files with the `--replace` fix command; shared logic in `scripts/setup/check-links.js`, also run by `codex.js` since Codex has no session hooks)
 - `system-prompt/`: per-host platform prompts (`claude-base.md`, `codex-base.md`). Linked to `~/.claude/system-prompt` and `~/.codex/system-prompt` so `fabric.systemPromptFile` / `codex_config.toml model_instructions_file` resolve through a per-host junction, not a hardcoded OneDrive path. See `.claude/memory/2026/08/11/system-prompt-paths-symlink.md`.
 - `cc-market/sharp-review/`: Sharp review plugin — hook, skill, workflow, findings sync (`post-review.js`)
 - `cc-market/rem/`: REM plugin — memory lifecycle, task management engine (`task-engine.js`), `/rem` and `/todo` skills
 - `skills/`: Custom skills — symlinked to both `~/.claude/skills` and `~/.codex/skills`. Add new skills here as `skills/<name>/SKILL.md`; they are picked up automatically on both hosts.
+  Account-level synced skills (`anthropic-skills:*`) are OFF — `syncClaudeAiSkills: false`
+  in `claude_settings.json` — otherwise the CLI downloads them into `~/.claude/skills/synced`,
+  i.e. straight into this repo. `.gitignore` carries `skills/synced/` as a backstop.
 - `output-styles/`: Output styles (`<name>.md`, `keep-coding-instructions: false`) — symlinked to `~/.claude/output-styles`. Non-coding personas (e.g. `academic`) for terminal use; toggle via `/config` → Output style. Strips coding guidance, keeps the harness/tools. A full system-prompt replacement was rejected (degrades CC to a chatbox) — see `.claude/memory/2026/06/20/persona-vs-output-style.md`.
 - `claude_plugins/`: Custom plugins (e.g., `claude-hud`)
 - `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) — see `cc-market/AGENTS.md`
@@ -64,7 +68,17 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
   `prune-cache-hook.js`, and `setup-check-hook.js` (verifies/heals `~/.claude`
   symlinks via `scripts/setup/check-links.js` — recreates missing links, converts
   the `claude-hud` config symlink to a hard link, warns on drifted plain files).
-  `Notification` runs `notify-hook.js`. The `Stop` hook runs the `sharp-review`
+  `Notification` runs `notify-hook.js`. `PreToolUse` (matcher `*`) runs
+  `loop-guard-hook.js`: per-session anti-spin guard — it hashes each
+  `(tool, normalized input)` inside a sliding window, and escalates on both exact
+  repeats and near-duplicates (trigram-Jaccard). Defaults: identical calls warn on
+  the 3rd via `additionalContext` and are denied from the 4th; near-duplicates warn
+  on the 4th and are denied from the 5th. Polling-by-design tools (`Monitor`,
+  `TaskOutput`, `ReadNotifications`, ...) are exempt and the hook fails open.
+  Every knob is an env var settable from the `env` block of `claude_settings.json`:
+  `CLAUDE_LOOP_GUARD_{WARN_AT,DENY_AT,SIMILAR_WARN_AT,SIMILAR_DENY_AT,
+  SIMILAR_THRESHOLD,WINDOW_MINUTES,MAX_ENTRIES,EXEMPT,DISABLE}` — see `DEFAULTS`
+  in the hook. The `Stop` hook runs the `sharp-review`
   plugin (post-task code review, 3 parallel reviewers).
 - `~/.claude/` links to repo for sync
 - `~/.codex/` links to repo for sync

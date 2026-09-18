@@ -38,3 +38,7 @@ system-prompt/dist/
 !**/.claude/watch/components/
 !**/.claude/watch/components/*.py
 !**/.claude/watch/config.yaml
+
+# Claude Code account-synced skills (anthropic-skills: docs, pdf, xlsx, ...).
+# Downloaded by the CLI into ~/.claude/skills/synced, which is a link into this repo.
+skills/synced/
