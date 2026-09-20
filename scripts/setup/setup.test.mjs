@@ -197,8 +197,7 @@ test('linkEntry: an up-to-date cross-volume copy is satisfied, not re-reported',
   fs.writeFileSync(src, '{"a":1}');
   linkEntry(src, dest, HARDLINK, false);
 
-  const second = linkEntry(src, dest, HARDLINK, false);
-  assert.equal(second.status, 'ok', 'a matching copy is the satisfied state');
+  const second = linkEntry(src, dest, HARDLINK, false);  assert.equal(second.status, 'ok', 'a matching copy is the satisfied state');
   assert.match(second.message, /copy/);
 });
 
@@ -224,4 +223,59 @@ test('linkEntry: --replace re-syncs a drifted copy and keeps the old one', { ski
   assert.equal(r.kind, 'copy');
   assert.equal(fs.readFileSync(dest, 'utf8'), '{"a":1}');
   assert.equal(fs.readFileSync(`${dest}.setup-bak`, 'utf8'), '{"edited-live":true}');
+});
+
+// claude-hud's config moved from a tracked file to a gitignored per-machine one. On a host
+// that pulls that change, the working tree is left holding a plain file whose CONTENT is
+// already correct — only its identity is stale. Demanding --replace there would be noise,
+// and the same reasoning already applies to the symlink case above.
+test('linkEntry: an identical plain file is re-linked, not reported as unlinked', () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(tmp('dest'), 'config.json');
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(src, '{"a":1}');
+  fs.writeFileSync(dest, '{"a":1}');           // same content, different inode
+
+  const r = linkEntry(src, dest, HARDLINK, false);
+  assert.equal(r.kind, 'hardlink');
+  assert.ok(isHardLinked(src, dest), 'must actually be linked afterwards');
+});
+
+test('linkEntry: a plain file with DIFFERENT content is still protected', () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(tmp('dest'), 'config.json');
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(src, '{"a":1}');
+  fs.writeFileSync(dest, '{"edited-live":true}');   // the consumer's own edits
+
+  const r = linkEntry(src, dest, HARDLINK, false);
+  // the skip path reports `status`, the success path `kind` — hence the two spellings
+  assert.equal(r.status, 'skip', 'local edits must never be overwritten without --replace');
+  assert.equal(fs.readFileSync(dest, 'utf8'), '{"edited-live":true}');
+});
+
+// ── the per-machine claude-hud config ────────────────────────────────────────
+
+test('ensureClaudeHudConfig: materialises the real config from the tracked template', async () => {
+  const { ensureClaudeHudConfig } = await import('./setup.js');
+  const repo = tmp('repo');
+  const dir = path.join(repo, 'claude_plugins', 'claude-hud');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.template.json'), '{"lineLayout":"compact"}');
+
+  assert.equal(ensureClaudeHudConfig(repo), true);
+  assert.equal(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'), '{"lineLayout":"compact"}');
+});
+
+test('ensureClaudeHudConfig: never clobbers the machine-tuned config', async () => {
+  const { ensureClaudeHudConfig } = await import('./setup.js');
+  const repo = tmp('repo');
+  const dir = path.join(repo, 'claude_plugins', 'claude-hud');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.template.json'), '{"lineLayout":"compact"}');
+  fs.writeFileSync(path.join(dir, 'config.json'), '{"lineLayout":"expanded","maxWidth":120}');
+
+  assert.equal(ensureClaudeHudConfig(repo), false);
+  assert.equal(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'),
+    '{"lineLayout":"expanded","maxWidth":120}');
 });

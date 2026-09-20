@@ -315,11 +315,18 @@ rolling back before step 7.
 - **Hard links.** `claude-hud`'s `config.json` must be a hard link (it rejects symlinked
   configs), and a hard link breaks when a writer *replaces* the inode. An earlier draft
   claimed this migration "strictly reduces" the exposure; that is **backwards**. The file
-  is git-tracked, and this design makes `git pull` the primary transport for Tier A — so
+  was git-tracked, and this design makes `git pull` the primary transport for Tier A — so
   the breaking writer changes from "occasional cloud sync-down" to "every pull that
-  touches this file". check-links auto-repairs it, but the honest fix is to ship
-  `config.template.json` and gitignore the real one: a per-machine tuned file
-  (`lineLayout`, `language`, `maxWidth`) should not be tracked at all. Not done here.
+  touches this file".
+  **Fixed:** the tracked file is now `config.template.json` and the real `config.json` is
+  gitignored and per-machine (its contents are host tuning: `lineLayout`, `language`,
+  `maxWidth`). `ensureClaudeHudConfig()` materialises it from the template on setup and from
+  `check-links` at SessionStart, so both halves are self-healing and no git operation
+  touches the inode any more.
+  Migrating an existing host is silent: the pull leaves a plain file whose content is
+  already correct, and `linkEntry` re-links a hardlink entry whose destination is
+  content-identical rather than demanding `--replace` — the same reasoning it already
+  applied to a symlinked destination.
 
 - **"No absolute cloud path in a shared file" is now enforced, with one accepted
   exception.** `npm run doctor` fails on a machine path in the payload or in tracked code

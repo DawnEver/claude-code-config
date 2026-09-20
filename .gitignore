@@ -42,3 +42,9 @@ system-prompt/dist/
 # Claude Code account-synced skills (anthropic-skills: docs, pdf, xlsx, ...).
 # Downloaded by the CLI into ~/.claude/skills/synced, which is a link into this repo.
 skills/synced/
+
+# claude-hud's config is machine-tuned (lineLayout, language, maxWidth) and is hard-linked
+# into ~/.claude. Tracking it made `git checkout`/`pull` the writer that replaces the inode
+# and breaks that link. The tracked template is config.template.json; setup copies it here
+# when absent.
+claude_plugins/claude-hud/config.json

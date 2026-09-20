@@ -169,12 +169,15 @@ on the same volume (Windows: same drive letter). When they are not — a working
 `~/.claude` on `C:` — setup falls back to a **copy** and says so: `claude-hud` rejects symlinks,
 not copies, so the file still loads; it just stops tracking the repo until the next setup run.
 An identical copy reports `ok`; a drifted one is never overwritten without `--replace`, which
-keeps the old contents at `.setup-bak`. Since the working tree moved out of cloud storage this file is git-tracked, so the
-frequent breaking writer is now **`git pull`/`git checkout`** rather than a cloud sync-down —
-any pull that touches it replaces the inode and silently unlinks it. `check-links.js` repairs it
-on SessionStart; `npm run setup -- -r` does it manually. This is the entry most likely to need
-periodic re-linking, and the honest fix would be to ship a `config.template.json` and gitignore
-the real one (a per-machine tuned file should not be tracked at all).
+keeps the old contents at `.setup-bak`.
+
+The real config is **gitignored and per-machine** — its contents are host tuning (`lineLayout`,
+`language`, `maxWidth`). The tracked file is `config.template.json`, and setup materialises the
+real one from it (as does `check-links` at SessionStart, so a fresh clone heals without a full
+setup run). This matters because the entry is still hard-linked: while the file was tracked, any
+`git pull` that touched it replaced the inode and silently unlinked it. Nothing in git touches it
+now, so the link only breaks if you edit it with a tool that replaces rather than writes the file
+— and `check-links.js` repairs that on SessionStart.
 
 ### Upgrading an existing install
 

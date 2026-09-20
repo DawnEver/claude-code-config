@@ -40,6 +40,9 @@ export const CLAUDE_LINKS = [
   { src: 'claude_settings.json', dest: 'settings.json', type: 'file', base: 'sync' },
   // claude-hud >= 0.8.0 refuses to load a symlinked config.json (its readConfigFile
   // lstat-checks and ignores non-regular files), so this one must be a HARD link.
+  // The source is gitignored and per-machine; ensureClaudeHudConfig() materialises it
+  // from config.template.json before this pass, and check-links does the same at
+  // SessionStart. Tracking it made `git checkout` the writer that broke the link.
   { src: path.join('claude_plugins', 'claude-hud', 'config.json'), dest: path.join('plugins', 'claude-hud', 'config.json'), type: 'file', hardlink: true },
   { src: 'skills', dest: 'skills', type: 'dir' },
   { src: 'output-styles', dest: 'output-styles', type: 'dir' },
@@ -109,6 +112,19 @@ export function ensureRealDir(dirPath) {
     fs.unlinkSync(dirPath);
   }
   fs.mkdirSync(dirPath, { recursive: true });
+}
+
+// claude-hud's config is machine-tuned (lineLayout, language, maxWidth) and is hard-linked
+// into ~/.claude. It is therefore NOT tracked: while it was, `git checkout`/`pull` was the
+// writer that replaced the inode and broke the link §10 describes. The tracked file is
+// config.template.json; materialise the real one from it when absent.
+export function ensureClaudeHudConfig(repoRoot = sourceDir) {
+  const dir = path.join(repoRoot, 'claude_plugins', 'claude-hud');
+  const real = path.join(dir, 'config.json');
+  const template = path.join(dir, 'config.template.json');
+  if (fs.existsSync(real) || !fs.existsSync(template)) return false;
+  fs.copyFileSync(template, real);
+  return true;
 }
 
 export function removeExisting(destPath) {
@@ -220,6 +236,13 @@ export function linkEntry(srcPath, destPath, link, replace) {
       }
     } else if (link.type === 'file' && isHardLinked(srcPath, destPath)) {
       return { status: 'ok', message: 'already linked (hard link)' };
+    } else if (link.hardlink && stat.isFile() && filesMatch(srcPath, destPath)) {
+      // Same reasoning as the symlink case above: the content is already exactly what this
+      // entry wants, so swapping the file identity loses nothing. This is what makes
+      // claude-hud's config moving from tracked to gitignored a no-op on an existing host —
+      // the pull leaves a plain file holding the template's content, and it re-links
+      // silently rather than demanding --replace.
+      replace = true;
     }
 
     // A hardlink-required entry across volumes can only ever be a copy, so an identical
@@ -574,6 +597,12 @@ export function setup(options = {}) {
   } else if (composed.status === 'threw') {
     console.log(`ERR   ~/.codex/config.toml — composition failed: ${composed.error.message}`);
     counters.errors++;
+  }
+
+  // Materialise the per-machine claude-hud config before the link pass: it is gitignored,
+  // so on a fresh clone the link source does not exist yet.
+  if (ensureClaudeHudConfig(sourceDir)) {
+    console.log('COPY  claude-hud/config.template.json - claude-hud/config.json');
   }
 
   console.log('--- Claude ---');

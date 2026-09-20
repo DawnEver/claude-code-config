@@ -16,6 +16,7 @@ import {
   CLAUDE_LINKS,
   getCodexLinks,
   ensureRealDir,
+  ensureClaudeHudConfig,
   linkEntry,
   getSyncDir,
   linkSourceRoot,
@@ -29,6 +30,15 @@ export const SETUP_FIX_CMD = 'node ~/.claude/scripts/setup/setup.js --replace';
 export function checkLinks() {
   const repaired = [];
   const warnings = [];
+
+  // The claude-hud config is gitignored and per-machine (see ensureClaudeHudConfig), so a
+  // fresh clone or a cleaned working tree has no link source until it is materialised.
+  // Doing it here means the SessionStart self-heal covers it without a full setup run.
+  try {
+    if (ensureClaudeHudConfig(sourceDir)) repaired.push('claude-hud config (from template)');
+  } catch {
+    // Non-fatal: the link pass below reports the missing source if it still is one.
+  }
 
   // Regenerate the derivable codex artifacts BEFORE verifying links, so a repo
   // that synced without re-running setup (or that lost the gitignored

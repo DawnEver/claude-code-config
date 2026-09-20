@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, parseHookCommands,
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks,
+  checkHostKeyedPaths,
 } from './doctor.js';
 
 // ── the guard detector ──
@@ -216,4 +217,38 @@ test('the payload check can actually fail on the real sync dir', () => {
     JSON.stringify({ fabric: { projects: { x: 'C:/Users/someone/x' } } }));
   const out = checkPayloadPaths(syncDir, ['claude_env_settings.json']);
   assert.ok(out.some((f) => f.level === 'FAIL'), 'a real violation must produce a FAIL');
+});
+
+// ── a host's own byHost entry, sitting in the shared file ──
+// Not a leak (only this host reads it) but the wrong file: the payload should carry no
+// machine path, and ~/.claude/claude_env_settings.local.json is the designed home for
+// per-machine values. Reported on the host it names, so each machine is told what to move
+// and the shared file drains host by host — rather than the cleanup living as a note in a
+// design document that nobody acts on.
+
+test('a byHost entry for THIS host is reported with the file to move it to', () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
+    serve: { byHost: { 'THIS-BOX': { projects: { p: 'D:/work/thing' } } } },
+  }));
+  const out = checkHostKeyedPaths(dir, ['x.json'], 'this-box');   // hostname match is case-insensitive
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'payload-own-host-path');
+  assert.match(out[0].detail, /claude_env_settings\.local\.json/);
+});
+
+test("another host's byHost entry is not this host's problem", () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
+    serve: { byHost: { 'OTHER-BOX': { projects: { p: 'D:/work/thing' } } } },
+  }));
+  assert.deepEqual(checkHostKeyedPaths(dir, ['x.json'], 'this-box'), []);
+});
+
+test('a portable value under this host\'s byHost entry is already fine', () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
+    serve: { byHost: { 'THIS-BOX': { projects: { p: '~/work/thing' } } } },
+  }));
+  assert.deepEqual(checkHostKeyedPaths(dir, ['x.json'], 'this-box'), []);
 });

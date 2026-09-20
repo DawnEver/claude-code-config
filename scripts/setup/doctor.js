@@ -294,6 +294,49 @@ export function checkHygiene(root = sourceDir) {
   return out;
 }
 
+/**
+ * A `byHost` entry for THIS host, sitting in the shared payload.
+ *
+ * It is not a leak — only this host reads it — but it is in the wrong file. The shared
+ * payload should carry no machine path at all, and each host's own
+ * `~/.claude/claude_env_settings.local.json` is the designed home for per-machine values
+ * (readers deep-merge local over shared). This check reports it on the host it names, so
+ * each machine is told what to move and the shared file drains itself host by host, rather
+ * than the cleanup living as a note in a design document that nobody acts on.
+ */
+export function checkHostKeyedPaths(syncDir, files = SYNC_PAYLOAD_FILES, hostname = os.hostname()) {
+  const out = [];
+  for (const name of files) {
+    if (!name.endsWith('.json')) continue;
+    const p = path.join(syncDir, name);
+    if (!fs.existsSync(p)) continue;
+    let parsed;
+    try { parsed = JSON.parse(fs.readFileSync(p, 'utf8')); } catch { continue; }
+
+    const visit = (node, keyPath) => {
+      if (!node || typeof node !== 'object') return;
+      for (const [key, value] of Object.entries(node)) {
+        if (key === 'byHost' && value && typeof value === 'object') {
+          for (const [host, block] of Object.entries(value)) {
+            if (host.toLowerCase() !== String(hostname).toLowerCase()) continue;
+            for (const { keyPath: inner, value: v } of walkStrings(block)) {
+              if (!absolutePathKinds(v).length) continue;
+              out.push(finding('WARN', 'payload-own-host-path',
+                `${name} ${[...keyPath, 'byHost', host, ...inner].join('.')} is this host's own path, in the shared file`,
+                `${v} — move it to ~/.claude/claude_env_settings.local.json under the same key path; ` +
+                'readers deep-merge local over shared, so the shared entry can then be deleted'));
+            }
+          }
+        } else {
+          visit(value, [...keyPath, key]);
+        }
+      }
+    };
+    visit(parsed, []);
+  }
+  return out;
+}
+
 // ── runner ──
 
 export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME } = {}) {
@@ -304,6 +347,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
   return [
     ...checkHooks(settings, home),
     ...checkPayloadPaths(syncDir),
+    ...checkHostKeyedPaths(syncDir),
     ...checkPayloadShape(syncDir, repoRoot),
     ...checkLinks({ repoRoot, syncDir }),
     ...checkPlugins(settings, home),
