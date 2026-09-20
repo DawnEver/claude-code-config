@@ -181,9 +181,11 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 
 | Event | Script | Purpose |
 |---|---|---|
+| `SessionStart` | `sync-hook.js --pull` | Fast-forwards this checkout onto its upstream, so a session starts from the freshest tree. Startup only (not resume/clear/compact), silent when already current, never fatal |
 | `SessionStart` | `fix-lsp-windows.js` | Windows-only: patches LSP binary names in `marketplace.json` to append `.cmd` |
 | `SessionStart` | `prune-cache-hook.js` | Prunes stale plugin cache entries on session start |
 | `SessionStart` | `setup-check-hook.js` | Self-heal: verifies/heals `~/.claude` symlinks via `scripts/setup/check-links.js` (recreates missing links, converts the `claude-hud` config symlink to a hard link, warns on drifted plain files) |
+| `SessionEnd` | `sync-hook.js --remind` | Reports uncommitted files / unpushed commits in this repo. Pushing stays explicit — see `.claude/memory/2026/06/06/feedback-no-auto-push.md` |
 | `Notification` | `notify-hook.js` | Native OS notification |
 | `Stop` | `sharp-review` plugin | Post-task sharp review (3 parallel reviewers) |
 | `statusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
@@ -192,16 +194,26 @@ The `rem` and `sharp-review` plugins (Stop hooks for memory consolidation and co
 
 The REM hook gates on session depth (>= 2 stops, >= 2 min). Runs `/rem` skill. State tracked in `.claude/.rem-state.json`.
 
+### Syncing this repo across hosts
+
+Tracked content (Tier A) travels by `git pull`/`push` — see `docs/sync-architecture.md`. `sync-hook.js` automates only the **inbound** half: it fast-forwards at session start, and refuses (reporting, never merging or rebasing) when the host has its own unpushed commits. The outbound half stays a deliberate user action by design.
+
+The repo is located from the hook's own module path, so no username, drive letter, or checkout path is baked in — the same file works on every host. Every failure is a silent no-op: offline, no remote, no upstream, a held `index.lock`, or a blocked checkout all just mean "nothing changed this session". Network time is bounded by `CLAUDE_SYNC_FETCH_TIMEOUT_MS` (default 6000, settable from the `env` block of `claude_settings.json`).
+
 Hook wiring in `claude_settings.json`:
 
 ```json
 "hooks": {
   "SessionStart": [
     { "hooks": [
+      { "type": "command", "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull", "timeout": 15 },
       { "type": "command", "command": "node ~/.claude/scripts/setup/fix-lsp-windows.js" },
       { "type": "command", "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js" },
       { "type": "command", "command": "node ~/.claude/scripts/hooks/setup-check-hook.js" }
     ] }
+  ],
+  "SessionEnd": [
+    { "hooks": [{ "type": "command", "command": "node ~/.claude/scripts/hooks/sync-hook.js --remind", "timeout": 10 }] }
   ],
   "Notification": [{ "hooks": [{ "type": "command", "command": "node ~/.claude/scripts/hooks/notify-hook.js" }] }]
 },

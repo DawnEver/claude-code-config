@@ -64,10 +64,16 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
 - `aliases.ps1` / `aliases.sh` — Shell integration; `setup.js` installs `.cmd` wrappers on Windows. Wrappers land next to the matching host binary (`ccc*` next to `claude`, `co*` next to `codex`); on a single-host install the other host's wrappers are skipped. `todo`/`traceme` go to whichever host's bin dir is on PATH (or to `codex`'s dir on a Codex-only install).
 
 ### Workflows
-- Hooks wired in `claude_settings.json`: `SessionStart` runs `fix-lsp-windows.js`,
-  `prune-cache-hook.js`, and `setup-check-hook.js` (verifies/heals `~/.claude`
-  symlinks via `scripts/setup/check-links.js` — recreates missing links, converts
-  the `claude-hud` config symlink to a hard link, warns on drifted plain files).
+- Hooks wired in `claude_settings.json`: `SessionStart` runs `sync-hook.js --pull`
+  (fast-forwards this checkout onto its upstream so a session starts from the
+  freshest tree — startup only, silent when current, refuses rather than merging when
+  the host has its own unpushed commits; a successful pull also re-runs `checkLinks()`
+  because a pull replaces the `claude-hud` hard link, §10 of `docs/sync-architecture.md`),
+  then `fix-lsp-windows.js`, `prune-cache-hook.js`, and `setup-check-hook.js`
+  (verifies/heals `~/.claude` symlinks via `scripts/setup/check-links.js` — recreates
+  missing links, converts the `claude-hud` config symlink to a hard link, warns on
+  drifted plain files). `SessionEnd` runs `sync-hook.js --remind` (uncommitted /
+  unpushed report; the outbound half stays a deliberate user action — no auto-push).
   `Notification` runs `notify-hook.js`. `PreToolUse` (matcher `*`) runs
   `loop-guard-hook.js`: per-session anti-spin guard — it hashes each
   `(tool, normalized input)` inside a sliding window, and escalates on both exact

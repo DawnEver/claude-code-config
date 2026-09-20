@@ -13,6 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { isMain } from '../shared/is-main.mjs';
 
 const PATCHES = {
   'typescript-language-server': 'typescript-language-server.cmd',
@@ -83,6 +84,6 @@ function patchObject(obj, patches, onPatch) {
 }
 
 // Allow running directly
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.url.replace('file:///', '').replace(/\//g, path.sep))) {
+if (isMain(import.meta.url)) {
   fixLspWindows();
 }
