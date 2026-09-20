@@ -17,6 +17,11 @@ at — or nothing at all, which is the zero-config default). See
 - [Claude Code](https://code.claude.com/docs/en/setup): `npm install -g @anthropic-ai/claude-code`
 - [Codex](https://github.com/openai/codex): `npm install -g @openai/codex && codex login`
 
+Provisioning a Windows host without admin rights? `scripts/setup/bootstrap-windows.bat`
+installs Rust and Node.js LTS at user level and appends them to the user `PATH`. Run it
+from an ordinary (non-elevated) shell, then open a new one so the `PATH` change takes
+effect.
+
 ## Setup
 
 ```sh
