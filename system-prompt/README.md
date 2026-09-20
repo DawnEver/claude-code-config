@@ -32,14 +32,20 @@ clean/keep).
 
 ```json
 { "fabric": {
-    "systemPromptFile": "C:/.../system-prompt/claude-base.md",
+    "systemPromptFile": "~/.claude/system-prompt/claude-base.md",
     "profiles": {
       "writer":   { "style": "academic" },
-      "executor": { "toolsPreset": "exec", "systemPromptFile": "C:/.../academic.claude.md" },
+      "executor": { "toolsPreset": "exec", "systemPromptFile": "~/.claude/system-prompt/dist/academic.claude.md" },
       "planner":  { "toolsPreset": "coord", "allowedTools": "Read,Glob,Grep,SendMessage" }
     }
 }}
 ```
+
+Paths go through `~/.claude/system-prompt`, never a machine path: `setup.js` links the repo's
+`system-prompt/` there on every host, so the same config file resolves correctly on a machine
+with a different username, drive letter, or checkout location. A hardcoded path here is the
+bug `.claude/rules/rem/path-conventions.md` exists to prevent — this doc previously taught one
+by example. `dist/` is generated per machine by `build.mjs` and is gitignored.
 
 Priority: `profile.systemPromptFile` > `profile.style` (auto-built) >
 `fabric.systemPromptFile`. Both spawn paths (persistent `openSession`,

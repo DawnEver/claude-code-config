@@ -239,6 +239,7 @@ cannot recur silently. It is read-only. Checks:
 |---|---|
 | Wired hooks resolve and have a live entry guard | A hook that exits 0 doing nothing — indistinguishable from "nothing to report" |
 | No absolute machine path in the payload or in tracked code | A path from one host shipping to all of them |
+| A host's own `byHost` entry sitting in the shared file | Reported on the host it names, with the local file to move it to — so the shared payload drains host by host instead of the cleanup living in a design note |
 | Payload top-level shape vs its template | The stale-shape drift that produced an empty model catalogue |
 | Link table vs what is on disk | A link entry whose source or destination has gone |
 | Plugin inventory: enabled vs installed | Enabled-but-absent, and orphans whose marketplace no longer exists |
