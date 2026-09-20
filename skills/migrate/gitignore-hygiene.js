@@ -14,7 +14,7 @@ const REPO_SKIP_DIRS = new Set(['node_modules', '.git', 'dist']);
 // artifacts rem owns (MEMORY.md index, _meta.json) come LAST so they win and stay
 // ignored. Verify changes with `git add --dry-run` on a fresh nested file, NOT
 // `check-ignore -v` (whose exit code misreports negated re-includes).
-const CLAUDE_GITIGNORE_TEMPLATE = [
+export const CLAUDE_GITIGNORE_TEMPLATE = [
   '**/.claude/**',
   '!**/.claude/settings.json',
   '!**/.claude/agents/',

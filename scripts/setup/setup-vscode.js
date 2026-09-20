@@ -23,7 +23,7 @@
 import fs from 'fs';
 import path from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
-import { readMergedEnvSettings } from '../shared/config.mjs';
+import { buildClaudeInvocation } from '../runtime/cc-launcher.mjs';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { resolveSyncDir } from '../shared/sync-dir.mjs';
@@ -96,29 +96,24 @@ if (provider === 'claude') {
   // Apply provider
   // The payload may live outside the repo; resolve it the same way setup does.
   const envSettingsPath = path.join(getSyncDir(), 'claude_env_settings.json');
-  if (!fs.existsSync(envSettingsPath)) {
-    console.error(`ERROR Missing: ${envSettingsPath}`);
+
+  // Project the provider through the launcher's own builder rather than reading
+  // claude_env_settings.json here. This used to look up `env:<provider>` — a schema
+  // retired on 2026-08-25 when the registry moved to `providers.<name>` — so every
+  // call with a non-claude provider failed with "Unknown provider" and an empty
+  // available list. Reusing buildClaudeInvocation also means VS Code, `ccc` and
+  // `cods` cannot drift: one projection, one source of truth.
+  const { env: projected, error } = buildClaudeInvocation({ provider, envSettingsPath });
+  if (error) {
+    console.error(`ERROR ${error}`);
     process.exit(1);
   }
-
-  let profiles;
-  try { profiles = readMergedEnvSettings({ sharedPath: envSettingsPath }); } catch {
-    console.error('ERROR Could not parse claude_env_settings.json (or claude_env_settings.local.json)');
-    process.exit(1);
-  }
-
-  const profile = profiles[`env:${provider}`];
-  if (!profile) {
-    const available = Object.keys(profiles)
-      .filter(k => k.startsWith('env:') && k !== 'env:claude')
-      .map(k => k.replace('env:', ''));
-    console.error(`ERROR Unknown provider: ${provider}`);
-    console.error(`      Available: ${available.join(', ')}`);
-    process.exit(1);
-  }
-
+  const profile = Object.fromEntries(
+    Object.entries(projected).filter(([k]) => PROVIDER_KEYS.includes(k))
+  );
   if (!Object.keys(profile).length) {
-    console.error(`ERROR Provider "${provider}" has no env vars configured in claude_env_settings.json`);
+    console.error(`ERROR Provider "${provider}" projects no env vars — check its ` +
+      `url/models block in claude_env_settings.json`);
     process.exit(1);
   }
 

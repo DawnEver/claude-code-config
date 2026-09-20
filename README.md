@@ -34,12 +34,22 @@ If `claude_settings.json` or `claude_env_settings.json` are missing, setup copie
 
 ### LSPs
 
+The `typescript-lsp`, `pyright-lsp` and `rust-analyzer-lsp` plugins ship with the official
+marketplace and are **not enabled** here — they are installed but dormant, so nothing spawns
+them. To turn one on, add it to `enabledPlugins` in `claude_settings.json` and install the
+server:
+
 ```sh
 npm install -g pyright typescript-language-server typescript
 rustup component add rust-analyzer
 ```
 
-**Windows:** `setup.js` patches `marketplace.json` to append `.cmd` to LSP binary names (required by `uv_spawn` - [#1432](https://github.com/anthropics/claude-plugins-official/issues/1432)).
+**Windows:** `uv_spawn` cannot find a binary without the `.cmd` extension
+([#1432](https://github.com/anthropics/claude-plugins-official/issues/1432)), so a fresh
+marketplace clone needs `marketplace.json` patched. That is a one-off manual edit — the
+`fix-lsp-windows.js` SessionStart hook that used to do it was removed once the plugins went
+dormant, since it otherwise spawned a process on every session to patch binaries for
+plugins that are never launched.
 
 ### Provider Switching
 
@@ -182,7 +192,6 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 | Event | Script | Purpose |
 |---|---|---|
 | `SessionStart` | `sync-hook.js --pull` | Fast-forwards this checkout onto its upstream, so a session starts from the freshest tree. Startup only (not resume/clear/compact), silent when already current, never fatal |
-| `SessionStart` | `fix-lsp-windows.js` | Windows-only: patches LSP binary names in `marketplace.json` to append `.cmd` |
 | `SessionStart` | `prune-cache-hook.js` | Prunes stale plugin cache entries on session start |
 | `SessionStart` | `setup-check-hook.js` | Self-heal: verifies/heals `~/.claude` symlinks via `scripts/setup/check-links.js` (recreates missing links, converts the `claude-hud` config symlink to a hard link, warns on drifted plain files) |
 | `SessionStart` | `doctor.js --hook` | Reports failing invariants only (silent when healthy, ~100ms). See Health check below |
@@ -237,7 +246,6 @@ Hook wiring in `claude_settings.json`:
   "SessionStart": [
     { "hooks": [
       { "type": "command", "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull", "timeout": 15 },
-      { "type": "command", "command": "node ~/.claude/scripts/setup/fix-lsp-windows.js" },
       { "type": "command", "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js" },
       { "type": "command", "command": "node ~/.claude/scripts/hooks/setup-check-hook.js" }
     ] }

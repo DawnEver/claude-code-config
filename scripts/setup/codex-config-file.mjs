@@ -12,7 +12,6 @@ import path from 'path';
 
 import {
   sharedHeadOf,
-  localSectionsOf,
   splitCodexConfig,
   composeCodexConfig,
   assertLossless,
@@ -107,19 +106,15 @@ export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir }) {
   const target = path.join(codexDir, 'config.toml');
 
   let localText = '';
-  let importedFromFleet = 0;
   let droppedDeadPaths = 0;
   const before = fs.lstatSync(target, { throwIfNoEntry: false });
   if (before) {
     try {
-      // A symlink still points at the pre-split shared file; read THROUGH it, then keep
-      // only what belongs to this host.
       const existing = fs.readFileSync(target, 'utf8');
       assertLossless(existing);
       const filtered = localSectionsForThisHost(existing);
       localText = filtered.text;
       droppedDeadPaths = filtered.dropped;
-      if (before.isSymbolicLink()) importedFromFleet = filtered.kept;
     } catch {
       localText = '';
     }
@@ -145,7 +140,6 @@ export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir }) {
     providers,
     localSections: splitCodexConfig(next).local.length,
     strippedFromPayload: leaked,
-    importedFromFleet,
     droppedDeadPaths,
   };
 }

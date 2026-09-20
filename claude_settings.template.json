@@ -14,30 +14,29 @@
         "TRACEME_SYNC_REMOTE": "Your TRACEME Git Repo"
     },
     "includeCoAuthoredBy": false,
-  "permissions": {
-    "allow": [
-      "Bash",
-      "Read",
-      "Edit",
-      "Write",
-      "PowerShell",
-      "WebSearch",
-      "Skill(update-config)",
-      "Skill(rem:rem)",
-      "Skill(rem:todo)",
-      "Skill(fabric:continue)",
-      "Skill(fabric:models)",
-      "Skill(fabric:summary)",
-      "mcp__plugin_fabric_fabric__call",
-      "mcp__plugin_fabric_fabric__list_providers"
-    ],
-    "deny": [
-      "Bash(rm -rf *)",
-      "Bash(sudo *)",
-      "Bash(curl * | bash)"
-    ],
-    "defaultMode": "auto"
-  },
+    "permissions": {
+        "allow": [
+            "Bash",
+            "Read",
+            "Edit",
+            "Write",
+            "PowerShell",
+            "WebSearch",
+            "Skill(rem:rem)",
+            "Skill(rem:todo)",
+            "Skill(fabric:continue)",
+            "Skill(fabric:models)",
+            "Skill(fabric:handoff)",
+            "mcp__plugin_fabric_fabric__call",
+            "mcp__plugin_fabric_fabric__list_providers"
+        ],
+        "deny": [
+            "Bash(rm -rf *)",
+            "Bash(sudo *)",
+            "Bash(curl * | bash)"
+        ],
+        "defaultMode": "auto"
+    },
     "hooks": {
         "PreToolUse": [
             {
@@ -58,11 +57,6 @@
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull",
                         "timeout": 15
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/setup/fix-lsp-windows.js",
-                        "timeout": 5
                     },
                     {
                         "type": "command",
@@ -160,9 +154,5 @@
             "$defaults"
         ]
     },
-    "metadata": {
-        "NOTIFY_WAITING_TIMEOUT_MINUTES": 1
-    },
-  "autoCompactWindow": 720000
-
+    "autoCompactWindow": 720000
 }

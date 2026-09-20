@@ -36,7 +36,7 @@ function writeIfChanged(filePath, content, label) {
   }
 }
 
-function installPowerShellProfileAliasSource(claudeDir) {
+function installPowerShellProfileAliasSource() {
   const profilePath = path.join(os.homedir(), 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
   const oldSource = '. ~/.claude/scripts/shell/aliases.ps1';
   const sourceLine = '. ~/.claude/scripts/runtime/aliases.ps1';
@@ -83,7 +83,7 @@ export function resolveAliasBinDirs(locate = locateBinDir) {
   return { claudeBin, codexBin, targetBin };
 }
 
-export function installShellAliases(claudeDir, sourceDir) {
+export function installShellAliases(claudeDir) {
   // Place wrappers alongside an installed host binary so they land on PATH.
   // On Windows: write .cmd (CMD/PowerShell) + no-extension script (Git Bash).
   // On macOS/Linux: write no-extension shell script only.
@@ -198,5 +198,53 @@ export function installShellAliases(claudeDir, sourceDir) {
   console.log('      todo    - Task management CLI');
   console.log(`      installed to: ${targetBin}`);
 
-  if (isWindows) installPowerShellProfileAliasSource(claudeDir);
+  if (isWindows) installPowerShellProfileAliasSource();
+  else installPosixProfileAliasSource();
+}
+
+/**
+ * Which rc file sources the aliases.
+ *
+ * `$SHELL` decides; an unrecognised or absent shell falls back to the platform default
+ * (zsh on macOS since Catalina, bash elsewhere) rather than writing to both.
+ */
+export function posixProfilePaths(home = os.homedir(), shell = process.env.SHELL || '') {
+  if (/zsh$/.test(shell)) return [path.join(home, '.zshrc')];
+  if (/bash$/.test(shell)) return [path.join(home, '.bashrc')];
+  return [path.join(home, process.platform === 'darwin' ? '.zshrc' : '.bashrc')];
+}
+
+/**
+ * Source aliases.sh from the login shell.
+ *
+ * The wrappers written above only work when the target bin dir is on PATH. Sourcing the
+ * alias file is the PATH-independent route, and its own header has always claimed
+ * "sourced by ~/.bashrc / ~/.zshrc" — but nothing ever wrote that line. The PowerShell
+ * profile got the equivalent treatment; POSIX never did, so on a Mac `ccc`/`ccds`/`cods`
+ * could simply be missing after a successful setup. Both mechanisms are deliberate: the
+ * wrapper is the primary path, the alias is the fallback when PATH is not configured.
+ */
+export function installPosixProfileAliasSource(home = os.homedir()) {
+  const sourceLine = '. ~/.claude/scripts/runtime/aliases.sh';
+  const legacyLine = '. ~/.claude/scripts/shell/aliases.sh';
+
+  for (const profilePath of posixProfilePaths(home)) {
+    const existing = fs.existsSync(profilePath) ? fs.readFileSync(profilePath, 'utf8') : '';
+    const normalized = existing.replace(/\r\n/g, '\n');
+
+    let next = normalized;
+    if (next.includes(legacyLine)) {
+      next = next.replaceAll(legacyLine, sourceLine);
+    } else if (!next.includes(sourceLine)) {
+      const prefix = next.trimEnd();
+      next = `${prefix}${prefix ? '\n\n' : ''}# Claude Code aliases\n${sourceLine}\n`;
+    }
+
+    if (next !== normalized) {
+      fs.writeFileSync(profilePath, next);
+      console.log(`WRITE ${path.basename(profilePath)} - ${profilePath}`);
+    } else {
+      console.log(`OK    ${path.basename(profilePath)} - already up to date`);
+    }
+  }
 }

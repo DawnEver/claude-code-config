@@ -58,12 +58,7 @@ This does the following, all idempotent (safe to re-run, no-op once current):
 
    When running this skill for the user, dry-run first, show which repos would change,
    and confirm the mode before applying.
-3. **Retired plugins** — removes stale entries in `claude_settings.json` for plugins
-   that were merged or removed (`RETIRED_PLUGINS` in `migrate.js`): drops the old
-   `enabledPlugins` key and its permission-allow entries, enables the replacement, and
-   transfers the trusted skill/MCP permissions to it. E.g. `takeover@cc-market` →
-   `fabric@cc-market` (takeover was merged into fabric). No-op once already swapped.
-4. **Project `.claude/`** — for every cc-market plugin that provides a
+3. **Project `.claude/`** — for every cc-market plugin that provides a
    `migrations/migrate.mjs` (e.g. rem's memory/frontmatter normalization,
    sharp-review's legacy finding-file consolidation), runs it against the
    current project.

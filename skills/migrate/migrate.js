@@ -16,13 +16,10 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_ALIAS_NAMES, removeExisting, setup, getSyncDir } from '../../scripts/setup/setup.js';
+import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_ALIAS_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
 import { isAliasWrapper } from '../../scripts/setup/install-shell-aliases.js';
 import {
-  findGitRepos,
-  ensureGitignoreTemplate,
-  untrackIgnored,
-  findNestedClaudeIgnores,
+  CLAUDE_GITIGNORE_TEMPLATE,
   migrateGitignore,
   reposNeedingTemplate,
   promptGitignoreMode,
@@ -158,76 +155,7 @@ export function migrateOrphanedAliases({ dryRun } = {}) {
 }
 
 // ── C. Gitignore hygiene ──
-// Extracted to gitignore-hygiene.js. Re-exported for backward compatibility.
-export {
-  findGitRepos,
-  ensureGitignoreTemplate,
-  untrackIgnored,
-  findNestedClaudeIgnores,
-  migrateGitignore,
-  reposNeedingTemplate,
-  promptGitignoreMode,
-} from './gitignore-hygiene.js';
-
-// ── E. Retired-plugin settings migration ──
-// Plugins merged or removed over time leave stale entries in claude_settings.json — both an
-// `enabledPlugins` key and permission-allow entries for their skills/MCP tools. Remove them
-// (idempotent, self-detecting) and ensure the replacement is enabled. `settingsPath` is the
-// repo's claude_settings.json, which is symlinked into ~/.claude.
-export const RETIRED_PLUGINS = [
-  {
-    id: 'takeover@cc-market',
-    replacement: 'fabric@cc-market',        // merged into fabric (one `call` primitive)
-    permPrefixes: ['Skill(takeover:', 'mcp__plugin_takeover_takeover__'],
-    // Trust the user already granted the retired plugin, transferred to the replacement so
-    // its skills/tools don't re-prompt. Added only when a stale entry was actually present.
-    addPerms: [
-      'Skill(fabric:continue)', 'Skill(fabric:models)', 'Skill(fabric:summary)',
-      'mcp__plugin_fabric_fabric__call', 'mcp__plugin_fabric_fabric__list_providers',
-    ],
-  },
-];
-
-// claude_settings.json lives in the sync payload, which is usually NOT the repo dir.
-// Resolving it against sourceDir made this a permanent silent no-op that still reported
-// "no retired plugin entries" — an actively false result. Default to the resolved sync dir.
-export function migrateRetiredPlugins({ dryRun, settingsPath = path.join(getSyncDir(), 'claude_settings.json') } = {}) {
-  if (!fs.existsSync(settingsPath)) {
-    console.log(`SKIP  retired-plugin migration - claude_settings.json not found at ${settingsPath}`);
-    return [];
-  }
-  let settings;
-  try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { return []; }
-
-  const retired = [];
-  let changed = false;
-  const enabled = settings.enabledPlugins || (settings.enabledPlugins = {});
-  const allow = settings.permissions?.allow;
-
-  for (const { id, replacement, permPrefixes = [], addPerms = [] } of RETIRED_PLUGINS) {
-    const hasEntry = id in enabled;
-    const stalePerms = Array.isArray(allow) && allow.some(p => permPrefixes.some(pre => p.startsWith(pre)));
-    if (!hasEntry && !stalePerms) continue;
-
-    if (dryRun) {
-      console.log(`WOULD RETIRE  ${id}${replacement ? ` → ${replacement}` : ''} in claude_settings.json`);
-    } else {
-      if (hasEntry) delete enabled[id];
-      if (replacement && !(replacement in enabled)) enabled[replacement] = true;
-      if (Array.isArray(allow)) {
-        const kept = allow.filter(p => !permPrefixes.some(pre => p.startsWith(pre)));
-        for (const p of addPerms) if (!kept.includes(p)) kept.push(p);
-        settings.permissions.allow = kept;
-      }
-      changed = true;
-      console.log(`RETIRE  ${id}${replacement ? ` → ${replacement}` : ''} - swapped stale settings entries`);
-    }
-    retired.push(id);
-  }
-
-  if (changed && !dryRun) fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-  return retired;
-}
+// The implementation lives in gitignore-hygiene.js; this file only orchestrates it.
 
 // ── D. cc-market project migration ──
 
@@ -269,10 +197,6 @@ async function main() {
   const aliasRemoved = migrateOrphanedAliases({ dryRun });
   if (aliasRemoved.length === 0) console.log('OK    no orphaned CLI aliases');
 
-  console.log('\n--- Retired plugins ---');
-  const retired = migrateRetiredPlugins({ dryRun });
-  if (retired.length === 0) console.log('OK    no retired plugin entries in claude_settings.json');
-
   if (!dryRun) {
     console.log('\n--- Re-link & re-alias (current layout) ---');
     setup();
@@ -292,19 +216,10 @@ async function main() {
     if (mode === 'ai' && pending.length) {
       console.log('AI-EDIT REQUIRED — perform these merges now, do not stop after this run:');
       console.log('  Template block to splice into each .gitignore (one contiguous group):');
-      const template = [
-        '**/.claude/**',
-        '!**/.claude/settings.json',
-        '!**/.claude/agents/', '!**/.claude/agents/**',
-        '!**/.claude/skills/', '!**/.claude/skills/**',
-        '!**/.claude/commands/', '!**/.claude/commands/**',
-        '!**/.claude/workflows/', '!**/.claude/workflows/**',
-        '!**/.claude/output-styles/', '!**/.claude/output-styles/**',
-        '!**/.claude/rules/', '!**/.claude/rules/**',
-        '!**/.claude/memory/', '!**/.claude/memory/**',
-        '**/.claude/rules/MEMORY.md', '**/_meta.json',
-      ];
-      for (const l of template) console.log(`    ${l}`);
+      // Print the real template, not a copy of it. The hand-written duplicate that
+      // used to live here had already drifted — it was missing the `docs` re-includes —
+      // so the block it told the user to splice was wrong.
+      for (const l of CLAUDE_GITIGNORE_TEMPLATE) console.log(`    ${l}`);
       console.log('  Target files (merge template above with each repo\'s own rules, drop superseded managed lines):');
       for (const r of pending) console.log(`    - ${path.join(cwd, r, '.gitignore')}`);
       console.log('  After merging, run `git rm --cached` on any now-ignored tracked files in those repos.');

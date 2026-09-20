@@ -4,7 +4,6 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { fixLspWindows } from './fix-lsp-windows.js';
 import { checkMacNotify } from './check-mac-notify.js';
 import { installShellAliases } from './install-shell-aliases.js';
 import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
@@ -15,7 +14,6 @@ import {
   resolveSyncDir,
   syncDirSource,
   writeSyncDirPointer,
-  validateSyncDir,
   SYNC_PAYLOAD_FILES,
 } from '../shared/sync-dir.mjs';
 
@@ -560,9 +558,6 @@ export function setup(options = {}) {
     if (composed.strippedFromPayload) {
       console.log(`STRIP codex_config.toml — removed ${composed.strippedFromPayload} machine-written section(s) from the shared head (backup: codex_config.toml.pre-split-bak)`);
     }
-    if (composed.importedFromFleet) {
-      console.log(`KEEP  ~/.codex/config.toml — carried over ${composed.importedFromFleet} project-trust entr(y/ies) that exist on this host`);
-    }
     if (composed.droppedDeadPaths) {
       console.log(`DROP  ~/.codex/config.toml — discarded ${composed.droppedDeadPaths} project entr(y/ies) whose path does not exist here`);
     }
@@ -612,12 +607,9 @@ export function setup(options = {}) {
     }
   }
   // Note: plugin enablement + the cc-market marketplace live in claude_settings.template.json,
-  // which setup copies to claude_settings.json on a fresh install. Existing-install deltas
-  // (enabling a new plugin, retiring a merged one) are migrate's job — see
-  // skills/migrate/migrate.js `migrateRetiredPlugins()`. setup does not mutate enabledPlugins.
-
-  // Fix LSP commands on Windows (.cmd extension required)
-  fixLspWindows();
+  // which setup copies to claude_settings.json on a fresh install. setup does not mutate
+  // enabledPlugins — flipping a plugin on or off is a deliberate edit to the shared payload
+  // (or the template), not something setup or migrate should infer.
 
   // Check macOS notification helper
   if (process.platform === 'darwin') {
@@ -627,7 +619,7 @@ export function setup(options = {}) {
 
   // Install shell aliases
   console.log('\n--- Shell Aliases ---');
-  installShellAliases(claudeDir, sourceDir);
+  installShellAliases(claudeDir);
 
   console.log(`\nDone: ${counters.created} linked, ${counters.skipped} skipped, ${counters.errors} errors`);
 

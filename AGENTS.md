@@ -23,7 +23,12 @@
   refuses to seed a configured-but-empty dir, which would manufacture conflict copies.
   With no sync dir configured everything resolves inside the repo, exactly as before.
 - The working tree must NOT live inside a cloud-synced folder. See `docs/sync-architecture.md`.
-- `npm run migrate` - Bring `~/.claude`/`~/.codex` symlinks, retired-plugin settings entries (e.g. takeover→fabric), and the current project's `.claude/` (cc-market plugin files) up to the latest format. `npm run migrate -- --dry-run` previews link/settings changes without writing. See `/migrate` skill.
+- `npm run migrate` - Bring `~/.claude`/`~/.codex` symlinks, orphaned CLI aliases, and the
+  current project's `.claude/` (cc-market plugin files) up to the latest format.
+  `npm run migrate -- --dry-run` previews link/settings changes without writing. See `/migrate` skill.
+  It no longer touches `enabledPlugins`: the retired-plugin swap it used to perform
+  (`takeover` → `fabric`) can no longer match anything, since that plugin is gone from
+  cc-market and the settings file is shared by every host.
 
 ## Architecture
 Cross-platform Claude Code & Codex config sync. The working tree lives OUTSIDE any
@@ -32,7 +37,7 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
 — read it before touching anything path-related.
 
 ### Structure
-- `scripts/setup/`: `setup.js` (OS detection, symlinks), `install-shell-aliases.js` (per-host wrapper install), `check-links.js` (shared self-heal for setup links — invoked by `scripts/hooks/setup-check-hook.js` on SessionStart and by `codex.js` since Codex has no session hooks), `fix-lsp-windows.js` (Windows LSP `.cmd` patch), `check-mac-notify.js` (macOS notification helper), `setup-vscode.js` (VS Code provider switching)
+- `scripts/setup/`: `setup.js` (OS detection, symlinks), `install-shell-aliases.js` (per-host wrapper install + the login-shell alias source line on both PowerShell and POSIX), `check-links.js` (shared self-heal for setup links — invoked by `scripts/hooks/setup-check-hook.js` on SessionStart and by `codex.js` since Codex has no session hooks), `doctor.js` (the invariant checker — `npm run doctor`), `check-mac-notify.js` (macOS notification helper), `setup-vscode.js` (VS Code provider switching)
 - `skills/migrate/`: `/migrate` skill — `migrate.js` (orphaned symlink cleanup + cc-market plugin `.claude/` migrations) and tests
 - `scripts/runtime/`: `cc.js` / `codex.js` (provider launchers), `cc-launcher.mjs` / `codex-launcher.mjs` (pure env+args projection helpers), `aliases.sh`, `aliases.ps1`, `todo-launcher.mjs`, `traceme-launcher.mjs`
 - `scripts/shared/`: cross-host config helpers — `config.mjs` (`readMergedEnvSettings`, two-layer shared+local merge), `provider-keys.js` (single source of truth for the `ANTHROPIC_*` env-var strip list)
@@ -75,7 +80,7 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
   freshest tree — startup only, silent when current, refuses rather than merging when
   the host has its own unpushed commits; a successful pull also re-runs `checkLinks()`
   because a pull replaces the `claude-hud` hard link, §10 of `docs/sync-architecture.md`),
-  then `fix-lsp-windows.js`, `prune-cache-hook.js`, and `setup-check-hook.js`
+  then `prune-cache-hook.js`, `setup-check-hook.js`
   (verifies/heals `~/.claude` symlinks via `scripts/setup/check-links.js` — recreates
   missing links, converts the `claude-hud` config symlink to a hard link, warns on
   drifted plain files). `SessionEnd` runs `sync-hook.js --remind` (uncommitted /

@@ -90,7 +90,6 @@ test('a symlinked pre-split config keeps THIS host\'s trust entries, not the who
   });
 
   const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir });
-  assert.equal(r.importedFromFleet, 1);
   assert.equal(r.droppedDeadPaths, 1);
 
   const target = path.join(codexDir, 'config.toml');

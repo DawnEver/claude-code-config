@@ -1,7 +1,8 @@
 // scripts/shared/config.mjs — two-layer provider config read (shared + machine-local).
 //
-// claude_env_settings.json rides the OneDrive-synced repo, so every machine sees the same
-// provider blocks. Secrets (API keys) must NOT live there — each machine keeps its own in
+// claude_env_settings.json rides the SYNC PAYLOAD (see docs/sync-architecture.md §3), not
+// the repo, so every machine sees the same provider blocks. Secrets (API keys) must NOT
+// live there — each machine keeps its own in
 // `~/.claude/claude_env_settings.local.json`, a REAL machine-local dir (setup.js only
 // junctions specific children into the repo; the directory itself is per-machine and never
 // synced). This helper reads the shared file and deep-merges the local one on top (override
