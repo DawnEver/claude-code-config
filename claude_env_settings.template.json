@@ -9,7 +9,7 @@
             "models": {
                 "base": "deepseek-v4-flash[1m]",
                 "fable": "deepseek-v4-pro[1m]",
-                "opus": "deepseek-v4-flash-vision-exp[1m]"
+                "opus": "deepseek-v4-flash[1m]"
             }
         },
         "kimi": {

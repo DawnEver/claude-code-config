@@ -6,6 +6,7 @@
 // Exit 0 = healthy; 1 = cache broken (second run re-created the prefix).
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const [,, promptFile, ...rest] = process.argv;
 const toolsArg = rest.find((a, i) => a === "--tools" && rest[i + 1]);
@@ -26,10 +27,15 @@ function claudeBin() {
   // Prefer the native claude.exe (no shell needed; .cmd shims are EINVAL for
   // Node ≥20.12 without shell:true). Resolve from PATH like claude.cmd does.
   if (process.env.CLAUDE_EXE) return process.env.CLAUDE_EXE;
+  if (process.platform !== "win32") return "claude";
+  // The npm-global layout, derived from this process's own node rather than written out
+  // as an absolute path: the previous literal ("C:/Users/linxu/nodejs/...") was both a
+  // machine path in a tracked file and wrong for every other host. Deliberately NOT
+  // realpath'd — under nvm the bin dir is a symlink, and this wants the sibling
+  // node_modules, which sits next to the link rather than its target.
   const candidates = [
-    process.platform === "win32"
-      ? "C:/Users/linxu/nodejs/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
-      : "claude",
+    join(dirname(process.execPath), "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"),
+    "claude",
   ];
   return candidates.find((c) => existsSync(c)) ?? "claude";
 }

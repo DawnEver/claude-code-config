@@ -46,6 +46,24 @@ import {
  */
 export const LOCAL_SECTION_PREFIXES = ['projects', 'notice', 'hooks.state'];
 
+// `[marketplaces.<id>]` mixes configuration with runtime state and is deliberately NOT
+// split, which is worth spelling out because it looks like an oversight:
+//
+//   source_type / source   configuration — a fresh host needs it to know where the
+//                          marketplace comes from
+//   last_updated           state — when THIS host last refreshed it
+//   last_revision          state — the revision THIS host is at
+//
+// Claiming the whole table as local would strip the source config a new host needs, which
+// is the same mistake the `hooks` note above records. Splitting it per KEY is not
+// available either: the partitioner works per table, so the state lines would land in the
+// local text without their `[marketplaces.*]` header and be re-emitted under whatever
+// table precedes them — valid-looking TOML with the wrong meaning.
+//
+// So the state is shared. The cost is bounded: a host may believe the marketplace is at a
+// revision it is not, and Codex re-checks. A correct fix needs a per-key local channel
+// that re-emits the header with the retained keys — worth doing only if this ever bites.
+
 /** Tables owned by the generator; never shared, even if found outside the markers. */
 const GENERATED_PREFIXES = ['model_providers'];
 

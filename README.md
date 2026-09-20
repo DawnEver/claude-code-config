@@ -88,7 +88,7 @@ wire formats, so no `wire_api` value can bridge them — use `ccgmi`, not a Code
       "models": {
         "base":  "deepseek-v4-flash[1m]",
         "fable": "deepseek-v4-pro[1m]",
-        "opus":  "deepseek-v4-flash-vision-exp[1m]"
+        "opus":  "deepseek-v4-flash[1m]"
       }
     }
   }
@@ -98,6 +98,10 @@ wire formats, so no `wire_api` value can bridge them — use `ccgmi`, not a Code
 URL and the API key (from `~/.claude/claude_env_settings.local.json`) are
 declared **once**. `cc.js` and `codex.js` read the same block and project to
 their binary's env/args.
+
+> A role may deliberately repeat `base` (`deepseek` sets `opus` to the same slug).
+> The generated Codex catalogue is deduplicated by slug, so this provider yields
+> **6 entries, not 7** — that is intended, not a generator bug.
 
 Add a provider by adding a `providers.<name>` block and (optionally) an alias
 entry in `scripts/setup/install-shell-aliases.js`. See

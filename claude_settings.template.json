@@ -154,5 +154,11 @@
             "$defaults"
         ]
     },
-    "autoCompactWindow": 720000
+    "autoCompactWindow": 720000,
+    "model": "opus[1m]",
+    "modelSettings": {
+        "claude-opus-5": {
+            "effortLevel": "low"
+        }
+    }
 }

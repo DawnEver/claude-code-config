@@ -43,27 +43,35 @@ export function looksLikeBrokenGuard(line) {
 }
 
 /** Absolute machine paths that must not appear in a file shared across hosts. */
+export const ABSOLUTE_PATH_PATTERNS = [
+  // A drive letter must be preceded by a boundary. Without that, `[A-Za-z]:[\/]`
+  // matches the `v:/` in `env:/` and the `s:/` in `https://`, which is most of
+  // what this check would otherwise report.
+  { re: /(?:^|[\s"'(=:,])[A-Za-z]:[\\/]/, what: 'drive-letter path' },
+  { re: /(?:^|[^\w])\/Users\/[A-Za-z0-9._-]+/, what: 'macOS home path' },
+  { re: /(?:^|[^\w])\/home\/[A-Za-z0-9._-]+/, what: 'Linux home path' },
+];
+
+/** Which kinds of machine path this string holds, if any. */
+export function absolutePathKinds(value) {
+  if (typeof value !== 'string') return [];
+  return ABSOLUTE_PATH_PATTERNS.filter(({ re }) => re.test(value)).map((p) => p.what);
+}
+
+/** Every string in a parsed JSON tree, with the key path that reaches it. */
+export function walkStrings(node, keyPath = []) {
+  if (typeof node === 'string') return [{ keyPath, value: node }];
+  if (!node || typeof node !== 'object') return [];
+  return Object.entries(node).flatMap(([k, v]) => walkStrings(v, [...keyPath, k]));
+}
+
 export function findAbsolutePaths(text) {
   const hits = [];
-  const patterns = [
-    // A drive letter must be preceded by a boundary. Without that, `[A-Za-z]:[\/]`
-    // matches the `v:/` in `env:/` and the `s:/` in `https://`, which is most of
-    // what this check would otherwise report.
-    { re: /(?:^|[\s"'(=:,])[A-Za-z]:[\\/]/g, what: 'drive-letter path' },
-    { re: /(?:^|[^\w])\/Users\/[A-Za-z0-9._-]+/g, what: 'macOS home path' },
-    { re: /(?:^|[^\w])\/home\/[A-Za-z0-9._-]+/g, what: 'Linux home path' },
-  ];
   const lines = text.split(/\r?\n/);
   lines.forEach((line, i) => {
     if (/^\s*(?:\/\/|#)/.test(line)) return;            // a comment is not a value
-    const matched = [];
-    for (const { re, what } of patterns) {
-      re.lastIndex = 0;
-      if (re.test(line)) matched.push(what);
-    }
-    if (matched.length) {
-      hits.push({ line: i + 1, what: matched.join(" + "), text: line.trim().slice(0, 120) });
-    }
+    const kinds = absolutePathKinds(line);
+    if (kinds.length) hits.push({ line: i + 1, what: kinds.join(' + '), text: line.trim().slice(0, 120) });
   });
   return hits;
 }
@@ -127,6 +135,26 @@ export function checkPayloadPaths(syncDir, files = SYNC_PAYLOAD_FILES) {
     if (!fs.existsSync(p)) continue;
     let text;
     try { text = fs.readFileSync(p, 'utf8'); } catch { continue; }
+
+    // JSON payloads are inspected value-by-value rather than line-by-line, so a compact
+    // file cannot hide a violation behind a formatting accident and a byHost exemption
+    // cannot leak onto a neighbouring value that merely shares the line.
+    if (name.endsWith('.json')) {
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { continue; }   // reported by checkPayloadShape
+      for (const { keyPath, value } of walkStrings(parsed)) {
+        const kinds = absolutePathKinds(value);
+        if (!kinds.length) continue;
+        const exempt = keyPath.includes('byHost');
+        out.push(finding(exempt ? 'WARN' : 'FAIL', exempt ? 'payload-host-keyed-path' : 'payload-abs-path',
+          `${name} ${keyPath.join('.')} has a ${kinds.join(' + ')}${exempt ? ', under a byHost override' : ''}`,
+          exempt
+            ? `${value} — read only by the host it names, so it cannot be wrong elsewhere; move it to that host's claude_env_settings.local.json to get it out of the shared file`
+            : `${value} — this file syncs to every host, so no host's path may appear in it`));
+      }
+      continue;
+    }
+
     for (const hit of findAbsolutePaths(text)) {
       out.push(finding('FAIL', 'payload-abs-path', `${name}:${hit.line} has a ${hit.what}`,
         `${hit.text} — this file syncs to every host, so no host's path may appear in it`));

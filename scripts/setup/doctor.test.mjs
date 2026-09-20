@@ -106,6 +106,45 @@ test('a clean payload passes', () => {
   assert.deepEqual(checkPayloadPaths(dir, ['x.json']), []);
 });
 
+// The invariant is "no value that would be WRONG on another host", not "no absolute path
+// ever". A path under byHost.<hostname> is read only by the host it names, so it cannot be
+// wrong elsewhere — failing on it would enforce a rule stricter than the design.
+test('a path under a byHost override is reported, but is not a failure', () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
+    serve: { byHost: { ws1: { projects: { p: 'D:/work/thing' } } } },
+  }));
+  const out = checkPayloadPaths(dir, ['x.json']);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].level, 'WARN');
+  assert.equal(out[0].id, 'payload-host-keyed-path');
+});
+
+test('a path outside byHost in the same file is still a failure', () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
+    shared: { p: 'C:/Users/someone/thing' },
+    serve: { byHost: { ws1: { projects: { p: 'D:/work/thing' } } } },
+  }));
+  const out = checkPayloadPaths(dir, ['x.json']);
+  const levels = out.map((f) => f.level).sort();
+  assert.deepEqual(levels, ['FAIL', 'WARN']);
+});
+
+// Values are inspected through the parsed tree, so a compact file cannot hide a violation
+// behind a formatting accident — nor can a byHost exemption leak onto a value that merely
+// shares the line.
+test('the check is independent of JSON formatting', () => {
+  const pretty = tmp(); const compact = tmp();
+  const data = { shared: { p: 'C:/Users/someone/thing' }, serve: { byHost: { a: { p: 'D:/ok' } } } };
+  fs.writeFileSync(path.join(pretty, 'x.json'), JSON.stringify(data, null, 2));
+  fs.writeFileSync(path.join(compact, 'x.json'), JSON.stringify(data));
+  const a = checkPayloadPaths(pretty, ['x.json']).map((f) => f.level).sort();
+  const b = checkPayloadPaths(compact, ['x.json']).map((f) => f.level).sort();
+  assert.deepEqual(a, b);
+  assert.deepEqual(a, ['FAIL', 'WARN']);
+});
+
 // The 2026-08-29 incident in miniature: the payload kept an old shape, nothing
 // compared it to the template, and the generator emitted an empty catalogue.
 test('a payload missing a key its template declares is a FAIL', () => {

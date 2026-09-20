@@ -83,7 +83,7 @@ binary:
       "models": {                                //   single source of truth for the model set
         "base":  "deepseek-v4-flash[1m]",        //     → ANTHROPIC_MODEL (+ codex --model, minus [1m])
         "fable": "deepseek-v4-pro[1m]",          //     → ANTHROPIC_DEFAULT_FABLE_MODEL
-        "opus":  "deepseek-v4-flash-vision-exp[1m]"  // → ANTHROPIC_DEFAULT_OPUS_MODEL
+        "opus":  "deepseek-v4-flash[1m]"  // → ANTHROPIC_DEFAULT_OPUS_MODEL
         // optional per-class keys: sonnet / haiku / subagent / codex — else derived from base
       }
     }
