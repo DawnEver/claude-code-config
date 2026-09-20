@@ -10,7 +10,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, dirname, parse } from "node:path";
 import { homedir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { isMain } from "../scripts/shared/is-main.mjs";
 
 const DEFAULT_SEARCH_DIRS = () => {
   const dirs = [join(homedir(), ".claude", "output-styles")];
@@ -74,7 +74,7 @@ export function discoverStyles(searchDirs = DEFAULT_SEARCH_DIRS()) {
   return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   const styles = discoverStyles();
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(styles, null, 2));

@@ -10,6 +10,12 @@
 - `npm run setup` - Initial setup
 - `node scripts/setup/setup.js` - Manual setup
 - Re-run setup to verify (checks existing symlinks)
+- `npm run doctor` - Read-only invariant check. Every check maps to an incident that
+  actually happened here (a hook wired but silently dead, payload/template shape drift,
+  absolute machine paths in shared files, orphaned plugin installs, NUL bytes making a
+  file binary to git). Exits 1 on failure; also runs at SessionStart via `--hook`,
+  which reports failures only and is silent when healthy. Add a check here whenever a
+  new silent-divergence incident is found — that is the point of the file.
 - **Multi-machine only:** `node scripts/setup/setup.js --sync-dir "<path>"` points this
   host at the shared config payload and records `~/.claude/sync-dir`. Add
   `--init-sync-dir` on the FIRST machine to seed an empty payload dir from the templates;
@@ -90,6 +96,13 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
 - `~/.codex/` links to repo for sync
 
 ### Standard
+- **A script that is also a module must gate its entry point with `isMain(import.meta.url)`
+  from `scripts/shared/is-main.mjs` — never `process.argv[1] === fileURLToPath(import.meta.url)`.**
+  Node realpaths a module but not `argv[1]`, and every hook here is launched through the
+  `~/.claude/scripts` link, so the naive comparison is always false in production: the body
+  never runs and the process exits 0 in silence. That bug shipped twice — it disabled
+  `loop-guard-hook.js` for two days and made `SETUP_FIX_CMD` a no-op. `npm run doctor` fails
+  on any recurrence.
 - After changes, update README and `setup.js` if needed
 - **A skill's execution knowledge goes in its `SKILL.md` / `reference/*.md`, never in `rules/*` or `AGENTS.md`/`CLAUDE.md`.** At runtime a skill sees only its own files and the host project's config — never this repo's rules/`AGENTS.md`.
 - Plugin development, tests, and marketplace conventions → see `cc-market/AGENTS.md`

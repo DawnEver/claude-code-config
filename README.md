@@ -185,6 +185,7 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 | `SessionStart` | `fix-lsp-windows.js` | Windows-only: patches LSP binary names in `marketplace.json` to append `.cmd` |
 | `SessionStart` | `prune-cache-hook.js` | Prunes stale plugin cache entries on session start |
 | `SessionStart` | `setup-check-hook.js` | Self-heal: verifies/heals `~/.claude` symlinks via `scripts/setup/check-links.js` (recreates missing links, converts the `claude-hud` config symlink to a hard link, warns on drifted plain files) |
+| `SessionStart` | `doctor.js --hook` | Reports failing invariants only (silent when healthy, ~100ms). See Health check below |
 | `SessionEnd` | `sync-hook.js --remind` | Reports uncommitted files / unpushed commits in this repo. Pushing stays explicit — see `.claude/memory/2026/06/06/feedback-no-auto-push.md` |
 | `Notification` | `notify-hook.js` | Native OS notification |
 | `Stop` | `sharp-review` plugin | Post-task sharp review (3 parallel reviewers) |
@@ -193,6 +194,35 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 The `rem` and `sharp-review` plugins (Stop hooks for memory consolidation and code review) are auto-registered via `enabledPlugins` — this is set on **fresh install** (the template `claude_settings.template.json` is copied to `claude_settings.json` on first run). Existing installs pick up plugin enablement deltas via `npm run migrate`.
 
 The REM hook gates on session depth (>= 2 stops, >= 2 min). Runs `/rem` skill. State tracked in `.claude/.rem-state.json`.
+
+### Health check
+
+```bash
+npm run doctor          # full report; exits 1 if any invariant fails
+npm run doctor -- --json
+```
+
+Every incident this repo has had is the same shape: an intended state and an actual state
+diverged and nothing noticed. A hook was wired but its entry guard silently never fired; the
+payload drifted from its template and a generator emitted an empty catalogue instead of an
+error; a doc described hooks the config no longer wired; an invariant the design named in
+prose ("no absolute path in a shared file") was enforced nowhere.
+
+`scripts/setup/doctor.js` turns each of those into a check that fails loudly, so the class
+cannot recur silently. It is read-only. Checks:
+
+| Check | The failure it catches |
+|---|---|
+| Wired hooks resolve and have a live entry guard | A hook that exits 0 doing nothing — indistinguishable from "nothing to report" |
+| No absolute machine path in the payload or in tracked code | A path from one host shipping to all of them |
+| Payload top-level shape vs its template | The stale-shape drift that produced an empty model catalogue |
+| Link table vs what is on disk | A link entry whose source or destination has gone |
+| Plugin inventory: enabled vs installed | Enabled-but-absent, and orphans whose marketplace no longer exists |
+| No NUL bytes / no broken entry guards in source | A file git calls binary (unreviewable diffs, invisible to ripgrep) |
+
+It is wired into `SessionStart` as `--hook`, which reports **failures only** and stays silent
+when healthy. Warnings are informational — the dormant-plugin list is never empty — and a
+notice that appears every session regardless trains the reader to ignore it.
 
 ### Syncing this repo across hosts
 

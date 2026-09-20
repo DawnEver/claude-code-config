@@ -13,7 +13,8 @@
 // or just re-clone). Default repo path: .scratch/piebald under this repo.
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isMain } from "../scripts/shared/is-main.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = join(HERE, "..", ".scratch", "piebald");
@@ -90,7 +91,7 @@ function sync(repoPath = DEFAULT_REPO) {
   console.log(`\nWrote absorption list → ${CHANGELOG} (${interesting.length} relevant, ${trivia.length} trivia)`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   const idx = process.argv.indexOf("--repo");
   sync(idx > 0 && process.argv[idx + 1] ? process.argv[idx + 1] : DEFAULT_REPO);
 }

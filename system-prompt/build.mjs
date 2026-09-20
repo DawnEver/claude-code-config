@@ -7,8 +7,9 @@
 // (no cwd/env/git-status/time leaks — those break cross-process prompt cache).
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { discoverStyles, parseFrontmatter } from "./discover-styles.mjs";
+import { isMain } from "../scripts/shared/is-main.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BASE = join(HERE, "claude-base.md");
@@ -59,6 +60,6 @@ export function buildAll(styleNames = []) {
   return registry;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMain(import.meta.url)) {
   buildAll(process.argv.slice(2));
 }

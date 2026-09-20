@@ -10,6 +10,7 @@ import { installShellAliases } from './install-shell-aliases.js';
 import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
+import { isMain } from '../shared/is-main.mjs';
 import {
   resolveSyncDir,
   syncDirSource,
@@ -636,6 +637,10 @@ export function setup(options = {}) {
   return counters;
 }
 
-if (path.resolve(process.argv[1] || '') === path.resolve(__dirname, 'setup.js')) {
+// isMain realpaths both sides. A plain path comparison is false whenever this is
+// invoked through the ~/.claude/scripts link — which is exactly how SETUP_FIX_CMD
+// (check-links.js) tells the user to run it, so the self-heal advice would be a
+// silent no-op. See scripts/shared/is-main.mjs.
+if (isMain(import.meta.url)) {
   setup(parseSetupArgs(process.argv.slice(2)));
 }

@@ -73,6 +73,11 @@
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/setup-check-hook.js",
                         "timeout": 5
+                    },
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/setup/doctor.js --hook",
+                        "timeout": 10
                     }
                 ]
             }
