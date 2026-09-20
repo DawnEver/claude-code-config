@@ -201,12 +201,15 @@ All hook scripts live in `scripts/hooks/` and are configured in `claude_settings
 | `SessionStart` | `doctor.js --hook` | Reports failing invariants only (silent when healthy, ~100ms). See Health check below |
 | `SessionEnd` | `sync-hook.js --remind` | Reports uncommitted files / unpushed commits in this repo. Pushing stays explicit — see `.claude/memory/2026/06/06/feedback-no-auto-push.md` |
 | `Notification` | `notify-hook.js` | Native OS notification |
-| `Stop` | `sharp-review` plugin | Post-task sharp review (3 parallel reviewers) |
+| `PreToolUse` (`*`) | `loop-guard-hook.js` | Anti-spin guard: hashes each `(tool, normalized input)` in a sliding window and escalates on exact repeats and near-duplicates. Warns on the 3rd identical call, denies from the 4th. Every knob is an env var — see `DEFAULTS` in the hook |
+| `Stop` | `sharp-review` plugin | Wave-gated review trigger — fires `/sharp-review` once the diff crosses the wave's line/file threshold. See `docs/providers.md` |
 | `statusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 
-The `rem` and `sharp-review` plugins (Stop hooks for memory consolidation and code review) are auto-registered via `enabledPlugins` — this is set on **fresh install** (the template `claude_settings.template.json` is copied to `claude_settings.json` on first run). Existing installs pick up plugin enablement deltas via `npm run migrate`.
+All hook scripts live in `scripts/hooks/`; `doctor.js` lives in `scripts/setup/` because it is also a setup-time command.
 
-The REM hook gates on session depth (>= 2 stops, >= 2 min). Runs `/rem` skill. State tracked in `.claude/.rem-state.json`.
+The `rem`, `sharp-review`, `evolve`, `traceme` and `fabric` plugins are enabled via `enabledPlugins`. That list is set on **fresh install** (the template `claude_settings.template.json` is copied to `claude_settings.json` on first run) and is otherwise a deliberate edit to the shared payload — `npm run migrate` does **not** enable plugins for you.
+
+The REM hook gates on session depth (>= 3 stops, >= 2 min). Runs `/rem` skill. State tracked in `.claude/.rem-state.json`.
 
 ### Health check
 
@@ -296,9 +299,9 @@ claude --bare --model haiku "please read ~/.claude/CLAUDE.md to test claude perm
 
 `.gitignore` uses a `**/.claude/**` pattern with `!.claude/rules/` and `!.claude/memory/` exceptions — content is git-tracked, but the per-device `MEMORY.md` indexes and `_meta.json` files are gitignored so each machine's view of the archive is independent.
 
-After a session, add entries to `.claude/memory/YYYY/MM/DD/<topic>.md` and prepend a one-line pointer to `MEMORY.md` (keep >= 20 entries, newest-first). If the session changed project architecture or setup, update `AGENTS.md` too.
+After a session, add entries to `.claude/memory/YYYY/MM/DD/<topic>.md` and prepend a one-line pointer to `MEMORY.md` (newest-first). If the session changed project architecture or setup, update `AGENTS.md` too.
 
-When `MEMORY.md` hits 20 entries, the REM hook triggers a **crystallize**: distill all memory into `.claude/rules/` rule files, then clear the index. Memory files are never deleted.
+The `MEMORY.md` index is bounded, not capped: the injected hot set is the long-term entries plus the newest 60 short-term ones (`HOT_SHORT_MAX`), and `MAX_ENTRIES = 20` survives only as a legacy advisory value. At `CATALOG_ADVISORY_MAX` (400 entries in the full catalogue) the store is large enough that a **crystallize** is recommended — but that is a checked, user-gated step inside `/rem`, not something a hook fires. Crystallizing distills memory into `.claude/rules/`; memory files are never deleted.
 
 ## Remote Control
 

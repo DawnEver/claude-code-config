@@ -39,15 +39,24 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
 ### Structure
 - `scripts/setup/`: `setup.js` (OS detection, symlinks), `install-shell-aliases.js` (per-host wrapper install + the login-shell alias source line on both PowerShell and POSIX), `check-links.js` (shared self-heal for setup links — invoked by `scripts/hooks/setup-check-hook.js` on SessionStart and by `codex.js` since Codex has no session hooks), `doctor.js` (the invariant checker — `npm run doctor`), `check-mac-notify.js` (macOS notification helper), `setup-vscode.js` (VS Code provider switching)
 - `skills/migrate/`: `/migrate` skill — `migrate.js` (orphaned symlink cleanup + cc-market plugin `.claude/` migrations) and tests
-- `scripts/runtime/`: `cc.js` / `codex.js` (provider launchers), `cc-launcher.mjs` / `codex-launcher.mjs` (pure env+args projection helpers), `aliases.sh`, `aliases.ps1`, `todo-launcher.mjs`, `traceme-launcher.mjs`
-- `scripts/shared/`: cross-host config helpers — `config.mjs` (`readMergedEnvSettings`, two-layer shared+local merge), `provider-keys.js` (single source of truth for the `ANTHROPIC_*` env-var strip list)
+- `scripts/runtime/`: `cc.js` / `codex.js` (provider launchers), `cc-launcher.mjs` / `codex-launcher.mjs` (pure env+args projection helpers — reused by `setup-vscode.js` so the two hosts cannot drift), `aliases.sh` / `aliases.ps1` (sourced from the login shell; `install-shell-aliases.js` writes the source line on both PowerShell and POSIX), `plugin-launcher.mjs` (resolves a plugin script inside the installed cache, used by the `todo`/`traceme` launchers), `win-spawn.mjs` (the Windows spawn shim), `todo-launcher.mjs`, `traceme-launcher.mjs`
+- `scripts/shared/`: cross-host config helpers — `config.mjs` (`readMergedEnvSettings`, two-layer shared+local merge), `provider-keys.js` (single source of truth for the `ANTHROPIC_*` env-var strip list), `sync-dir.mjs` (resolves the payload dir: `$CLAUDE_SYNC_DIR` → `~/.claude/sync-dir` → repo root, and defines `SYNC_PAYLOAD_FILES`), `is-main.mjs` (the entry-point guard every script that is also a module must use — see Standard)
 - ~~`scripts/migration/`~~: retired 2026-08-30 — all three hosts are on the split layout, so the one-time tooling (`migrate-host.mjs`, `rescue-clone.mjs`, the runbook, and the payload bootstrap copies) was archived to `.claude/memory/2026/08/30/.archive/`. See `.claude/memory/2026/08/30/host-migration-retired.md`; `docs/sync-architecture.md` still documents the layout itself.
 - `scripts/hooks/`: `loop-guard-hook.js` (PreToolUse anti-spin guard — see Workflows),
-  `notify-hook.js` (cross-platform notifications), `hud-hook.js`, `setup-check-hook.js` (SessionStart: verifies/heals setup links — recreates missing links, converts claude-hud config symlink→hard link, warns on drifted plain files with the `--replace` fix command; shared logic in `scripts/setup/check-links.js`, also run by `codex.js` since Codex has no session hooks)
+  `sync-hook.js` (`--pull` on SessionStart, `--remind` on SessionEnd — see Workflows),
+  `prune-cache-hook.js` (SessionStart: drops stale plugin-cache versions),
+  `notify-hook.js` (cross-platform notifications), `hud-hook.js` (statusLine),
+  `setup-check-hook.js` (SessionStart: verifies/heals setup links — recreates missing links,
+  converts claude-hud config symlink→hard link, warns on drifted plain files with the
+  `--replace` fix command; shared logic in `scripts/setup/check-links.js`, also run by
+  `codex.js` since Codex has no session hooks)
 - `system-prompt/`: per-host platform prompts (`claude-base.md`, `codex-base.md`). Linked to `~/.claude/system-prompt` and `~/.codex/system-prompt` so `fabric.systemPromptFile` / `codex_config.toml model_instructions_file` resolve through a per-host junction, not a hardcoded OneDrive path. See `.claude/memory/2026/08/11/system-prompt-paths-symlink.md`.
-- `cc-market/sharp-review/`: Sharp review plugin — hook, skill, workflow, findings sync (`post-review.js`)
-- `cc-market/rem/`: REM plugin — memory lifecycle, task management engine (`task-engine.js`), `/rem` and `/todo` skills
-- `skills/`: Custom skills — symlinked to both `~/.claude/skills` and `~/.codex/skills`. Add new skills here as `skills/<name>/SKILL.md`; they are picked up automatically on both hosts.
+- `cc-market/`: the plugin marketplace (gitignored, its own repo — `DawnEver/cc-market`, cloned by setup). Five of its plugins are enabled and load-bearing here: `rem` (memory lifecycle, task engine `task-engine.js`, `/rem` + `/todo`), `sharp-review` (post-task review: hook, skill, workflow, findings sync via `post-review.js`), `evolve` (iterative review→fix loop), `traceme` (token/cost observability), `fabric` (multi-provider sessions and handoff). Three more are dormant — `watch`, `cc-latex`, `cc-academia` — installed or present but not enabled. See `cc-market/AGENTS.md`
+- `skills/`: Custom skills (`git-tidy`, `migrate`) — the whole dir is symlinked to
+  `~/.claude/skills`. Codex needs each skill linked **individually**
+  (`discoverCodexSkillLinks()` in setup.js, because `~/.codex/skills` also holds Codex's own
+  built-in `.system` skills and cannot be replaced wholesale). Add new skills here as
+  `skills/<name>/SKILL.md`; they are picked up automatically on both hosts.
   Account-level synced skills (`anthropic-skills:*`) are OFF — `syncClaudeAiSkills: false`
   in `claude_settings.json` — otherwise the CLI downloads them into `~/.claude/skills/synced`,
   i.e. straight into this repo. `.gitignore` carries `skills/synced/` as a backstop.
@@ -72,7 +81,7 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
 - `cods` — Codex launcher (DeepSeek), same `providers.<name>` block. `claude_env_settings.json` is the single source of truth for both hosts — see `docs/providers.md`. GMI is Claude-only (Anthropic protocol); there is no `cogmi`.
 - `todo` — Task management: `todo` (list), `todo <text>` (add), `todo rm <id>` (remove), `todo help`
 - `traceme` — Personal observability: token/cost reports, multi-device sync
-- `aliases.ps1` / `aliases.sh` — Shell integration; `setup.js` installs `.cmd` wrappers on Windows. Wrappers land next to the matching host binary (`ccc*` next to `claude`, `co*` next to `codex`); on a single-host install the other host's wrappers are skipped. `todo`/`traceme` go to whichever host's bin dir is on PATH (or to `codex`'s dir on a Codex-only install).
+- `aliases.ps1` / `aliases.sh` — Shell integration; `setup.js` installs `.cmd` wrappers on Windows and no-extension `sh` wrappers elsewhere, and writes the matching source line into the PowerShell profile or `~/.zshrc`/`~/.bashrc`. Wrappers land next to the matching host binary (`ccc*` next to `claude`, `cods` next to `codex`); on a single-host install the other host's wrappers are skipped. `todo`/`traceme` go to whichever host's bin dir is on PATH (or to `codex`'s dir on a Codex-only install).
 
 ### Workflows
 - Hooks wired in `claude_settings.json`: `SessionStart` runs `sync-hook.js --pull`

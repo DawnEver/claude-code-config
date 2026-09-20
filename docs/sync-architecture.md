@@ -60,7 +60,7 @@ Transport: `git pull` / `git push`. Nothing else.
 | File | Why it can't be in git | Why it must be shared |
 | --- | --- | --- |
 | `claude_settings.json` | env vars, permissions, hook wiring — historically secret-bearing | one settings surface across machines |
-| `claude_env_settings.json` | non-secret provider config (base URLs, model pins) | `providers.<name>` is the single source of truth for both `cc*` and `co*` launchers |
+| `claude_env_settings.json` | non-secret provider config (base URLs, model pins) | `providers.<name>` is the single source of truth for both the `cc*` and `cods` launchers |
 | `codex_config.toml` | host-tuned Codex config (model, sandbox, TUI) | same — **but only its hand-edited head**, see below |
 
 These are small, hand-edited, rarely written concurrently, and contain no `.git`, no
@@ -171,7 +171,7 @@ Tier B file still sitting in the repo into it (never copies — two copies of
 GitHub: DawnEver/claude-code-config
    │  git pull / push
    ▼
-~/Documents/Code/AI/cc-config/            ← working tree + .git, NEVER cloud-synced
+<repo>/                ← working tree + .git, NEVER cloud-synced
    ├── scripts/ skills/ system-prompt/ …      (Tier A)
    └── models.json                            (Tier D, generated, gitignored)
 
@@ -185,16 +185,16 @@ GitHub: DawnEver/claude-code-config
    ├── claude_env_settings.local.json        (Tier C: API keys)
    ├── settings.json              -> <cloud>/Sync/cc-config/claude_settings.json
    ├── claude_env_settings.json   -> <cloud>/Sync/cc-config/claude_env_settings.json
-   ├── CLAUDE.md                  -> ~/Documents/Code/AI/cc-config/GLOBAL-AGENTS.md
-   ├── skills/ scripts/ output-styles/ system-prompt/  -> ~/Documents/Code/AI/cc-config/…
-   └── keybindings.json           -> ~/Documents/Code/AI/cc-config/keybindings.json
+   ├── CLAUDE.md                  -> <repo>/GLOBAL-AGENTS.md
+   ├── skills/ scripts/ output-styles/ system-prompt/  -> <repo>/…
+   └── keybindings.json           -> <repo>/keybindings.json
 
 ~/.codex/
    ├── config.toml                COMPOSED real file (shared head + generated + local)
-   ├── models.json                -> ~/Documents/Code/AI/cc-config/models.json
-   ├── AGENTS.md                  -> ~/Documents/Code/AI/cc-config/GLOBAL-AGENTS.md
-   ├── system-prompt/             -> ~/Documents/Code/AI/cc-config/system-prompt
-   └── skills/<name>/             -> ~/Documents/Code/AI/cc-config/skills/<name>  (per-skill)
+   ├── models.json                -> <repo>/models.json
+   ├── AGENTS.md                  -> <repo>/GLOBAL-AGENTS.md
+   ├── system-prompt/             -> <repo>/system-prompt
+   └── skills/<name>/             -> <repo>/skills/<name>  (per-skill)
 ```
 
 With `resolveSyncDir()` returning the repo root (the no-cloud default), this collapses
@@ -295,47 +295,10 @@ no-cloud user (`syncDir === repoRoot`) still materializes them there.
 
 ## 8. Migration runbook
 
-### This machine (macOS, done first)
-1. `git clone https://github.com/DawnEver/claude-code-config.git ~/Documents/Code/AI/cc-config` ✅
-2. Create `<OneDrive>/Sync/cc-config/`, **move** the 3 Tier B files there.
-3. Implement §6 on the new clone; `npm test`; commit; push.
-4. `node scripts/setup/setup.js --sync-dir "<OneDrive>/Sync/cc-config" --replace`
-5. Verify every `~/.claude` / `~/.codex` link resolves to `~/Documents/Code/AI/cc-config`
-   or `<OneDrive>/Sync/cc-config` — and **nothing** to `<OneDrive>/Sync/claude`.
-6. Smoke-test `ccc`, `ccds`, `cods`, `todo`.
-
-`<OneDrive>/Sync/claude/` is left in place for now, deliberately: it is the rollback
-and it still holds the other machines' state until they migrate. It must be deleted
-only after step 7 completes everywhere, because while it exists it keeps replicating a
-poisoned `.git` between hosts.
-
-### Each other machine (G, WS1/`duip622037`)
-1. Let OneDrive settle, confirm `<OneDrive>/Sync/cc-config/` has arrived **with all
-   three files**. Do not run setup against an empty payload dir — it now refuses, but
-   check anyway.
-2. `git clone … ~/Documents/Code/AI/cc-config` (Windows: any non-synced path).
-3. `node scripts/setup/setup.js --sync-dir "<OneDrive>/Sync/cc-config" --replace`
-4. Confirm `~/.claude/claude_env_settings.local.json` still holds that host's API keys
-   (it is Tier C — untouched by the migration, but verify before deleting anything).
-5. **Stop using `<OneDrive>/Sync/claude` immediately.** Before that host forgets, check
-   `git -C "<OneDrive>/Sync/claude/cc-market" status` for unpushed plugin work and push it.
-6. Smoke-test the launchers.
-
-### cc-market
-`cc-market/` is its own git repo (`DawnEver/cc-market`), gitignored here and cloned by
-setup into the repo dir. It therefore moves with the working tree automatically, and
-`npm run setup` clones it fresh at the new location.
-
-It also matters for teardown: `setup.js` runs `git pull --ff-only` inside
-`<sourceDir>/cc-market` on every run. So an un-migrated host keeps invoking git against a
-cloud-replicated `.git` — the same failure mode this document exists to stop, just for
-cc-market instead of the config repo. Plugin development happens there, so it holds real
-uncommitted work. **Delete `<OneDrive>/Sync/claude/cc-market` first, not last.**
-
-### Step 7 — teardown, only when all hosts are done
-Delete `<OneDrive>/Sync/claude/`. Until then it is *not* inert: any host that still runs
-setup from it keeps exercising git inside a synced directory (see cc-market above). The
-old dir is the rollback, but it is a rollback with a running cost.
+Retired 2026-09-20 — the migration is complete on all three hosts and the legacy
+`<OneDrive>/Sync/claude/` directory has been deleted. The runbook is preserved in
+`.claude/memory/2026/09/20/sync-migration-runbook-retired.md`; what remains relevant to a
+reader of this document is § 3–5, which describe the layout itself.
 
 ## 9. Rollback
 
@@ -349,8 +312,6 @@ rolling back before step 7.
 - **Two hosts editing the same Tier B file between syncs** still produces an OneDrive
   conflict copy. Unlike an `.git/index` conflict this is visible, recoverable, and
   affects one small JSON file. Accepted.
-- **A host that never migrates** keeps writing into `<OneDrive>/Sync/claude` and keeps
-  the old breakage alive for itself. The runbook must be completed on all three.
 - **Hard links.** `claude-hud`'s `config.json` must be a hard link (it rejects symlinked
   configs), and a hard link breaks when a writer *replaces* the inode. An earlier draft
   claimed this migration "strictly reduces" the exposure; that is **backwards**. The file
@@ -360,13 +321,18 @@ rolling back before step 7.
   `config.template.json` and gitignore the real one: a per-machine tuned file
   (`lineLayout`, `language`, `maxWidth`) should not be tracked at all. Not done here.
 
-- **"No absolute cloud path in a shared file" is a goal, not a fact.** It holds for
-  tracked files. It is currently **false for the payload**: `claude_env_settings.json`
-  carries `"motronics-studio": "C:/Users/linxu/Documents/PEMC/motronics-studio"`, and the
-  pre-split `codex_config.toml` was saturated with them. The codex split removes the
-  largest source; the remaining one needs a `~`-relative value or a Tier C override. This
-  design asserts the invariant but does not yet enforce it — a setup-time lint that greps
-  the resolved payload for `/Users/`, `C:\`, `c:/` would.
+- **"No absolute cloud path in a shared file" is now enforced, with one accepted
+  exception.** `npm run doctor` fails on a machine path in the payload or in tracked code
+  (`payload-abs-path` / `hygiene-abs-path`), and runs the same checks at SessionStart via
+  `--hook`. This section previously said the invariant was "asserted but not yet enforced";
+  it is now a check, and the `motronics-studio` example it cited is fixed — this host's
+  entry is `~/Documents/PEMC/motronics-studio`, which fabric expands (`node-config.mjs`).
+  The exception is a path under `fabric.serve.byHost.<hostname>`. The invariant that
+  matters is "no value that would be *wrong* on another host", and a byHost-keyed value is
+  read only by the host it names, so the doctor reports those as warnings rather than
+  failures. Two remain (WS1's and WS2's `D:` paths) — `~` cannot express another drive, and
+  moving each into that host's own `~/.claude/claude_env_settings.local.json` is the way to
+  get it out of the shared file entirely. Worth doing on each host; not urgent.
 
 - **Files-On-Demand placeholders.** A dehydrated cloud file satisfies `existsSync` but its
   first read can block on a network fetch or fail offline, and the launchers read

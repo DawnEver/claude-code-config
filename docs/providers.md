@@ -58,11 +58,16 @@ providers.
 
 ## Model & Effort Strategy
 
-Use `opusplan` model + low effort as default. `opusplan` auto-switches Opus during plan mode
-and Sonnet during execution. For critical plan sessions, run `/effort high` before `/plan`.
+The fleet runs `model: "opus[1m]"` with `effortLevel: "low"` — both in
+`claude_settings.json`, and `modelSettings` can pin a different effort per model. For
+critical plan sessions, run `/effort high` before `/plan`.
 
-Sharp-review hook delegates to `/sharp-review` skill — the hook only handles classification
-(none/once/triple) and state tracking; all review logic lives in the skill.
+The sharp-review Stop hook is a **wave-gated adaptive trigger**, not a classifier: it
+tracks change accumulation per ref and fires `/sharp-review` when the diff crosses a
+threshold — wave 0 (new territory) at 300 lines / 5 files, wave 1+ (already reviewed once
+at this ref) at 1000 lines / 15 files, resetting to wave 0 when HEAD moves. Thresholds are
+per-project in `.claude/.rem-state.json` → `reviewGate.thresholds`; all review logic lives
+in the skill.
 
 ## Provider schema (`providers.<name>` — single source of truth)
 
@@ -163,10 +168,13 @@ force plain `codex` (OpenAI backend) to load the 3rd-party `models.json` too, hi
 OpenAI's models in the picker. The `cods` launcher passes it via `--config`
 only when a provider is selected.
 
-**Precondition the user maintains:** `codex_config.toml` must have a
-`[model_providers.<id>]` block per provider (e.g. `model_providers.deepseek =
-{ base_url = "...", env_key = "DEEPSEEK_API_KEY", wire_api = "responses" }`).
-The launcher does NOT auto-inject this — see "Out of scope" below.
+**The `[model_providers.<id>]` block is generated, not maintained by hand.**
+`scripts/setup/inject-codex-providers.mjs` writes one block per provider from
+`providers.<name>` (base_url, env_key, `wire_api = "responses"`) between the
+`# === setup-managed: model_providers` markers, and `npm run setup` runs it every time.
+The block is regenerated per host into `~/.codex/config.toml` and never reaches the
+shared `codex_config.toml`, which carries only the hand-edited head — see
+`docs/sync-architecture.md` § 3 for why those are two different files.
 
 **End-to-end caveat:** DeepSeek natively supports the Responses API (`wire_api =
 "responses"`), and its `deepseek-v4-*` models need a `~/.codex/models.json`
@@ -186,15 +194,6 @@ make `wire_api` a per-provider field in `providers.<name>` — today it is hardc
 
 ### Out of scope (follow-ups)
 
-- **`fabric.engine.providers.mjs:readRegistry()` migration** to the new schema.
-  Fabric (DawnEver/cc-market) currently reads `env:<provider>` blocks directly.
-  After this change it must read `providers.<name>` and project via the same
-  per-host logic. Until migrated, the `fabric` block in `claude_env_settings.json`
-  continues to work (it has its own shape, untouched). Separate repo, follow-up PR.
-- **Auto-rewriting `codex_config.toml` to inject `model_providers.<id>` blocks.**
-  Today the user maintains that file. Future: a setup hook could detect the
-  shared `providers.<name>` and write the matching TOML block, making
-  `cods` truly one-command.
 - **Additional `codex` aliases (`co`, `cokm`)** — the foundation supports them. To
   add:
   - `co` (codex default / OpenAI): no `providers.codex` block needed; the launcher

@@ -28,7 +28,11 @@ This does the following, all idempotent (safe to re-run, no-op once current):
    into this repo but no longer correspond to an entry in `CLAUDE_LINKS` /
    `CODEX_LINKS` (e.g. a renamed/removed skill or config), then re-runs the
    normal link-creation pass for the current layout.
-2. **Gitignore hygiene** — across the current repo and every nested git repo:
+2. **Orphaned CLI aliases** — removes wrapper files this repo wrote (recognised by their
+   marker comment) whose name is no longer in `KNOWN_ALIAS_NAMES`. This is what stops a
+   retired provider leaving `<name>.cmd` behind after its `<name>` is gone. It sweeps the
+   claude bin dir, so on a Codex-only host it is a no-op.
+3. **Gitignore hygiene** — across the current repo and every nested git repo:
    (a) normalizes `.gitignore` to the depth-agnostic `.claude/` template this skill
    owns (`CLAUDE_GITIGNORE_TEMPLATE` — base `**/.claude/**` exclusion plus the
    `agents`/`skills`/`commands`/`workflows`/`settings`/`output-styles`/`rules`/`memory`/`docs` re-includes,
@@ -58,7 +62,7 @@ This does the following, all idempotent (safe to re-run, no-op once current):
 
    When running this skill for the user, dry-run first, show which repos would change,
    and confirm the mode before applying.
-3. **Project `.claude/`** — for every cc-market plugin that provides a
+4. **Project `.claude/`** — for every cc-market plugin that provides a
    `migrations/migrate.mjs` (e.g. rem's memory/frontmatter normalization,
    sharp-review's legacy finding-file consolidation), runs it against the
    current project.
@@ -69,10 +73,9 @@ Preview repo-link changes only, without touching anything:
 node ~/.claude/skills/migrate/migrate.js --dry-run
 ```
 
-(`--dry-run` covers steps 1–3 fully — it prints which links/files *would* be
-removed/untracked and which retired-plugin entries *would* be swapped, without
-touching them; for step 4 it lists which plugins have migrations but does not run
-them, since they are write-only and self-detecting.)
+(`--dry-run` covers steps 1–3 fully — it prints which links, aliases and files *would* be
+removed/untracked, without touching them; for step 4 it lists which plugins have migrations
+but does not run them, since they are write-only and self-detecting.)
 
 If a plugin's migration reports `changed: true`, read its summary lines —
 they describe exactly what was moved/rewritten.
