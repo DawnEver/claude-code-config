@@ -9,7 +9,10 @@
             "models": {
                 "base": "deepseek-v4-flash[1m]",
                 "fable": "deepseek-v4-pro[1m]",
-                "opus": "deepseek-v4-flash[1m]"
+                "opus": "deepseek-v4-flash[1m]",
+                "sonnet": "deepseek-v4-flash[1m]",
+                "haiku": "deepseek-v4-flash[1m]",
+                "subagent": "deepseek-v4-flash[1m]"
             }
         },
         "kimi": {
@@ -20,6 +23,9 @@
             "codexPath": "/coding/v1",
             "models": {
                 "base": "k3[1m]",
+                "fable": "k3[1m]",
+                "opus": "k3[1m]",
+                "sonnet": "k3[1m]",
                 "haiku": "kimi-for-coding",
                 "subagent": "k3-256k"
             }
