@@ -9,7 +9,7 @@ at — or nothing at all, which is the zero-config default). See
 > `.git/` corrupts the index and overwrites the reflog. This repo was migrated out of OneDrive
 > on 2026-08-29 after exactly that.
 
-> This repo is publicly available, but it is primarily intended for personal use and rapid iteration — backward compatibility is not a concern. Rename, restructure, or remove anything outdated rather than adding shims or compat layers.
+> This repo is openly licensed under MIT, but it is primarily intended for personal use and rapid iteration — backward compatibility is not a concern. Rename, restructure, or remove anything outdated rather than adding shims or compat layers. Third-party tools and separately cloned repositories retain their own licences; the MIT licence here does not relicense them.
 
 ## Prerequisites
 
