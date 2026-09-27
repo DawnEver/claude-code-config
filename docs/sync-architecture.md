@@ -247,6 +247,20 @@ Two fixes:
   check-links to re-create).
 
 ### `scripts/runtime/cc.js` and `codex.js`
+Both provider launchers first run `sync-hook.js --pull` through
+`startup-sync.mjs` in a separate Node process. This ordering is intentional: a
+fast-forward may replace launcher and setup modules, which must not already be
+cached in the host process. Only after sync completes do the launchers
+dynamically import their repo-owned modules and read provider configuration.
+Claude's child process inherits `CC_CONFIG_STARTUP_SYNCED=1`, so its subsequent
+SessionStart hook does not fetch twice; a direct `claude` launch has no marker
+and updates normally. Codex has no SessionStart hook, so the setup-installed
+`codc` and `cods` executables perform this on every launch without shell-profile
+configuration; these are the guaranteed synchronized Codex entry points.
+Offline, dirty, ahead, and diverged states remain non-destructive
+fail-open cases, while a successful fast-forward invokes `checkLinks()` to
+rebuild links, generated models, and the composed Codex config immediately.
+
 These do **not** need `resolveSyncDir`. `~/.claude/claude_env_settings.json` is already
 the per-host indirection setup materializes for exactly this purpose, and §4's own rule
 says a consumer should name `~/.claude/...` rather than re-derive a cloud path:

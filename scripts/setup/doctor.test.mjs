@@ -7,6 +7,8 @@ import {
   looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, parseHookCommands,
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks,
   checkHostKeyedPaths,
+  checkCodexPluginCache,
+  checkPlugins,
 } from './doctor.js';
 
 // ── the guard detector ──
@@ -185,6 +187,37 @@ test('a hook whose script is absent is a FAIL', () => {
   const out = checkHooks(settings, home);
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 'hook-missing');
+});
+
+test('a retired Codex plugin cache is reported without flagging current plugins', () => {
+  const root = tmp(); const home = tmp();
+  const marketDir = path.join(root, 'cc-market', '.agents', 'plugins');
+  const cacheDir = path.join(home, '.codex', 'plugins', 'cache', 'cc-market');
+  fs.mkdirSync(marketDir, { recursive: true });
+  fs.mkdirSync(path.join(cacheDir, 'fabric'), { recursive: true });
+  fs.mkdirSync(path.join(cacheDir, 'takeover'), { recursive: true });
+  fs.writeFileSync(path.join(marketDir, 'marketplace.json'), JSON.stringify({
+    plugins: [{ name: 'fabric' }],
+  }));
+  const out = checkCodexPluginCache(root, home);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'codex-plugin-orphan-cache');
+  assert.match(out[0].title, /takeover/);
+});
+
+test('project-scoped plugin installs are not reported as globally dormant', () => {
+  const home = tmp();
+  const dir = path.join(home, '.claude', 'plugins');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'installed_plugins.json'), JSON.stringify({
+    plugins: {
+      'watch@cc-market': [{ scope: 'project', projectPath: '/work/a' }],
+      'rem@cc-market': [{ scope: 'user' }],
+    },
+  }));
+  const out = checkPlugins({ enabledPlugins: {} }, home);
+  assert.equal(out.length, 1);
+  assert.match(out[0].title, /rem@cc-market/);
 });
 
 // A NUL byte makes git call the file binary: its diffs become unreviewable and

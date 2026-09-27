@@ -3,16 +3,26 @@
 //
 // Thin spawn wrapper around `cc-launcher.mjs` (the pure env+args projection).
 // Provider config lives in `claude_env_settings.json` under `providers.<name>`.
-// Run `node scripts/setup/setup.js` to install the `ccc` / `ccds` / `cckm` /
-// `ccgmi` aliases; those wrappers exec this script with the provider name.
+// Run `node scripts/setup/setup.js` to install the `ccc` / `ccds` wrappers;
+// those wrappers exec this script with the provider name.
 
 import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
-import { buildClaudeInvocation } from './cc-launcher.mjs';
-import { prepareSpawn } from './win-spawn.mjs';
+import { syncBeforeLaunch } from './startup-sync.mjs';
+
+// Synchronize before importing repo-owned implementation modules: git may
+// replace them during a fast-forward. The host must launch with the new config,
+// not a module graph cached before the update.
+const sync = syncBeforeLaunch();
+if (sync.notice) console.error(sync.notice);
+process.env.CC_CONFIG_STARTUP_SYNCED = '1';
+const [{ buildClaudeInvocation }, { prepareSpawn }] = await Promise.all([
+  import('./cc-launcher.mjs'),
+  import('./win-spawn.mjs'),
+]);
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 

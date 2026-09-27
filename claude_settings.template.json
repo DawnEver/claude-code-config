@@ -55,7 +55,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull",
-                        "timeout": 15
+                        "timeout": 90
                     },
                     {
                         "type": "command",

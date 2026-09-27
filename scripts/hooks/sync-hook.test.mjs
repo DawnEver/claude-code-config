@@ -31,6 +31,12 @@ test('formatPull reports a fast-forward by count', () => {
   assert.match(formatPull({ pulled: 3 }), /fast-forwarded 3 commit/);
 });
 
+test('formatPull reports a successful update whose repair needs retrying', () => {
+  const msg = formatPull({ pulled: 2, repairError: 'payload busy' });
+  assert.match(msg, /fast-forwarded 2 commit/);
+  assert.match(msg, /repair failed: payload busy/);
+});
+
 test('formatPull surfaces a refusal without pretending it synced', () => {
   assert.match(formatPull({ pulled: 0, note: '2 unpushed commit(s)' }), /not updated: 2 unpushed/);
 });
@@ -171,6 +177,27 @@ test('integration: a diverged host is told, never merged or rebased', () => {
   assert.ok(!fs.existsSync(path.join(b, 'from-a.txt')), 'upstream must not be applied');
 });
 
+test('integration: conflicting dirty work is preserved and blocks the update', () => {
+  const { a, b } = fixture();
+  fs.writeFileSync(path.join(a, 'shared.txt'), 'base\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '--quiet', '-m', 'base file');
+  git(a, 'push', '--quiet');
+  runHook(b, '--pull', { source: 'startup' });
+
+  fs.writeFileSync(path.join(b, 'shared.txt'), 'local uncommitted work\n');
+  fs.writeFileSync(path.join(a, 'shared.txt'), 'upstream work\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '--quiet', '-m', 'upstream edit');
+  git(a, 'push', '--quiet');
+
+  const before = git(b, 'rev-parse', 'HEAD');
+  const notice = runHook(b, '--pull', { source: 'startup' });
+  assert.match(notice, /not updated: git refused the update/);
+  assert.equal(git(b, 'rev-parse', 'HEAD'), before);
+  assert.equal(readText(path.join(b, 'shared.txt')), 'local uncommitted work\n');
+});
+
 test('integration: an up-to-date host stays completely silent', () => {
   const { b } = fixture();
   assert.equal(runHook(b, '--pull', { source: 'startup' }), null);
@@ -204,4 +231,3 @@ test('integration: the reminder reports real uncommitted work', () => {
   fs.writeFileSync(path.join(b, 'scratch.txt'), 'wip\n');
   assert.match(runHook(b, '--remind'), /1 uncommitted file/);
 });
-

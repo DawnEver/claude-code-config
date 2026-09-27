@@ -97,6 +97,7 @@ export function formatPull(result) {
   if (!result) return null;                       // already current, or skipped
   const { pulled, note } = result;
   if (note) return `[cc-config] not updated: ${note}`;
+  if (pulled > 0 && result.repairError) return `[cc-config] fast-forwarded ${pulled} commit(s), but setup repair failed: ${result.repairError}`;
   if (pulled > 0) return `[cc-config] fast-forwarded ${pulled} commit(s) from upstream`;
   return null;
 }
@@ -141,7 +142,7 @@ export function formatMergeFailure(err) {
 
 // ── modes ──
 
-async function runPull() {
+export async function runPull() {
   if (!isRepo()) return null;
 
   // A held index.lock means another git process (another session, a background
@@ -177,12 +178,15 @@ async function runPull() {
   // A pull replaces inodes, which breaks the hard link claude-hud requires
   // (docs/sync-architecture.md §10). SessionStart also runs setup-check-hook,
   // but hook order within an event is not guaranteed, so repair here too.
+  let repairError = null;
   try {
     const { checkLinks } = await import('../setup/check-links.js');
     checkLinks();
-  } catch {}
+  } catch (err) {
+    repairError = err?.message || String(err);
+  }
 
-  return { pulled: behind };
+  return { pulled: behind, repairError };
 }
 
 function runRemind() {
@@ -231,9 +235,17 @@ async function main() {
   const mode = process.argv[2];
   const payload = await readPayload();
   let notice = null;
+  let syncResult = null;
 
   if (mode === '--pull') {
-    if (isStartup(payload)) notice = formatPull(await runPull());
+    // Provider launchers already run this hook before loading any repo-owned
+    // modules. Their child CLI inherits the marker, avoiding a second network
+    // fetch when Claude subsequently emits SessionStart. Direct `claude`
+    // launches have no marker and still update here.
+    if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') {
+      syncResult = await runPull();
+      notice = formatPull(syncResult);
+    }
   } else if (mode === '--remind') {
     notice = runRemind();
   } else {
@@ -242,7 +254,10 @@ async function main() {
   }
 
   // Silent when there is nothing to report.
-  if (notice) process.stdout.write(JSON.stringify({ systemMessage: notice }));
+  if (notice || syncResult?.pulled > 0) process.stdout.write(JSON.stringify({
+    ...(notice ? { systemMessage: notice } : {}),
+    ccConfigSync: syncResult,
+  }));
 }
 
 // Only run when invoked, so the pure helpers above stay importable by tests.

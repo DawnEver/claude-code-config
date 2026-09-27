@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { CLAUDE_LINKS, CODEX_LINKS, discoverCodexSkillLinks, getCodexLinks, ensureRealDir } from '../../scripts/setup/setup.js';
 import { findOrphanedLinks, discoverProjectMigrators } from './migrate.js';
 import { ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './gitignore-hygiene.js';
-import { locateBinDir, resolveAliasBinDirs } from '../../scripts/setup/install-shell-aliases.js';
+import { locateBinDir, resolveWrapperBinDirs } from '../../scripts/setup/install-cli-wrappers.js';
 
 describe('findOrphanedLinks', () => {
   let tmpDir, sourceDir, baseDir;
@@ -356,12 +356,12 @@ describe('migrateGitignore (integration)', () => {
   });
 });
 
-describe('resolveAliasBinDirs', () => {
+describe('resolveWrapperBinDirs', () => {
   const sep = path.sep;
 
   test('prefers the claude bin dir for both target and claude when claude exists', () => {
     const locate = (cmd) => (cmd === 'claude' ? `${sep}opt${sep}claude${sep}bin` : `${sep}opt${sep}codex${sep}bin`);
-    const { claudeBin, codexBin, targetBin } = resolveAliasBinDirs(locate);
+    const { claudeBin, codexBin, targetBin } = resolveWrapperBinDirs(locate);
     assert.equal(claudeBin, `${sep}opt${sep}claude${sep}bin`);
     assert.equal(codexBin, `${sep}opt${sep}codex${sep}bin`);
     assert.equal(targetBin, `${sep}opt${sep}claude${sep}bin`);
@@ -369,14 +369,14 @@ describe('resolveAliasBinDirs', () => {
 
   test('falls back to codex bin dir when only codex is installed', () => {
     const locate = (cmd) => (cmd === 'codex' ? `${sep}opt${sep}codex${sep}bin` : null);
-    const { claudeBin, codexBin, targetBin } = resolveAliasBinDirs(locate);
+    const { claudeBin, codexBin, targetBin } = resolveWrapperBinDirs(locate);
     assert.equal(claudeBin, null);
     assert.equal(codexBin, `${sep}opt${sep}codex${sep}bin`);
     assert.equal(targetBin, `${sep}opt${sep}codex${sep}bin`);
   });
 
   test('returns null target when neither host is installed', () => {
-    const { claudeBin, codexBin, targetBin } = resolveAliasBinDirs(() => null);
+    const { claudeBin, codexBin, targetBin } = resolveWrapperBinDirs(() => null);
     assert.equal(claudeBin, null);
     assert.equal(codexBin, null);
     assert.equal(targetBin, null);

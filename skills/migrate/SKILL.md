@@ -29,7 +29,7 @@ This does the following, all idempotent (safe to re-run, no-op once current):
    `CODEX_LINKS` (e.g. a renamed/removed skill or config), then re-runs the
    normal link-creation pass for the current layout.
 2. **Orphaned CLI aliases** — removes wrapper files this repo wrote (recognised by their
-   marker comment) whose name is no longer in `KNOWN_ALIAS_NAMES`. This is what stops a
+   marker comment) whose name is no longer in `KNOWN_WRAPPER_NAMES`. This is what stops a
    retired provider leaving `<name>.cmd` behind after its `<name>` is gone. It sweeps the
    claude bin dir, so on a Codex-only host it is a no-op.
 3. **Gitignore hygiene** — across the current repo and every nested git repo:
@@ -73,7 +73,7 @@ Preview repo-link changes only, without touching anything:
 node ~/.claude/skills/migrate/migrate.js --dry-run
 ```
 
-(`--dry-run` covers steps 1–3 fully — it prints which links, aliases and files *would* be
+(`--dry-run` covers steps 1–3 fully — it prints which links, wrappers and files *would* be
 removed/untracked, without touching them; for step 4 it lists which plugins have migrations
 but does not run them, since they are write-only and self-detecting.)
 

@@ -5,7 +5,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { checkMacNotify } from './check-mac-notify.js';
-import { installShellAliases } from './install-shell-aliases.js';
+import { installCliWrappers } from './install-cli-wrappers.js';
 import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
@@ -31,7 +31,7 @@ export function getSyncDir() {
 
 export { composeCodexConfigFile } from './codex-config-file.mjs';
 
-export const KNOWN_ALIAS_NAMES = ['ccc', 'ccds', 'cckm', 'ccgmi', 'cods', 'todo', 'traceme'];
+export const KNOWN_WRAPPER_NAMES = ['ccc', 'ccds', 'codc', 'cods', 'todo', 'traceme'];
 
 // `base: 'sync'` marks an entry whose source lives in the sync payload directory rather
 // than the repo (see getSyncDir). Unmarked entries resolve against sourceDir as before.
@@ -646,9 +646,9 @@ export function setup(options = {}) {
     if (!checkMacNotify()) counters.errors++;
   }
 
-  // Install shell aliases
-  console.log('\n--- Shell Aliases ---');
-  installShellAliases(claudeDir);
+  // Install standalone wrappers; shell profiles are deliberately not required.
+  console.log('\n--- CLI Wrappers ---');
+  installCliWrappers(claudeDir);
 
   console.log(`\nDone: ${counters.created} linked, ${counters.skipped} skipped, ${counters.errors} errors`);
 

@@ -69,15 +69,11 @@ namespaces).
 # Claude Code
 ccc   # official Claude subscription
 ccds  # DeepSeek  (Anthropic-compatible, direct)
-cckm  # Kimi      (Anthropic-compatible, direct)
-ccgmi # GMI Cloud (Anthropic-compatible, direct)
 
-# Codex — same providers.<name> block, different launcher
+# Codex
+codc  # official OpenAI provider
 cods  # DeepSeek  via codex (--config model_provider=deepseek --model deepseek-v4-flash)
 ```
-
-GMI is Claude-side only. It serves the Anthropic protocol and Codex speaks only OpenAI
-wire formats, so no `wire_api` value can bridge them — use `ccgmi`, not a Codex launcher.
 
 #### Provider shape
 
@@ -108,8 +104,8 @@ their binary's env/args.
 > The generated Codex catalogue is deduplicated by slug, so this provider yields
 > **6 entries, not 7** — that is intended, not a generator bug.
 
-Add a provider by adding a `providers.<name>` block and (optionally) an alias
-entry in `scripts/setup/install-shell-aliases.js`. See
+DeepSeek is the only configured third-party provider. Its wrappers are registered in
+`scripts/setup/install-cli-wrappers.js`. See
 `docs/providers.md` for the full schema.
 
 **Codex-side requirements:** `setup.js` generates what `cods` needs from

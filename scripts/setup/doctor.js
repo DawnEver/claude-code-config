@@ -227,7 +227,8 @@ export function checkPlugins(settings, home = HOME) {
   let registry;
   try { registry = JSON.parse(fs.readFileSync(registryPath, 'utf8')); } catch { return out; }
 
-  const installed = new Set(Object.keys(registry.plugins ?? registry).filter((k) => k.includes('@')));
+  const records = registry.plugins ?? registry;
+  const installed = new Set(Object.keys(records).filter((k) => k.includes('@')));
   const enabled = settings?.enabledPlugins ?? {};
   const marketsDir = path.join(home, '.claude', 'plugins', 'marketplaces');
 
@@ -239,6 +240,11 @@ export function checkPlugins(settings, home = HOME) {
   }
   for (const id of installed) {
     if (id in enabled) continue;
+    const installs = Array.isArray(records[id]) ? records[id] : [];
+    // Project-scoped installs are intentionally activated by that project, not
+    // by the user-wide enabledPlugins map. Reporting them as globally dormant
+    // made a healthy watch/cc-latex setup look broken on every host.
+    if (installs.length && installs.every((entry) => entry?.scope === 'project')) continue;
     const market = id.split('@')[1];
     const known = market === 'local' || fs.existsSync(path.join(marketsDir, market));
     out.push(finding(known ? 'WARN' : 'WARN', 'plugin-dormant',
@@ -246,6 +252,28 @@ export function checkPlugins(settings, home = HOME) {
       known ? 'either uninstall it or list it in enabledPlugins' : `its marketplace "${market}" does not exist — an orphan`));
   }
   return out;
+}
+
+// Codex does not expose a Claude-style installed_plugins.json. Its cache is the
+// observable install inventory, so compare it with the configured marketplace clone.
+// This catches retired plugins (for example takeover after it was absorbed by fabric)
+// without treating disabled-but-still-available plugins as orphans.
+export function checkCodexPluginCache(repoRoot = sourceDir, home = HOME) {
+  const cache = path.join(home, '.codex', 'plugins', 'cache', 'cc-market');
+  const manifest = path.join(repoRoot, 'cc-market', '.agents', 'plugins', 'marketplace.json');
+  if (!fs.existsSync(cache) || !fs.existsSync(manifest)) return [];
+  let known;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+    known = new Set((parsed.plugins ?? []).map((p) => p.name));
+  } catch {
+    return [];
+  }
+  return fs.readdirSync(cache, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !known.has(entry.name))
+    .map((entry) => finding('WARN', 'codex-plugin-orphan-cache',
+      `${entry.name}@cc-market remains in the Codex cache but is no longer in the marketplace`,
+      `${path.join(cache, entry.name)} — remove it after confirming no Codex process is using it`));
 }
 
 // Code hygiene that made a file unreadable to tools: a NUL byte makes git call a file
@@ -351,6 +379,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPayloadShape(syncDir, repoRoot),
     ...checkLinks({ repoRoot, syncDir }),
     ...checkPlugins(settings, home),
+    ...checkCodexPluginCache(repoRoot, home),
     ...checkHygiene(repoRoot),
   ];
 }

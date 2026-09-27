@@ -16,8 +16,8 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_ALIAS_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
-import { isAliasWrapper } from '../../scripts/setup/install-shell-aliases.js';
+import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_WRAPPER_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
+import { isManagedWrapper } from '../../scripts/setup/install-cli-wrappers.js';
 import {
   CLAUDE_GITIGNORE_TEMPLATE,
   migrateGitignore,
@@ -105,7 +105,7 @@ export function migrateRepoLinks({ dryRun } = {}) {
 
 // ── B. Orphaned CLI alias cleanup ──
 
-// `isAliasWrapper` is imported from the installer rather than re-declared here: this file
+// `isManagedWrapper` is imported from the installer rather than re-declared here: this file
 // used to carry its own `# claude-code-alias`-only copy, which silently excluded every
 // `.cmd` wrapper (the `.cmd` form spells it `rem claude-code-alias`). So `cogmi` was swept
 // up and `cogmi.cmd` was left behind, even though the `.cmd`-stripping below exists for
@@ -120,11 +120,11 @@ function findClaudeBin() {
   } catch { return null; }
 }
 
-export function migrateOrphanedAliases({ dryRun } = {}) {
+export function migrateOrphanedWrappers({ dryRun } = {}) {
   const claudeBin = findClaudeBin();
   if (!claudeBin || !fs.existsSync(claudeBin)) return [];
 
-  const known = new Set(KNOWN_ALIAS_NAMES);
+  const known = new Set(KNOWN_WRAPPER_NAMES);
   const removed = [];
 
   let entries;
@@ -136,17 +136,17 @@ export function migrateOrphanedAliases({ dryRun } = {}) {
     // Check if it's one of our managed alias files (has the marker)
     let content;
     try { content = fs.readFileSync(full, 'utf8'); } catch { continue; }
-    if (!isAliasWrapper(content)) continue;
+    if (!isManagedWrapper(content)) continue;
 
     // Extract the base name (strip .cmd extension on Windows)
     const baseName = entry.name.endsWith('.cmd') ? entry.name.slice(0, -4) : entry.name;
     if (known.has(baseName)) continue;
 
     if (dryRun) {
-      console.log(`WOULD REMOVE  alias ${entry.name} - orphaned (no longer in KNOWN_ALIAS_NAMES)`);
+      console.log(`WOULD REMOVE  alias ${entry.name} - orphaned (no longer in KNOWN_WRAPPER_NAMES)`);
     } else {
       fs.unlinkSync(full);
-      console.log(`REMV  alias ${entry.name} - orphaned (no longer in KNOWN_ALIAS_NAMES)`);
+      console.log(`REMV  alias ${entry.name} - orphaned (no longer in KNOWN_WRAPPER_NAMES)`);
     }
     removed.push(entry.name);
   }
@@ -193,12 +193,12 @@ async function main() {
   const removed = migrateRepoLinks({ dryRun });
   if (removed.length === 0) console.log('OK    no orphaned links');
 
-  console.log('\n--- CLI aliases ---');
-  const aliasRemoved = migrateOrphanedAliases({ dryRun });
-  if (aliasRemoved.length === 0) console.log('OK    no orphaned CLI aliases');
+  console.log('\n--- CLI wrappers ---');
+  const wrappersRemoved = migrateOrphanedWrappers({ dryRun });
+  if (wrappersRemoved.length === 0) console.log('OK    no orphaned CLI wrappers');
 
   if (!dryRun) {
-    console.log('\n--- Re-link & re-alias (current layout) ---');
+    console.log('\n--- Re-link & reinstall wrappers (current layout) ---');
     setup();
   }
 

@@ -82,7 +82,10 @@ test('sync-hook still runs when reached through a linked path', () => {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     }).trim();
     const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: REPO, encoding: 'utf8' }).trim();
-    if (dirty) assert.match(raw, /\[cc-config\]/, 'hook body must execute via a linked path');
+    const ahead = Number(execFileSync('git', ['rev-list', '--count', '@{u}..HEAD'], {
+      cwd: REPO, encoding: 'utf8', windowsHide: true,
+    }).trim());
+    if (dirty || ahead > 0) assert.match(raw, /\[cc-config\]/, 'hook body must execute via a linked path');
     else assert.equal(raw, '');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

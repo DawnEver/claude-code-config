@@ -11,9 +11,18 @@ import { statSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
-import { buildCodexInvocation } from './codex-launcher.mjs';
-import { prepareSpawn } from './win-spawn.mjs';
-import { checkLinks, SETUP_FIX_CMD } from '../setup/check-links.js';
+import { syncBeforeLaunch } from './startup-sync.mjs';
+
+// Codex has no SessionStart hook. Always synchronize before loading repo-owned
+// modules or reading the shared provider config.
+const sync = syncBeforeLaunch();
+if (sync.notice) console.error(sync.notice);
+process.env.CC_CONFIG_STARTUP_SYNCED = '1';
+const [{ buildCodexInvocation }, { prepareSpawn }, { checkLinks, SETUP_FIX_CMD }] = await Promise.all([
+  import('./codex-launcher.mjs'),
+  import('./win-spawn.mjs'),
+  import('../setup/check-links.js'),
+]);
 
 // Read the shared registry through the link setup already materialized, not a repo-relative
 // path: claude_env_settings.json lives in the sync payload, which may sit outside the repo.
@@ -52,7 +61,7 @@ function touchLinkCheckStamp() {
 
 // Codex has no session-start hook, so the launcher doubles as the link-health
 // checkpoint (Claude Code's side is scripts/hooks/setup-check-hook.js).
-if (!isLinkCheckFresh()) {
+if (sync.pulled > 0 || !isLinkCheckFresh()) {
   try {
     const { repaired, warnings } = checkLinks();
     if (repaired.length) console.error(`[setup-check] re-linked: ${repaired.join(', ')}`);

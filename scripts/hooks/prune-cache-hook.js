@@ -13,7 +13,10 @@ import { execFileSync, spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 
-const CACHE_ROOT = join(homedir(), '.claude', 'plugins', 'cache');
+const CACHE_ROOTS = [
+  join(homedir(), '.claude', 'plugins', 'cache'),
+  join(homedir(), '.codex', 'plugins', 'cache'),
+];
 const LIVE_CACHE = join(homedir(), '.claude', 'plugins', '.prune-live-cache.json');
 
 function compareVersion(a, b) {
@@ -54,7 +57,6 @@ import { execFileSync } from 'child_process';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 
-const CACHE_ROOT = ${JSON.stringify(CACHE_ROOT)};
 const LIVE_CACHE = ${JSON.stringify(LIVE_CACHE)};
 const isWin = ${JSON.stringify(process.platform === 'win32')};
 
@@ -95,8 +97,10 @@ let totalRemoved = 0;
 const liveVersions = readCachedLiveVersions();
 
 try {
-  for (const mp of readdirSync(CACHE_ROOT)) {
-    const mpDir = join(CACHE_ROOT, mp);
+  for (const cacheRoot of CACHE_ROOTS) {
+    if (!existsSync(cacheRoot)) continue;
+    for (const mp of readdirSync(cacheRoot)) {
+    const mpDir = join(cacheRoot, mp);
     if (!statSync(mpDir).isDirectory()) continue;
 
     for (const plugin of readdirSync(mpDir)) {
@@ -124,6 +128,7 @@ try {
           console.error(`[prune-cache-hook] failed to remove ${key}@${old}: ${e.message}`);
         }
       }
+    }
     }
   }
 
