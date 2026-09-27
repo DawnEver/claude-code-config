@@ -16,7 +16,7 @@ project_doc_fallback_filenames = [
     "README.md",
 ]
 
-model = "gpt-5.6-sol"
+model = "gpt-6-sol"
 model_reasoning_effort = "low"
 model_instructions_file = "~/.codex/system-prompt/codex-base.md"
 
