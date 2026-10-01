@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { Bridge, runningDaemonPid } from './daemon.mjs';
+import { TopicCache } from './topic-cache.mjs';
 
 function fakeTelegram() {
   const sent = [], edits = [], topics = [], answers = [], closed = [], reopened = [];
@@ -71,7 +72,7 @@ test('topic cache reuses a Topic across restarts', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
   const topicCacheFile = path.join(dir, 'topics.json');
   try {
-    const a = make(); a.bridge.topicCacheFile = topicCacheFile;
+    const a = make(); a.bridge.topics = new TopicCache(topicCacheFile);
     await a.bridge.sessionUp('codex', 't1', { cwd: '/proj', branch: 'main' });
     const b = make();
     const bridge2 = new Bridge({ ...b, telegram: b.telegram, machine: 'WS1', config: baseConfig, topicCacheFile,
@@ -314,7 +315,7 @@ test('closing records closedAt; reopening clears it; sweep deletes only own Topi
       deleted.push([c, id]); return true;
     };
     const logs = [];
-    const bridge = new Bridge({ telegram, codex: fakeCodex(), machine: 'WS1', config: baseConfig, topicCacheFile,
+    const bridge = new Bridge({ telegram, codex: fakeCodex(), machine: 'WS1', config: { ...baseConfig, deleteClosedAfterHours: 24 }, topicCacheFile,
       resolveContext: () => ({ project: 'proj', branch: 'main' }), now: () => t, log: (m) => logs.push(m) });
     await bridge.sessionUp('codex', 'a', { cwd: '/proj' });   // topic 100
     await bridge.sessionUp('codex', 'b', { cwd: '/proj' });   // topic 101
@@ -342,4 +343,76 @@ test('closing records closedAt; reopening clears it; sweep deletes only own Topi
     t = 1000 * H; await bridge.sweepClosedTopics();
     assert.deepEqual(deleted, [[-100, 100]], '0 = never');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+function sweepRig(entries, { preexisting } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const topicCacheFile = path.join(dir, 'topics.json');
+  fs.writeFileSync(topicCacheFile, JSON.stringify(entries));
+  const telegram = fakeTelegram();
+  telegram.deleted = [];
+  telegram.deleteForumTopic = async (c, id) => { telegram.deleted.push([c, id]); return true; };
+  const codex = fakeCodex();
+  const logs = [];
+  let t = 100 * 3600000;
+  const bridge = new Bridge({ telegram, codex, machine: 'WS1', config: { ...baseConfig, deleteClosedAfterHours: 24 }, topicCacheFile,
+    resolveContext: () => ({ project: 'proj', branch: 'main' }), now: () => t, log: (m) => logs.push(m) });
+  return { bridge, telegram, codex, logs, topicCacheFile, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('sweep never deletes the Topic of a session that re-attached to it', async () => {
+  const r = sweepRig({ '-100|claude:s1': { topicId: 55, closedAt: 0 } });
+  try {
+    await r.bridge.sessionUp('claude', 's1', { cwd: '/proj' });
+    assert.deepEqual(r.bridge.topics.get('-100|claude:s1'), { topicId: 55 }, 'closedAt cleared on attach, not on first post');
+    await r.bridge.sweepClosedTopics();
+    assert.deepEqual(r.telegram.deleted, []);
+  } finally { r.cleanup(); }
+});
+
+test('an idle leftover holding a due Topic loses it and opens a fresh one on activity', async () => {
+  const r = sweepRig({ '-100|codex:t1': { topicId: 55, closedAt: 0 } });
+  try {
+    await r.bridge.sessionUp('codex', 't1', { cwd: '/proj', preexisting: true });
+    await r.bridge.sweepClosedTopics();
+    assert.deepEqual(r.telegram.deleted, [[-100, 55]]);
+    r.codex.emit('prompt', { threadId: 't1', text: 'back' });
+    await until(() => r.telegram.sent.length === 2);
+    assert.deepEqual(r.telegram.reopened, [], 'no reopen of a deleted Topic');
+    assert.deepEqual(r.telegram.sent.map((s) => [s.text, s.threadId]), [['session up: WS1/codex/main (proj)', 100], ['> back', 100]]);
+    assert.equal(r.bridge.topics.topicId('-100|codex:t1'), 100);
+  } finally { r.cleanup(); }
+});
+
+test('a re-attach during an in-flight delete is not overwritten by a stale entry', async () => {
+  const r = sweepRig({ '-100|claude:s1': { topicId: 55, closedAt: 0 } });
+  try {
+    let release;
+    r.telegram.deleteForumTopic = (c, id) => { r.telegram.deleted.push([c, id]); return new Promise((res) => { release = res; }); };
+    const sweeping = r.bridge.sweepClosedTopics();
+    await until(() => release);
+    await r.bridge.sessionUp('claude', 's1', { cwd: '/proj' });   // attaches to 55 while it is being deleted
+    release(true);
+    await sweeping;
+    const s = r.bridge.sessions.get('claude:s1');
+    assert.equal(s.topicId, null, 'session no longer points at the deleted Topic');
+    assert.equal(r.bridge.topics.get('-100|claude:s1'), null);
+    await r.bridge.prompt('claude:s1', 'hi');
+    assert.equal(r.telegram.topics.length, 1, 'a fresh Topic is created');
+  } finally { r.cleanup(); }
+});
+
+test('sweep logs each distinct delete error once and logs again after a success', async () => {
+  const r = sweepRig({ '-100|codex:a': { topicId: 1, closedAt: 0 }, '-100|codex:b': { topicId: 2, closedAt: 0 } });
+  try {
+    let err = 'not enough rights';
+    r.telegram.deleteForumTopic = async (c, id) => { if (err) throw new Error(err); r.telegram.deleted.push(id); return true; };
+    await r.bridge.sweepClosedTopics(); await r.bridge.sweepClosedTopics();
+    err = 'fetch failed'; await r.bridge.sweepClosedTopics();
+    const errs = () => r.logs.filter((l) => l.startsWith('deleteForumTopic'));
+    assert.equal(errs().length, 2);
+    err = null; await r.bridge.sweepClosedTopics();
+    assert.deepEqual(r.telegram.deleted, [1, 2]);
+    assert.equal(r.logs.filter((l) => /^sweep|deleted closed/.test(l)).length, 2, 'only deletions are logged');
+  } finally { r.cleanup(); }
 });

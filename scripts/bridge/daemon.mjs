@@ -22,6 +22,7 @@ import { readMachineName } from '../shared/machine.mjs';
 import { TelegramClient } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ChannelHub } from './channel-hub.mjs';
+import { TopicCache } from './topic-cache.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
 const PROGRESS_MIN_INTERVAL_MS = 3000;
@@ -38,58 +39,48 @@ export class Bridge {
     this.sessions = new Map();   // key -> { agent, id, chatId, topicId, title, progress }
     this.approvals = new Map();  // short id -> { key, kind, ref, answerable }
     this.nextApproval = 1;
-    this.topicCache = this.#loadCache();
+    this.topics = new TopicCache(topicCacheFile);
     this.allowed = new Set(config.allowedUserIds);
     this.#wire();
   }
 
-  #loadCache() {
-    try { return JSON.parse(fs.readFileSync(this.topicCacheFile, 'utf8')); } catch { return {}; }
-  }
-
-  #saveCache() {
-    if (!this.topicCacheFile) return;
-    try { fs.mkdirSync(path.dirname(this.topicCacheFile), { recursive: true }); fs.writeFileSync(this.topicCacheFile, JSON.stringify(this.topicCache, null, 2)); } catch { /* cache only */ }
-  }
-
-  // topics.json: `chatId|key` -> {topicId, closedAt?} (a bare number is the pre-closedAt shape).
-  #cachedTopic(k) {
-    const v = this.topicCache[k];
-    return (typeof v === 'number' ? v : v?.topicId) ?? null;
-  }
-
-  #cacheSet(s, entry) {
-    this.topicCache[`${s.chatId}|${s.key}`] = entry;
-    this.#saveCache();
-  }
+  #cacheSet(s, entry) { this.topics.set(TopicCache.key(s.chatId, s.key), entry); }
 
   /**
-   * Delete Topics this bridge closed more than `deleteClosedAfterHours` ago (default 24,
-   * 0 = never). Only entries with a recorded closedAt qualify, so a Topic the bridge never
-   * closed is never touched. A failure (typically the missing "Delete messages" right)
-   * keeps the entry for the next sweep and is logged once.
+   * Delete Topics this bridge closed more than `deleteClosedAfterHours` ago (context.mjs
+   * owns the default; 0 = never). Only entries with a recorded closedAt qualify, so a Topic
+   * the bridge never closed is never touched, and a session that is active in a Topic clears
+   * its closedAt when it attaches. An idle leftover holding a due Topic loses it and gets a
+   * fresh one on its next activity. Each delete runs in the holder's write queue and is
+   * re-checked against the cache entry, so a concurrent reopen is never overwritten. A
+   * failure keeps the entry for the next sweep; each distinct error is logged once.
    */
   async sweepClosedTopics() {
-    const hours = this.config.deleteClosedAfterHours ?? 24;
-    if (!(hours > 0)) return 0;
     let n = 0;
-    for (const [k, v] of Object.entries(this.topicCache)) {
-      if (typeof v?.closedAt !== 'number' || this.now() - v.closedAt < hours * 3600000) continue;
-      const chatId = Number(k.slice(0, k.indexOf('|')));
-      try {
-        await this.telegram.deleteForumTopic(chatId, v.topicId);
-      } catch (e) {
-        if (!/thread not found|TOPIC_ID_INVALID/i.test(e.message)) {
-          if (!this.deleteWarned) this.log(`deleteForumTopic: ${e.message} (bot needs "Delete messages"; retrying each sweep, not logged again)`);
-          this.deleteWarned = true;
-          continue;
+    const holderOf = (k) => [...this.sessions.values()].find((s) => TopicCache.key(s.chatId, s.key) === k) ?? null;
+    for (const [k, e] of this.topics.due(this.now(), this.config.deleteClosedAfterHours)) {
+      const holder = holderOf(k);
+      if (holder && !holder.reopen) continue;
+      const run = async () => {
+        if (this.topics.get(k) !== e) return;
+        try {
+          await this.telegram.deleteForumTopic(TopicCache.chatIdOf(k), e.topicId);
+        } catch (err) {
+          if (!/thread not found|TOPIC_ID_INVALID/i.test(err.message)) {
+            if (this.deleteWarned !== err.message) this.log(`deleteForumTopic: ${err.message} (needs the "Delete messages" right; kept for the next sweep)`);
+            this.deleteWarned = err.message;
+            return;
+          }
         }
-      }
-      delete this.topicCache[k];
-      n++;
-      this.log(`deleted closed topic ${k} [topic ${v.topicId}]`);
+        this.deleteWarned = null;
+        if (this.topics.topicId(k) === e.topicId) this.topics.delete(k);
+        const h = holderOf(k);
+        if (h?.topicId === e.topicId) Object.assign(h, { topicId: null, opening: null, reopen: false });
+        n++;
+        this.log(`deleted closed topic ${k} [topic ${e.topicId}]`);
+      };
+      await (holder ? this.#serial(holder, run) : run());
     }
-    if (n) this.#saveCache();
     return n;
   }
 
@@ -187,9 +178,15 @@ export class Bridge {
     this.sessions.set(key, s);
     this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting}`);
     if (chatId === null) { this.log(`no chat for project ${ctx.project}; ${key} not mirrored`); return s; }
-    s.topicId = this.#cachedTopic(`${chatId}|${key}`);
+    s.topicId = this.topics.topicId(TopicCache.key(chatId, key));
     // A cached Topic was likely closed when its session last ended: reopen before posting.
-    if (s.topicId) { s.opening = Promise.resolve(); s.reopen = true; }
+    if (s.topicId) {
+      s.opening = Promise.resolve();
+      s.reopen = true;
+      // An active session owns its Topic again at once, so the sweep cannot take it. An idle
+      // leftover keeps closedAt until its first activity.
+      if (!preexisting) this.#cacheSet(s, { topicId: s.topicId });
+    }
     else if (!preexisting) await this.#open(s);
     return s;
   }
@@ -272,8 +269,7 @@ export class Bridge {
     } catch (e) {
       // A cached Topic that was deleted in Telegram: forget it, recreate on next restart.
       if (s.topicId && /thread not found|TOPIC_DELETED|TOPIC_CLOSED/i.test(e.message)) {
-        delete this.topicCache[`${s.chatId}|${s.key}`];
-        this.#saveCache();
+        this.topics.delete(TopicCache.key(s.chatId, s.key));
       }
       this.log(`send ${s.title}: ${e.message}`);
       return [];
@@ -458,11 +454,12 @@ export async function main() {
   process.on('SIGTERM', stop);
   log(`up: machine=${machine} ipc=127.0.0.1:${port}`);
   codexLoop(codex, log, ac.signal);
-  const sweep = () => bridge.sweepClosedTopics()
-    .then((n) => log(`sweep: ${n} closed topic(s) deleted (after ${config.deleteClosedAfterHours}h; 0 = never)`))
-    .catch((e) => log(`sweep: ${e.message}`));
-  sweep();
-  setInterval(sweep, 3600000).unref();
+  if (config.deleteClosedAfterHours > 0) {
+    const sweep = () => bridge.sweepClosedTopics().catch((e) => log(`sweep: ${e.message}`));
+    log(`sweep: deleting Topics closed more than ${config.deleteClosedAfterHours}h ago, hourly`);
+    sweep();
+    setInterval(sweep, 3600000).unref();
+  }
   await bridge.pollLoop(ac.signal);
 }
 
