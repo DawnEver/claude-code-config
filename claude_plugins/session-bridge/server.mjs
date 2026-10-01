@@ -77,6 +77,8 @@ export class DaemonLink {
   #connect() {
     let rt;
     try { rt = JSON.parse(fs.readFileSync(this.runtimeFile, 'utf8')); } catch { return this.#retry(); }
+    // A half-written or stale runtime file must mean "retry", not a throw out of net.connect.
+    if (!Number.isInteger(rt?.port) || rt.port <= 0 || rt.port > 65535 || typeof rt.token !== 'string') return this.#retry();
     const sock = net.connect({ host: '127.0.0.1', port: rt.port });
     this.socket = sock;
     sock.on('connect', async () => {
@@ -89,6 +91,7 @@ export class DaemonLink {
     sock.on('data', lines((m) => this.#onMessage(m)));
     sock.on('error', () => {});
     sock.on('close', () => {
+      if (this.ready) this.log('bridge daemon disconnected; reconnecting');
       this.ready = false;
       for (const p of this.pending.values()) p.reject(new Error('bridge daemon disconnected'));
       this.pending.clear();
@@ -176,17 +179,32 @@ function main() {
     cwd,
     branch: gitBranch(cwd),
   };
+  // Claude Code swallows an MCP server's stderr, so the reason this process ends goes to a
+  // machine-local file as well; a channel that vanishes silently is otherwise undiagnosable.
+  const logFile = path.join(path.dirname(RUNTIME_FILE), `channel-${process.pid}.log`);
+  const log = (m) => {
+    const line = `[session-bridge ${new Date().toISOString()}] ${m}\n`;
+    process.stderr.write(line);
+    try { fs.mkdirSync(path.dirname(logFile), { recursive: true }); fs.appendFileSync(logFile, line); } catch { /* best effort */ }
+  };
+  // Record a crash, then still die: a process that limps on without its daemon link would
+  // look connected while Telegram delivery has stopped.
+  process.on('uncaughtExceptionMonitor', (e) => log(`uncaught: ${e?.stack ?? e}`));
+  process.on('unhandledRejection', (e) => { log(`unhandled rejection: ${e?.stack ?? e}`); process.exit(1); });
+  process.on('exit', (code) => log(`exit ${code}`));
+  process.stdout.on('error', (e) => log(`stdout: ${e.message}`));
   const write = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
   let server;
   const link = new DaemonLink({
     session,
     onInbound: (p) => server.inbound(p),
     onVerdict: (p) => server.verdict(p),
-    log: (m) => process.stderr.write(`[session-bridge] ${m}\n`),
+    log,
   });
   server = createChannelServer({ write, link });
   process.stdin.on('data', lines((m) => server.onMessage(m)));
-  process.stdin.on('end', () => { link.stop(); process.exit(0); });
+  process.stdin.on('end', () => { log('stdin closed by Claude Code'); link.stop(); process.exit(0); });
+  log(`start session=${session.sessionId} cwd=${cwd}`);
   link.start();
 }
 

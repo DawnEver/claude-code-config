@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CodexAdapter, progressLine, probeDaemon, backlogSince } from './codex-adapter.mjs';
+import { CodexAdapter, progressLine, probeDaemon, backlogSince, unwrapShell } from './codex-adapter.mjs';
 
 /** Fake app-server behind the adapter's transport interface. */
 function fakeAppServer({ loaded = ['t1'], threads = {} } = {}) {
@@ -17,8 +17,11 @@ function fakeAppServer({ loaded = ['t1'], threads = {} } = {}) {
       calls.push(m);
       if (m.id === undefined) return;
       const spec = threads[m.params?.threadId];
-      const fail = m.method === 'thread/resume' && spec?.error && (spec.failTimes ?? Infinity) > 0 && spec.error;
-      if (fail && spec.failTimes !== undefined) spec.failTimes--;
+      // A fresh thread: resume AND read both fail until the rollout exists (real Codex behaviour).
+      const resumeFails = m.method === 'thread/resume' && spec?.error && (spec.failTimes ?? Infinity) > 0;
+      const readFails = m.method === 'thread/read' && spec?.readFails && (spec.failTimes ?? Infinity) > 0;
+      const fail = (resumeFails || readFails) && spec.error;
+      if (resumeFails && spec.failTimes !== undefined) spec.failTimes--;
       if (fail) { setImmediate(() => onMsg(JSON.stringify({ id: m.id, error: { code: -32600, message: fail } }))); return; }
       const result = {
         initialize: { userAgent: 'fake' },
@@ -128,7 +131,7 @@ test('an ephemeral thread that cannot be resumed is not retried every poll', asy
 });
 
 test('a fresh thread whose rollout is not written yet is retried until it subscribes', async () => {
-  const srv = fakeAppServer({ loaded: [], threads: { t3: { failTimes: 1, error: 'no rollout found for thread id t3',
+  const srv = fakeAppServer({ loaded: [], threads: { t3: { failTimes: 1, readFails: true, error: 'no rollout found for thread id t3',
     id: 't3', cwd: '/w', ephemeral: false, turns: [] } } });
   const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({ status: 'running' }), resumeRetryMs: 5 });
   const ups = [];
@@ -190,6 +193,15 @@ test('transport close drops every session', async () => {
   srv.transport.close();
   assert.deepEqual(downs, ['t1']);
   assert.equal(a.connected, false);
+});
+
+test('progress lines show the command, not the shell Codex wraps it in', () => {
+  assert.equal(unwrapShell('"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command \'git rev-parse --short HEAD\''),
+    'git rev-parse --short HEAD');
+  assert.equal(unwrapShell("/bin/bash -lc 'npm test'"), 'npm test');
+  assert.equal(unwrapShell('pwsh -NoProfile -Command "ls"'), 'ls');
+  assert.equal(unwrapShell('git status'), 'git status');
+  assert.equal(progressLine({ type: 'commandExecution', command: "bash -lc 'make'", exitCode: 0 }), '$ make (exit 0)');
 });
 
 test('progressLine ignores chatter items', () => {

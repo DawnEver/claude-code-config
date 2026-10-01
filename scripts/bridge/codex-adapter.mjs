@@ -66,12 +66,24 @@ function oneLine(s, max = 160) {
   return t.length > max ? t.slice(0, max - 1) + '…' : t;
 }
 
+// Codex runs every command through a shell (`"...\powershell.exe" -Command '...'`,
+// `bash -lc '...'`); the wrapper is noise in a one-line progress view.
+const SHELL_WRAPPER = /^\s*"?(?:[^"\s]*[\\/])?(?:powershell|pwsh|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+|-NonInteractive\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]+)$/i;
+
+export function unwrapShell(command) {
+  const m = SHELL_WRAPPER.exec(String(command ?? ''));
+  if (!m) return String(command ?? '');
+  const inner = m[1].trim();
+  const q = inner[0];
+  return (q === '"' || q === "'") && inner.endsWith(q) ? inner.slice(1, -1) : inner;
+}
+
 /** Compact progress line for a completed item, or null for items not worth a line. */
 export function progressLine(item) {
   switch (item?.type) {
     case 'commandExecution': {
       const code = item.exitCode ?? item.exit_code;
-      return `$ ${oneLine(item.command, 120)}${code !== undefined && code !== null ? ` (exit ${code})` : ''}`;
+      return `$ ${oneLine(unwrapShell(item.command), 120)}${code !== undefined && code !== null ? ` (exit ${code})` : ''}`;
     }
     case 'fileChange': {
       const n = Array.isArray(item.changes) ? item.changes.length : 0;
@@ -180,8 +192,10 @@ export class CodexAdapter extends EventEmitter {
       // No rollout yet is normal for a fresh thread: Codex writes it once the first turn
       // starts, so retry shortly (the poll is the backstop). An ephemeral thread never gets
       // one, so it is skipped for good instead of failing every poll.
+      // thread/read fails too before the rollout exists, so only an explicit `ephemeral`
+      // answer gives up; anything else is retried.
       const read = await this.rpc?.request('thread/read', { threadId }).catch(() => null);
-      if (read?.thread?.ephemeral !== false) { this.unresumable.add(threadId); return; }
+      if (read?.thread?.ephemeral === true) { this.unresumable.add(threadId); return; }
       const t = setTimeout(() => this.#subscribe(threadId, opts).catch((err) => this.emit('warn', `resume ${threadId}: ${err.message}`)), this.resumeRetryMs);
       t.unref?.();
     } finally { this.pending.delete(threadId); }

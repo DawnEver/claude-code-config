@@ -102,6 +102,7 @@ export class Bridge {
     const base = `${this.machine}/${agent}/${ctx.branch ?? 'detached'}`;
     const s = { agent, id, key, chatId, base, title: base, project: ctx.project, topicId: null, progress: null, opening: null };
     this.sessions.set(key, s);
+    this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting}`);
     if (chatId === null) { this.log(`no chat for project ${ctx.project}; ${key} not mirrored`); return s; }
     s.topicId = this.topicCache[`${chatId}|${key}`] ?? null;
     if (s.topicId) s.opening = Promise.resolve();
@@ -132,6 +133,7 @@ export class Bridge {
     const s = this.sessions.get(key);
     if (!s) return;
     this.sessions.delete(key);
+    this.log(`down ${key}`);
     if (s.opening) this.#send(s, `session ended: ${s.title}`).catch(() => {});
   }
 
@@ -143,6 +145,7 @@ export class Bridge {
 
   async #post(s, text, opts = {}) {
     try {
+      this.log(`post ${s.title} [topic ${s.topicId ?? '-'}] ${text.replace(/\s+/g, ' ').slice(0, 60)}`);
       return await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...opts });
     } catch (e) {
       // A cached Topic that was deleted in Telegram: forget it, recreate on next restart.

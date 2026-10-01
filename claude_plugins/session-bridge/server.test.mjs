@@ -106,6 +106,17 @@ test('reply tool reports, not throws, when the daemon is down', async () => {
   assert.match(out[0].result.content[0].text, /not running/);
 });
 
+test('a runtime file with a bad port is retried, never thrown out of net.connect', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-'));
+  const runtimeFile = path.join(dir, 'runtime.json');
+  fs.writeFileSync(runtimeFile, JSON.stringify({ port: 'oops', token: 't' }));
+  const link = new DaemonLink({ runtimeFile, session: { sessionId: 'x' } });
+  try {
+    assert.doesNotThrow(() => link.start());
+    assert.equal(link.socket, null);
+  } finally { link.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('hub binds loopback only', async () => {
   const hub = new ChannelHub();
   await hub.listen(0);
