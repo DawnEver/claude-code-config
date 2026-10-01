@@ -4,7 +4,7 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { TelegramClient, chunkText, escapeMarkdownV2 } from './telegram.mjs';
+import { TelegramClient, chunkText } from './telegram.mjs';
 
 /** Local fake Bot API. `handler(method, body)` returns the JSON envelope. */
 async function fakeApi(handler) {
@@ -30,10 +30,6 @@ test('chunkText splits at <=4096 preferring newlines', () => {
   assert.ok(parts.every((p) => p.length <= 4096));
   assert.equal(parts.join('\n').replace(/\n+/g, ''), text.replace(/\n+/g, ''));
   assert.equal(chunkText('x'.repeat(9000)).length, 3);
-});
-
-test('escapeMarkdownV2 escapes every reserved char', () => {
-  assert.equal(escapeMarkdownV2('a_b*c[d](e)~`>#+-=|{}.!\\'), 'a\\_b\\*c\\[d\\]\\(e\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!\\\\');
 });
 
 test('sendMessage chunks, targets the topic, and puts the token only in the path', async () => {

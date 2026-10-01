@@ -1,19 +1,19 @@
 #!/usr/bin/env node
-// scripts/bridge/daemon.mjs — the per-machine session bridge (docs/harness-architecture.md
-// §5-7, docs/bridge.md).
+// scripts/bridge/daemon.mjs — the per-machine session bridge (docs/bridge.md).
 //
 // Owns the machine's single bot token and the only getUpdates loop, and multiplexes every
-// live session on the machine: Codex threads via the shared app-server (codex-adapter.mjs)
-// and Claude sessions via their session-bridge channel (channel-hub.mjs). Each session maps
-// to (project group, Topic): project = origin repo name of the session cwd, group =
-// `bridge.projects.<repo>.chatId` (else `bridge.fallbackChatId`), Topic title =
-// `<machine>/<agent>/<branch>`. Telegram is a stateless view — the mapping is rebuilt from
-// live sessions; topics.json only avoids re-creating a Topic after a restart.
+// live session on the machine. Host specifics live in adapters (codex-adapter.mjs,
+// claude-adapter.mjs), which all emit the same events:
+//   up {id, cwd, branch?, preexisting, backlog[]}, prompt {id, text, turnId?},
+//   progress {id, text}, final {id, text, turnId?, status?},
+//   approval {id, ref, summary, answerable}, approval-resolved {ref}, down {id}
+// and offer the same interface: inject(id, text, user), status(id),
+// answerApproval(ref, allow, id), and optionally interrupt(id).
+// This file is host-agnostic: one lifecycle (lifecycle.mjs), one ordered write queue per
+// session, one bring-up hold, one echo suppression.
 //
 // Inbound from allowlisted users only: plain text = inject; `/status`, `/interrupt`.
-// Approvals: relayed as a notice. Inline accept/decline buttons appear only when this
-// machine opts in (`bridge.approvalsFromTelegram: true`) and are honoured only for
-// allowlisted user ids; anything else is dropped, not queued.
+// Approval buttons only when this machine opts in, honoured only for allowlisted ids.
 
 import fs from 'fs';
 import path from 'path';
@@ -21,160 +21,62 @@ import { isMain } from '../shared/is-main.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { TelegramClient } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
-import { ChannelHub } from './channel-hub.mjs';
+import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
+import { newSession, onUp, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
 const PROGRESS_MIN_INTERVAL_MS = 3000;
+const PROGRESS_LINES = 12;
+const ECHO_TTL_MS = 10 * 60000;   // a Telegram inject that never echoes back is forgotten
+const TOPIC_GONE = /thread not found|TOPIC_DELETED|TOPIC_ID_INVALID/i;
+const TOPIC_CLOSED = /TOPIC_CLOSED/i;
+const TOPIC_UNCHANGED = /TOPIC_NOT_MODIFIED/i;
+
+export const sessionKey = (agent, id) => `${agent}:${id}`;
+export const topicTitle = (machine, agent, branch) => `${machine}/${agent}/${branch ?? 'detached'}`;
 
 export class Bridge {
   /**
-   * @param {{ telegram, codex?, hub?, config, machine: string,
+   * @param {{ telegram, adapters?: EventEmitter[], config, machine: string,
    *           resolveContext?: (cwd, hints) => {project, branch},
    *           topicCacheFile?: string|null, log?: (msg) => void, now?: () => number }} deps
    */
-  constructor({ telegram, codex = null, hub = null, config, machine, resolveContext = gitContext,
+  constructor({ telegram, adapters = [], config, machine, resolveContext = gitContext,
     topicCacheFile = null, log = () => {}, now = Date.now }) {
-    Object.assign(this, { telegram, codex, hub, config, machine, resolveContext, topicCacheFile, log, now });
-    this.sessions = new Map();   // key -> { agent, id, chatId, topicId, title, progress }
-    this.approvals = new Map();  // short id -> { key, kind, ref, answerable }
+    Object.assign(this, { telegram, config, machine, resolveContext, log, now });
+    this.hosts = new Map(adapters.map((a) => [a.agent, a]));
+    this.sessions = new Map();   // key -> session (lifecycle.mjs record + routing fields)
+    this.held = new Map();       // key -> live events that arrived during bring-up
+    this.approvals = new Map();  // short id -> { key, agent, ref }
     this.nextApproval = 1;
     this.topics = new TopicCache(topicCacheFile);
     this.allowed = new Set(config.allowedUserIds);
-    this.#wire();
+    this.warned = new Map();     // what -> last logged message (log each distinct failure once)
+    for (const a of adapters) this.#wire(a);
   }
 
-  #cacheSet(s, entry) { this.topics.set(TopicCache.key(s.chatId, s.key), entry); }
-
-  /**
-   * Delete Topics this bridge closed more than `deleteClosedAfterHours` ago (context.mjs
-   * owns the default; 0 = never). Only entries with a recorded closedAt qualify, so a Topic
-   * the bridge never closed is never touched, and a session that is active in a Topic clears
-   * its closedAt when it attaches. Topics held by a registered session are skipped. Each delete runs in the holder's write queue and is
-   * re-checked against the cache entry, so a concurrent reopen is never overwritten. A
-   * failure keeps the entry for the next sweep; each distinct error is logged once.
-   */
-  async sweepClosedTopics() {
-    let n = 0;
-    const holderOf = (k) => [...this.sessions.values()].find((s) => TopicCache.key(s.chatId, s.key) === k) ?? null;
-    for (const [k, e] of this.topics.due(this.now(), this.config.deleteClosedAfterHours)) {
-      const holder = holderOf(k);
-      // A registered session keeps its Topic, however long it has been closed (an
-      // idle-closed Codex thread may come back); it becomes deletable once the session ends.
-      if (holder) continue;
-      const run = async () => {
-        if (this.topics.get(k) !== e) return;
-        try {
-          await this.telegram.deleteForumTopic(TopicCache.chatIdOf(k), e.topicId);
-        } catch (err) {
-          if (!/thread not found|TOPIC_ID_INVALID/i.test(err.message)) {
-            if (this.deleteWarned !== err.message) this.log(`deleteForumTopic: ${err.message} (needs the "Delete messages" right; kept for the next sweep)`);
-            this.deleteWarned = err.message;
-            return;
-          }
-        }
-        this.deleteWarned = null;
-        if (this.topics.topicId(k) === e.topicId) this.topics.delete(k);
-        const h = holderOf(k);
-        if (h?.topicId === e.topicId) Object.assign(h, { topicId: null, opening: null, reopen: false });
-        n++;
-        this.log(`deleted closed topic ${k} [topic ${e.topicId}]`);
-      };
-      await (holder ? this.#serial(holder, run) : run());
-    }
-    return n;
-  }
-
-  #wire() {
-    const c = this.codex;
-    if (c) {
-      // While a thread is brought up (Topic opening, backlog replay pending) its live events
-      // are held, then flushed after the backlog minus the turns the backlog already had:
-      // a turn that completes during bring-up shows up both in thread/resume and live.
-      const held = new Map();   // key -> [{ kind, turnId, run }]
-      const live = (kind) => (e, run) => {
-        const q = held.get(`codex:${e.threadId}`);
-        if (q) q.push({ kind, turnId: e.turnId ?? null, run }); else run();
-      };
-      c.on('session-up', (s) => {
-        const key = `codex:${s.threadId}`;
-        if (!held.has(key) && !this.sessions.has(key)) held.set(key, []);
-        const backlog = s.backlog ?? [];
-        const seen = new Set(backlog.filter((b) => b.turnId).map((b) => `${b.kind}:${b.turnId}`));
-        this.sessionUp('codex', s.threadId, s)
-          .then(async () => {
-            for (const b of backlog) {
-              if (b.kind === 'prompt') await this.prompt(key, b.text);
-              else await this.final(key, b.text, b.status);
-            }
-          })
-          .catch((e) => this.log(`codex up: ${e.message}`))
-          .finally(async () => {
-            const q = held.get(key) ?? [];
-            held.delete(key);
-            for (const ev of q) if (!(ev.turnId && seen.has(`${ev.kind}:${ev.turnId}`))) await ev.run();
-          });
+  #wire(a) {
+    a.on('up', (e) => this.sessionUp(a.agent, e).catch((err) => this.log(`${a.agent} up: ${err.message}`)));
+    a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
+    for (const kind of ['prompt', 'progress', 'final', 'approval']) {
+      a.on(kind, (e) => {
+        const key = sessionKey(a.agent, e.id);
+        const q = this.held.get(key);
+        if (q) q.push({ kind, e }); else this.#event(key, kind, e).catch((err) => this.log(`${kind}: ${err.message}`));
       });
-      c.on('session-down', (s) => this.sessionDown(`codex:${s.threadId}`));
-      c.on('prompt', (e) => live('prompt')(e, () => this.prompt(`codex:${e.threadId}`, e.text)));
-      c.on('progress', (e) => live('progress')(e, () => this.progress(`codex:${e.threadId}`, e.text)));
-      c.on('final', (e) => live('final')(e, () => this.final(`codex:${e.threadId}`, e.text, e.status)));
-      c.on('approval', (a) => live('approval')(a, () => this.approval(`codex:${a.threadId}`, { kind: 'codex', ref: a.key, summary: a.summary, answerable: a.answerable })));
-      c.on('approval-resolved', (a) => this.approvalResolved('codex', a.key));
-      c.on('warn', (m) => this.log(m));
     }
-    const h = this.hub;
-    if (h) {
-      h.on('session-up', (s) => this.sessionUp('claude', s.sessionId, s)
-        .then(() => this.#drainMirrors())
-        .catch((e) => this.log(`claude up: ${e.message}`)));
-      h.on('session-down', (s) => this.sessionDown(`claude:${s.sessionId}`));
-      h.on('reply', (r) => {
-        const s = this.sessions.get(`claude:${r.sessionId}`);
-        if (s) (s.replies ??= []).push(r.text.trim());
-        return this.final(`claude:${r.sessionId}`, r.text);
-      });
-      h.on('mirror', (m) => this.mirror(m).catch((e) => this.log(`mirror: ${e.message}`)));
-      h.on('permission', (p) => this.approval(`claude:${p.sessionId}`, {
-        kind: 'claude', ref: p.request_id, answerable: true,
-        summary: `${p.tool_name}: ${p.description ?? ''}${p.input_preview ? `\n${String(p.input_preview).slice(0, 1500)}` : ''}`,
-      }));
-    }
+    a.on('approval-resolved', (e) => {
+      for (const [id, x] of this.approvals) if (x.agent === a.agent && x.ref === e.ref) this.approvals.delete(id);
+    });
+    a.on('warn', (m) => this.log(m));
   }
 
-  /** The registered Claude session a hook call belongs to: by claude pid (stable across
-   *  /clear, which mints a new session id), else by session id. */
-  #claudeSession({ claudePid, sessionId }) {
-    for (const s of this.sessions.values()) if (s.agent === 'claude' && claudePid && s.claudePid === claudePid) return s;
-    return sessionId ? this.sessions.get(`claude:${sessionId}`) ?? null : null;
-  }
-
-  /**
-   * A prompt or final answer reported by bridge-hook.js. A final identical to what the
-   * model already sent with the reply tool this turn is not posted twice. A call that
-   * beats the channel's registration is held briefly and replayed on session-up.
-   */
-  async mirror(m) {
-    const s = this.#claudeSession(m);
-    if (!s) {
-      const now = this.now();
-      this.pendingMirrors = [...(this.pendingMirrors ?? []).filter((p) => now - p.at < 30000), { m, at: now }].slice(-50);
-      return;
-    }
-    if (m.kind === 'prompt') return this.prompt(s.key, m.text);
-    const text = m.text.trim();
-    const dup = s.replies?.includes(text);
-    s.replies = [];
-    if (text && !dup) await this.final(s.key, m.text);
-  }
-
-  async #drainMirrors() {
-    const held = this.pendingMirrors ?? [];
-    this.pendingMirrors = [];
-    for (const { m, at } of held) {
-      if (this.#claudeSession(m)) await this.mirror(m);
-      else this.pendingMirrors.push({ m, at });
-    }
+  #event(key, kind, e) {
+    if (kind === 'prompt') return this.prompt(key, e.text);
+    if (kind === 'progress') return this.progress(key, e.text);
+    if (kind === 'final') return this.final(key, e.text, e.status);
+    return this.approval(key, e);
   }
 
   chatFor(project) {
@@ -182,58 +84,33 @@ export class Bridge {
   }
 
   /**
-   * Register a session. Its Topic opens (and `session up` is posted) at once for a session
-   * that appeared while the bridge ran, but only on first activity for one that was
-   * already loaded when the bridge started: the Codex daemon keeps threads loaded after
-   * their TUI exits, so most of those are idle leftovers. A session whose Topic is cached
-   * is re-attached silently.
+   * Register a session, replay its backlog, then release the live events held meanwhile,
+   * minus the turns the backlog already carried (a turn that completes during bring-up is
+   * reported both ways).
    */
-  async sessionUp(agent, id, { cwd, branch, originUrl, preexisting = false, claudePid = null } = {}) {
-    const key = `${agent}:${id}`;
-    if (this.sessions.has(key)) return this.sessions.get(key);
-    const ctx = this.resolveContext(cwd, { branch, originUrl });
-    const chatId = this.chatFor(ctx.project);
-    const base = `${this.machine}/${agent}/${ctx.branch ?? 'detached'}`;
-    const s = { agent, id, key, chatId, base, title: base, project: ctx.project, topicId: null, progress: null, opening: null, claudePid, lastActivity: this.now() };
-    this.sessions.set(key, s);
-    this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting}`);
-    if (chatId === null) { this.log(`no chat for project ${ctx.project}; ${key} not mirrored`); return s; }
-    s.topicId = this.topics.topicId(TopicCache.key(chatId, key));
-    // A cached Topic was likely closed when its session last ended: reopen before posting.
-    if (s.topicId) {
-      s.opening = Promise.resolve();
-      s.reopen = true;
-      // An active session owns its Topic again at once, so the sweep cannot take it. An idle
-      // leftover keeps closedAt until its first activity.
-      if (!preexisting) this.#cacheSet(s, { topicId: s.topicId });
+  async sessionUp(agent, { id, cwd, branch, preexisting = false, backlog = [] }) {
+    const key = sessionKey(agent, id);
+    if (this.sessions.has(key) || this.held.has(key)) return this.sessions.get(key);
+    this.held.set(key, []);
+    try {
+      const ctx = this.resolveContext(cwd, { branch });
+      const chatId = this.chatFor(ctx.project);
+      const cached = chatId === null ? null : this.topics.get(TopicCache.key(chatId, key));
+      const base = topicTitle(this.machine, agent, ctx.branch);
+      const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, base,
+        title: cached?.title ?? base, project: ctx.project, chain: Promise.resolve(), progress: null, injected: [] };
+      this.sessions.set(key, s);
+      this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting} topic=${s.topicId ?? '-'}`);
+      if (chatId === null) this.log(`no chat for project ${ctx.project}; ${key} not mirrored`);
+      else await this.#apply(s, onUp(s, { preexisting, now: this.now() }));
+      for (const b of backlog) await this.#event(key, b.kind, b);
+    } finally {
+      const seen = new Set(backlog.filter((b) => b.turnId).map((b) => `${b.kind}:${b.turnId}`));
+      const q = this.held.get(key) ?? [];
+      this.held.delete(key);
+      for (const { kind, e } of q) if (!(e.turnId && seen.has(`${kind}:${e.turnId}`))) await this.#event(key, kind, e).catch(() => {});
     }
-    else if (!preexisting) await this.#open(s);
-    return s;
-  }
-
-  /** Create the session's Topic and announce it, once; concurrent callers share the work. */
-  #open(s) {
-    s.opening ??= (async () => {
-      // Number only against sessions that hold a Topic: idle leftovers never show a title.
-      const taken = new Set([...this.sessions.values()]
-        .filter((o) => o !== s && o.opening && o.chatId === s.chatId).map((o) => o.title));
-      for (let n = 2; taken.has(s.title); n++) s.title = `${s.base} #${n}`;
-      try {
-        s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title)).message_thread_id;
-        this.#cacheSet(s, { topicId: s.topicId });
-      } catch (e) {
-        this.log(`createForumTopic ${s.title}: ${e.message} (posting without a Topic)`);
-      }
-      await this.#post(s, `session up: ${s.title}${s.project ? ` (${s.project})` : ''}`);
-      // Telegram auto-pins a Topic's first message; that pin is noise here.
-      if (s.topicId) {
-        await this.#serial(s, () => this.telegram.unpinAllForumTopicMessages(s.chatId, s.topicId)).catch((e) => {
-          if (!this.unpinWarned) this.log(`unpinAllForumTopicMessages: ${e.message} (further failures not logged)`);
-          this.unpinWarned = true;
-        });
-      }
-    })();
-    return s.opening;
+    return this.sessions.get(key);
   }
 
   sessionDown(key) {
@@ -241,113 +118,138 @@ export class Bridge {
     if (!s) return;
     this.sessions.delete(key);
     this.log(`down ${key}`);
-    if (!s.opening) return;
-    this.#send(s, `session ended: ${s.title}`)
-      .then(() => s.topicId && this.#serial(s, async () => {
-        try {
-          await this.telegram.closeForumTopic(s.chatId, s.topicId);
-          this.#cacheSet(s, { topicId: s.topicId, closedAt: this.now() });
-          this.log(`closed topic ${s.title} [topic ${s.topicId}]`);
-        } catch (e) { this.log(`closeForumTopic ${s.title}: ${e.message}`); }
-      }))
-      .catch(() => {});
+    if (s.chatId !== null) this.#apply(s, onDown(s, this.now())).catch(() => {});
   }
 
-  async #send(s, text, opts = {}) {
-    if (s.chatId === null) return [];
-    await this.#open(s);
-    return this.#post(s, text, opts);
+  /** Close the Topics of sessions idle for `idleCloseMinutes`; the session stays registered. */
+  closeIdle() {
+    const runs = [];
+    for (const s of this.sessions.values()) {
+      if (s.chatId === null) continue;
+      const actions = onIdleTick(s, this.now(), this.config.idleCloseMinutes);
+      if (actions.length) runs.push(this.#apply(s, actions));
+    }
+    return Promise.all(runs).then(() => runs.length);
   }
 
-  /** Run Telegram writes for one session strictly in order (a final must not overtake
-   *  its prompt, nor the close its `session ended`). */
+  /**
+   * Delete Topics closed more than `deleteClosedAfterHours` ago. A Topic held by a
+   * registered session is never deleted: an idle-closed session may come back.
+   */
+  async sweepClosedTopics() {
+    let n = 0;
+    const holder = (k) => [...this.sessions.values()].find((s) => s.chatId !== null && TopicCache.key(s.chatId, s.key) === k);
+    for (const [k, e] of this.topics.due(this.now(), this.config.deleteClosedAfterHours)) {
+      if (holder(k)) continue;
+      try {
+        await this.telegram.deleteForumTopic(TopicCache.chatIdOf(k), e.topicId);
+      } catch (err) {
+        if (!TOPIC_GONE.test(err.message)) { this.#warnOnce('deleteForumTopic', `${err.message} (needs the "Delete messages" right; kept for the next sweep)`); continue; }
+      }
+      this.warned.delete('deleteForumTopic');
+      if (this.topics.get(k) === e) this.topics.set(k, null);
+      const h = holder(k);   // re-attached while the delete was in flight
+      if (h?.topicId === e.topicId) Object.assign(h, { topicId: null, state: 'none', closedAt: null });
+      n++;
+      this.log(`deleted closed topic ${e.title ?? k} [topic ${e.topicId}]`);
+    }
+    return n;
+  }
+
+  #warnOnce(what, msg) {
+    if (this.warned.get(what) === msg) return;
+    this.warned.set(what, msg);
+    this.log(`${what}: ${msg}`);
+  }
+
+  // ── Telegram writes: strictly ordered per session ──
+
   #serial(s, fn) {
-    const p = (s.chain ?? Promise.resolve()).then(fn);
+    const p = s.chain.then(fn);
     s.chain = p.catch(() => {});
     return p;
   }
 
-  #post(s, text, opts = {}) {
-    return this.#serial(s, () => this.#postNow(s, text, opts));
+  #apply(s, actions) {
+    if (!actions.length || s.chatId === null) return Promise.resolve();
+    return this.#serial(s, async () => { for (const a of actions) await this.#run(s, a); });
   }
 
-  async #postNow(s, text, opts) {
-    await this.#reopenNow(s);
+  #save(s) {
+    if (s.chatId !== null) this.topics.set(TopicCache.key(s.chatId, s.key), cacheEntry(s, s.title));
+  }
+
+  async #run(s, action) {
+    if (action === 'create') {
+      // Number against sessions that hold (or are creating) a Topic in the same group.
+      const taken = new Set([...this.sessions.values()]
+        .filter((o) => o !== s && o.chatId === s.chatId && (o.topicId || o.creating)).map((o) => o.title));
+      s.title = s.base;
+      for (let n = 2; taken.has(s.title); n++) s.title = `${s.base} #${n}`;
+      s.creating = true;
+      try {
+        s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title)).message_thread_id;
+        this.#save(s);
+      } catch (e) {
+        this.log(`createForumTopic ${s.title}: ${e.message} (posting without a Topic)`);
+      } finally { s.creating = false; }
+      await this.#postNow(s, `session up: ${s.title}${s.project ? ` (${s.project})` : ''}`, {}, false);
+      // Telegram auto-pins a Topic's first message; that pin is noise here.
+      if (s.topicId) await this.telegram.unpinAllForumTopicMessages(s.chatId, s.topicId).catch((e) => this.#warnOnce('unpinAllForumTopicMessages', e.message));
+      return;
+    }
+    if (action === 'notice-ended') return this.#postNow(s, `session ended: ${s.title}`);
+    if (!s.topicId) return;
+    const call = action === 'reopen' ? 'reopenForumTopic' : 'closeForumTopic';
+    try {
+      await this.telegram[call](s.chatId, s.topicId);
+    } catch (e) {
+      if (!TOPIC_UNCHANGED.test(e.message)) {
+        if (TOPIC_GONE.test(e.message) && action === 'reopen') { for (const a of onTopicGone(s)) await this.#run(s, a); return; }
+        this.log(`${call} ${s.title}: ${e.message}`);
+      }
+    }
+    this.#save(s);
+    this.log(`${action === 'reopen' ? 'reopened' : 'closed'} topic ${s.title} [topic ${s.topicId}]${action === 'close' ? ` (${s.state === 'ended' ? 'ended' : 'idle'})` : ''}`);
+  }
+
+  async #postNow(s, text, opts = {}, retry = true) {
     try {
       this.log(`post ${s.title} [topic ${s.topicId ?? '-'}] ${text.replace(/\s+/g, ' ').slice(0, 60)}`);
       return await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...opts });
     } catch (e) {
-      // A cached Topic that was deleted in Telegram: forget it, recreate on next restart.
-      if (s.topicId && /thread not found|TOPIC_DELETED/i.test(e.message)) this.topics.delete(TopicCache.key(s.chatId, s.key));
-      else if (s.topicId && /TOPIC_CLOSED/i.test(e.message)) s.reopen = true;
+      // Telegram-side drift (Topic deleted or closed by hand): repair once, then resend.
+      const fix = !retry || !s.topicId ? null : TOPIC_GONE.test(e.message) ? onTopicGone(s) : TOPIC_CLOSED.test(e.message) ? onTopicFoundClosed(s) : null;
+      if (fix) {
+        for (const a of fix) await this.#run(s, a);
+        return this.#postNow(s, text, opts, false);
+      }
       this.log(`send ${s.title}: ${e.message}`);
       return [];
     }
   }
 
-  /** Reopen the session's Topic if it may be closed, and clear its closedAt. */
-  async #reopenNow(s) {
-    if (s.reopen && s.topicId) {
-      s.reopen = false;
-      try {
-        await this.telegram.reopenForumTopic(s.chatId, s.topicId);
-        this.#cacheSet(s, { topicId: s.topicId });
-        this.log(`reopened topic ${s.title} [topic ${s.topicId}]`);
-      } catch (e) {
-        if (/TOPIC_NOT_MODIFIED/i.test(e.message)) this.#cacheSet(s, { topicId: s.topicId });
-        else this.log(`reopenForumTopic ${s.title}: ${e.message}`);
-      }
-    }
+  /** Activity: run the lifecycle (create or reopen the Topic), then post, in order. */
+  #send(s, text, opts = {}) {
+    if (s.chatId === null) return Promise.resolve([]);
+    this.#activity(s);
+    return this.#serial(s, () => this.#postNow(s, text, opts));
   }
 
-  /** Any sign of life: restart the idle clock, and reopen an idle-closed Topic at once. */
-  #touch(s) {
-    s.lastActivity = this.now();
-    if (!s.idleClosed) return;
-    s.idleClosed = false;
-    s.reopen = true;
-    this.#serial(s, () => this.#reopenNow(s)).catch(() => {});
+  #activity(s) {
+    if (s.chatId !== null) this.#apply(s, onActivity(s, this.now())).catch(() => {});
   }
 
-  /**
-   * Codex threads never end on their own (the app-server keeps them loaded after the TUI
-   * exits), so a Codex Topic with no activity for `codexIdleCloseMinutes` (context.mjs owns
-   * the default; 0 = never) is closed quietly and gets a closedAt. The session stays
-   * registered, so the delete sweep leaves the Topic alone, and the next activity reopens
-   * the same Topic.
-   */
-  async closeIdleCodexTopics() {
-    const minutes = this.config.codexIdleCloseMinutes;
-    if (!(minutes > 0)) return 0;
-    let n = 0;
-    for (const s of this.sessions.values()) {
-      if (s.agent !== 'codex' || !s.topicId || !s.opening || s.idleClosed || s.reopen) continue;
-      if (this.now() - s.lastActivity < minutes * 60000) continue;
-      s.idleClosed = true;
-      n++;
-      await this.#serial(s, async () => {
-        if (!s.idleClosed) return;   // activity arrived while queued
-        try {
-          await this.telegram.closeForumTopic(s.chatId, s.topicId);
-          this.#cacheSet(s, { topicId: s.topicId, closedAt: this.now() });
-          this.log(`idle-closed topic ${s.title} [topic ${s.topicId}] after ${minutes}m`);
-        } catch (e) {
-          s.idleClosed = false;
-          this.log(`closeForumTopic ${s.title}: ${e.message}`);
-        }
-      }).catch(() => {});
-    }
-    return n;
-  }
+  // ── session events ──
 
-  /** A prompt typed into the session (TUI or official remote). One that came from this
-   *  Topic is already visible there, so its echo is skipped once. */
+  /** A prompt typed into the session. One injected from its Topic is skipped once. */
   async prompt(key, text) {
     const s = this.sessions.get(key);
     if (!s) return;
-    this.#touch(s);
-    const i = s.injected?.indexOf(text) ?? -1;
-    if (i !== -1) { s.injected.splice(i, 1); return; }
+    const now = this.now();
+    s.injected = s.injected.filter((x) => now - x.at < ECHO_TTL_MS);
+    const i = s.injected.findIndex((x) => x.text === text.trim());
+    if (i !== -1) { s.injected.splice(i, 1); this.#activity(s); return; }
     await this.#send(s, `> ${text}`);
   }
 
@@ -355,21 +257,20 @@ export class Bridge {
   async progress(key, line) {
     const s = this.sessions.get(key);
     if (!s || s.chatId === null) return;
-    this.#touch(s);
+    this.#activity(s);
     const p = s.progress ??= { lines: [], msgId: null, last: 0, timer: null };
-    p.lines.push(line);
-    if (p.lines.length > 12) p.lines = p.lines.slice(-12);
-    const flush = async () => {
+    p.lines = [...p.lines, line].slice(-PROGRESS_LINES);
+    const flush = () => this.#serial(s, async () => {
       p.timer = null;
       p.last = this.now();
       const text = `working…\n${p.lines.join('\n')}`;
       if (p.msgId) {
         try { await this.telegram.editMessageText(s.chatId, p.msgId, text); } catch (e) { this.log(`edit: ${e.message}`); }
       } else {
-        const [m] = await this.#send(s, text);
+        const [m] = await this.#postNow(s, text);
         p.msgId = m?.message_id ?? null;
       }
-    };
+    });
     if (this.now() - p.last >= PROGRESS_MIN_INTERVAL_MS) return flush();
     if (!p.timer) { p.timer = setTimeout(flush, PROGRESS_MIN_INTERVAL_MS); p.timer.unref?.(); }
   }
@@ -377,19 +278,17 @@ export class Bridge {
   async final(key, text, status) {
     const s = this.sessions.get(key);
     if (!s) return;
-    this.#touch(s);
     if (s.progress?.timer) clearTimeout(s.progress.timer);
     s.progress = null;
     const body = text?.trim() ? text : `(turn ${status ?? 'completed'}, no message)`;
     await this.#send(s, status && status !== 'completed' ? `[${status}] ${body}` : body);
   }
 
-  async approval(key, { kind, ref, summary, answerable }) {
+  async approval(key, { ref, summary, answerable }) {
     const s = this.sessions.get(key);
     if (!s) return;
-    this.#touch(s);
     const id = String(this.nextApproval++);
-    this.approvals.set(id, { key, kind, ref });
+    this.approvals.set(id, { key, agent: s.agent, ref });
     const offer = answerable && this.config.approvalsFromTelegram && this.allowed.size > 0;
     const head = offer ? `approval needed on ${this.machine}` : `approval needed on ${this.machine}, answer locally or via official remote`;
     const replyMarkup = offer ? { inline_keyboard: [[
@@ -398,9 +297,7 @@ export class Bridge {
     await this.#send(s, `${head}\n${summary}`, { replyMarkup });
   }
 
-  approvalResolved(kind, ref) {
-    for (const [id, a] of this.approvals) if (a.kind === kind && a.ref === ref) this.approvals.delete(id);
-  }
+  // ── Telegram inbound ──
 
   #sessionAt(chatId, topicId) {
     for (const s of this.sessions.values()) if (s.chatId === chatId && (s.topicId ?? null) === (topicId ?? null)) return s;
@@ -414,28 +311,22 @@ export class Bridge {
     if (!m?.text || !this.allowed.has(Number(m.from?.id))) return;
     const s = this.#sessionAt(m.chat.id, m.is_topic_message ? m.message_thread_id : null);
     if (!s) return;
+    const host = this.hosts.get(s.agent);
     const text = m.text.trim();
     const cmd = /^\/(\w+)(?:@\w+)?\s*$/.exec(text)?.[1];
-    if (cmd === 'status') return this.#send(s, `${s.title}: ${this.#status(s)}`);
+    if (cmd === 'status') return this.#send(s, `${s.title}: ${host.status(s.id)}`);
     if (cmd === 'interrupt') {
-      if (s.agent !== 'codex') return this.#send(s, 'interrupt is Codex-only; use Esc in the Claude TUI');
-      const ok = await this.codex.interrupt(s.id).catch(() => false);
+      if (!host.interrupt) return this.#send(s, `interrupt is not available for ${s.agent}; use Esc locally`);
+      const ok = await host.interrupt(s.id).catch(() => false);
       return this.#send(s, ok ? 'interrupt sent' : 'nothing to interrupt');
     }
+    this.#activity(s);
+    s.injected = [...s.injected, { text, at: this.now() }].slice(-20);
     try {
-      this.#touch(s);
-      (s.injected ??= []).push(text);
-      if (s.injected.length > 20) s.injected.shift();
-      if (s.agent === 'codex') await this.codex.inject(s.id, text);
-      else if (!this.hub.deliver(s.id, text, m.from.username ?? String(m.from.id))) throw new Error('channel disconnected');
+      await host.inject(s.id, text, m.from.username ?? String(m.from.id));
     } catch (e) {
       await this.#send(s, `inject failed: ${e.message}`);
     }
-  }
-
-  #status(s) {
-    if (s.agent === 'codex') return this.codex?.status(s.id) ?? 'unknown';
-    return this.hub?.sessions.has(s.id) ? 'channel connected' : 'channel disconnected';
   }
 
   async #onCallback(q) {
@@ -445,8 +336,7 @@ export class Bridge {
     let note = 'not allowed';
     if (allowed && a) {
       const yes = m[2] === 'y';
-      const s = this.sessions.get(a.key);
-      const ok = a.kind === 'codex' ? this.codex?.answerApproval(a.ref, yes) : this.hub?.verdict(s?.id, a.ref, yes);
+      const ok = this.hosts.get(a.agent)?.answerApproval(a.ref, yes, this.sessions.get(a.key)?.id);
       this.approvals.delete(m[1]);
       note = ok ? (yes ? 'accepted' : 'declined') : 'already resolved';
       if (ok && q.message) this.telegram.editMessageText(q.message.chat.id, q.message.message_id, `${q.message.text ?? ''}\n-> ${note} by ${q.from.username ?? q.from.id}`).catch(() => {});
@@ -506,31 +396,29 @@ export async function main() {
   if (!config.allowedUserIds.length) log('bridge.allowedUserIds is empty: inbound Telegram messages will all be dropped');
 
   const telegram = new TelegramClient({ token: config.botToken, offsetFile: path.join(BRIDGE_RUNTIME_DIR, 'offset.json') });
-  const hub = new ChannelHub();
-  const port = await hub.listen(0);
-  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: hub.token, pid: process.pid }, null, 2));
+  const claude = new ClaudeAdapter();
+  const port = await claude.listen(0);
+  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid }, null, 2));
   const codex = new CodexAdapter();
-  const bridge = new Bridge({ telegram, codex, hub, config, machine, log, topicCacheFile: path.join(BRIDGE_RUNTIME_DIR, 'topics.json') });
+  const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, topicCacheFile: path.join(BRIDGE_RUNTIME_DIR, 'topics.json') });
 
   const ac = new AbortController();
   const stop = () => {
     ac.abort();
     try { if (JSON.parse(fs.readFileSync(RUNTIME_FILE, 'utf8')).pid === process.pid) fs.rmSync(RUNTIME_FILE); } catch { /* gone */ }
     codex.stop();
-    hub.close().finally(() => process.exit(0));
+    claude.close().finally(() => process.exit(0));
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-  log(`up: machine=${machine} ipc=127.0.0.1:${port}`);
+  log(`up: machine=${machine} ipc=127.0.0.1:${port} idleCloseMinutes=${config.idleCloseMinutes} deleteClosedAfterHours=${config.deleteClosedAfterHours}`);
   codexLoop(codex, log, ac.signal);
-  if (config.codexIdleCloseMinutes > 0) {
-    log(`idle close: Codex Topics close after ${config.codexIdleCloseMinutes}m without activity`);
-    setInterval(() => bridge.closeIdleCodexTopics().catch((e) => log(`idle close: ${e.message}`)),
-      Math.min(60000, config.codexIdleCloseMinutes * 60000)).unref();
+  if (config.idleCloseMinutes > 0) {
+    setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)),
+      Math.min(60000, config.idleCloseMinutes * 60000)).unref();
   }
   if (config.deleteClosedAfterHours > 0) {
     const sweep = () => bridge.sweepClosedTopics().catch((e) => log(`sweep: ${e.message}`));
-    log(`sweep: deleting Topics closed more than ${config.deleteClosedAfterHours}h ago, hourly`);
     sweep();
     setInterval(sweep, 3600000).unref();
   }

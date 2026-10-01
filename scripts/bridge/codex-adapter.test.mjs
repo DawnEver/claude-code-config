@@ -50,7 +50,7 @@ async function started(opts) {
   const srv = fakeAppServer(opts);
   const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({ status: 'running' }) });
   const ups = [];
-  a.on('session-up', (s) => ups.push(s));
+  a.on('up', (s) => ups.push(s));
   assert.equal(await a.start(), true);
   await a.refresh();
   return { a, srv, ups };
@@ -66,14 +66,14 @@ test('start() returns false when the daemon probe fails, without connecting', as
 test('handshake then subscribe every loaded thread via thread/resume', async () => {
   const { srv, ups } = await started();
   assert.deepEqual(srv.calls.map((c) => c.method), ['initialize', 'initialized', 'thread/loaded/list', 'thread/resume']);
-  assert.deepEqual(ups, [{ threadId: 't1', cwd: '/w', branch: 'feat/x', name: null, preexisting: true, backlog: [] }]);
+  assert.deepEqual(ups, [{ id: 't1', cwd: '/w', branch: 'feat/x', preexisting: true, backlog: [] }]);
 });
 
 test('ephemeral threads are skipped; unloaded threads go down on refresh', async () => {
   const { a, srv, ups } = await started({ loaded: ['t1', 'e1'], threads: { e1: { id: 'e1', ephemeral: true } } });
-  assert.deepEqual(ups.map((u) => u.threadId), ['t1']);
+  assert.deepEqual(ups.map((u) => u.id), ['t1']);
   const downs = [];
-  a.on('session-down', (d) => downs.push(d.threadId));
+  a.on('down', (d) => downs.push(d.id));
   srv.setLoaded([]);
   await a.refresh();
   assert.deepEqual(downs, ['t1']);
@@ -91,7 +91,7 @@ test('deltas aggregate; final message is emitted on turn/completed; progress per
   srv.push('item/completed', { threadId: 't1', turnId: 'turnA', item: { type: 'commandExecution', id: 'c', command: 'npm test', exitCode: 0 } });
   srv.push('turn/completed', { threadId: 't1', turn: { id: 'turnA', status: 'completed' } });
   assert.deepEqual(progress, ['$ npm test (exit 0)']);
-  assert.deepEqual(finals, [{ threadId: 't1', turnId: 'turnA', status: 'completed', text: 'Hello' }]);
+  assert.deepEqual(finals, [{ id: 't1', turnId: 'turnA', status: 'completed', text: 'Hello' }]);
   assert.equal(a.status('t1'), 'idle');
 });
 
@@ -135,7 +135,7 @@ test('a fresh thread whose rollout is not written yet is retried until it subscr
     id: 't3', cwd: '/w', ephemeral: false, turns: [] } } });
   const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({ status: 'running' }), resumeRetryMs: 5 });
   const ups = [];
-  a.on('session-up', (s) => ups.push(s.threadId));
+  a.on('up', (s) => ups.push(s.id));
   await a.start(); await a.refresh();
   srv.push('thread/started', { thread: { id: 't3', ephemeral: false } });
   await new Promise((r) => setTimeout(r, 40));
@@ -150,7 +150,7 @@ test('a completed userMessage item is emitted as the prompt text', async () => {
   srv.push('item/completed', { threadId: 't1', turnId: 'tu', item: { type: 'userMessage', id: 'u', content: [
     { type: 'text', text: 'fix the build' }, { type: 'image', url: 'x' }] } });
   srv.push('item/completed', { threadId: 't1', item: { type: 'userMessage', id: 'v', content: [{ type: 'image', url: 'x' }] } });
-  assert.deepEqual(prompts, [{ threadId: 't1', turnId: 'tu', text: 'fix the build' }]);
+  assert.deepEqual(prompts, [{ id: 't1', turnId: 'tu', text: 'fix the build' }]);
 });
 
 test('inject uses turn/start when idle and turn/steer with expectedTurnId mid-turn', async () => {
@@ -169,12 +169,12 @@ test('approvals are relayed and never answered unless answerApproval is called',
   const { a, srv } = await started();
   const seen = [], resolved = [];
   a.on('approval', (x) => seen.push(x));
-  a.on('approval-resolved', (x) => resolved.push(x.key));
+  a.on('approval-resolved', (x) => resolved.push(x.ref));
   srv.request(77, 'item/commandExecution/requestApproval', { threadId: 't1', turnId: 'x', itemId: 'i', command: 'rm -rf build' });
   srv.request(78, 'item/permissions/requestApproval', { threadId: 't1' });
   srv.request(79, 'account/chatgptAuthTokens/refresh', {});
   await tick();
-  assert.deepEqual(seen.map((s) => [s.key, s.answerable, s.summary]), [['c77', true, '$ rm -rf build'], ['c78', false, 'item/permissions/requestApproval']]);
+  assert.deepEqual(seen.map((s) => [s.id, s.ref, s.answerable, s.summary]), [['t1', 'c77', true, '$ rm -rf build'], ['t1', 'c78', false, 'item/permissions/requestApproval']]);
   assert.deepEqual(srv.responses, [], 'nothing answered automatically');
   assert.equal(a.answerApproval('c78', true), false, 'non accept/decline shapes are never answered');
   assert.equal(a.answerApproval('c77', false), true);
@@ -189,10 +189,10 @@ test('approvals are relayed and never answered unless answerApproval is called',
 test('transport close drops every session', async () => {
   const { a, srv } = await started();
   const downs = [];
-  a.on('session-down', (d) => downs.push(d.threadId));
+  a.on('down', (d) => downs.push(d.id));
   srv.transport.close();
   assert.deepEqual(downs, ['t1']);
-  assert.equal(a.connected, false);
+  assert.equal(a.status('t1'), 'not loaded');
 });
 
 test('progress lines show the command, not the shell Codex wraps it in', () => {

@@ -1,7 +1,7 @@
-// scripts/bridge/topic-cache.mjs — the daemon's topics.json: `chatId|sessionKey` ->
-// {topicId, closedAt?}. A cache only (docs/bridge.md): it avoids recreating a Topic after a
-// restart and records which Topics this bridge itself closed, which is the sole input to
-// the closed-Topic sweep. A bare number is the pre-closedAt shape and is never swept.
+// scripts/bridge/topic-cache.mjs — topics.json: `chatId|sessionKey` -> {topicId, title,
+// closedAt?}. A cache only (docs/bridge.md): it lets a session re-attach to its Topic after
+// a daemon restart, and records which Topics this bridge closed, the sole input to the
+// delete sweep. Entries of any other shape are ignored; deleting the file is always safe.
 
 import fs from 'fs';
 import path from 'path';
@@ -10,35 +10,29 @@ export class TopicCache {
   constructor(file = null) {
     this.file = file;
     this.entries = {};
-    try { this.entries = JSON.parse(fs.readFileSync(file, 'utf8')) ?? {}; } catch { /* empty cache */ }
+    try {
+      for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')) ?? {})) {
+        if (Number.isInteger(v?.topicId)) this.entries[k] = v;
+      }
+    } catch { /* empty cache */ }
   }
 
   static key(chatId, sessionKey) { return `${chatId}|${sessionKey}`; }
 
   static chatIdOf(k) { return Number(k.slice(0, k.indexOf('|'))); }
 
-  /** Normalised entry, or null. */
-  get(k) {
-    const v = this.entries[k];
-    if (typeof v === 'number') return { topicId: v };
-    return v?.topicId ? v : null;
+  get(k) { return this.entries[k] ?? null; }
+
+  /** Write an entry; null removes it. */
+  set(k, entry) {
+    if (entry) this.entries[k] = entry; else delete this.entries[k];
+    this.save();
   }
 
-  topicId(k) { return this.get(k)?.topicId ?? null; }
-
-  set(k, entry) { this.entries[k] = entry; this.save(); }
-
-  delete(k) { if (k in this.entries) { delete this.entries[k]; this.save(); } }
-
-  /** Entries this bridge closed at least `hours` ago. `hours <= 0` disables the sweep. */
+  /** Entries closed at least `hours` ago. `hours <= 0` disables the sweep. */
   due(now, hours) {
     if (!(hours > 0)) return [];
-    const out = [];
-    for (const k of Object.keys(this.entries)) {
-      const e = this.get(k);
-      if (typeof e?.closedAt === 'number' && now - e.closedAt >= hours * 3600000) out.push([k, e]);
-    }
-    return out;
+    return Object.entries(this.entries).filter(([, e]) => typeof e.closedAt === 'number' && now - e.closedAt >= hours * 3600000);
   }
 
   save() {

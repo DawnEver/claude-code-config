@@ -4,7 +4,7 @@
 // Wired for UserPromptSubmit and Stop. The model is not trusted to call the channel's
 // `reply` tool, so — like the Codex adapter does for Codex — the transcript side is
 // mirrored mechanically: one authenticated one-shot `mirror` call to the bridge daemon's
-// channel hub (127.0.0.1, port + token from ~/.claude/bridge/runtime.json). The daemon maps
+// Claude adapter (claude-adapter.mjs, 127.0.0.1, port + token from ~/.claude/bridge/runtime.json). The daemon maps
 // CLAUDE_PID (stable across /clear) to the session's registered channel and posts it.
 //
 // Fail-open and silent: hook stdout can inject context, so nothing is ever printed; every
@@ -12,12 +12,10 @@
 // runtime file exists and CLAUDE_PID is set.
 
 import fs from 'fs';
-import os from 'os';
 import net from 'net';
-import path from 'path';
 import { isMain } from '../shared/is-main.mjs';
+import { RUNTIME_FILE } from '../bridge/context.mjs';
 
-export const RUNTIME_FILE = path.join(os.homedir(), '.claude', 'bridge', 'runtime.json');
 const TIMEOUT_MS = 2000;
 
 const isRealUser = (e) => {
@@ -51,8 +49,8 @@ export function mirrorFor(payload, env = process.env) {
   const base = { claudePid, sessionId: payload?.session_id ?? null };
   if (payload?.hook_event_name === 'UserPromptSubmit') {
     const text = String(payload.prompt ?? '');
-    // A prompt that arrived through the channel came from Telegram already.
-    if (!text.trim() || /^\s*<channel[\s>]/.test(text)) return null;
+    // A channel prompt (from Telegram) is sent too: the daemon's echo suppression drops it.
+    if (!text.trim()) return null;
     return { ...base, kind: 'prompt', text };
   }
   if (payload?.hook_event_name === 'Stop') {

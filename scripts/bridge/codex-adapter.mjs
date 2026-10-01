@@ -8,7 +8,7 @@
 //
 // Live sessions = `thread/loaded/list` (threads the daemon holds in memory). Each is
 // subscribed with `thread/resume`, which only works for persisted (non-ephemeral) threads.
-// `thread/list` is the metadata fallback when `thread/read` does not answer.
+// Emits the host-neutral events documented in daemon.mjs.
 //
 // Method names verified against `codex app-server generate-json-schema` (codex-cli 0.159.3).
 
@@ -120,6 +120,7 @@ export function backlogSince(turns = [], sinceMs) {
 export class CodexAdapter extends EventEmitter {
   constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000 } = {}) {
     super();
+    this.agent = 'codex';
     this.now = now;
     this.resumeRetryMs = resumeRetryMs;
     this.connectedAt = Infinity;
@@ -129,11 +130,9 @@ export class CodexAdapter extends EventEmitter {
     this.probe = probe;
     this.clientName = clientName;
     this.rpc = null;
-    this.threads = new Map();     // threadId -> { cwd, branch, name, activeTurnId, deltas, lastAgent }
+    this.threads = new Map();     // threadId -> { cwd, branch, activeTurnId, deltas, lastAgent }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
   }
-
-  get connected() { return !!this.rpc; }
 
   /** Attach to the daemon. Resolves false (no throw) when it is not running. */
   async start() {
@@ -150,7 +149,6 @@ export class CodexAdapter extends EventEmitter {
       if (this.rpc !== rpc) return;
       this.rpc = null;
       for (const id of [...this.threads.keys()]) this.#drop(id);
-      this.emit('disconnected');
     });
     await new Promise((resolve) => t.onOpen(resolve));
     await rpc.request('initialize', { clientInfo: { name: this.clientName, version: '1' } });
@@ -209,19 +207,18 @@ export class CodexAdapter extends EventEmitter {
     const info = {
       cwd: th.cwd ?? r.cwd,
       branch: th.gitInfo?.branch ?? null,
-      name: th.name ?? th.preview ?? null,
       activeTurnId: running?.id ?? null,
       deltas: new Map(),
       lastAgent: null,
     };
     this.threads.set(threadId, info);
-    this.emit('session-up', { threadId, cwd: info.cwd, branch: info.branch, name: info.name,
+    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch,
       preexisting, backlog: backlogSince(th.turns, this.connectedAt) });
   }
 
   #drop(threadId) {
     if (!this.threads.delete(threadId)) return;
-    this.emit('session-down', { threadId });
+    this.emit('down', { id: threadId });
   }
 
   #onNotification(method, p = {}) {
@@ -229,7 +226,6 @@ export class CodexAdapter extends EventEmitter {
     switch (method) {
       case 'turn/started':
         if (th) { th.activeTurnId = p.turn?.id ?? null; th.lastAgent = null; }
-        this.emit('turn-started', { threadId: p.threadId, turnId: p.turn?.id });
         break;
       case 'item/agentMessage/delta':
         if (th) th.deltas.set(p.itemId, (th.deltas.get(p.itemId) ?? '') + (p.delta ?? ''));
@@ -238,14 +234,14 @@ export class CodexAdapter extends EventEmitter {
         const item = p.item ?? {};
         if (item.type === 'userMessage') {
           const text = promptText(item);
-          if (text) this.emit('prompt', { threadId: p.threadId, turnId: p.turnId ?? null, text });
+          if (text) this.emit('prompt', { id: p.threadId, turnId: p.turnId ?? null, text });
         }
         if (item.type === 'agentMessage' && th) {
           th.lastAgent = item.text ?? th.deltas.get(item.id) ?? th.lastAgent;
           th.deltas.delete(item.id);
         }
         const line = progressLine(item);
-        if (line) this.emit('progress', { threadId: p.threadId, text: line });
+        if (line) this.emit('progress', { id: p.threadId, text: line });
         break;
       }
       case 'turn/completed': {
@@ -253,14 +249,14 @@ export class CodexAdapter extends EventEmitter {
         let text = th?.lastAgent;
         if (!text && th?.deltas.size) text = [...th.deltas.values()].join('\n');
         if (th) { th.activeTurnId = null; th.deltas.clear(); th.lastAgent = null; }
-        this.emit('final', { threadId: p.threadId, turnId: p.turn?.id ?? null, status, text: text ?? '' });
+        this.emit('final', { id: p.threadId, turnId: p.turn?.id ?? null, status, text: text ?? '' });
         break;
       }
       case 'serverRequest/resolved': {
         for (const [key, a] of this.approvals) {
           if (String(a.rpcId) === String(p.requestId)) {
             this.approvals.delete(key);
-            this.emit('approval-resolved', { key, threadId: a.threadId });
+            this.emit('approval-resolved', { ref: key });
           }
         }
         break;
@@ -287,7 +283,7 @@ export class CodexAdapter extends EventEmitter {
     const summary = p.command ? `$ ${oneLine(Array.isArray(p.command) ? p.command.join(' ') : p.command, 300)}`
       : p.reason ? oneLine(p.reason, 300) : method;
     this.emit('approval', {
-      key, threadId: p.threadId ?? p.conversationId, method, summary,
+      id: p.threadId ?? p.conversationId, ref: key, summary,
       answerable: ANSWERABLE_APPROVALS.has(method),
     });
     return undefined;   // answered later via answerApproval, or by another client

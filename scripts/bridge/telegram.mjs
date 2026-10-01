@@ -10,13 +10,6 @@ import path from 'path';
 
 export const MAX_MESSAGE = 4096;
 
-const MDV2_SPECIAL = /[_*[\]()~`>#+\-=|{}.!\\]/g;
-
-/** Escape text for parse_mode MarkdownV2. */
-export function escapeMarkdownV2(text) {
-  return String(text).replace(MDV2_SPECIAL, (c) => `\\${c}`);
-}
-
 /** Split text into <= max chunks, preferring newline then space boundaries. */
 export function chunkText(text, max = MAX_MESSAGE) {
   const s = String(text ?? '');
@@ -118,19 +111,15 @@ export class TelegramClient {
     return fresh;
   }
 
-  /**
-   * Send text, chunked to 4096. Plain text by default; `markdown: true` escapes for
-   * MarkdownV2. Returns the sent messages.
-   */
-  async sendMessage(chatId, text, { threadId, markdown = false, replyMarkup } = {}) {
+  /** Send plain text, chunked to 4096. Returns the sent messages. */
+  async sendMessage(chatId, text, { threadId, replyMarkup } = {}) {
     const sent = [];
-    const parts = chunkText(text, markdown ? Math.floor(MAX_MESSAGE / 2) : MAX_MESSAGE);
+    const parts = chunkText(text);
     for (let i = 0; i < parts.length; i++) {
       const params = {
         chat_id: chatId,
-        text: markdown ? escapeMarkdownV2(parts[i]) : parts[i],
+        text: parts[i],
         ...(threadId ? { message_thread_id: threadId } : {}),
-        ...(markdown ? { parse_mode: 'MarkdownV2' } : {}),
         ...(replyMarkup && i === parts.length - 1 ? { reply_markup: replyMarkup } : {}),
         link_preview_options: { is_disabled: true },
       };

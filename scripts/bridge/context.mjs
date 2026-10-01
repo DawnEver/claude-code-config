@@ -16,11 +16,17 @@ export const SHARED_ENV_SETTINGS_PATH = path.join(CLAUDE_DIR, 'claude_env_settin
 export const BRIDGE_RUNTIME_DIR = path.join(CLAUDE_DIR, 'bridge');
 export const RUNTIME_FILE = path.join(BRIDGE_RUNTIME_DIR, 'runtime.json');
 
+/** The single source for the bridge's tunable defaults (0 = never for both). */
+export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 24 };
+
+const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
+
 /**
  * Normalised bridge config.
- * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId, bridge.deleteClosedAfterHours (24; 0 = never),
- *          bridge.codexIdleCloseMinutes (30; 0 = never)
+ * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId, bridge.idleCloseMinutes,
+ *          bridge.deleteClosedAfterHours
  * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram
+ * Either layer may set any key; local wins.
  */
 export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
   const merged = readMergedEnvSettings({ sharedPath, localPath }) ?? {};
@@ -32,8 +38,8 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
     allowedUserIds: (b.allowedUserIds ?? []).map(Number).filter(Number.isFinite),
     approvalsFromTelegram: b.approvalsFromTelegram === true,
     fallbackChatId: b.fallbackChatId ?? null,
-    deleteClosedAfterHours: typeof b.deleteClosedAfterHours === 'number' && b.deleteClosedAfterHours >= 0 ? b.deleteClosedAfterHours : 24,
-    codexIdleCloseMinutes: typeof b.codexIdleCloseMinutes === 'number' && b.codexIdleCloseMinutes >= 0 ? b.codexIdleCloseMinutes : 30,
+    idleCloseMinutes: nonNegative(b.idleCloseMinutes, BRIDGE_DEFAULTS.idleCloseMinutes),
+    deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
     projects,
   };
 }

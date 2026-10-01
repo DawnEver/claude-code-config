@@ -5,218 +5,304 @@ import os from 'os';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { Bridge, runningDaemonPid } from './daemon.mjs';
-import { TopicCache } from './topic-cache.mjs';
+
+const M = 60000, H = 60 * M;
+const HOSTS = ['codex', 'claude'];
 
 function fakeTelegram() {
-  const sent = [], edits = [], topics = [], answers = [], closed = [], reopened = [];
+  const t = { sent: [], edits: [], topics: [], answers: [], closed: [], reopened: [], deleted: [], unpinned: [] };
   let nextTopic = 100, nextMsg = 1;
-  return {
-    sent, edits, topics, answers, closed, reopened,
-    closeForumTopic: async (chatId, threadId) => { closed.push([chatId, threadId]); return true; },
-    reopenForumTopic: async (chatId, threadId) => { reopened.push([chatId, threadId]); return true; },
-    createForumTopic: async (chatId, name) => { topics.push([chatId, name]); return { message_thread_id: nextTopic++ }; },
-    sendMessage: async (chatId, text, opts = {}) => { sent.push({ chatId, text, ...opts }); return [{ message_id: nextMsg++ }]; },
-    editMessageText: async (chatId, id, text) => { edits.push({ chatId, id, text }); },
-    answerCallbackQuery: async (id, text) => { answers.push(text); },
-  };
+  Object.assign(t, {
+    createForumTopic: async (chatId, name) => { t.topics.push([chatId, name]); return { message_thread_id: nextTopic++ }; },
+    sendMessage: async (chatId, text, opts = {}) => { t.sent.push({ chatId, text, ...opts }); return [{ message_id: nextMsg++ }]; },
+    editMessageText: async (chatId, id, text) => { t.edits.push({ chatId, id, text }); },
+    answerCallbackQuery: async (id, text) => { t.answers.push(text); },
+    closeForumTopic: async (c, id) => { t.closed.push([c, id]); return true; },
+    reopenForumTopic: async (c, id) => { t.reopened.push([c, id]); return true; },
+    deleteForumTopic: async (c, id) => { t.deleted.push([c, id]); return true; },
+    unpinAllForumTopicMessages: async (c, id) => { t.unpinned.push([c, id]); return true; },
+  });
+  return t;
 }
 
-function fakeCodex() {
-  const c = new EventEmitter();
-  c.injected = []; c.answered = [];
-  c.inject = async (id, text) => { c.injected.push([id, text]); return 'started'; };
-  c.interrupt = async () => true;
-  c.status = () => 'idle';
-  c.answerApproval = (key, yes) => { c.answered.push([key, yes]); return true; };
-  return c;
-}
-
-function fakeHub() {
+function fakeHost(agent, { interrupt = agent === 'codex' } = {}) {
   const h = new EventEmitter();
-  h.sessions = new Map();
-  h.delivered = []; h.verdicts = [];
-  h.deliver = (id, text, user) => { h.delivered.push([id, text, user]); return true; };
-  h.verdict = (id, req, allow) => { h.verdicts.push([id, req, allow]); return true; };
+  h.agent = agent;
+  h.injected = []; h.answered = [];
+  h.inject = async (id, text, user) => { h.injected.push([id, text, user]); };
+  h.status = () => 'idle';
+  h.answerApproval = (ref, yes, id) => { h.answered.push([ref, yes, id]); return true; };
+  if (interrupt) h.interrupt = async () => true;
   return h;
 }
 
 const ALICE = 42, MALLORY = 666;
-const baseConfig = { projects: { 'proj': { chatId: -100 } }, fallbackChatId: -999, allowedUserIds: [ALICE], approvalsFromTelegram: false };
+const baseConfig = { projects: { proj: { chatId: -100 } }, fallbackChatId: -999, allowedUserIds: [ALICE],
+  approvalsFromTelegram: false, idleCloseMinutes: 30, deleteClosedAfterHours: 24 };
 
-function make(config = {}) {
-  const telegram = fakeTelegram(), codex = fakeCodex(), hub = fakeHub();
+function make({ config = {}, topicCacheFile = null } = {}) {
+  const telegram = fakeTelegram();
+  const hosts = { codex: fakeHost('codex'), claude: fakeHost('claude') };
+  const logs = [];
+  let t = 0;
   const bridge = new Bridge({
-    telegram, codex, hub, machine: 'WS1', config: { ...baseConfig, ...config },
+    telegram, adapters: Object.values(hosts), machine: 'WS1', config: { ...baseConfig, ...config }, topicCacheFile,
     resolveContext: (cwd, h) => ({ project: cwd === '/proj' ? 'proj' : 'other', branch: h.branch ?? 'main' }),
+    log: (m) => logs.push(m), now: () => t,
   });
-  return { bridge, telegram, codex, hub };
+  return { bridge, telegram, hosts, logs, at: (v) => { t = v; } };
 }
 
-const flush = () => new Promise((r) => setImmediate(r));
 const until = async (fn, ms = 2000) => {
   const end = Date.now() + ms;
   while (!fn()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 5)); }
 };
+const settle = () => new Promise((r) => setTimeout(r, 20));
 const msg = (from, text, thread = 100, chat = -100) => ({ message: { chat: { id: chat }, from: { id: from, username: 'u' }, text, is_topic_message: true, message_thread_id: thread } });
+const up = (r, agent, id, extra = {}) => r.bridge.sessionUp(agent, { id, cwd: '/proj', ...extra });
+const texts = (t) => t.sent.map((s) => s.text);
 
-test('session-up creates <machine>/<agent>/<branch> topic in the project group, fallback otherwise', async () => {
-  const { bridge, telegram } = make();
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj', branch: 'feat/x' });
-  await bridge.sessionUp('claude', 's1', { cwd: '/elsewhere', branch: 'main' });
-  await bridge.sessionUp('codex', 't2', { cwd: '/proj', branch: 'feat/x' });
-  assert.deepEqual(telegram.topics, [[-100, 'WS1/codex/feat/x'], [-999, 'WS1/claude/main'], [-100, 'WS1/codex/feat/x #2']]);
-  assert.equal(telegram.sent[0].threadId, 100);
+test('topics: <machine>/<agent>/<branch> in the project group, fallback otherwise, numbered per group', async () => {
+  const r = make();
+  await up(r, 'codex', 't1', { branch: 'feat/x' });
+  await r.bridge.sessionUp('claude', { id: 's1', cwd: '/elsewhere' });
+  await up(r, 'codex', 't2', { branch: 'feat/x' });
+  assert.deepEqual(r.telegram.topics, [[-100, 'WS1/codex/feat/x'], [-999, 'WS1/claude/main'], [-100, 'WS1/codex/feat/x #2']]);
+  assert.deepEqual(r.telegram.unpinned, [[-100, 100], [-999, 101], [-100, 102]], 'auto-pinned first message is unpinned');
 });
 
-test('topic cache reuses a Topic across restarts', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
-  const topicCacheFile = path.join(dir, 'topics.json');
-  try {
-    const a = make(); a.bridge.topics = new TopicCache(topicCacheFile);
-    await a.bridge.sessionUp('codex', 't1', { cwd: '/proj', branch: 'main' });
-    const b = make();
-    const bridge2 = new Bridge({ ...b, telegram: b.telegram, machine: 'WS1', config: baseConfig, topicCacheFile,
-      resolveContext: () => ({ project: 'proj', branch: 'main' }) });
-    const s = await bridge2.sessionUp('codex', 't1', { cwd: '/proj', preexisting: true });
-    assert.equal(s.topicId, 100);
-    assert.deepEqual(b.telegram.topics, []);
-    assert.deepEqual(b.telegram.sent, [], 're-attached silently, no second "session up"');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+for (const agent of HOSTS) {
+  test(`${agent}: the whole lifecycle — up, mirror, idle close, reopen same Topic, end, delete`, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+    const topicCacheFile = path.join(dir, 'topics.json');
+    const cache = () => JSON.parse(fs.readFileSync(topicCacheFile, 'utf8'));
+    try {
+      const r = make({ topicCacheFile });
+      const host = r.hosts[agent];
+      await up(r, agent, 'x');
+      host.emit('prompt', { id: 'x', text: 'hi' });
+      host.emit('final', { id: 'x', text: 'Hello!' });
+      await until(() => r.telegram.sent.length === 3);
+      assert.deepEqual(texts(r.telegram), [`session up: WS1/${agent}/main (proj)`, '> hi', 'Hello!']);
+
+      r.at(29 * M); await r.bridge.closeIdle();
+      assert.deepEqual(r.telegram.closed, [], '29m: still open');
+      r.at(30 * M); await r.bridge.closeIdle(); await r.bridge.closeIdle();
+      assert.deepEqual(r.telegram.closed, [[-100, 100]], 'closed once, quietly');
+      assert.equal(r.telegram.sent.length, 3, 'no message on idle close');
+      assert.equal(cache()[`-100|${agent}:x`].closedAt, 30 * M);
+
+      r.at(30 * M + 25 * H); await r.bridge.sweepClosedTopics();
+      assert.deepEqual(r.telegram.deleted, [], 'never deleted while registered');
+
+      await r.bridge.handleUpdate(msg(ALICE, 'wake up'));
+      await until(() => r.telegram.reopened.length === 1);
+      assert.deepEqual(r.telegram.reopened, [[-100, 100]], 'same Topic');
+      assert.deepEqual(host.injected, [['x', 'wake up', 'u']]);
+      assert.equal(cache()[`-100|${agent}:x`].closedAt, undefined, 'closedAt cleared');
+      host.emit('prompt', { id: 'x', text: 'wake up' });   // the echo of the inject
+      host.emit('final', { id: 'x', text: 'awake' });
+      await until(() => r.telegram.sent.length === 4);
+      await settle();
+      assert.deepEqual(texts(r.telegram).slice(3), ['awake'], 'inject not echoed');
+      assert.equal(r.telegram.topics.length, 1);
+
+      r.at(40 * H);
+      host.emit('down', { id: 'x' });
+      await until(() => r.telegram.closed.length === 2);
+      assert.equal(texts(r.telegram).at(-1), `session ended: WS1/${agent}/main`);
+      r.at(40 * H + 23 * H); await r.bridge.sweepClosedTopics();
+      assert.deepEqual(r.telegram.deleted, []);
+      r.at(40 * H + 24 * H); await r.bridge.sweepClosedTopics();
+      assert.deepEqual(r.telegram.deleted, [[-100, 100]]);
+      assert.deepEqual(cache(), {});
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test(`${agent}: a restarted bridge re-attaches to the cached Topic; a closed one is reopened on resume`, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+    const topicCacheFile = path.join(dir, 'topics.json');
+    try {
+      const a = make({ topicCacheFile });
+      await up(a, agent, 'x');
+      a.hosts[agent].emit('down', { id: 'x' });
+      await until(() => a.telegram.closed.length === 1);
+      const b = make({ topicCacheFile });
+      await up(b, agent, 'x');
+      b.hosts[agent].emit('final', { id: 'x', text: 'back' });
+      await until(() => b.telegram.sent.length === 1);
+      assert.deepEqual(b.telegram.topics, [], 'no new Topic');
+      assert.deepEqual(b.telegram.reopened, [[-100, 100]]);
+      assert.deepEqual([b.telegram.sent[0].text, b.telegram.sent[0].threadId], ['back', 100]);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test(`${agent}: live events during bring-up wait for the backlog, minus turns it already had`, async () => {
+    const r = make();
+    let open;
+    r.telegram.createForumTopic = () => new Promise((res) => { open = () => res({ message_thread_id: 100 }); });
+    const host = r.hosts[agent];
+    host.emit('up', { id: 'x', cwd: '/proj', preexisting: false, backlog: [{ kind: 'prompt', text: 'hi', turnId: 'T1' }] });
+    host.emit('prompt', { id: 'x', turnId: 'T1', text: 'hi' });
+    host.emit('final', { id: 'x', turnId: 'T1', text: 'Hello!' });
+    await until(() => open);
+    open();
+    await until(() => r.telegram.sent.length === 3);
+    await settle();
+    assert.deepEqual(texts(r.telegram), [`session up: WS1/${agent}/main (proj)`, '> hi', 'Hello!']);
+  });
+
+  test(`${agent}: a leftover gets no Topic until activity`, async () => {
+    const r = make();
+    await up(r, agent, 'old', { preexisting: true });
+    r.at(1000 * M); await r.bridge.closeIdle();
+    r.hosts[agent].emit('down', { id: 'old' });
+    await settle();
+    assert.deepEqual([r.telegram.topics, r.telegram.sent, r.telegram.closed], [[], [], []]);
+    await up(r, agent, 'idle', { preexisting: true });
+    r.hosts[agent].emit('prompt', { id: 'idle', text: 'back again' });
+    await until(() => r.telegram.sent.length === 2);
+    assert.deepEqual(texts(r.telegram), [`session up: WS1/${agent}/main (proj)`, '> back again']);
+  });
+
+  test(`${agent}: approvals are notices by default; opt-in buttons honour only the allowlist`, async () => {
+    const off = make();
+    await up(off, agent, 'x');
+    off.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
+    await until(() => off.telegram.sent.length === 2);
+    assert.match(texts(off.telegram)[1], /answer locally or via official remote/);
+    await off.bridge.handleUpdate({ callback_query: { id: 'q', data: 'ap:1:y', from: { id: ALICE } } });
+    assert.deepEqual(off.hosts[agent].answered, []);
+
+    const on = make({ config: { approvalsFromTelegram: true } });
+    await up(on, agent, 'x');
+    on.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
+    await until(() => on.telegram.sent.length === 2);
+    assert.deepEqual(on.telegram.sent[1].replyMarkup.inline_keyboard[0].map((b) => b.callback_data), ['ap:1:y', 'ap:1:n']);
+    await on.bridge.handleUpdate({ callback_query: { id: 'q1', data: 'ap:1:y', from: { id: MALLORY } } });
+    assert.equal(on.telegram.answers.at(-1), 'not allowed');
+    await on.bridge.handleUpdate({ callback_query: { id: 'q2', data: 'ap:1:n', from: { id: ALICE } } });
+    assert.deepEqual(on.hosts[agent].answered, [['r1', false, 'x']]);
+    await on.bridge.handleUpdate({ callback_query: { id: 'q3', data: 'ap:1:y', from: { id: ALICE } } });
+    assert.equal(on.telegram.answers.at(-1), 'already resolved');
+    on.hosts[agent].emit('approval', { id: 'x', ref: 'r2', summary: 'perm', answerable: false });
+    await until(() => on.telegram.sent.length === 3);
+    assert.equal(on.telegram.sent[2].replyMarkup, undefined, 'unanswerable kinds never get buttons');
+  });
+}
+
+test('strangers are dropped; /status, /interrupt go through the host interface', async () => {
+  const r = make();
+  await up(r, 'codex', 't1');                         // topic 100
+  await up(r, 'claude', 's1', { branch: 'dev' });     // topic 101
+  const before = r.telegram.sent.length;
+  await r.bridge.handleUpdate(msg(MALLORY, 'rm -rf /'));
+  assert.deepEqual(r.hosts.codex.injected, []);
+  assert.equal(r.telegram.sent.length, before);
+  await r.bridge.handleUpdate(msg(ALICE, '/status@my_bot', 100));
+  await until(() => /WS1\/codex\/main: idle/.test(texts(r.telegram).at(-1)));
+  await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 100));
+  await until(() => texts(r.telegram).at(-1) === 'interrupt sent');
+  await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 101));
+  await until(() => /not available for claude/.test(texts(r.telegram).at(-1)));
 });
 
-test('text from an allowlisted user is injected into the topic session; others are dropped', async () => {
-  const { bridge, codex, hub, telegram } = make();
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });       // topic 100
-  await bridge.sessionUp('claude', 's1', { cwd: '/proj', branch: 'dev' });  // topic 101
-  const before = telegram.sent.length;
-  await bridge.handleUpdate(msg(MALLORY, 'rm -rf /'));
-  assert.deepEqual(codex.injected, []);
-  assert.equal(telegram.sent.length, before, 'no reply to strangers');
-  await bridge.handleUpdate(msg(ALICE, 'fix the test', 100));
-  await bridge.handleUpdate(msg(ALICE, 'and docs', 101));
-  assert.deepEqual(codex.injected, [['t1', 'fix the test']]);
-  assert.deepEqual(hub.delivered, [['s1', 'and docs', 'u']]);
+test('an inject that fails is reported in the Topic', async () => {
+  const r = make();
+  r.hosts.claude.inject = async () => { throw new Error('channel disconnected'); };
+  await up(r, 'claude', 's1');
+  await r.bridge.handleUpdate(msg(ALICE, 'hello'));
+  await until(() => texts(r.telegram).at(-1) === 'inject failed: channel disconnected');
 });
 
-test('prompts typed in the TUI are mirrored; ones injected from the Topic are not echoed', async () => {
-  const { bridge, codex, telegram } = make();
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
-  codex.emit('prompt', { threadId: 't1', text: 'refactor the parser' }); await flush();
-  assert.equal(telegram.sent.at(-1).text, '> refactor the parser');
-  await bridge.handleUpdate(msg(ALICE, 'from phone', 100));
-  const before = telegram.sent.length;
-  codex.emit('prompt', { threadId: 't1', text: 'from phone' }); await flush();
-  assert.equal(telegram.sent.length, before, 'own injection not echoed');
-  codex.emit('prompt', { threadId: 't1', text: 'from phone' }); await flush();
-  assert.equal(telegram.sent.at(-1).text, '> from phone', 'echo suppressed only once');
-});
-
-test('a session loaded before the bridge started opens its Topic only on first activity', async () => {
-  const { bridge, codex, telegram } = make();
-  await bridge.sessionUp('codex', 'old', { cwd: '/proj', preexisting: true });
-  bridge.sessionDown('codex:old');
-  await bridge.sessionUp('codex', 'idle', { cwd: '/proj', preexisting: true });
-  assert.deepEqual(telegram.topics, [], 'idle leftovers stay invisible');
-  assert.deepEqual(telegram.sent, [], 'not even a "session ended"');
-  codex.emit('prompt', { threadId: 'idle', text: 'back again' }); await flush();
-  assert.equal(telegram.topics.length, 1);
-  assert.deepEqual(telegram.sent.map((s) => s.text), ['session up: WS1/codex/main (proj)', '> back again']);
-});
-
-test('an idle leftover on the same branch does not push a new session to "#2"', async () => {
-  const { bridge, telegram } = make();
-  await bridge.sessionUp('codex', 'idle', { cwd: '/proj', preexisting: true });
-  await bridge.sessionUp('codex', 'fresh', { cwd: '/proj' });
-  assert.deepEqual(telegram.topics.map((t) => t[1]), ['WS1/codex/main']);
-});
-
-test('a codex backlog lands in the new Topic, after the session-up notice, in order', async () => {
-  const { codex, telegram } = make();
-  codex.emit('session-up', { threadId: 't9', cwd: '/proj', backlog: [
-    { kind: 'prompt', text: 'hi' }, { kind: 'final', text: 'Hello!', status: 'completed' }] });
-  await flush(); await flush();
-  const texts = telegram.sent.map((s) => s.text);
-  const up = texts.findIndex((t) => t.startsWith('session up'));
-  assert.deepEqual(texts.slice(up), [texts[up], '> hi', 'Hello!']);
-  assert.ok(telegram.sent.slice(up).every((s) => s.threadId === telegram.sent[up].threadId), 'all in the same Topic');
-});
-
-test('/status and /interrupt commands', async () => {
-  const { bridge, telegram } = make();
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
-  await bridge.sessionUp('claude', 's1', { cwd: '/proj', branch: 'dev' });
-  await bridge.handleUpdate(msg(ALICE, '/status@my_bot', 100));
-  assert.match(telegram.sent.at(-1).text, /WS1\/codex\/main: idle/);
-  await bridge.handleUpdate(msg(ALICE, '/interrupt', 100));
-  assert.equal(telegram.sent.at(-1).text, 'interrupt sent');
-  await bridge.handleUpdate(msg(ALICE, '/interrupt', 101));
-  assert.match(telegram.sent.at(-1).text, /Codex-only/);
+test('an injected prompt that never echoes back is forgotten after 10 minutes', async () => {
+  const r = make();
+  await up(r, 'claude', 's1');
+  await r.bridge.handleUpdate(msg(ALICE, 'yes'));
+  r.at(11 * M);
+  r.hosts.claude.emit('prompt', { id: 's1', text: 'yes' });
+  await until(() => texts(r.telegram).at(-1) === '> yes');
 });
 
 test('progress lines collapse into one edited message; final is a new message', async () => {
-  let t = 0;
-  const { bridge, telegram, codex } = make();
-  bridge.now = () => t;
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
-  t = 10000; codex.emit('progress', { threadId: 't1', text: '$ ls' }); await flush();
-  t = 20000; codex.emit('progress', { threadId: 't1', text: '$ npm test' }); await flush();
-  const progressMsgs = telegram.sent.filter((s) => s.text.startsWith('working'));
-  assert.equal(progressMsgs.length, 1);
-  assert.match(telegram.edits.at(-1).text, /\$ ls\n\$ npm test/);
-  codex.emit('final', { threadId: 't1', text: 'All green', status: 'completed' }); await flush();
-  assert.equal(telegram.sent.at(-1).text, 'All green');
-  codex.emit('final', { threadId: 't1', text: '', status: 'interrupted' }); await flush();
-  assert.match(telegram.sent.at(-1).text, /\[interrupted\]/);
+  const r = make();
+  await up(r, 'codex', 't1');
+  r.at(10000); r.hosts.codex.emit('progress', { id: 't1', text: '$ ls' });
+  await until(() => r.telegram.sent.length === 2);
+  r.at(20000); r.hosts.codex.emit('progress', { id: 't1', text: '$ npm test' });
+  await until(() => r.telegram.edits.length === 1);
+  assert.match(r.telegram.edits[0].text, /\$ ls\n\$ npm test/);
+  r.hosts.codex.emit('final', { id: 't1', text: 'All green', status: 'completed' });
+  r.hosts.codex.emit('final', { id: 't1', text: '', status: 'interrupted' });
+  await until(() => r.telegram.sent.length === 4);
+  assert.deepEqual(texts(r.telegram).slice(2), ['All green', '[interrupted] (turn interrupted, no message)']);
 });
 
-test('claude reply tool output lands in its topic', async () => {
-  const { bridge, telegram, hub } = make();
-  await bridge.sessionUp('claude', 's1', { cwd: '/proj' });
-  hub.emit('reply', { sessionId: 's1', text: 'done: 3 files' }); await flush();
-  assert.deepEqual([telegram.sent.at(-1).text, telegram.sent.at(-1).threadId], ['done: 3 files', 100]);
+test('Telegram drift: a Topic closed by hand is reopened, a deleted one recreated, then the post is resent', async () => {
+  const r = make();
+  await up(r, 'codex', 't1');
+  const send = r.telegram.sendMessage;
+  let fail = 'Bad Request: TOPIC_CLOSED';
+  r.telegram.sendMessage = async (...a) => { if (fail) { const m = fail; fail = null; throw new Error(m); } return send(...a); };
+  r.hosts.codex.emit('final', { id: 't1', text: 'one' });
+  await until(() => texts(r.telegram).at(-1) === 'one');
+  assert.deepEqual(r.telegram.reopened, [[-100, 100]]);
+  fail = 'Bad Request: message thread not found';
+  r.hosts.codex.emit('final', { id: 't1', text: 'two' });
+  await until(() => texts(r.telegram).at(-1) === 'two');
+  assert.equal(r.telegram.sent.at(-1).threadId, 101, 'posted in the recreated Topic');
 });
 
-test('approvals: notice only by default; no buttons, callbacks ignored', async () => {
-  const { bridge, telegram, codex } = make();
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
-  codex.emit('approval', { threadId: 't1', key: 'c7', summary: '$ rm x', answerable: true }); await flush();
-  const notice = telegram.sent.at(-1);
-  assert.match(notice.text, /approval needed on WS1, answer locally or via official remote/);
-  assert.equal(notice.replyMarkup, undefined);
-  await bridge.handleUpdate({ callback_query: { id: 'q', data: 'ap:1:y', from: { id: ALICE } } });
-  assert.deepEqual(codex.answered, []);
+test('sweep: rights errors logged once per distinct message, entry kept; 0 = never; untouched without closedAt', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const topicCacheFile = path.join(dir, 'topics.json');
+  try {
+    fs.writeFileSync(topicCacheFile, JSON.stringify({
+      '-100|codex:a': { topicId: 1, title: 'a', closedAt: 0 },
+      '-100|codex:open': { topicId: 2, title: 'b' },
+    }));
+    const r = make({ topicCacheFile });
+    let err = 'not enough rights';
+    r.telegram.deleteForumTopic = async (c, id) => { if (err) throw new Error(err); r.telegram.deleted.push(id); return true; };
+    r.at(25 * H);
+    await r.bridge.sweepClosedTopics(); await r.bridge.sweepClosedTopics();
+    err = 'fetch failed'; await r.bridge.sweepClosedTopics();
+    assert.equal(r.logs.filter((l) => l.startsWith('deleteForumTopic')).length, 2);
+    err = null; await r.bridge.sweepClosedTopics();
+    assert.deepEqual(r.telegram.deleted, [1]);
+    assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(topicCacheFile, 'utf8'))), ['-100|codex:open']);
+    const never = make({ topicCacheFile, config: { deleteClosedAfterHours: 0 } });
+    assert.equal(await never.bridge.sweepClosedTopics(), 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('approvals opt-in: buttons, allowlisted user answers, stranger cannot', async () => {
-  const { bridge, telegram, codex, hub } = make({ approvalsFromTelegram: true });
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
-  await bridge.sessionUp('claude', 's1', { cwd: '/proj', branch: 'dev' });
-  codex.emit('approval', { threadId: 't1', key: 'c7', summary: '$ rm x', answerable: true }); await flush();
-  const kb = telegram.sent.at(-1).replyMarkup.inline_keyboard[0];
-  assert.deepEqual(kb.map((b) => b.callback_data), ['ap:1:y', 'ap:1:n']);
-  await bridge.handleUpdate({ callback_query: { id: 'q1', data: 'ap:1:y', from: { id: MALLORY } } });
-  assert.deepEqual(codex.answered, []);
-  assert.equal(telegram.answers.at(-1), 'not allowed');
-  await bridge.handleUpdate({ callback_query: { id: 'q2', data: 'ap:1:n', from: { id: ALICE } } });
-  assert.deepEqual(codex.answered, [['c7', false]]);
-  await bridge.handleUpdate({ callback_query: { id: 'q3', data: 'ap:1:y', from: { id: ALICE } } });
-  assert.equal(telegram.answers.at(-1), 'already resolved');
-
-  hub.emit('permission', { sessionId: 's1', request_id: 'abcde', tool_name: 'Bash', description: 'ls' }); await flush();
-  await bridge.handleUpdate({ callback_query: { id: 'q4', data: 'ap:2:y', from: { id: ALICE } } });
-  assert.deepEqual(hub.verdicts, [['s1', 'abcde', true]]);
-
-  codex.emit('approval', { threadId: 't1', key: 'c9', summary: 'perm', answerable: false }); await flush();
-  assert.equal(telegram.sent.at(-1).replyMarkup, undefined, 'unanswerable shapes never get buttons');
+test('a re-attach during an in-flight delete leaves the session without the deleted Topic', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const topicCacheFile = path.join(dir, 'topics.json');
+  try {
+    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|claude:s1': { topicId: 55, title: 't', closedAt: 0 } }));
+    const r = make({ topicCacheFile });
+    let release;
+    r.telegram.deleteForumTopic = () => new Promise((res) => { release = res; });
+    r.at(25 * H);
+    const sweeping = r.bridge.sweepClosedTopics();
+    await until(() => release);
+    await up(r, 'claude', 's1', { preexisting: true });
+    release(true);
+    await sweeping;
+    assert.equal(r.bridge.sessions.get('claude:s1').topicId, null);
+    r.hosts.claude.emit('prompt', { id: 's1', text: 'hi' });
+    await until(() => r.telegram.topics.length === 1);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('session-down posts an end notice and forgets the session', async () => {
-  const { bridge, telegram, codex } = make();
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
-  codex.emit('session-down', { threadId: 't1' }); await flush();
-  assert.match(telegram.sent.at(-1).text, /session ended/);
-  await bridge.handleUpdate(msg(ALICE, 'hello', 100));
-  assert.deepEqual(codex.injected, []);
+test('unpin failures are logged once', async () => {
+  const r = make();
+  r.telegram.unpinAllForumTopicMessages = async () => { throw new Error('not enough rights'); };
+  await up(r, 'codex', 't1');
+  await up(r, 'codex', 't2');
+  await settle();
+  assert.equal(r.logs.filter((l) => /unpin/.test(l)).length, 1);
 });
 
 test('runningDaemonPid: live pid detected, dead or own pid ignored', () => {
@@ -229,243 +315,4 @@ test('runningDaemonPid: live pid detected, dead or own pid ignored', () => {
     fs.writeFileSync(f, JSON.stringify({ pid: process.ppid }));
     assert.equal(runningDaemonPid(f), process.ppid);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('session-down posts the end notice, then closes the Topic', async () => {
-  const { bridge, telegram, hub } = make();
-  await bridge.sessionUp('claude', 's1', { cwd: '/proj' });
-  hub.emit('session-down', { sessionId: 's1' });
-  await until(() => telegram.closed.length);
-  assert.equal(telegram.sent.at(-1).text, 'session ended: WS1/claude/main');
-  assert.deepEqual(telegram.closed, [[-100, 100]]);
-});
-
-test('a cached Topic is reopened once before the first post after re-attach', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
-  const topicCacheFile = path.join(dir, 'topics.json');
-  try {
-    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|codex:t1': 55 }));
-    const telegram = fakeTelegram();
-    telegram.reopenForumTopic = async (c, t) => { telegram.reopened.push([c, t]); throw new Error('telegram reopenForumTopic: Bad Request: TOPIC_NOT_MODIFIED'); };
-    const codex = fakeCodex();
-    const bridge = new Bridge({ telegram, codex, machine: 'WS1', config: baseConfig, topicCacheFile,
-      resolveContext: () => ({ project: 'proj', branch: 'main' }) });
-    await bridge.sessionUp('codex', 't1', { cwd: '/proj', preexisting: true });
-    assert.deepEqual(telegram.reopened, [], 'silent re-attach does not touch Telegram');
-    codex.emit('prompt', { threadId: 't1', text: 'again' });
-    codex.emit('final', { threadId: 't1', text: 'ok', status: 'completed' });
-    await until(() => telegram.sent.length === 2);
-    assert.deepEqual(telegram.reopened, [[-100, 55]]);
-    assert.deepEqual(telegram.sent.map((s) => [s.text, s.threadId]), [['> again', 55], ['ok', 55]]);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('claude mirror: prompt and final routed by claudePid, Telegram injections not echoed, reply not doubled', async () => {
-  const { bridge, telegram, hub } = make();
-  hub.emit('session-up', { sessionId: 'uuid-1', cwd: '/proj', branch: 'main', claudePid: 4242 });
-  await until(() => telegram.sent.length === 1);
-  // After /clear the hook reports a new session id but the same claude pid.
-  hub.emit('mirror', { claudePid: 4242, sessionId: 'uuid-2', kind: 'prompt', text: 'hi' });
-  hub.emit('mirror', { claudePid: 4242, sessionId: 'uuid-2', kind: 'final', text: 'Hello!' });
-  await until(() => telegram.sent.length === 3);
-  assert.deepEqual(telegram.sent.slice(1).map((s) => [s.text, s.threadId]), [['> hi', 100], ['Hello!', 100]]);
-
-  await bridge.handleUpdate(msg(ALICE, 'from phone', 100));
-  hub.emit('mirror', { claudePid: 4242, kind: 'prompt', text: 'from phone' });
-  hub.emit('reply', { sessionId: 'uuid-1', text: 'done: 3 files' });
-  hub.emit('mirror', { claudePid: 4242, kind: 'final', text: 'done: 3 files\n' });
-  hub.emit('mirror', { claudePid: 4242, kind: 'final', text: '   ' });
-  await flush(); await flush(); await new Promise((r) => setTimeout(r, 20));
-  assert.deepEqual(telegram.sent.slice(3).map((s) => s.text), ['done: 3 files'], 'no echo, no double post, no empty final');
-});
-
-test('a mirror that beats the channel registration is held until the session is up', async () => {
-  const { telegram, hub } = make();
-  hub.emit('mirror', { claudePid: 7, sessionId: 'u', kind: 'prompt', text: 'early' });
-  hub.emit('session-up', { sessionId: 'u', cwd: '/proj', branch: 'main', claudePid: 7 });
-  await until(() => telegram.sent.length === 2);
-  assert.deepEqual(telegram.sent.map((s) => s.text), ['session up: WS1/claude/main (proj)', '> early']);
-});
-
-test('a new Topic is unpinned after its first post; a failure is logged once and ignored', async () => {
-  const { bridge, telegram } = make();
-  const logs = [];
-  bridge.log = (m) => logs.push(m);
-  const unpinned = [];
-  telegram.unpinAllForumTopicMessages = async (c, t) => { unpinned.push([c, t, telegram.sent.length]); throw new Error('not enough rights'); };
-  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
-  await bridge.sessionUp('codex', 't2', { cwd: '/proj' });
-  assert.deepEqual(unpinned, [[-100, 100, 1], [-100, 101, 2]], 'after the session-up post');
-  assert.equal(logs.filter((l) => /unpin/.test(l)).length, 1);
-});
-
-test('closing records closedAt; reopening clears it; sweep deletes only own Topics closed > N hours', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
-  const topicCacheFile = path.join(dir, 'topics.json');
-  const H = 3600000;
-  try {
-    // legacy number entry (never closed by us) and a foreign-looking entry must survive.
-    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|codex:legacy': 9 }));
-    let t = 0;
-    const telegram = fakeTelegram();
-    const deleted = [];
-    let rightsOk = false;
-    telegram.deleteForumTopic = async (c, id) => {
-      if (!rightsOk) throw new Error('telegram deleteForumTopic: Bad Request: not enough rights');
-      deleted.push([c, id]); return true;
-    };
-    const logs = [];
-    const bridge = new Bridge({ telegram, codex: fakeCodex(), machine: 'WS1', config: { ...baseConfig, deleteClosedAfterHours: 24 }, topicCacheFile,
-      resolveContext: () => ({ project: 'proj', branch: 'main' }), now: () => t, log: (m) => logs.push(m) });
-    await bridge.sessionUp('codex', 'a', { cwd: '/proj' });   // topic 100
-    await bridge.sessionUp('codex', 'b', { cwd: '/proj' });   // topic 101
-    bridge.sessionDown('codex:a'); bridge.sessionDown('codex:b');
-    await until(() => telegram.closed.length === 2);
-    const cache = () => JSON.parse(fs.readFileSync(topicCacheFile, 'utf8'));
-    assert.deepEqual(cache()['-100|codex:a'], { topicId: 100, closedAt: 0 });
-
-    t = 1 * H;   // b comes back: reopen clears closedAt
-    await bridge.sessionUp('codex', 'b', { cwd: '/proj' });
-    await bridge.prompt('codex:b', 'again');
-    assert.deepEqual(cache()['-100|codex:b'], { topicId: 101 });
-
-    t = 23 * H; await bridge.sweepClosedTopics();
-    assert.deepEqual(deleted, [], 'not old enough');
-    t = 25 * H; await bridge.sweepClosedTopics(); await bridge.sweepClosedTopics();
-    assert.equal(logs.filter((l) => /deleteForumTopic/.test(l)).length, 1, 'rights error logged once');
-    assert.ok(cache()['-100|codex:a'], 'kept for retry');
-    rightsOk = true; await bridge.sweepClosedTopics();
-    assert.deepEqual(deleted, [[-100, 100]]);
-    assert.deepEqual(Object.keys(cache()).sort(), ['-100|codex:b', '-100|codex:legacy']);
-
-    bridge.config = { ...baseConfig, deleteClosedAfterHours: 0 };
-    bridge.sessionDown('codex:b'); await until(() => telegram.closed.length === 3);
-    t = 1000 * H; await bridge.sweepClosedTopics();
-    assert.deepEqual(deleted, [[-100, 100]], '0 = never');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-function sweepRig(entries, { preexisting } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
-  const topicCacheFile = path.join(dir, 'topics.json');
-  fs.writeFileSync(topicCacheFile, JSON.stringify(entries));
-  const telegram = fakeTelegram();
-  telegram.deleted = [];
-  telegram.deleteForumTopic = async (c, id) => { telegram.deleted.push([c, id]); return true; };
-  const codex = fakeCodex();
-  const logs = [];
-  let t = 100 * 3600000;
-  const bridge = new Bridge({ telegram, codex, machine: 'WS1', config: { ...baseConfig, deleteClosedAfterHours: 24 }, topicCacheFile,
-    resolveContext: () => ({ project: 'proj', branch: 'main' }), now: () => t, log: (m) => logs.push(m) });
-  return { bridge, telegram, codex, logs, topicCacheFile, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
-}
-
-test('sweep never deletes the Topic of a session that re-attached to it', async () => {
-  const r = sweepRig({ '-100|claude:s1': { topicId: 55, closedAt: 0 } });
-  try {
-    await r.bridge.sessionUp('claude', 's1', { cwd: '/proj' });
-    assert.deepEqual(r.bridge.topics.get('-100|claude:s1'), { topicId: 55 }, 'closedAt cleared on attach, not on first post');
-    await r.bridge.sweepClosedTopics();
-    assert.deepEqual(r.telegram.deleted, []);
-  } finally { r.cleanup(); }
-});
-
-test('a registered session keeps its Topic even when it is due; activity reopens the same Topic', async () => {
-  const r = sweepRig({ '-100|codex:t1': { topicId: 55, closedAt: 0 } });
-  try {
-    await r.bridge.sessionUp('codex', 't1', { cwd: '/proj', preexisting: true });
-    await r.bridge.sweepClosedTopics();
-    assert.deepEqual(r.telegram.deleted, []);
-    r.codex.emit('prompt', { threadId: 't1', text: 'back' });
-    await until(() => r.telegram.sent.length === 1);
-    assert.deepEqual(r.telegram.reopened, [[-100, 55]]);
-    assert.deepEqual(r.telegram.sent.map((s) => [s.text, s.threadId]), [['> back', 55]]);
-    assert.deepEqual(r.bridge.topics.get('-100|codex:t1'), { topicId: 55 });
-  } finally { r.cleanup(); }
-});
-
-test('a re-attach during an in-flight delete is not overwritten by a stale entry', async () => {
-  const r = sweepRig({ '-100|claude:s1': { topicId: 55, closedAt: 0 } });
-  try {
-    let release;
-    r.telegram.deleteForumTopic = (c, id) => { r.telegram.deleted.push([c, id]); return new Promise((res) => { release = res; }); };
-    const sweeping = r.bridge.sweepClosedTopics();
-    await until(() => release);
-    await r.bridge.sessionUp('claude', 's1', { cwd: '/proj' });   // attaches to 55 while it is being deleted
-    release(true);
-    await sweeping;
-    const s = r.bridge.sessions.get('claude:s1');
-    assert.equal(s.topicId, null, 'session no longer points at the deleted Topic');
-    assert.equal(r.bridge.topics.get('-100|claude:s1'), null);
-    await r.bridge.prompt('claude:s1', 'hi');
-    assert.equal(r.telegram.topics.length, 1, 'a fresh Topic is created');
-  } finally { r.cleanup(); }
-});
-
-test('sweep logs each distinct delete error once and logs again after a success', async () => {
-  const r = sweepRig({ '-100|codex:a': { topicId: 1, closedAt: 0 }, '-100|codex:b': { topicId: 2, closedAt: 0 } });
-  try {
-    let err = 'not enough rights';
-    r.telegram.deleteForumTopic = async (c, id) => { if (err) throw new Error(err); r.telegram.deleted.push(id); return true; };
-    await r.bridge.sweepClosedTopics(); await r.bridge.sweepClosedTopics();
-    err = 'fetch failed'; await r.bridge.sweepClosedTopics();
-    const errs = () => r.logs.filter((l) => l.startsWith('deleteForumTopic'));
-    assert.equal(errs().length, 2);
-    err = null; await r.bridge.sweepClosedTopics();
-    assert.deepEqual(r.telegram.deleted, [1, 2]);
-    assert.equal(r.logs.filter((l) => /^sweep|deleted closed/.test(l)).length, 2, 'only deletions are logged');
-  } finally { r.cleanup(); }
-});
-
-test('codex idle close: at 30m not 29m, quietly; new activity reopens the same Topic; no delete while registered', async () => {
-  const r = sweepRig({});
-  const M = 60000;
-  try {
-    let t = 0;
-    r.bridge.now = () => t;
-    r.bridge.config = { ...r.bridge.config, codexIdleCloseMinutes: 30 };
-    await r.bridge.sessionUp('codex', 't1', { cwd: '/proj' });          // topic 100
-    await r.bridge.sessionUp('claude', 's1', { cwd: '/proj', branch: 'dev' });  // never idle-closed
-    t = 10 * M; r.codex.emit('progress', { threadId: 't1', text: '$ ls' }); await flush();
-    t = 39 * M; await r.bridge.closeIdleCodexTopics();
-    assert.deepEqual(r.telegram.closed, [], '29m idle: still open');
-    t = 40 * M; await r.bridge.closeIdleCodexTopics(); await r.bridge.closeIdleCodexTopics();
-    assert.deepEqual(r.telegram.closed, [[-100, 100]], 'closed once, claude untouched');
-    const sentBefore = r.telegram.sent.length;
-    assert.equal(r.bridge.topics.get('-100|codex:t1').closedAt, 40 * M);
-    assert.ok(r.bridge.sessions.has('codex:t1'), 'stays registered');
-
-    t = 40 * M + 25 * 3600000; await r.bridge.sweepClosedTopics();
-    assert.deepEqual(r.telegram.deleted, [], 'not deleted while registered');
-
-    await r.bridge.handleUpdate(msg(ALICE, 'wake up', 100));   // Telegram inject is activity
-    await until(() => r.telegram.reopened.length === 1);
-    assert.deepEqual(r.telegram.reopened, [[-100, 100]]);
-    assert.deepEqual(r.bridge.topics.get('-100|codex:t1'), { topicId: 100 }, 'closedAt cleared');
-    r.codex.emit('final', { threadId: 't1', text: 'awake', status: 'completed' });
-    await until(() => r.telegram.sent.length > sentBefore);
-    assert.deepEqual([r.telegram.sent.at(-1).text, r.telegram.sent.at(-1).threadId], ['awake', 100]);
-    assert.equal(r.telegram.topics.length, 2, 'no new Topic for the same thread');
-
-    r.bridge.config = { ...r.bridge.config, codexIdleCloseMinutes: 0 };
-    t += 1000 * M; await r.bridge.closeIdleCodexTopics();
-    assert.equal(r.telegram.closed.length, 1, '0 = never');
-  } finally { r.cleanup(); }
-});
-
-test('live codex events during bring-up wait for the backlog and skip turns it already replayed', async () => {
-  const { codex, telegram } = make();
-  let openTopic;
-  telegram.createForumTopic = (chatId, name) => { telegram.topics.push([chatId, name]); return new Promise((r) => { openTopic = () => r({ message_thread_id: 100 }); }); };
-  codex.emit('session-up', { threadId: 't9', cwd: '/proj', backlog: [{ kind: 'prompt', text: 'hi', turnId: 'T1' }] });
-  // The turn finishes while the Topic is still being created; its prompt also arrives live.
-  codex.emit('prompt', { threadId: 't9', turnId: 'T1', text: 'hi' });
-  codex.emit('final', { threadId: 't9', turnId: 'T1', text: 'Hello!', status: 'completed' });
-  await until(() => openTopic);
-  openTopic();
-  await until(() => telegram.sent.length === 3);
-  await new Promise((r) => setTimeout(r, 20));
-  assert.deepEqual(telegram.sent.map((s) => s.text), ['session up: WS1/codex/main (proj)', '> hi', 'Hello!']);
-  codex.emit('prompt', { threadId: 't9', turnId: 'T2', text: 'next' }); await until(() => telegram.sent.length === 4);
-  assert.equal(telegram.sent.at(-1).text, '> next', 'live again once flushed');
 });
