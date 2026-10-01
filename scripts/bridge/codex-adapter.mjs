@@ -106,9 +106,10 @@ export function backlogSince(turns = [], sinceMs) {
 }
 
 export class CodexAdapter extends EventEmitter {
-  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now } = {}) {
+  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000 } = {}) {
     super();
     this.now = now;
+    this.resumeRetryMs = resumeRetryMs;
     this.connectedAt = Infinity;
     this.pending = new Set();
     this.unresumable = new Set();
@@ -175,9 +176,14 @@ export class CodexAdapter extends EventEmitter {
     try {
       await this.#resume(threadId, opts);
     } catch (e) {
-      // An ephemeral thread has no rollout and never will; asking again every poll is noise.
-      if (/no rollout found/i.test(e.message)) this.unresumable.add(threadId);
-      throw e;
+      if (!/no rollout found/i.test(e.message)) throw e;
+      // No rollout yet is normal for a fresh thread: Codex writes it once the first turn
+      // starts, so retry shortly (the poll is the backstop). An ephemeral thread never gets
+      // one, so it is skipped for good instead of failing every poll.
+      const read = await this.rpc?.request('thread/read', { threadId }).catch(() => null);
+      if (read?.thread?.ephemeral !== false) { this.unresumable.add(threadId); return; }
+      const t = setTimeout(() => this.#subscribe(threadId, opts).catch((err) => this.emit('warn', `resume ${threadId}: ${err.message}`)), this.resumeRetryMs);
+      t.unref?.();
     } finally { this.pending.delete(threadId); }
   }
 

@@ -16,12 +16,15 @@ function fakeAppServer({ loaded = ['t1'], threads = {} } = {}) {
       if (m.method === undefined) { responses.push(m); return; }
       calls.push(m);
       if (m.id === undefined) return;
-      const fail = m.method === 'thread/resume' && threads[m.params?.threadId]?.error;
+      const spec = threads[m.params?.threadId];
+      const fail = m.method === 'thread/resume' && spec?.error && (spec.failTimes ?? Infinity) > 0 && spec.error;
+      if (fail && spec.failTimes !== undefined) spec.failTimes--;
       if (fail) { setImmediate(() => onMsg(JSON.stringify({ id: m.id, error: { code: -32600, message: fail } }))); return; }
       const result = {
         initialize: { userAgent: 'fake' },
         'thread/loaded/list': { data: loaded, nextCursor: null },
         'thread/resume': { thread: threads[m.params?.threadId] ?? { id: m.params?.threadId, cwd: '/w', ephemeral: false, gitInfo: { branch: 'feat/x' }, turns: [] } },
+        'thread/read': { thread: { id: m.params?.threadId, ephemeral: spec?.ephemeral ?? false } },
         'turn/start': { turn: { id: 'turnA' } },
         'turn/steer': { turnId: 'turnA' },
         'turn/interrupt': {},
@@ -116,12 +119,25 @@ test('thread/started subscribes at once, once, and carries the backlog', async (
 });
 
 test('an ephemeral thread that cannot be resumed is not retried every poll', async () => {
-  const { a, srv } = await started({ loaded: ['eph'], threads: { eph: { error: 'no rollout found for thread id eph' } } });
+  const { a, srv } = await started({ loaded: ['eph'], threads: { eph: { ephemeral: true, error: 'no rollout found for thread id eph' } } });
   const warns = [];
   a.on('warn', (w) => warns.push(w));
   await a.refresh(); await a.refresh();
   assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 1);
   assert.deepEqual(warns, []);
+});
+
+test('a fresh thread whose rollout is not written yet is retried until it subscribes', async () => {
+  const srv = fakeAppServer({ loaded: [], threads: { t3: { failTimes: 1, error: 'no rollout found for thread id t3',
+    id: 't3', cwd: '/w', ephemeral: false, turns: [] } } });
+  const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({ status: 'running' }), resumeRetryMs: 5 });
+  const ups = [];
+  a.on('session-up', (s) => ups.push(s.threadId));
+  await a.start(); await a.refresh();
+  srv.push('thread/started', { thread: { id: 't3', ephemeral: false } });
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(ups, ['t3']);
+  assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 2);
 });
 
 test('a completed userMessage item is emitted as the prompt text', async () => {
