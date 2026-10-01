@@ -2,7 +2,10 @@
 
 ## Principles
 
-- **First principles.** Derive decisions from the actual system, not from templates or habits. State assumptions when they shape the outcome.
+- **First principles.** Derive decisions from the actual system and current requirements, not from templates, habits, or historical baggage. State assumptions when they shape the outcome.
+- **Discard historical baggage.** Remove obsolete structures and compatibility layers when they no longer serve a current need.
+- **Occam's razor.** Choose the simplest solution that fully meets the requirements; do not add abstractions for hypothetical needs.
+- **Single source of truth.** Keep each fact or configuration in one authoritative place; derive other representations from it rather than maintaining duplicates.
 - **Deliver at full scope.** Complete the requested work under reasonable assumptions; do not stop at the minimal subset unless asked.
 - **Analyze before implementing.** For open-ended questions, present analysis, options, and tradeoffs instead of jumping to code.
 - **Security.** Do not introduce injection, XSS, or other vulnerabilities. For security-sensitive or destructive work, surface the risk before acting.

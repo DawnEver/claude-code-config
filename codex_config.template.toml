@@ -16,7 +16,7 @@ project_doc_fallback_filenames = [
     "README.md",
 ]
 
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "low"
 model_instructions_file = "~/.codex/system-prompt/codex-base.md"
 
@@ -37,10 +37,6 @@ status_line = [
 ]
 status_line_use_colors = true
 theme = "github"
-
-[tui.model_availability_nux]
-"gpt-5.5" = 4
-"gpt-5.6-sol" = 4
 
 [analytics]
 enabled = false
@@ -71,6 +67,7 @@ enabled = true
 enabled = true
 
 [features]
+remote_control = true
 prevent_idle_sleep = true
 terminal_resize_reflow = true
 memories = false
