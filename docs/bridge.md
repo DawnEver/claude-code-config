@@ -25,6 +25,11 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
 - **Ended sessions close their Topic**: `session ended: <title>`, then `closeForumTopic`.
   A session re-attached to a cached Topic calls `reopenForumTopic` once before its next post
   (`TOPIC_NOT_MODIFIED` ignored). Needs the bot's Manage Topics right.
+- **Old closed Topics are deleted**: closing records `closedAt` in `topics.json` (reopen
+  clears it). At startup and hourly the daemon calls `deleteForumTopic` for every Topic it
+  closed more than `bridge.deleteClosedAfterHours` ago (default 24, `0` = never), then drops
+  the entry. Entries without a `closedAt` (never closed by the bridge, or written before this
+  existed) are never deleted.
 - **No pin noise**: Telegram auto-pins a new Topic's first message; the daemon calls
   `unpinAllForumTopicMessages` right after `session up` (a missing pin right is logged once).
 - Claude sessions are keyed by `CLAUDE_CODE_SESSION_ID`, so `--resume` / `--continue` reuses
@@ -42,7 +47,8 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
    the machine (e.g. `ws1_bridge_bot`). `/setprivacy` -> **Disable**, so the bot sees plain
    messages in groups, not only commands.
 3. **Groups**: per project, create a group, enable **Topics** (group settings), add every
-   machine's bot, and promote each bot to **admin with "Manage Topics"**.
+   machine's bot, and promote each bot to **admin with "Manage Topics"** (close/reopen/unpin) and **"Delete
+   messages"** (needed to delete old closed Topics; without it the sweep logs once and retries).
 4. **Chat ids**: send a message in the group, then open
    `https://api.telegram.org/bot<TOKEN>/getUpdates` *before* the daemon runs (it would
    consume the update) and read `message.chat.id` (`-100...`). Your own user id is
@@ -51,7 +57,8 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
    ```json
    "bridge": {
      "fallbackChatId": -1001111111111,
-     "projects": { "claude-code-config": { "chatId": -1002222222222 } }
+     "projects": { "claude-code-config": { "chatId": -1002222222222 } },
+     "deleteClosedAfterHours": 24
    }
    ```
 6. **Secrets** (machine-local, never synced) in `~/.claude/claude_env_settings.local.json`:
@@ -141,7 +148,7 @@ forgets an approval once `serverRequest/resolved` arrives. Claude: the channel d
 | --- | --- |
 | `runtime.json` | daemon pid, IPC port, IPC token (0600 on POSIX; profile ACL on Windows) |
 | `offset.json` | last `update_id` (cache) |
-| `topics.json` | `chatId|title -> topic id` (cache) |
+| `topics.json` | `chatId|session key -> {topicId, closedAt?}` (cache; also drives the closed-Topic sweep) |
 | `daemon.log` | Windows service log |
 
 ## Protocol notes (as built)

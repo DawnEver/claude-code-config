@@ -297,3 +297,49 @@ test('a new Topic is unpinned after its first post; a failure is logged once and
   assert.deepEqual(unpinned, [[-100, 100, 1], [-100, 101, 2]], 'after the session-up post');
   assert.equal(logs.filter((l) => /unpin/.test(l)).length, 1);
 });
+
+test('closing records closedAt; reopening clears it; sweep deletes only own Topics closed > N hours', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const topicCacheFile = path.join(dir, 'topics.json');
+  const H = 3600000;
+  try {
+    // legacy number entry (never closed by us) and a foreign-looking entry must survive.
+    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|codex:legacy': 9 }));
+    let t = 0;
+    const telegram = fakeTelegram();
+    const deleted = [];
+    let rightsOk = false;
+    telegram.deleteForumTopic = async (c, id) => {
+      if (!rightsOk) throw new Error('telegram deleteForumTopic: Bad Request: not enough rights');
+      deleted.push([c, id]); return true;
+    };
+    const logs = [];
+    const bridge = new Bridge({ telegram, codex: fakeCodex(), machine: 'WS1', config: baseConfig, topicCacheFile,
+      resolveContext: () => ({ project: 'proj', branch: 'main' }), now: () => t, log: (m) => logs.push(m) });
+    await bridge.sessionUp('codex', 'a', { cwd: '/proj' });   // topic 100
+    await bridge.sessionUp('codex', 'b', { cwd: '/proj' });   // topic 101
+    bridge.sessionDown('codex:a'); bridge.sessionDown('codex:b');
+    await until(() => telegram.closed.length === 2);
+    const cache = () => JSON.parse(fs.readFileSync(topicCacheFile, 'utf8'));
+    assert.deepEqual(cache()['-100|codex:a'], { topicId: 100, closedAt: 0 });
+
+    t = 1 * H;   // b comes back: reopen clears closedAt
+    await bridge.sessionUp('codex', 'b', { cwd: '/proj' });
+    await bridge.prompt('codex:b', 'again');
+    assert.deepEqual(cache()['-100|codex:b'], { topicId: 101 });
+
+    t = 23 * H; await bridge.sweepClosedTopics();
+    assert.deepEqual(deleted, [], 'not old enough');
+    t = 25 * H; await bridge.sweepClosedTopics(); await bridge.sweepClosedTopics();
+    assert.equal(logs.filter((l) => /deleteForumTopic/.test(l)).length, 1, 'rights error logged once');
+    assert.ok(cache()['-100|codex:a'], 'kept for retry');
+    rightsOk = true; await bridge.sweepClosedTopics();
+    assert.deepEqual(deleted, [[-100, 100]]);
+    assert.deepEqual(Object.keys(cache()).sort(), ['-100|codex:b', '-100|codex:legacy']);
+
+    bridge.config = { ...baseConfig, deleteClosedAfterHours: 0 };
+    bridge.sessionDown('codex:b'); await until(() => telegram.closed.length === 3);
+    t = 1000 * H; await bridge.sweepClosedTopics();
+    assert.deepEqual(deleted, [[-100, 100]], '0 = never');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

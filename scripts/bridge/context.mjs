@@ -18,7 +18,7 @@ export const RUNTIME_FILE = path.join(BRIDGE_RUNTIME_DIR, 'runtime.json');
 
 /**
  * Normalised bridge config.
- * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId
+ * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId, bridge.deleteClosedAfterHours (24; 0 = never)
  * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram
  */
 export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
@@ -31,6 +31,7 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
     allowedUserIds: (b.allowedUserIds ?? []).map(Number).filter(Number.isFinite),
     approvalsFromTelegram: b.approvalsFromTelegram === true,
     fallbackChatId: b.fallbackChatId ?? null,
+    deleteClosedAfterHours: typeof b.deleteClosedAfterHours === 'number' && b.deleteClosedAfterHours >= 0 ? b.deleteClosedAfterHours : 24,
     projects,
   };
 }

@@ -106,3 +106,12 @@ test('unpinAllForumTopicMessages targets the Topic', async () => {
     assert.deepEqual([api.calls[0].method, api.calls[0].params], ['unpinAllForumTopicMessages', { chat_id: -100, message_thread_id: 7 }]);
   } finally { api.close(); }
 });
+
+test('deleteForumTopic targets the Topic', async () => {
+  const api = await fakeApi(() => ({ ok: true, result: true }));
+  try {
+    const tg = new TelegramClient({ token: 't', apiBase: api.base });
+    assert.equal(await tg.deleteForumTopic(-100, 7), true);
+    assert.deepEqual([api.calls[0].method, api.calls[0].params], ['deleteForumTopic', { chat_id: -100, message_thread_id: 7 }]);
+  } finally { api.close(); }
+});
