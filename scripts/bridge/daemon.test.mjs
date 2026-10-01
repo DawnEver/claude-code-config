@@ -7,10 +7,12 @@ import { EventEmitter } from 'events';
 import { Bridge, runningDaemonPid } from './daemon.mjs';
 
 function fakeTelegram() {
-  const sent = [], edits = [], topics = [], answers = [];
+  const sent = [], edits = [], topics = [], answers = [], closed = [], reopened = [];
   let nextTopic = 100, nextMsg = 1;
   return {
-    sent, edits, topics, answers,
+    sent, edits, topics, answers, closed, reopened,
+    closeForumTopic: async (chatId, threadId) => { closed.push([chatId, threadId]); return true; },
+    reopenForumTopic: async (chatId, threadId) => { reopened.push([chatId, threadId]); return true; },
     createForumTopic: async (chatId, name) => { topics.push([chatId, name]); return { message_thread_id: nextTopic++ }; },
     sendMessage: async (chatId, text, opts = {}) => { sent.push({ chatId, text, ...opts }); return [{ message_id: nextMsg++ }]; },
     editMessageText: async (chatId, id, text) => { edits.push({ chatId, id, text }); },
@@ -50,6 +52,10 @@ function make(config = {}) {
 }
 
 const flush = () => new Promise((r) => setImmediate(r));
+const until = async (fn, ms = 2000) => {
+  const end = Date.now() + ms;
+  while (!fn()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 5)); }
+};
 const msg = (from, text, thread = 100, chat = -100) => ({ message: { chat: { id: chat }, from: { id: from, username: 'u' }, text, is_topic_message: true, message_thread_id: thread } });
 
 test('session-up creates <machine>/<agent>/<branch> topic in the project group, fallback otherwise', async () => {
@@ -222,4 +228,60 @@ test('runningDaemonPid: live pid detected, dead or own pid ignored', () => {
     fs.writeFileSync(f, JSON.stringify({ pid: process.ppid }));
     assert.equal(runningDaemonPid(f), process.ppid);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('session-down posts the end notice, then closes the Topic', async () => {
+  const { bridge, telegram, hub } = make();
+  await bridge.sessionUp('claude', 's1', { cwd: '/proj' });
+  hub.emit('session-down', { sessionId: 's1' });
+  await until(() => telegram.closed.length);
+  assert.equal(telegram.sent.at(-1).text, 'session ended: WS1/claude/main');
+  assert.deepEqual(telegram.closed, [[-100, 100]]);
+});
+
+test('a cached Topic is reopened once before the first post after re-attach', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const topicCacheFile = path.join(dir, 'topics.json');
+  try {
+    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|codex:t1': 55 }));
+    const telegram = fakeTelegram();
+    telegram.reopenForumTopic = async (c, t) => { telegram.reopened.push([c, t]); throw new Error('telegram reopenForumTopic: Bad Request: TOPIC_NOT_MODIFIED'); };
+    const codex = fakeCodex();
+    const bridge = new Bridge({ telegram, codex, machine: 'WS1', config: baseConfig, topicCacheFile,
+      resolveContext: () => ({ project: 'proj', branch: 'main' }) });
+    await bridge.sessionUp('codex', 't1', { cwd: '/proj', preexisting: true });
+    assert.deepEqual(telegram.reopened, [], 'silent re-attach does not touch Telegram');
+    codex.emit('prompt', { threadId: 't1', text: 'again' });
+    codex.emit('final', { threadId: 't1', text: 'ok', status: 'completed' });
+    await until(() => telegram.sent.length === 2);
+    assert.deepEqual(telegram.reopened, [[-100, 55]]);
+    assert.deepEqual(telegram.sent.map((s) => [s.text, s.threadId]), [['> again', 55], ['ok', 55]]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('claude mirror: prompt and final routed by claudePid, Telegram injections not echoed, reply not doubled', async () => {
+  const { bridge, telegram, hub } = make();
+  hub.emit('session-up', { sessionId: 'uuid-1', cwd: '/proj', branch: 'main', claudePid: 4242 });
+  await until(() => telegram.sent.length === 1);
+  // After /clear the hook reports a new session id but the same claude pid.
+  hub.emit('mirror', { claudePid: 4242, sessionId: 'uuid-2', kind: 'prompt', text: 'hi' });
+  hub.emit('mirror', { claudePid: 4242, sessionId: 'uuid-2', kind: 'final', text: 'Hello!' });
+  await until(() => telegram.sent.length === 3);
+  assert.deepEqual(telegram.sent.slice(1).map((s) => [s.text, s.threadId]), [['> hi', 100], ['Hello!', 100]]);
+
+  await bridge.handleUpdate(msg(ALICE, 'from phone', 100));
+  hub.emit('mirror', { claudePid: 4242, kind: 'prompt', text: 'from phone' });
+  hub.emit('reply', { sessionId: 'uuid-1', text: 'done: 3 files' });
+  hub.emit('mirror', { claudePid: 4242, kind: 'final', text: 'done: 3 files\n' });
+  hub.emit('mirror', { claudePid: 4242, kind: 'final', text: '   ' });
+  await flush(); await flush(); await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(telegram.sent.slice(3).map((s) => s.text), ['done: 3 files'], 'no echo, no double post, no empty final');
+});
+
+test('a mirror that beats the channel registration is held until the session is up', async () => {
+  const { telegram, hub } = make();
+  hub.emit('mirror', { claudePid: 7, sessionId: 'u', kind: 'prompt', text: 'early' });
+  hub.emit('session-up', { sessionId: 'u', cwd: '/proj', branch: 'main', claudePid: 7 });
+  await until(() => telegram.sent.length === 2);
+  assert.deepEqual(telegram.sent.map((s) => s.text), ['session up: WS1/claude/main (proj)', '> early']);
 });

@@ -95,6 +95,28 @@
                     }
                 ]
             }
+        ],
+        "UserPromptSubmit": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+                        "timeout": 5
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+                        "timeout": 5
+                    }
+                ]
+            }
         ]
     },
     "worktree": {

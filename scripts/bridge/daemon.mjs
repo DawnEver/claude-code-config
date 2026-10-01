@@ -73,13 +73,55 @@ export class Bridge {
     }
     const h = this.hub;
     if (h) {
-      h.on('session-up', (s) => this.sessionUp('claude', s.sessionId, s).catch((e) => this.log(`claude up: ${e.message}`)));
+      h.on('session-up', (s) => this.sessionUp('claude', s.sessionId, s)
+        .then(() => this.#drainMirrors())
+        .catch((e) => this.log(`claude up: ${e.message}`)));
       h.on('session-down', (s) => this.sessionDown(`claude:${s.sessionId}`));
-      h.on('reply', (r) => this.final(`claude:${r.sessionId}`, r.text));
+      h.on('reply', (r) => {
+        const s = this.sessions.get(`claude:${r.sessionId}`);
+        if (s) (s.replies ??= []).push(r.text.trim());
+        return this.final(`claude:${r.sessionId}`, r.text);
+      });
+      h.on('mirror', (m) => this.mirror(m).catch((e) => this.log(`mirror: ${e.message}`)));
       h.on('permission', (p) => this.approval(`claude:${p.sessionId}`, {
         kind: 'claude', ref: p.request_id, answerable: true,
         summary: `${p.tool_name}: ${p.description ?? ''}${p.input_preview ? `\n${String(p.input_preview).slice(0, 1500)}` : ''}`,
       }));
+    }
+  }
+
+  /** The registered Claude session a hook call belongs to: by claude pid (stable across
+   *  /clear, which mints a new session id), else by session id. */
+  #claudeSession({ claudePid, sessionId }) {
+    for (const s of this.sessions.values()) if (s.agent === 'claude' && claudePid && s.claudePid === claudePid) return s;
+    return sessionId ? this.sessions.get(`claude:${sessionId}`) ?? null : null;
+  }
+
+  /**
+   * A prompt or final answer reported by bridge-hook.js. A final identical to what the
+   * model already sent with the reply tool this turn is not posted twice. A call that
+   * beats the channel's registration is held briefly and replayed on session-up.
+   */
+  async mirror(m) {
+    const s = this.#claudeSession(m);
+    if (!s) {
+      const now = this.now();
+      this.pendingMirrors = [...(this.pendingMirrors ?? []).filter((p) => now - p.at < 30000), { m, at: now }].slice(-50);
+      return;
+    }
+    if (m.kind === 'prompt') return this.prompt(s.key, m.text);
+    const text = m.text.trim();
+    const dup = s.replies?.includes(text);
+    s.replies = [];
+    if (text && !dup) await this.final(s.key, m.text);
+  }
+
+  async #drainMirrors() {
+    const held = this.pendingMirrors ?? [];
+    this.pendingMirrors = [];
+    for (const { m, at } of held) {
+      if (this.#claudeSession(m)) await this.mirror(m);
+      else this.pendingMirrors.push({ m, at });
     }
   }
 
@@ -94,18 +136,19 @@ export class Bridge {
    * their TUI exits, so most of those are idle leftovers. A session whose Topic is cached
    * is re-attached silently.
    */
-  async sessionUp(agent, id, { cwd, branch, originUrl, preexisting = false } = {}) {
+  async sessionUp(agent, id, { cwd, branch, originUrl, preexisting = false, claudePid = null } = {}) {
     const key = `${agent}:${id}`;
     if (this.sessions.has(key)) return this.sessions.get(key);
     const ctx = this.resolveContext(cwd, { branch, originUrl });
     const chatId = this.chatFor(ctx.project);
     const base = `${this.machine}/${agent}/${ctx.branch ?? 'detached'}`;
-    const s = { agent, id, key, chatId, base, title: base, project: ctx.project, topicId: null, progress: null, opening: null };
+    const s = { agent, id, key, chatId, base, title: base, project: ctx.project, topicId: null, progress: null, opening: null, claudePid };
     this.sessions.set(key, s);
     this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting}`);
     if (chatId === null) { this.log(`no chat for project ${ctx.project}; ${key} not mirrored`); return s; }
     s.topicId = this.topicCache[`${chatId}|${key}`] ?? null;
-    if (s.topicId) s.opening = Promise.resolve();
+    // A cached Topic was likely closed when its session last ended: reopen before posting.
+    if (s.topicId) { s.opening = Promise.resolve(); s.reopen = true; }
     else if (!preexisting) await this.#open(s);
     return s;
   }
@@ -134,7 +177,15 @@ export class Bridge {
     if (!s) return;
     this.sessions.delete(key);
     this.log(`down ${key}`);
-    if (s.opening) this.#send(s, `session ended: ${s.title}`).catch(() => {});
+    if (!s.opening) return;
+    this.#send(s, `session ended: ${s.title}`)
+      .then(() => s.topicId && this.#serial(s, async () => {
+        try {
+          await this.telegram.closeForumTopic(s.chatId, s.topicId);
+          this.log(`closed topic ${s.title} [topic ${s.topicId}]`);
+        } catch (e) { this.log(`closeForumTopic ${s.title}: ${e.message}`); }
+      }))
+      .catch(() => {});
   }
 
   async #send(s, text, opts = {}) {
@@ -143,7 +194,28 @@ export class Bridge {
     return this.#post(s, text, opts);
   }
 
-  async #post(s, text, opts = {}) {
+  /** Run Telegram writes for one session strictly in order (a final must not overtake
+   *  its prompt, nor the close its `session ended`). */
+  #serial(s, fn) {
+    const p = (s.chain ?? Promise.resolve()).then(fn);
+    s.chain = p.catch(() => {});
+    return p;
+  }
+
+  #post(s, text, opts = {}) {
+    return this.#serial(s, () => this.#postNow(s, text, opts));
+  }
+
+  async #postNow(s, text, opts) {
+    if (s.reopen && s.topicId) {
+      s.reopen = false;
+      try {
+        await this.telegram.reopenForumTopic(s.chatId, s.topicId);
+        this.log(`reopened topic ${s.title} [topic ${s.topicId}]`);
+      } catch (e) {
+        if (!/TOPIC_NOT_MODIFIED/i.test(e.message)) this.log(`reopenForumTopic ${s.title}: ${e.message}`);
+      }
+    }
     try {
       this.log(`post ${s.title} [topic ${s.topicId ?? '-'}] ${text.replace(/\s+/g, ' ').slice(0, 60)}`);
       return await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...opts });
@@ -237,11 +309,9 @@ export class Bridge {
       return this.#send(s, ok ? 'interrupt sent' : 'nothing to interrupt');
     }
     try {
-      if (s.agent === 'codex') {
-        (s.injected ??= []).push(text);
-        if (s.injected.length > 20) s.injected.shift();
-        await this.codex.inject(s.id, text);
-      }
+      (s.injected ??= []).push(text);
+      if (s.injected.length > 20) s.injected.shift();
+      if (s.agent === 'codex') await this.codex.inject(s.id, text);
       else if (!this.hub.deliver(s.id, text, m.from.username ?? String(m.from.id))) throw new Error('channel disconnected');
     } catch (e) {
       await this.#send(s, `inject failed: ${e.message}`);

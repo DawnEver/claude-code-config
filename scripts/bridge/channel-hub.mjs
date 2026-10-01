@@ -6,7 +6,8 @@
 // token go into ~/.claude/bridge/runtime.json (0600); a connection that does not present
 // the token as its first `register` call is dropped.
 //
-// channel -> hub:  register {token, sessionId, cwd, branch}, reply {text}, permission_request {...}
+// channel -> hub:  register {token, sessionId, cwd, branch, claudePid}, reply {text}, permission_request {...}
+// hook -> hub:     mirror {token, claudePid, sessionId, kind: prompt|final, text} (one-shot connection)
 // hub -> channel:  inbound {text, user}, permission {request_id, behavior}
 
 import net from 'net';
@@ -34,21 +35,33 @@ export class ChannelHub extends EventEmitter {
     return new Promise((r) => (this.server ? this.server.close(() => r()) : r()));
   }
 
+  #tokenOk(t) {
+    return typeof t === 'string' && t.length === this.token.length &&
+      crypto.timingSafeEqual(Buffer.from(t), Buffer.from(this.token));
+  }
+
   #onSocket(socket) {
     let sessionId = null;
     const authTimer = setTimeout(() => { if (!sessionId) socket.destroy(); }, 5000);
     authTimer.unref();
     const peer = new JsonRpcPeer((t) => socket.write(t + '\n'), {
       onRequest: (method, p = {}) => {
+        const unauthorized = () => { setImmediate(() => socket.destroy()); return Object.assign(new Error('unauthorized'), { code: 401 }); };
         if (method === 'register') {
-          const ok = typeof p.token === 'string' && p.token.length === this.token.length &&
-            crypto.timingSafeEqual(Buffer.from(p.token), Buffer.from(this.token));
-          if (!ok || !p.sessionId) { setImmediate(() => socket.destroy()); throw Object.assign(new Error('unauthorized'), { code: 401 }); }
+          if (!this.#tokenOk(p.token) || !p.sessionId) throw unauthorized();
           clearTimeout(authTimer);
           sessionId = String(p.sessionId);
+          const claudePid = Number(p.claudePid) || null;
           this.sessions.get(sessionId)?.socket.destroy();
-          this.sessions.set(sessionId, { peer, socket, cwd: p.cwd, branch: p.branch });
-          this.emit('session-up', { sessionId, cwd: p.cwd, branch: p.branch ?? null });
+          this.sessions.set(sessionId, { peer, socket, cwd: p.cwd, branch: p.branch, claudePid });
+          this.emit('session-up', { sessionId, cwd: p.cwd, branch: p.branch ?? null, claudePid });
+          return { ok: true };
+        }
+        // One-shot call from bridge-hook.js (a Claude hook): authenticated per call.
+        if (method === 'mirror') {
+          if (!this.#tokenOk(p.token)) throw unauthorized();
+          if (p.kind !== 'prompt' && p.kind !== 'final') throw Object.assign(new Error('bad kind'), { code: -32602 });
+          this.emit('mirror', { claudePid: Number(p.claudePid) || null, sessionId: p.sessionId ?? null, kind: p.kind, text: String(p.text ?? '') });
           return { ok: true };
         }
         if (!sessionId) throw Object.assign(new Error('unauthorized'), { code: 401 });

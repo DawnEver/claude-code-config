@@ -84,3 +84,16 @@ test('getUpdates advances, persists and dedupes the offset', async () => {
     assert.equal(api.calls.at(-1).params.offset, 12);
   } finally { api.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('closeForumTopic / reopenForumTopic target the Topic', async () => {
+  const api = await fakeApi(() => ({ ok: true, result: true }));
+  try {
+    const tg = new TelegramClient({ token: 't', apiBase: api.base });
+    assert.equal(await tg.closeForumTopic(-100, 7), true);
+    assert.equal(await tg.reopenForumTopic(-100, 7), true);
+    assert.deepEqual(api.calls.map((c) => [c.method, c.params]), [
+      ['closeForumTopic', { chat_id: -100, message_thread_id: 7 }],
+      ['reopenForumTopic', { chat_id: -100, message_thread_id: 7 }],
+    ]);
+  } finally { api.close(); }
+});

@@ -22,6 +22,9 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
   sessions share a branch). Telegram is a stateless view: the mapping is rebuilt from live
   sessions. `~/.claude/bridge/topics.json` (keyed by session id) only avoids creating a new
   Topic after a daemon restart; delete it freely. A re-attached session posts nothing.
+- **Ended sessions close their Topic**: `session ended: <title>`, then `closeForumTopic`.
+  A session re-attached to a cached Topic calls `reopenForumTopic` once before its next post
+  (`TOPIC_NOT_MODIFIED` ignored). Needs the bot's Manage Topics right.
 - **Leftovers stay quiet.** The Codex daemon keeps a thread loaded after its TUI exits, so
   a bridge (re)start sees every thread opened since the daemon started. Those get no Topic
   and no `session up` until they show activity again; sessions that appear while the
@@ -107,8 +110,14 @@ In a session's Topic (only allowlisted senders):
 
 Output: Codex posts one `working…` message per turn, edited in place with compact progress
 lines (commands, file edits, tool calls; throttled to one edit per 3 s), then the final
-agent message as a new message. Claude posts whatever it sends with the channel's `reply`
-tool. Long text is split at 4096 chars; 429s honour `retry_after`.
+agent message as a new message. Claude: `scripts/hooks/bridge-hook.js`
+(wired for `UserPromptSubmit` and `Stop`) mirrors every typed prompt as `> <prompt>` and the
+turn's final assistant text, mechanically — the model is not relied on to call `reply`. The
+hook makes one authenticated `mirror {token, claudePid, sessionId, kind, text}` call to the
+hub; the daemon matches `claudePid` (`CLAUDE_PID`, stable across `/clear`) to the session's
+registered channel. Prompts that came from the Topic (`<channel ...>`) are not echoed, and a
+final identical to a `reply` tool message of the same turn is not posted twice. `reply`
+stays available for explicit mid-task messages. Long text is split at 4096 chars; 429s honour `retry_after`.
 
 ## Approvals
 
@@ -138,7 +147,9 @@ forgets an approval once `serverRequest/resolved` arrives. Claude: the channel d
   URL, not a stream).
 - Live Codex sessions = `thread/loaded/list`; each is subscribed with `thread/resume`.
 - Daemon <-> channel IPC: newline JSON-RPC over `127.0.0.1:<random>`; the channel's first
-  call must be `register {token, sessionId, cwd, branch}`.
+  call must be `register {token, sessionId, cwd, branch, claudePid}` (`sessionId` =
+  `CLAUDE_CODE_SESSION_ID`, `claudePid` = `CLAUDE_PID`, both set by Claude Code for its MCP
+  servers and hooks). Hooks use a one-shot connection whose only call is `mirror`.
 
 ## Unverified
 

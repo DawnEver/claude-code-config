@@ -23,7 +23,7 @@ async function rig() {
   const out = [];
   let server;
   const link = new DaemonLink({
-    runtimeFile, session: { sessionId: 's1', cwd: '/repo', branch: 'main' },
+    runtimeFile, session: { sessionId: 's1', cwd: '/repo', branch: 'main', claudePid: 77 },
     onInbound: (p) => server.inbound(p), onVerdict: (p) => server.verdict(p),
   });
   server = createChannelServer({ write: (m) => out.push(m), link });
@@ -42,6 +42,7 @@ test('initialize declares channel + permission capabilities and instructions', a
   assert.deepEqual(r.capabilities.experimental, { 'claude/channel': {}, 'claude/channel/permission': {} });
   assert.deepEqual(r.capabilities.tools, {});
   assert.match(r.instructions, /reply tool/);
+  assert.match(r.instructions, /mirrored automatically/);
   await s.onMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
   assert.deepEqual(out[1].result.tools.map((t) => t.name), ['reply']);
 });
@@ -49,7 +50,7 @@ test('initialize declares channel + permission capabilities and instructions', a
 test('register, inbound -> channel notification, reply tool -> hub, permission round trip', async () => {
   const r = await rig();
   try {
-    assert.deepEqual(r.ups, [{ sessionId: 's1', cwd: '/repo', branch: 'main' }]);
+    assert.deepEqual(r.ups, [{ sessionId: 's1', cwd: '/repo', branch: 'main', claudePid: 77 }]);
 
     assert.equal(r.hub.deliver('s1', 'run the tests', 'alice'), true);
     await until(() => r.out.length);
@@ -122,4 +123,28 @@ test('hub binds loopback only', async () => {
   await hub.listen(0);
   assert.equal(hub.server.address().address, '127.0.0.1');
   await hub.close();
+});
+
+test('register carries claudePid; a one-shot mirror call needs the token', async () => {
+  const hub = new ChannelHub();
+  const port = await hub.listen(0);
+  const ups = [], mirrors = [];
+  hub.on('session-up', (s) => ups.push(s));
+  hub.on('mirror', (m) => mirrors.push(m));
+  const call = (params) => new Promise((resolve) => {
+    const sock = net.connect({ host: '127.0.0.1', port });
+    let buf = '';
+    sock.on('data', (d) => { buf += d; if (buf.includes('\n')) { sock.destroy(); resolve(JSON.parse(buf)); } });
+    sock.on('close', () => resolve(buf ? JSON.parse(buf) : null));
+    sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'mirror', params }) + '\n'));
+  });
+  try {
+    const bad = await call({ token: 'x'.repeat(hub.token.length), claudePid: 1, kind: 'final', text: 'no' });
+    assert.equal(bad?.error?.code, 401);
+    const ok = await call({ token: hub.token, claudePid: 9, sessionId: 'u', kind: 'final', text: 'yes' });
+    assert.deepEqual(ok.result, { ok: true });
+    assert.deepEqual(mirrors, [{ claudePid: 9, sessionId: 'u', kind: 'final', text: 'yes' }]);
+    const bogus = await call({ token: hub.token, claudePid: 9, kind: 'other', text: 'x' });
+    assert.ok(bogus.error, 'unknown kind rejected');
+  } finally { await hub.close(); }
 });

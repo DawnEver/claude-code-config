@@ -150,6 +150,14 @@ export class TelegramClient {
     return this.call('createForumTopic', { chat_id: chatId, name: String(name).slice(0, 128) });
   }
 
+  closeForumTopic(chatId, threadId) {
+    return this.call('closeForumTopic', { chat_id: chatId, message_thread_id: threadId });
+  }
+
+  reopenForumTopic(chatId, threadId) {
+    return this.call('reopenForumTopic', { chat_id: chatId, message_thread_id: threadId });
+  }
+
   answerCallbackQuery(id, text) {
     return this.call('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}) });
   }
