@@ -20,8 +20,12 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
   `bridge.fallbackChatId`; no fallback means the session is not mirrored.
 - **One Topic per session**, titled `<machine>/<agent>/<branch>` (`#2`, `#3` when two live
   sessions share a branch). Telegram is a stateless view: the mapping is rebuilt from live
-  sessions. `~/.claude/bridge/topics.json` only avoids creating a new Topic after a daemon
-  restart; delete it freely.
+  sessions. `~/.claude/bridge/topics.json` (keyed by session id) only avoids creating a new
+  Topic after a daemon restart; delete it freely. A re-attached session posts nothing.
+- **Leftovers stay quiet.** The Codex daemon keeps a thread loaded after its TUI exits, so
+  a bridge (re)start sees every thread opened since the daemon started. Those get no Topic
+  and no `session up` until they show activity again; sessions that appear while the
+  bridge runs open their Topic at once.
 
 ## Setup (per machine)
 

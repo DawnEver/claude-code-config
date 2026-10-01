@@ -70,9 +70,10 @@ test('topic cache reuses a Topic across restarts', async () => {
     const b = make();
     const bridge2 = new Bridge({ ...b, telegram: b.telegram, machine: 'WS1', config: baseConfig, topicCacheFile,
       resolveContext: () => ({ project: 'proj', branch: 'main' }) });
-    const s = await bridge2.sessionUp('codex', 't9', { cwd: '/proj' });
+    const s = await bridge2.sessionUp('codex', 't1', { cwd: '/proj', preexisting: true });
     assert.equal(s.topicId, 100);
     assert.deepEqual(b.telegram.topics, []);
+    assert.deepEqual(b.telegram.sent, [], 're-attached silently, no second "session up"');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -101,6 +102,18 @@ test('prompts typed in the TUI are mirrored; ones injected from the Topic are no
   assert.equal(telegram.sent.length, before, 'own injection not echoed');
   codex.emit('prompt', { threadId: 't1', text: 'from phone' }); await flush();
   assert.equal(telegram.sent.at(-1).text, '> from phone', 'echo suppressed only once');
+});
+
+test('a session loaded before the bridge started opens its Topic only on first activity', async () => {
+  const { bridge, codex, telegram } = make();
+  await bridge.sessionUp('codex', 'old', { cwd: '/proj', preexisting: true });
+  bridge.sessionDown('codex:old');
+  await bridge.sessionUp('codex', 'idle', { cwd: '/proj', preexisting: true });
+  assert.deepEqual(telegram.topics, [], 'idle leftovers stay invisible');
+  assert.deepEqual(telegram.sent, [], 'not even a "session ended"');
+  codex.emit('prompt', { threadId: 'idle', text: 'back again' }); await flush();
+  assert.equal(telegram.topics.length, 1);
+  assert.deepEqual(telegram.sent.map((s) => s.text), ['session up: WS1/codex/main (proj)', '> back again']);
 });
 
 test('a codex backlog lands in the new Topic, after the session-up notice, in order', async () => {

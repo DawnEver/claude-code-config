@@ -144,6 +144,7 @@ export class CodexAdapter extends EventEmitter {
     this.rpc = rpc;
     this.transport = t;
     this.connectedAt = this.now();
+    this.synced = false;
     return true;
   }
 
@@ -160,17 +161,20 @@ export class CodexAdapter extends EventEmitter {
       cursor = r.nextCursor;
     } while (cursor);
     for (const id of [...this.threads.keys()]) if (!ids.has(id)) this.#drop(id);
-    for (const id of ids) if (!this.threads.has(id)) await this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+    // Threads already loaded at the first sync are mostly idle leftovers of exited TUIs.
+    const preexisting = !this.synced;
+    for (const id of ids) if (!this.threads.has(id)) await this.#subscribe(id, { preexisting }).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+    this.synced = true;
   }
 
-  async #subscribe(threadId) {
+  async #subscribe(threadId, opts = {}) {
     // thread/started and the poll can race for the same thread; resume it once.
     if (this.threads.has(threadId) || this.pending.has(threadId)) return;
     this.pending.add(threadId);
-    try { await this.#resume(threadId); } finally { this.pending.delete(threadId); }
+    try { await this.#resume(threadId, opts); } finally { this.pending.delete(threadId); }
   }
 
-  async #resume(threadId) {
+  async #resume(threadId, { preexisting = false } = {}) {
     const r = await this.rpc.request('thread/resume', { threadId });
     const th = r.thread ?? {};
     if (th.ephemeral) return;
@@ -185,7 +189,7 @@ export class CodexAdapter extends EventEmitter {
     };
     this.threads.set(threadId, info);
     this.emit('session-up', { threadId, cwd: info.cwd, branch: info.branch, name: info.name,
-      backlog: backlogSince(th.turns, this.connectedAt) });
+      preexisting, backlog: backlogSince(th.turns, this.connectedAt) });
   }
 
   #drop(threadId) {

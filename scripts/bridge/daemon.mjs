@@ -87,7 +87,14 @@ export class Bridge {
     return this.config.projects[project]?.chatId ?? this.config.fallbackChatId ?? null;
   }
 
-  async sessionUp(agent, id, { cwd, branch, originUrl } = {}) {
+  /**
+   * Register a session. Its Topic opens (and `session up` is posted) at once for a session
+   * that appeared while the bridge ran, but only on first activity for one that was
+   * already loaded when the bridge started: the Codex daemon keeps threads loaded after
+   * their TUI exits, so most of those are idle leftovers. A session whose Topic is cached
+   * is re-attached silently.
+   */
+  async sessionUp(agent, id, { cwd, branch, originUrl, preexisting = false } = {}) {
     const key = `${agent}:${id}`;
     if (this.sessions.has(key)) return this.sessions.get(key);
     const ctx = this.resolveContext(cwd, { branch, originUrl });
@@ -96,39 +103,50 @@ export class Bridge {
     const taken = new Set([...this.sessions.values()].filter((s) => s.chatId === chatId).map((s) => s.title));
     let title = base;
     for (let n = 2; taken.has(title); n++) title = `${base} #${n}`;
-    const s = { agent, id, key, chatId, title, project: ctx.project, topicId: null, progress: null };
+    const s = { agent, id, key, chatId, title, project: ctx.project, topicId: null, progress: null, opening: null };
     this.sessions.set(key, s);
     if (chatId === null) { this.log(`no chat for project ${ctx.project}; ${key} not mirrored`); return s; }
-    const cacheKey = `${chatId}|${title}`;
-    s.topicId = this.topicCache[cacheKey] ?? null;
-    if (!s.topicId) {
+    s.topicId = this.topicCache[`${chatId}|${key}`] ?? null;
+    if (s.topicId) s.opening = Promise.resolve();
+    else if (!preexisting) await this.#open(s);
+    return s;
+  }
+
+  /** Create the session's Topic and announce it, once; concurrent callers share the work. */
+  #open(s) {
+    s.opening ??= (async () => {
       try {
-        s.topicId = (await this.telegram.createForumTopic(chatId, title)).message_thread_id;
-        this.topicCache[cacheKey] = s.topicId;
+        s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title)).message_thread_id;
+        this.topicCache[`${s.chatId}|${s.key}`] = s.topicId;
         this.#saveCache();
       } catch (e) {
-        this.log(`createForumTopic ${title}: ${e.message} (posting without a Topic)`);
+        this.log(`createForumTopic ${s.title}: ${e.message} (posting without a Topic)`);
       }
-    }
-    await this.#send(s, `session up: ${title}${ctx.project ? ` (${ctx.project})` : ''}`);
-    return s;
+      await this.#post(s, `session up: ${s.title}${s.project ? ` (${s.project})` : ''}`);
+    })();
+    return s.opening;
   }
 
   sessionDown(key) {
     const s = this.sessions.get(key);
     if (!s) return;
     this.sessions.delete(key);
-    this.#send(s, `session ended: ${s.title}`).catch(() => {});
+    if (s.opening) this.#send(s, `session ended: ${s.title}`).catch(() => {});
   }
 
   async #send(s, text, opts = {}) {
     if (s.chatId === null) return [];
+    await this.#open(s);
+    return this.#post(s, text, opts);
+  }
+
+  async #post(s, text, opts = {}) {
     try {
       return await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...opts });
     } catch (e) {
       // A cached Topic that was deleted in Telegram: forget it, recreate on next restart.
       if (s.topicId && /thread not found|TOPIC_DELETED|TOPIC_CLOSED/i.test(e.message)) {
-        delete this.topicCache[`${s.chatId}|${s.title}`];
+        delete this.topicCache[`${s.chatId}|${s.key}`];
         this.#saveCache();
       }
       this.log(`send ${s.title}: ${e.message}`);
