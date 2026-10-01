@@ -370,17 +370,17 @@ test('sweep never deletes the Topic of a session that re-attached to it', async 
   } finally { r.cleanup(); }
 });
 
-test('an idle leftover holding a due Topic loses it and opens a fresh one on activity', async () => {
+test('a registered session keeps its Topic even when it is due; activity reopens the same Topic', async () => {
   const r = sweepRig({ '-100|codex:t1': { topicId: 55, closedAt: 0 } });
   try {
     await r.bridge.sessionUp('codex', 't1', { cwd: '/proj', preexisting: true });
     await r.bridge.sweepClosedTopics();
-    assert.deepEqual(r.telegram.deleted, [[-100, 55]]);
+    assert.deepEqual(r.telegram.deleted, []);
     r.codex.emit('prompt', { threadId: 't1', text: 'back' });
-    await until(() => r.telegram.sent.length === 2);
-    assert.deepEqual(r.telegram.reopened, [], 'no reopen of a deleted Topic');
-    assert.deepEqual(r.telegram.sent.map((s) => [s.text, s.threadId]), [['session up: WS1/codex/main (proj)', 100], ['> back', 100]]);
-    assert.equal(r.bridge.topics.topicId('-100|codex:t1'), 100);
+    await until(() => r.telegram.sent.length === 1);
+    assert.deepEqual(r.telegram.reopened, [[-100, 55]]);
+    assert.deepEqual(r.telegram.sent.map((s) => [s.text, s.threadId]), [['> back', 55]]);
+    assert.deepEqual(r.bridge.topics.get('-100|codex:t1'), { topicId: 55 });
   } finally { r.cleanup(); }
 });
 
@@ -414,5 +414,41 @@ test('sweep logs each distinct delete error once and logs again after a success'
     err = null; await r.bridge.sweepClosedTopics();
     assert.deepEqual(r.telegram.deleted, [1, 2]);
     assert.equal(r.logs.filter((l) => /^sweep|deleted closed/.test(l)).length, 2, 'only deletions are logged');
+  } finally { r.cleanup(); }
+});
+
+test('codex idle close: at 30m not 29m, quietly; new activity reopens the same Topic; no delete while registered', async () => {
+  const r = sweepRig({});
+  const M = 60000;
+  try {
+    let t = 0;
+    r.bridge.now = () => t;
+    r.bridge.config = { ...r.bridge.config, codexIdleCloseMinutes: 30 };
+    await r.bridge.sessionUp('codex', 't1', { cwd: '/proj' });          // topic 100
+    await r.bridge.sessionUp('claude', 's1', { cwd: '/proj', branch: 'dev' });  // never idle-closed
+    t = 10 * M; r.codex.emit('progress', { threadId: 't1', text: '$ ls' }); await flush();
+    t = 39 * M; await r.bridge.closeIdleCodexTopics();
+    assert.deepEqual(r.telegram.closed, [], '29m idle: still open');
+    t = 40 * M; await r.bridge.closeIdleCodexTopics(); await r.bridge.closeIdleCodexTopics();
+    assert.deepEqual(r.telegram.closed, [[-100, 100]], 'closed once, claude untouched');
+    const sentBefore = r.telegram.sent.length;
+    assert.equal(r.bridge.topics.get('-100|codex:t1').closedAt, 40 * M);
+    assert.ok(r.bridge.sessions.has('codex:t1'), 'stays registered');
+
+    t = 40 * M + 25 * 3600000; await r.bridge.sweepClosedTopics();
+    assert.deepEqual(r.telegram.deleted, [], 'not deleted while registered');
+
+    await r.bridge.handleUpdate(msg(ALICE, 'wake up', 100));   // Telegram inject is activity
+    await until(() => r.telegram.reopened.length === 1);
+    assert.deepEqual(r.telegram.reopened, [[-100, 100]]);
+    assert.deepEqual(r.bridge.topics.get('-100|codex:t1'), { topicId: 100 }, 'closedAt cleared');
+    r.codex.emit('final', { threadId: 't1', text: 'awake', status: 'completed' });
+    await until(() => r.telegram.sent.length > sentBefore);
+    assert.deepEqual([r.telegram.sent.at(-1).text, r.telegram.sent.at(-1).threadId], ['awake', 100]);
+    assert.equal(r.telegram.topics.length, 2, 'no new Topic for the same thread');
+
+    r.bridge.config = { ...r.bridge.config, codexIdleCloseMinutes: 0 };
+    t += 1000 * M; await r.bridge.closeIdleCodexTopics();
+    assert.equal(r.telegram.closed.length, 1, '0 = never');
   } finally { r.cleanup(); }
 });

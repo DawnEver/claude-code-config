@@ -29,7 +29,15 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
   clears it). At startup and hourly the daemon calls `deleteForumTopic` for every Topic it
   closed more than `bridge.deleteClosedAfterHours` ago (default 24, `0` = never), then drops
   the entry. Entries without a `closedAt` (never closed by the bridge, or written before this
-  existed) are never deleted.
+  existed) are never deleted, and neither is a Topic still held by a registered session.
+- **Idle Codex Topics close**: a Codex thread never ends on its own (the app-server keeps it
+  loaded), so after `bridge.codexIdleCloseMinutes` (default 30, `0` = never) with no prompt,
+  progress, final, approval or Telegram inject, its Topic is closed quietly (no message) and
+  gets a `closedAt`. The session stays registered, so the delete sweep skips it however long
+  it stays closed; any new activity reopens the **same** Topic and clears `closedAt`. Only
+  once the thread is unloaded (`session ended`) does the 24 h deletion clock apply.
+  Telegram lets only admins post in a closed Topic: as the group owner your messages still
+  reach the bot and reopen it; a non-admin member cannot post there at all.
 - **No pin noise**: Telegram auto-pins a new Topic's first message; the daemon calls
   `unpinAllForumTopicMessages` right after `session up` (a missing pin right is logged once).
 - Claude sessions are keyed by `CLAUDE_CODE_SESSION_ID`, so `--resume` / `--continue` reuses
@@ -58,7 +66,8 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
    "bridge": {
      "fallbackChatId": -1001111111111,
      "projects": { "claude-code-config": { "chatId": -1002222222222 } },
-     "deleteClosedAfterHours": 24
+     "deleteClosedAfterHours": 24,
+     "codexIdleCloseMinutes": 30
    }
    ```
 6. **Secrets** (machine-local, never synced) in `~/.claude/claude_env_settings.local.json`:

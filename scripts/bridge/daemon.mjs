@@ -50,8 +50,7 @@ export class Bridge {
    * Delete Topics this bridge closed more than `deleteClosedAfterHours` ago (context.mjs
    * owns the default; 0 = never). Only entries with a recorded closedAt qualify, so a Topic
    * the bridge never closed is never touched, and a session that is active in a Topic clears
-   * its closedAt when it attaches. An idle leftover holding a due Topic loses it and gets a
-   * fresh one on its next activity. Each delete runs in the holder's write queue and is
+   * its closedAt when it attaches. Topics held by a registered session are skipped. Each delete runs in the holder's write queue and is
    * re-checked against the cache entry, so a concurrent reopen is never overwritten. A
    * failure keeps the entry for the next sweep; each distinct error is logged once.
    */
@@ -60,7 +59,9 @@ export class Bridge {
     const holderOf = (k) => [...this.sessions.values()].find((s) => TopicCache.key(s.chatId, s.key) === k) ?? null;
     for (const [k, e] of this.topics.due(this.now(), this.config.deleteClosedAfterHours)) {
       const holder = holderOf(k);
-      if (holder && !holder.reopen) continue;
+      // A registered session keeps its Topic, however long it has been closed (an
+      // idle-closed Codex thread may come back); it becomes deletable once the session ends.
+      if (holder) continue;
       const run = async () => {
         if (this.topics.get(k) !== e) return;
         try {
@@ -174,7 +175,7 @@ export class Bridge {
     const ctx = this.resolveContext(cwd, { branch, originUrl });
     const chatId = this.chatFor(ctx.project);
     const base = `${this.machine}/${agent}/${ctx.branch ?? 'detached'}`;
-    const s = { agent, id, key, chatId, base, title: base, project: ctx.project, topicId: null, progress: null, opening: null, claudePid };
+    const s = { agent, id, key, chatId, base, title: base, project: ctx.project, topicId: null, progress: null, opening: null, claudePid, lastActivity: this.now() };
     this.sessions.set(key, s);
     this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting}`);
     if (chatId === null) { this.log(`no chat for project ${ctx.project}; ${key} not mirrored`); return s; }
@@ -252,6 +253,21 @@ export class Bridge {
   }
 
   async #postNow(s, text, opts) {
+    await this.#reopenNow(s);
+    try {
+      this.log(`post ${s.title} [topic ${s.topicId ?? '-'}] ${text.replace(/\s+/g, ' ').slice(0, 60)}`);
+      return await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...opts });
+    } catch (e) {
+      // A cached Topic that was deleted in Telegram: forget it, recreate on next restart.
+      if (s.topicId && /thread not found|TOPIC_DELETED/i.test(e.message)) this.topics.delete(TopicCache.key(s.chatId, s.key));
+      else if (s.topicId && /TOPIC_CLOSED/i.test(e.message)) s.reopen = true;
+      this.log(`send ${s.title}: ${e.message}`);
+      return [];
+    }
+  }
+
+  /** Reopen the session's Topic if it may be closed, and clear its closedAt. */
+  async #reopenNow(s) {
     if (s.reopen && s.topicId) {
       s.reopen = false;
       try {
@@ -263,17 +279,46 @@ export class Bridge {
         else this.log(`reopenForumTopic ${s.title}: ${e.message}`);
       }
     }
-    try {
-      this.log(`post ${s.title} [topic ${s.topicId ?? '-'}] ${text.replace(/\s+/g, ' ').slice(0, 60)}`);
-      return await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...opts });
-    } catch (e) {
-      // A cached Topic that was deleted in Telegram: forget it, recreate on next restart.
-      if (s.topicId && /thread not found|TOPIC_DELETED|TOPIC_CLOSED/i.test(e.message)) {
-        this.topics.delete(TopicCache.key(s.chatId, s.key));
-      }
-      this.log(`send ${s.title}: ${e.message}`);
-      return [];
+  }
+
+  /** Any sign of life: restart the idle clock, and reopen an idle-closed Topic at once. */
+  #touch(s) {
+    s.lastActivity = this.now();
+    if (!s.idleClosed) return;
+    s.idleClosed = false;
+    s.reopen = true;
+    this.#serial(s, () => this.#reopenNow(s)).catch(() => {});
+  }
+
+  /**
+   * Codex threads never end on their own (the app-server keeps them loaded after the TUI
+   * exits), so a Codex Topic with no activity for `codexIdleCloseMinutes` (context.mjs owns
+   * the default; 0 = never) is closed quietly and gets a closedAt. The session stays
+   * registered, so the delete sweep leaves the Topic alone, and the next activity reopens
+   * the same Topic.
+   */
+  async closeIdleCodexTopics() {
+    const minutes = this.config.codexIdleCloseMinutes;
+    if (!(minutes > 0)) return 0;
+    let n = 0;
+    for (const s of this.sessions.values()) {
+      if (s.agent !== 'codex' || !s.topicId || !s.opening || s.idleClosed || s.reopen) continue;
+      if (this.now() - s.lastActivity < minutes * 60000) continue;
+      s.idleClosed = true;
+      n++;
+      await this.#serial(s, async () => {
+        if (!s.idleClosed) return;   // activity arrived while queued
+        try {
+          await this.telegram.closeForumTopic(s.chatId, s.topicId);
+          this.#cacheSet(s, { topicId: s.topicId, closedAt: this.now() });
+          this.log(`idle-closed topic ${s.title} [topic ${s.topicId}] after ${minutes}m`);
+        } catch (e) {
+          s.idleClosed = false;
+          this.log(`closeForumTopic ${s.title}: ${e.message}`);
+        }
+      }).catch(() => {});
     }
+    return n;
   }
 
   /** A prompt typed into the session (TUI or official remote). One that came from this
@@ -281,6 +326,7 @@ export class Bridge {
   async prompt(key, text) {
     const s = this.sessions.get(key);
     if (!s) return;
+    this.#touch(s);
     const i = s.injected?.indexOf(text) ?? -1;
     if (i !== -1) { s.injected.splice(i, 1); return; }
     await this.#send(s, `> ${text}`);
@@ -290,6 +336,7 @@ export class Bridge {
   async progress(key, line) {
     const s = this.sessions.get(key);
     if (!s || s.chatId === null) return;
+    this.#touch(s);
     const p = s.progress ??= { lines: [], msgId: null, last: 0, timer: null };
     p.lines.push(line);
     if (p.lines.length > 12) p.lines = p.lines.slice(-12);
@@ -311,6 +358,7 @@ export class Bridge {
   async final(key, text, status) {
     const s = this.sessions.get(key);
     if (!s) return;
+    this.#touch(s);
     if (s.progress?.timer) clearTimeout(s.progress.timer);
     s.progress = null;
     const body = text?.trim() ? text : `(turn ${status ?? 'completed'}, no message)`;
@@ -320,6 +368,7 @@ export class Bridge {
   async approval(key, { kind, ref, summary, answerable }) {
     const s = this.sessions.get(key);
     if (!s) return;
+    this.#touch(s);
     const id = String(this.nextApproval++);
     this.approvals.set(id, { key, kind, ref });
     const offer = answerable && this.config.approvalsFromTelegram && this.allowed.size > 0;
@@ -355,6 +404,7 @@ export class Bridge {
       return this.#send(s, ok ? 'interrupt sent' : 'nothing to interrupt');
     }
     try {
+      this.#touch(s);
       (s.injected ??= []).push(text);
       if (s.injected.length > 20) s.injected.shift();
       if (s.agent === 'codex') await this.codex.inject(s.id, text);
@@ -454,6 +504,11 @@ export async function main() {
   process.on('SIGTERM', stop);
   log(`up: machine=${machine} ipc=127.0.0.1:${port}`);
   codexLoop(codex, log, ac.signal);
+  if (config.codexIdleCloseMinutes > 0) {
+    log(`idle close: Codex Topics close after ${config.codexIdleCloseMinutes}m without activity`);
+    setInterval(() => bridge.closeIdleCodexTopics().catch((e) => log(`idle close: ${e.message}`)),
+      Math.min(60000, config.codexIdleCloseMinutes * 60000)).unref();
+  }
   if (config.deleteClosedAfterHours > 0) {
     const sweep = () => bridge.sweepClosedTopics().catch((e) => log(`sweep: ${e.message}`));
     log(`sweep: deleting Topics closed more than ${config.deleteClosedAfterHours}h ago, hourly`);
