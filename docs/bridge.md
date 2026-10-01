@@ -61,8 +61,14 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
 
 ### Codex sessions
 
-Nothing to do per session: any persisted thread loaded in the shared app-server daemon
-(the TUI attaches to it) is picked up within ~15 s. Ephemeral threads cannot be
+Start sessions with `codc`. A plain `codex` TUI runs its own embedded app-server, which the
+bridge cannot see; with `bridge.botToken` set, `codc` adds `--remote unix://` to every
+interactive launch (bare, a prompt, `resume`, `fork`) so the TUI attaches to the shared
+app-server daemon. `exec` and other non-interactive subcommands, an explicit `--remote`,
+and third-party providers (`cods`, whose overrides the daemon would not apply) are left as
+they are. Any persisted thread loaded in the shared daemon is picked up within ~15 s.
+Prompts typed in the TUI are mirrored into the Topic as `> <prompt>`; ones sent from the
+Topic are not echoed back. Ephemeral threads cannot be
 subscribed (`thread/resume` needs a rollout) and are skipped. If the daemon is not running
 (`codex app-server daemon version`), the bridge keeps retrying.
 

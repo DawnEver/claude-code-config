@@ -87,6 +87,16 @@ test('deltas aggregate; final message is emitted on turn/completed; progress per
   assert.equal(a.status('t1'), 'idle');
 });
 
+test('a completed userMessage item is emitted as the prompt text', async () => {
+  const { a, srv } = await started();
+  const prompts = [];
+  a.on('prompt', (p) => prompts.push(p));
+  srv.push('item/completed', { threadId: 't1', item: { type: 'userMessage', id: 'u', content: [
+    { type: 'text', text: 'fix the build' }, { type: 'image', url: 'x' }] } });
+  srv.push('item/completed', { threadId: 't1', item: { type: 'userMessage', id: 'v', content: [{ type: 'image', url: 'x' }] } });
+  assert.deepEqual(prompts, [{ threadId: 't1', text: 'fix the build' }]);
+});
+
 test('inject uses turn/start when idle and turn/steer with expectedTurnId mid-turn', async () => {
   const { a, srv } = await started();
   assert.equal(await a.inject('t1', 'hi'), 'started');

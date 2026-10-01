@@ -14,6 +14,21 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
+import { readBridgeConfig } from '../bridge/context.mjs';
+
+// Subcommands that open the interactive TUI; every other subcommand (exec, app-server, ...)
+// is non-interactive and must not be redirected. A bare positional is the TUI's prompt.
+const TUI_SUBCOMMANDS = new Set(['resume', 'fork']);
+const NON_TUI_SUBCOMMANDS = new Set(['exec', 'e', 'review', 'login', 'logout', 'mcp', 'plugin', 'app-server',
+  'remote-control', 'app', 'completion', 'update', 'doctor', 'sandbox', 'debug', 'apply', 'a', 'queue', 'archive',
+  'delete', 'migrate-rollouts', 'unarchive', 'cloud', 'exec-server', 'features', 'agents', 'help']);
+
+function isInteractiveTui(args) {
+  if (args.includes('--remote') || args.some((a) => a.startsWith('--remote='))) return false;
+  if (args.some((a) => a === '-h' || a === '--help' || a === '-V' || a === '--version')) return false;
+  const first = args.find((a) => !a.startsWith('-'));
+  return first === undefined || TUI_SUBCOMMANDS.has(first) || !NON_TUI_SUBCOMMANDS.has(first);
+}
 
 // Codex-specific env vars we strip from the parent so the launcher's projection
 // (or codex's own defaults) is the only source. `OPENAI_BASE_URL` is in here
@@ -67,7 +82,11 @@ export function buildCodexInvocation({
   for (const k of CODEX_STRIP_KEYS) delete env[k];
 
   if (!provider || provider === 'codex') {
-    return { env, args: [...extraArgs], provider: null, available: [], error: null };
+    // With the session bridge configured, an interactive TUI attaches to the shared
+    // app-server daemon; a TUI on its own embedded server is invisible to the bridge.
+    const attach = readBridgeConfig({ sharedPath: envSettingsPath, localPath }).botToken
+      && isInteractiveTui(extraArgs) ? ['--remote', 'unix://'] : [];
+    return { env, args: [...attach, ...extraArgs], provider: null, available: [], error: null };
   }
 
   if (!existsSync(envSettingsPath)) {

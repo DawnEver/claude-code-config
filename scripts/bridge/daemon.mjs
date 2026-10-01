@@ -57,6 +57,7 @@ export class Bridge {
     if (c) {
       c.on('session-up', (s) => this.sessionUp('codex', s.threadId, s).catch((e) => this.log(`codex up: ${e.message}`)));
       c.on('session-down', (s) => this.sessionDown(`codex:${s.threadId}`));
+      c.on('prompt', (e) => this.prompt(`codex:${e.threadId}`, e.text));
       c.on('progress', (e) => this.progress(`codex:${e.threadId}`, e.text));
       c.on('final', (e) => this.final(`codex:${e.threadId}`, e.text, e.status));
       c.on('approval', (a) => this.approval(`codex:${a.threadId}`, { kind: 'codex', ref: a.key, summary: a.summary, answerable: a.answerable }));
@@ -128,6 +129,16 @@ export class Bridge {
     }
   }
 
+  /** A prompt typed into the session (TUI or official remote). One that came from this
+   *  Topic is already visible there, so its echo is skipped once. */
+  async prompt(key, text) {
+    const s = this.sessions.get(key);
+    if (!s) return;
+    const i = s.injected?.indexOf(text) ?? -1;
+    if (i !== -1) { s.injected.splice(i, 1); return; }
+    await this.#send(s, `> ${text}`);
+  }
+
   /** One progress message per turn, edited in place and throttled. */
   async progress(key, line) {
     const s = this.sessions.get(key);
@@ -197,7 +208,11 @@ export class Bridge {
       return this.#send(s, ok ? 'interrupt sent' : 'nothing to interrupt');
     }
     try {
-      if (s.agent === 'codex') await this.codex.inject(s.id, text);
+      if (s.agent === 'codex') {
+        (s.injected ??= []).push(text);
+        if (s.injected.length > 20) s.injected.shift();
+        await this.codex.inject(s.id, text);
+      }
       else if (!this.hub.deliver(s.id, text, m.from.username ?? String(m.from.id))) throw new Error('channel disconnected');
     } catch (e) {
       await this.#send(s, `inject failed: ${e.message}`);

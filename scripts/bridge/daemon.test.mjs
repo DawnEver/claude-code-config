@@ -90,6 +90,19 @@ test('text from an allowlisted user is injected into the topic session; others a
   assert.deepEqual(hub.delivered, [['s1', 'and docs', 'u']]);
 });
 
+test('prompts typed in the TUI are mirrored; ones injected from the Topic are not echoed', async () => {
+  const { bridge, codex, telegram } = make();
+  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
+  codex.emit('prompt', { threadId: 't1', text: 'refactor the parser' }); await flush();
+  assert.equal(telegram.sent.at(-1).text, '> refactor the parser');
+  await bridge.handleUpdate(msg(ALICE, 'from phone', 100));
+  const before = telegram.sent.length;
+  codex.emit('prompt', { threadId: 't1', text: 'from phone' }); await flush();
+  assert.equal(telegram.sent.length, before, 'own injection not echoed');
+  codex.emit('prompt', { threadId: 't1', text: 'from phone' }); await flush();
+  assert.equal(telegram.sent.at(-1).text, '> from phone', 'echo suppressed only once');
+});
+
 test('/status and /interrupt commands', async () => {
   const { bridge, telegram } = make();
   await bridge.sessionUp('codex', 't1', { cwd: '/proj' });

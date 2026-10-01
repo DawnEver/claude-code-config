@@ -171,6 +171,10 @@ export class CodexAdapter extends EventEmitter {
         break;
       case 'item/completed': {
         const item = p.item ?? {};
+        if (item.type === 'userMessage') {
+          const text = (item.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n').trim();
+          if (text) this.emit('prompt', { threadId: p.threadId, text });
+        }
         if (item.type === 'agentMessage' && th) {
           th.lastAgent = item.text ?? th.deltas.get(item.id) ?? th.lastAgent;
           th.deltas.delete(item.id);

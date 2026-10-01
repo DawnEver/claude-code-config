@@ -35,11 +35,11 @@ function fixture() {
 }
 
 test('default Codex (provider=null) leaves env untouched beyond strip sets and adds no args', () => {
-  const { shared } = fixture();
+  const { shared, local } = fixture();
   writeFileSync(shared, '{}');
   const before = { ...process.env };
   const { env, args, provider: used, error } = buildCodexInvocation({
-    provider: null, extraArgs: ['--foo'], envSettingsPath: shared,
+    provider: null, extraArgs: ['--foo'], envSettingsPath: shared, localPath: local,
   });
   assert.equal(error, null);
   assert.equal(used, null);
@@ -209,4 +209,34 @@ test('provenance: the codex launcher injects nothing (config.toml shell_environm
   assert.equal(env.HARNESS_MACHINE, process.env.HARNESS_MACHINE);
   assert.equal(env.HARNESS_AGENT, process.env.HARNESS_AGENT);
   assert.equal(env.GIT_COMMITTER_NAME, process.env.GIT_COMMITTER_NAME);
+});
+
+// ── session bridge: the TUI must attach to the shared app-server (docs/bridge.md) ──
+
+function bridgeFixture(botToken) {
+  const dir = mkdtempSync(join(tmpdir(), 'codex-bridge-'));
+  const shared = join(dir, 'claude_env_settings.json');
+  const local = join(dir, 'claude_env_settings.local.json');
+  writeFileSync(shared, JSON.stringify({ providers: { deepseek: { url: 'https://api.deepseek.com', codexPath: '/v1' } } }));
+  writeFileSync(local, JSON.stringify(botToken ? { bridge: { botToken } } : {}));
+  return { shared, local };
+}
+
+test('bridge: interactive official TUI attaches to the shared daemon', () => {
+  const { shared, local } = bridgeFixture('123:abc');
+  assert.deepEqual(buildCodexInvocation({ provider: null, envSettingsPath: shared, localPath: local }).args,
+    ['--remote', 'unix://']);
+  assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['fix the build'], envSettingsPath: shared, localPath: local }).args,
+    ['--remote', 'unix://', 'fix the build']);
+  assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['resume', '--last'], envSettingsPath: shared, localPath: local }).args,
+    ['--remote', 'unix://', 'resume', '--last']);
+});
+
+test('bridge: non-TUI subcommands, an explicit --remote, or no bot token stay untouched', () => {
+  const { shared, local } = bridgeFixture('123:abc');
+  for (const extraArgs of [['exec', 'hi'], ['app-server', 'daemon', 'version'], ['--remote', 'ws://h:1']]) {
+    assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs, envSettingsPath: shared, localPath: local }).args, extraArgs);
+  }
+  const none = bridgeFixture(null);
+  assert.deepEqual(buildCodexInvocation({ provider: null, envSettingsPath: none.shared, localPath: none.local }).args, []);
 });
