@@ -211,10 +211,17 @@ export function isMainSession({ ppid, claudePid, ancestors }) {
   return claudes.length <= 1;
 }
 
+/** The id this channel registers under, and where it came from (logged at start). */
+export function sessionIdentity(env, { hostname, pid, rand }) {
+  if (env.CLAUDE_CODE_SESSION_ID) return { sessionId: env.CLAUDE_CODE_SESSION_ID, source: 'CLAUDE_CODE_SESSION_ID' };
+  return { sessionId: `${hostname}-${pid}-${rand}`, source: `fallback (CLAUDE_CODE_SESSION_ID unset; hostname=${hostname} pid=${pid} random=${rand})` };
+}
+
 function main() {
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const identity = sessionIdentity(process.env, { hostname: os.hostname(), pid: process.pid, rand: crypto.randomBytes(3).toString('hex') });
   const session = {
-    sessionId: process.env.CLAUDE_CODE_SESSION_ID || `${os.hostname()}-${process.pid}-${crypto.randomBytes(3).toString('hex')}`,
+    sessionId: identity.sessionId,
     cwd,
   };
   // Claude Code swallows an MCP server's stderr, so the reason this process ends goes to a
@@ -242,7 +249,7 @@ function main() {
   server = createChannelServer({ write, link });
   process.stdin.on('data', jsonLines((m) => server.onMessage(m)));
   process.stdin.on('end', () => { log('stdin closed by Claude Code'); link.stop(); process.exit(0); });
-  log(`start session=${session.sessionId} (${process.env.CLAUDE_CODE_SESSION_ID ? 'CLAUDE_CODE_SESSION_ID' : 'fallback id'}) cwd=${cwd}`);
+  log(`start session=${session.sessionId} from ${identity.source} cwd=${cwd}`);
   const ancestors = ancestorsOf(process.ppid, processTable());
   log(`ancestry ${ancestors.map((a) => `${a.pid}:${base(tokens(a.cmd, 1)[0])}${isClaudeProcess(a.cmd) ? '*' : ''}`).join(' < ') || 'unknown'}`);
   if (!isMainSession({ ppid: process.ppid, claudePid: process.env.CLAUDE_PID, ancestors })) {

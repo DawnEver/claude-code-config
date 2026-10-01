@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import net from 'net';
 import path from 'path';
-import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess } from './server.mjs';
+import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity } from './server.mjs';
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
 
 const until = async (fn, ms = 3000) => {
@@ -182,4 +182,11 @@ test('ancestorsOf walks a process table upward from a pid', () => {
   const table = new Map([[10, { ppid: 9, cmd: 'claude' }], [9, { ppid: 8, cmd: 'bash' }], [8, { ppid: 8, cmd: 'init' }]]);
   assert.deepEqual(ancestorsOf(10, table).map((a) => a.pid), [10, 9, 8]);
   assert.deepEqual(ancestorsOf(99, table), []);
+});
+
+test('sessionIdentity: CLAUDE_CODE_SESSION_ID, else a fallback whose inputs are spelled out for the log', () => {
+  assert.deepEqual(sessionIdentity({ CLAUDE_CODE_SESSION_ID: 'u-1' }, { hostname: 'h', pid: 7, rand: 'ab' }),
+    { sessionId: 'u-1', source: 'CLAUDE_CODE_SESSION_ID' });
+  assert.deepEqual(sessionIdentity({}, { hostname: 'h', pid: 7, rand: 'ab' }),
+    { sessionId: 'h-7-ab', source: 'fallback (CLAUDE_CODE_SESSION_ID unset; hostname=h pid=7 random=ab)' });
 });

@@ -100,7 +100,9 @@ Not a plugin: a plugin lives and dies with one session, while the bridge must ou
 every session, own the machine's single bot token, and multiplex all its sessions.
 
 Built. How it works — the host adapters, the one session lifecycle shared by Claude and
-Codex, setup and config — is described once, in [`bridge.md`](bridge.md).
+Codex, setup and config — is described once, in [`bridge.md`](bridge.md); the coordination
+view it derives from origin (pushes, verdicts, issues, the `lanes` Topic) in
+[`coordination.md`](coordination.md).
 
 ## 7. Permissions
 

@@ -17,14 +17,14 @@ export const BRIDGE_RUNTIME_DIR = path.join(CLAUDE_DIR, 'bridge');
 export const RUNTIME_FILE = path.join(BRIDGE_RUNTIME_DIR, 'runtime.json');
 
 /** The single source for the bridge's tunable defaults (0 = never for both). */
-export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 24 };
+export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 24, observeIntervalSeconds: 60 };
 
 const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
 
 /**
  * Normalised bridge config.
- * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId, bridge.idleCloseMinutes,
- *          bridge.deleteClosedAfterHours
+ * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId, bridge.coordinator,
+ *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.observeIntervalSeconds
  * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram
  * Either layer may set any key; local wins.
  */
@@ -40,6 +40,8 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
     fallbackChatId: b.fallbackChatId ?? null,
     idleCloseMinutes: nonNegative(b.idleCloseMinutes, BRIDGE_DEFAULTS.idleCloseMinutes),
     deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
+    observeIntervalSeconds: nonNegative(b.observeIntervalSeconds, BRIDGE_DEFAULTS.observeIntervalSeconds),
+    coordinator: typeof b.coordinator === 'string' && b.coordinator ? b.coordinator : null,
     projects,
   };
 }
