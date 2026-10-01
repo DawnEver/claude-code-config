@@ -111,6 +111,7 @@ export class CodexAdapter extends EventEmitter {
     this.now = now;
     this.connectedAt = Infinity;
     this.pending = new Set();
+    this.unresumable = new Set();
     this.connect = connect;
     this.probe = probe;
     this.clientName = clientName;
@@ -169,9 +170,15 @@ export class CodexAdapter extends EventEmitter {
 
   async #subscribe(threadId, opts = {}) {
     // thread/started and the poll can race for the same thread; resume it once.
-    if (this.threads.has(threadId) || this.pending.has(threadId)) return;
+    if (this.threads.has(threadId) || this.pending.has(threadId) || this.unresumable.has(threadId)) return;
     this.pending.add(threadId);
-    try { await this.#resume(threadId, opts); } finally { this.pending.delete(threadId); }
+    try {
+      await this.#resume(threadId, opts);
+    } catch (e) {
+      // An ephemeral thread has no rollout and never will; asking again every poll is noise.
+      if (/no rollout found/i.test(e.message)) this.unresumable.add(threadId);
+      throw e;
+    } finally { this.pending.delete(threadId); }
   }
 
   async #resume(threadId, { preexisting = false } = {}) {

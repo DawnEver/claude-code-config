@@ -16,6 +16,8 @@ function fakeAppServer({ loaded = ['t1'], threads = {} } = {}) {
       if (m.method === undefined) { responses.push(m); return; }
       calls.push(m);
       if (m.id === undefined) return;
+      const fail = m.method === 'thread/resume' && threads[m.params?.threadId]?.error;
+      if (fail) { setImmediate(() => onMsg(JSON.stringify({ id: m.id, error: { code: -32600, message: fail } }))); return; }
       const result = {
         initialize: { userAgent: 'fake' },
         'thread/loaded/list': { data: loaded, nextCursor: null },
@@ -111,6 +113,15 @@ test('thread/started subscribes at once, once, and carries the backlog', async (
   assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 1, 'resumed once despite the race');
   assert.equal(ups.length, 1);
   assert.deepEqual(ups[0].backlog, [{ kind: 'prompt', text: 'hi' }, { kind: 'final', text: 'Hello!', status: 'completed' }]);
+});
+
+test('an ephemeral thread that cannot be resumed is not retried every poll', async () => {
+  const { a, srv } = await started({ loaded: ['eph'], threads: { eph: { error: 'no rollout found for thread id eph' } } });
+  const warns = [];
+  a.on('warn', (w) => warns.push(w));
+  await a.refresh(); await a.refresh();
+  assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 1);
+  assert.deepEqual(warns, []);
 });
 
 test('a completed userMessage item is emitted as the prompt text', async () => {
