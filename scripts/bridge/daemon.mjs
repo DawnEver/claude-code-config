@@ -100,10 +100,7 @@ export class Bridge {
     const ctx = this.resolveContext(cwd, { branch, originUrl });
     const chatId = this.chatFor(ctx.project);
     const base = `${this.machine}/${agent}/${ctx.branch ?? 'detached'}`;
-    const taken = new Set([...this.sessions.values()].filter((s) => s.chatId === chatId).map((s) => s.title));
-    let title = base;
-    for (let n = 2; taken.has(title); n++) title = `${base} #${n}`;
-    const s = { agent, id, key, chatId, title, project: ctx.project, topicId: null, progress: null, opening: null };
+    const s = { agent, id, key, chatId, base, title: base, project: ctx.project, topicId: null, progress: null, opening: null };
     this.sessions.set(key, s);
     if (chatId === null) { this.log(`no chat for project ${ctx.project}; ${key} not mirrored`); return s; }
     s.topicId = this.topicCache[`${chatId}|${key}`] ?? null;
@@ -115,6 +112,10 @@ export class Bridge {
   /** Create the session's Topic and announce it, once; concurrent callers share the work. */
   #open(s) {
     s.opening ??= (async () => {
+      // Number only against sessions that hold a Topic: idle leftovers never show a title.
+      const taken = new Set([...this.sessions.values()]
+        .filter((o) => o !== s && o.opening && o.chatId === s.chatId).map((o) => o.title));
+      for (let n = 2; taken.has(s.title); n++) s.title = `${s.base} #${n}`;
       try {
         s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title)).message_thread_id;
         this.topicCache[`${s.chatId}|${s.key}`] = s.topicId;

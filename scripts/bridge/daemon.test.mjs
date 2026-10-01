@@ -116,6 +116,13 @@ test('a session loaded before the bridge started opens its Topic only on first a
   assert.deepEqual(telegram.sent.map((s) => s.text), ['session up: WS1/codex/main (proj)', '> back again']);
 });
 
+test('an idle leftover on the same branch does not push a new session to "#2"', async () => {
+  const { bridge, telegram } = make();
+  await bridge.sessionUp('codex', 'idle', { cwd: '/proj', preexisting: true });
+  await bridge.sessionUp('codex', 'fresh', { cwd: '/proj' });
+  assert.deepEqual(telegram.topics.map((t) => t[1]), ['WS1/codex/main']);
+});
+
 test('a codex backlog lands in the new Topic, after the session-up notice, in order', async () => {
   const { codex, telegram } = make();
   codex.emit('session-up', { threadId: 't9', cwd: '/proj', backlog: [
