@@ -44,13 +44,15 @@ A tip is reported once; the cache remembers it.
   an ordinary bridge Topic: it idle-closes and reopens like any other, and is never deleted
   while the daemon runs. Messages sent into it are ignored.
 - **Issues** (coordinator only, repos with lab_commons): each new open issue as
-  `issue #N: <title>`, and each `@<machine>` in its body as `hint: @<machine> #N <title>`. A
+  `issue #N: <title>`, and each `@<machine>` in its body as `hint: @<machine> #N <title>`.
+  Comments are read too, since the last poll (`issue comments-since <ISO> --json`, the
+  timestamp kept in the machine-local cache): each `@<machine>` in a new comment is posted
+  once per comment id as `hint: @<machine> #N <title> — <first line>`, except when the
+  comment's provenance line names that same machine (an agent mentioning itself). A
   hint is a pointer for a human, never a trigger (lab-commons `ISSUE-IS-INTENT`).
 
 ## Limits
 
-- Issue **comments** are not read: the forge door has no comment-listing verb, so `@machine`
-  hints come from issue bodies only.
 - The coordinator cannot see other machines' sessions, so a hint is posted whether or not
   the named machine has a live session.
 - A moved branch is attributed by its new commits' committers; a branch rewritten by a

@@ -12,6 +12,7 @@ function world({ machine = 'G-Laptop', coordinator = 'G-Laptop', family = true }
     commits: {},          // range "old..new" or "new" -> [{sha, committer}]
     statuses: {},         // sha -> [{context, state}]
     issues: [],
+    comments: [], sinceAsked: [], clock: '2026-10-01T10:00:00.000Z',
     locked: false,
     branchOf: { '/r/sub': 'feat/x' },
     sessions: [],
@@ -33,11 +34,12 @@ function world({ machine = 'G-Laptop', coordinator = 'G-Laptop', family = true }
   const forge = async (top, args) => {
     if (!family) return null;
     if (args[0] === 'status') return w.statuses[args[2]] ?? [];
+    if (args[0] === 'issue' && args[1] === 'comments-since') { w.sinceAsked.push(args[2]); return w.comments; }
     if (args[0] === 'issue') return w.issues;
     return null;
   };
   const obs = new Observer({
-    machine, config: { coordinator }, git, forge, cacheFile: null,
+    machine, config: { coordinator }, git, forge, cacheFile: null, now: () => w.clock,
     exists: (p) => w.locked && p.endsWith('index.lock'),
     sessions: () => w.sessions,
     post: (key, text) => w.posts.push([key, text]),
@@ -148,4 +150,32 @@ test('a push to the branch a session is on goes to that session, whoever pushed 
   w.commits['a0..a1'] = [{ sha: 'a1', committer: 'M' }];
   await obs.poll();
   assert.deepEqual([w.posts, w.lanes], [[['codex:main', 'pushed a1 → main (+1)']], []]);
+});
+
+test('comment @machine hints: since the last poll, once per comment id, self-mentions skipped', async () => {
+  const { w, obs } = world();
+  w.sessions = [lanesSession];
+  w.issues = [{ number: 3, title: 'port solver', body: '' }];
+  w.comments = [{ issue: 3, id: 1, author: 'bot', body: 'old @WS2', created: 'x' }];
+  await obs.poll();   // seeds: nothing historic
+  assert.deepEqual(w.sinceAsked, []);
+  w.clock = '2026-10-01T10:05:00.000Z';
+  w.comments = [
+    { issue: 3, id: 2, author: 'bot', body: 'can @WS2 take this?\nsecond line', created: 'x' },
+    { issue: 3, id: 3, author: 'bot', body: '[WS1 · codex · feat/x]\n\nhanding back, @WS1 and @G-Laptop', created: 'x' },
+    { issue: 8, id: 4, author: 'bot', body: 'hey @WS1', created: 'x' },
+  ];
+  await obs.poll();
+  await obs.poll();   // same ids again: posted once
+  assert.deepEqual(w.sinceAsked, ['2026-10-01T10:00:00.000Z', '2026-10-01T10:05:00.000Z']);
+  assert.deepEqual(w.lanes.map(([, , t]) => t), [
+    'hint: @WS2 #3 port solver — can @WS2 take this?',
+    'hint: @G-Laptop #3 port solver — handing back, @WS1 and @G-Laptop',
+    'hint: @WS1 #8 — hey @WS1',
+  ]);
+  const nonCoord = world({ machine: 'WS1' });
+  nonCoord.w.sessions = [lanesSession];
+  await nonCoord.obs.poll();
+  await nonCoord.obs.poll();
+  assert.deepEqual(nonCoord.w.sinceAsked, []);
 });

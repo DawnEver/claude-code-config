@@ -4,7 +4,8 @@
 // Every poll, for each repo a live main session on this machine works in: fetch origin
 // (remote refs only), diff the remote-tracking tips against the last seen ones, and report
 // a moved branch where it belongs; follow a reported tip until its lab/gate and lab/heavy
-// statuses appear. The coordinator machine also reports new issues and @machine hints.
+// statuses appear. The coordinator machine also reports new issues and @machine hints (from
+// issue bodies, and from comments since its last poll).
 // Statuses and issues come from the repo's own `python -m lab_commons.dev.forge ... --json`;
 // a repo without lab_commons in its venv gets the git part only.
 
@@ -15,7 +16,9 @@ import { execFile } from 'child_process';
 const VERDICTS = ['lab/gate', 'lab/heavy'];
 const VERDICT_WORD = { success: 'PASS', failure: 'FAIL' };
 const PENDING_MAX = 20;
+const COMMENTS_MAX = 500;
 const short = (sha) => sha.slice(0, 7);
+const mentionsOf = (body) => new Set([...String(body ?? '').matchAll(/(?:^|\s)@([A-Za-z0-9][\w-]*)/g)].map((x) => x[1]));
 
 /** `Name (<machine>/<agent>)` -> {machine, agent}; null for a human (unprovenanced) commit. */
 export function provenanceOf(committer) {
@@ -46,12 +49,14 @@ export class Observer {
    * @param {{ machine: string, config: {coordinator: string|null},
    *           sessions: () => {key, cwd, chatId, project}[],
    *           post: (key, text) => void, postLanes: (chatId, project, text) => void,
-   *           git?, forge?, exists?, cacheFile?: string|null, log? }} deps
+   *           git?, forge?, exists?, cacheFile?: string|null, log?, now?: () => string }} deps
    */
   constructor({ machine, config, sessions, post, postLanes, git = runGit, forge = runForge,
-    exists = fs.existsSync, cacheFile = null, log = () => {} }) {
-    Object.assign(this, { machine, config, sessions, post, postLanes, git, forge, exists, cacheFile, log });
-    this.cache = {};   // top -> { tips: {branch: sha}, issues: number[] | undefined, pending: [] }
+    exists = fs.existsSync, cacheFile = null, log = () => {}, now = () => new Date().toISOString() }) {
+    Object.assign(this, { machine, config, sessions, post, postLanes, git, forge, exists, cacheFile, log, now });
+    // top -> { tips: {branch: sha}, issues: number[] | undefined, pending: [],
+    //          commentsSince: ISO | undefined, comments: id[] }
+    this.cache = {};
     try { this.cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')) ?? {}; } catch { /* first run */ }
     this.busy = false;
   }
@@ -148,11 +153,36 @@ export class Observer {
       for (const i of list) {
         if (seen.has(i.number)) continue;
         this.postLanes(r.chatId, r.project, `issue #${i.number}: ${i.title}`);
-        for (const m of new Set([...String(i.body ?? '').matchAll(/(?:^|\s)@([A-Za-z0-9][\w-]*)/g)].map((x) => x[1]))) {
+        for (const m of mentionsOf(i.body)) {
           this.postLanes(r.chatId, r.project, `hint: @${m} #${i.number} ${i.title}`);
         }
       }
     }
     c.issues = [...new Set([...seen, ...list.map((i) => i.number)])];
+    await this.#comments(top, r, c, list);
+  }
+
+  /** @machine hints from comments since the last poll; once per id; never an agent naming itself. */
+  async #comments(top, r, c, open) {
+    const now = this.now();
+    if (!c.commentsSince) { c.commentsSince = now; c.comments = []; return; }   // first sight
+    const list = await this.forge(top, ['issue', 'comments-since', c.commentsSince]);
+    if (!Array.isArray(list)) return;
+    const seen = new Set(c.comments ?? []);
+    const titles = new Map(open.map((i) => [i.number, i.title]));
+    for (const k of list) {
+      if (seen.has(k.id)) continue;
+      seen.add(k.id);
+      const lines = String(k.body ?? '').split('\n');
+      const stamp = /^\[([^\s·\]]+) · /.exec(lines[0] ?? '')?.[1];
+      const text = lines.slice(stamp ? 1 : 0).find((l) => l.trim())?.trim() ?? '';
+      const title = titles.get(k.issue);
+      for (const m of mentionsOf(k.body)) {
+        if (m === stamp) continue;
+        this.postLanes(r.chatId, r.project, `hint: @${m} #${k.issue}${title ? ` ${title}` : ''} — ${text}`);
+      }
+    }
+    c.comments = [...seen].slice(-COMMENTS_MAX);
+    c.commentsSince = now;
   }
 }
