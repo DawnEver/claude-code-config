@@ -23,7 +23,7 @@ async function rig() {
   const out = [];
   let server;
   const link = new DaemonLink({
-    runtimeFile, session: { sessionId: 's1', cwd: '/repo', claudePid: 77 },
+    runtimeFile, session: { sessionId: 's1', cwd: '/repo' },
     onInbound: (p) => server.inbound(p), onVerdict: (p) => server.verdict(p),
   });
   server = createChannelServer({ write: (m) => out.push(m), link });
@@ -136,8 +136,8 @@ test('a one-shot mirror call needs the token and a known kind', async () => {
     sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'mirror', params }) + '\n'));
   });
   try {
-    assert.equal((await call({ token: 'x'.repeat(hub.token.length), claudePid: 1, kind: 'final', text: 'no' }))?.error?.code, 401);
-    assert.deepEqual((await call({ token: hub.token, claudePid: 9, sessionId: 'u', kind: 'final', text: 'yes' })).result, { ok: true });
-    assert.ok((await call({ token: hub.token, claudePid: 9, kind: 'other', text: 'x' })).error, 'unknown kind rejected');
+    assert.equal((await call({ token: 'x'.repeat(hub.token.length), sessionIds: ['u'], kind: 'final', text: 'no' }))?.error?.code, 401);
+    assert.deepEqual((await call({ token: hub.token, sessionIds: ['u'], kind: 'final', text: 'yes' })).result, { ok: true });
+    assert.ok((await call({ token: hub.token, sessionIds: ['u'], kind: 'other', text: 'x' })).error, 'unknown kind rejected');
   } finally { await hub.close(); }
 });

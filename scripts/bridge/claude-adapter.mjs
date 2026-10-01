@@ -3,14 +3,16 @@
 // Claude has no shared daemon, so two things dial in here over 127.0.0.1 (newline
 // JSON-RPC, random port, token in ~/.claude/bridge/runtime.json):
 //   - each session's session-bridge channel (claude_plugins/session-bridge) stays connected:
-//       register {token, sessionId, cwd, claudePid}, reply {text}, permission_request {...}
+//       register {token, sessionId, cwd}, reply {text}, permission_request {...}
 //       <- inbound {text, user}, permission {request_id, behavior}
-//   - bridge-hook.js makes one-shot calls: mirror {token, claudePid, sessionId, kind, text}
+//   - bridge-hook.js makes one-shot calls: mirror {token, sessionIds, kind, text}
 // and it emits the host-neutral events every adapter emits (see daemon.mjs):
 //   up {id, cwd, preexisting, backlog}, prompt {id, text}, final {id, text},
 //   approval {id, ref, summary, answerable}, down {id}.
-// A hook call is routed by CLAUDE_PID (stable across /clear, which mints a new session id),
-// else by session id, and held briefly when it beats the channel's registration.
+// A hook call names the session's current id and the id its process started with (the
+// channel registered under the latter; /clear mints a new current one), and is held briefly
+// when it beats the channel's registration. CLAUDE_PID is not usable: a nested `claude`
+// inherits its parent's.
 
 import net from 'net';
 import crypto from 'crypto';
@@ -32,7 +34,7 @@ export class ClaudeAdapter extends EventEmitter {
     this.agent = 'claude';
     this.token = token;
     this.now = now;
-    this.sessions = new Map();   // sessionId -> { peer, socket, claudePid, replies }
+    this.sessions = new Map();   // sessionId -> { peer, socket, replies }
     this.held = [];              // hook calls that arrived before their session registered
   }
 
@@ -66,7 +68,7 @@ export class ClaudeAdapter extends EventEmitter {
           clearTimeout(authTimer);
           sessionId = String(p.sessionId);
           this.sessions.get(sessionId)?.socket.destroy();
-          this.sessions.set(sessionId, { peer, socket, claudePid: Number(p.claudePid) || null, replies: [] });
+          this.sessions.set(sessionId, { peer, socket, replies: [] });
           this.emit('up', { id: sessionId, cwd: p.cwd, preexisting: false, backlog: [] });
           this.#release();
           return { ok: true };
@@ -74,7 +76,7 @@ export class ClaudeAdapter extends EventEmitter {
         if (method === 'mirror') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
           if (p.kind !== 'prompt' && p.kind !== 'final') throw Object.assign(new Error('bad kind'), { code: -32602 });
-          this.#mirror({ claudePid: Number(p.claudePid) || null, sessionId: p.sessionId ?? null, kind: p.kind, text: String(p.text ?? '') });
+          this.#mirror({ sessionIds: (Array.isArray(p.sessionIds) ? p.sessionIds : []).map(String), kind: p.kind, text: String(p.text ?? '') });
           return { ok: true };
         }
         if (!sessionId) throw unauthorized();
@@ -106,9 +108,8 @@ export class ClaudeAdapter extends EventEmitter {
     });
   }
 
-  #route({ claudePid, sessionId }) {
-    if (claudePid) for (const [id, s] of this.sessions) if (s.claudePid === claudePid) return id;
-    return sessionId && this.sessions.has(sessionId) ? sessionId : null;
+  #route({ sessionIds }) {
+    return sessionIds.find((id) => this.sessions.has(id)) ?? null;
   }
 
   #mirror(m) {

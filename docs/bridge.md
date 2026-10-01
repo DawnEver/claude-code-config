@@ -95,15 +95,18 @@ token in `runtime.json`):
 
 - **The session-bridge channel** (`claude_plugins/session-bridge/server.mjs`, an MCP stdio
   server on plain Node) stays connected for the life of the session:
-  `register {token, sessionId, cwd, claudePid}` (`sessionId` = `CLAUDE_CODE_SESSION_ID`, so
-  `--resume` re-attaches; `claudePid` = `CLAUDE_PID`), then `reply`, `permission_request`.
+  `register {token, sessionId, cwd}` (`sessionId` = `CLAUDE_CODE_SESSION_ID`, so `--resume`
+  re-attaches), then `reply`, `permission_request`.
   Inbound Telegram text arrives in the session as a `<channel source="session-bridge">`
   event. Its socket closing is `down`.
 - **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit` and `Stop`) mirrors every
   prompt and the turn's final assistant text with a one-shot `mirror` call, so output does
-  not depend on the model calling `reply`. Calls are routed by `CLAUDE_PID` (stable across
-  `/clear`, which mints a new session id) and held up to 30 s if they beat the channel's
-  registration. Channel prompts are unwrapped to their text, so the echo suppression above
+  not depend on the model calling `reply`. Calls name the payload's `session_id` and the
+  hook's `CLAUDE_CODE_SESSION_ID` (the id the process started with, which is what the channel
+  registered; `/clear` mints a new payload id), and are held up to 30 s if they beat the
+  channel's registration. `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g.
+  `ccc -p` run from inside a session) inherits its parent's, which once routed one
+  session's output into another's Topic. Channel prompts are unwrapped to their text, so the echo suppression above
   drops them. A final identical to a `reply` of the same turn is not posted twice; `reply`
   stays for explicit mid-task messages.
 - No `/interrupt` (use Esc locally).
@@ -189,11 +192,13 @@ unverified.
 | `offset.json` | last `update_id` (cache) |
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
-| `channel-<pid>.log` | one per Claude channel process: start (session id, `CLAUDE_PID`), connect, exit |
+| `channel-<pid>.log` | one per Claude channel process: start (session id), connect, exit |
 
 ## Unverified
 
 - A Telegram message posted into a closed Topic (expected: reaches the bot for admins).
+- Mirroring after `/clear` (relies on the hook's `CLAUDE_CODE_SESSION_ID` keeping the
+  startup id).
 - Whether `UserPromptSubmit` fires for channel-injected prompts (either way no echo:
   the unwrap path drops it, and an unechoed inject expires).
 - Channels together with `--remote-control` in one Claude session.

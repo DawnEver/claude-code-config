@@ -26,13 +26,14 @@ test('finalAssistantText: text blocks after the last real user message only', ()
 });
 
 test('mirrorFor: prompt from payload, channel injections skipped, final prefers last_assistant_message', () => {
-  const env = { CLAUDE_PID: '123' };
+  const env = { CLAUDE_CODE_SESSION_ID: 'boot' };
   assert.deepEqual(mirrorFor({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: 'hi' }, env),
-    { claudePid: 123, sessionId: 's', kind: 'prompt', text: 'hi' });
+    { sessionIds: ['s', 'boot'], kind: 'prompt', text: 'hi' });
   assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', prompt: '<channel source="session-bridge">x</channel>' }, env).text, '<channel source="session-bridge">x</channel>', 'passed through; the adapter unwraps it');
-  assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, {}), null, 'no claude pid -> no-op');
+  assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, {}), null, 'no session id -> no-op');
+  assert.deepEqual(mirrorFor({ hook_event_name: 'UserPromptSubmit', session_id: 'boot', prompt: 'hi' }, env).sessionIds, ['boot'], 'deduplicated');
   assert.deepEqual(mirrorFor({ hook_event_name: 'Stop', session_id: 's', last_assistant_message: 'bye' }, env),
-    { claudePid: 123, sessionId: 's', kind: 'final', text: 'bye' });
+    { sessionIds: ['s', 'boot'], kind: 'final', text: 'bye' });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-'));
   try {
     const tp = path.join(dir, 't.jsonl');
@@ -49,8 +50,8 @@ test('sendMirror delivers to a live hub, and resolves quietly when none runs', a
     const port = await hub.listen(0);
     const runtimeFile = path.join(dir, 'runtime.json');
     fs.writeFileSync(runtimeFile, j({ port, token: hub.token }));
-    assert.equal(await sendMirror({ claudePid: 1, sessionId: 's', kind: 'final', text: 'ok' }, { runtimeFile }), true);
-    assert.deepEqual(hub.held.map((h) => h.m), [{ claudePid: 1, sessionId: 's', kind: 'final', text: 'ok' }], 'held until its session registers');
-    assert.equal(await sendMirror({ claudePid: 1, kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), false);
+    assert.equal(await sendMirror({ sessionIds: ['s'], kind: 'final', text: 'ok' }, { runtimeFile }), true);
+    assert.deepEqual(hub.held.map((h) => h.m), [{ sessionIds: ['s'], kind: 'final', text: 'ok' }], 'held until its session registers');
+    assert.equal(await sendMirror({ sessionIds: ['s'], kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), false);
   } finally { await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

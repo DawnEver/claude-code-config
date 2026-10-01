@@ -25,28 +25,36 @@ test('unwrapChannel returns the text of a channel prompt, anything else unchange
   assert.equal(unwrapChannel('plain'), 'plain');
 });
 
-test('mirror calls route by claude pid across /clear, are held before register, and finals dedupe against reply', async () => {
+test('mirror calls route by session id, are held before register, never cross sessions, and dedupe against reply', async () => {
   const r = await rig();
   try {
-    await r.hook({ claudePid: 42, sessionId: 'uuid-1', kind: 'prompt', text: 'early' });
+    await r.hook({ sessionIds: ['uuid-1'], kind: 'prompt', text: 'early' });
     assert.deepEqual(r.events, [], 'held until the channel registers');
     const ch = await r.open();
-    await r.rpc(ch, 'register', { sessionId: 'uuid-1', cwd: '/repo', claudePid: 42 });
-    await r.hook({ claudePid: 42, sessionId: 'uuid-2', kind: 'prompt', text: '<channel source="session-bridge" user="u">from phone</channel>' });
+    await r.rpc(ch, 'register', { sessionId: 'uuid-1', cwd: '/repo' });
+    // A nested session (e.g. `claude -p` run from inside another session) is its own session.
+    const parent = await r.open();
+    await r.rpc(parent, 'register', { sessionId: 'parent', cwd: '/repo' });
+    // After /clear the hook's current id is new; the id the process started with still matches.
+    await r.hook({ sessionIds: ['uuid-2', 'uuid-1'], kind: 'prompt', text: '<channel source="session-bridge" user="u">from phone</channel>' });
     await r.rpc(ch, 'reply', { text: 'done' });
-    await r.hook({ claudePid: 42, kind: 'final', text: 'done\n' });
-    await r.hook({ claudePid: 42, kind: 'final', text: '  ' });
-    await r.hook({ claudePid: 42, kind: 'final', text: 'second turn' });
+    await r.hook({ sessionIds: ['uuid-1'], kind: 'final', text: 'done\n' });
+    await r.hook({ sessionIds: ['uuid-1'], kind: 'final', text: '  ' });
+    await r.hook({ sessionIds: ['parent'], kind: 'final', text: 'parent answer' });
+    await r.hook({ sessionIds: ['uuid-1'], kind: 'final', text: 'second turn' });
+    await r.hook({ sessionIds: ['stranger'], kind: 'final', text: 'nobody' });
     assert.deepEqual(r.events.map(([k, e]) => [k, e.id, e.text]), [
       ['up', 'uuid-1', undefined],
       ['prompt', 'uuid-1', 'early'],
+      ['up', 'parent', undefined],
       ['prompt', 'uuid-1', 'from phone'],
       ['final', 'uuid-1', 'done'],
+      ['final', 'parent', 'parent answer'],
       ['final', 'uuid-1', 'second turn'],
     ]);
-    ch.destroy();
+    ch.destroy(); parent.destroy();
     await new Promise((res) => setTimeout(res, 50));
-    assert.deepEqual(r.events.at(-1), ['down', { id: 'uuid-1' }]);
+    assert.deepEqual(r.events.filter(([k]) => k === 'down').map(([, e]) => e.id).sort(), ['parent', 'uuid-1']);
   } finally { await r.a.close(); }
 });
 

@@ -4,12 +4,12 @@
 // Wired for UserPromptSubmit and Stop. The model is not trusted to call the channel's
 // `reply` tool, so — like the Codex adapter does for Codex — the transcript side is
 // mirrored mechanically: one authenticated one-shot `mirror` call to the bridge daemon's
-// Claude adapter (claude-adapter.mjs, 127.0.0.1, port + token from ~/.claude/bridge/runtime.json). The daemon maps
-// CLAUDE_PID (stable across /clear) to the session's registered channel and posts it.
+// Claude adapter (claude-adapter.mjs; 127.0.0.1, port + token from runtime.json), naming
+// the session by id so the adapter can find the session's registered channel.
 //
 // Fail-open and silent: hook stdout can inject context, so nothing is ever printed; every
 // failure exits 0; a hard 2 s timer bounds the whole run. A no-op unless the daemon's
-// runtime file exists and CLAUDE_PID is set.
+// runtime file exists.
 
 import fs from 'fs';
 import net from 'net';
@@ -44,9 +44,10 @@ export function finalAssistantText(jsonl) {
 
 /** The mirror call for one hook payload, or null when there is nothing to send. */
 export function mirrorFor(payload, env = process.env) {
-  const claudePid = Number(env.CLAUDE_PID) || null;
-  if (!claudePid) return null;
-  const base = { claudePid, sessionId: payload?.session_id ?? null };
+  // The current id, and the one this claude process started with (its channel's id).
+  const sessionIds = [...new Set([payload?.session_id, env.CLAUDE_CODE_SESSION_ID].filter(Boolean))];
+  if (!sessionIds.length) return null;
+  const base = { sessionIds };
   if (payload?.hook_event_name === 'UserPromptSubmit') {
     const text = String(payload.prompt ?? '');
     // A channel prompt (from Telegram) is sent too: the daemon's echo suppression drops it.
@@ -87,7 +88,7 @@ export function sendMirror(params, { runtimeFile = RUNTIME_FILE, timeoutMs = TIM
 
 async function main() {
   setTimeout(() => process.exit(0), TIMEOUT_MS + 500).unref();
-  if (!process.env.CLAUDE_PID || !fs.existsSync(RUNTIME_FILE)) return;
+  if (!fs.existsSync(RUNTIME_FILE)) return;
   let raw = '';
   for await (const c of process.stdin) raw += c;
   const call = mirrorFor(JSON.parse(raw || '{}'));

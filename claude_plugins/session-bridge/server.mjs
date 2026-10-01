@@ -159,8 +159,6 @@ function main() {
   const session = {
     sessionId: process.env.CLAUDE_CODE_SESSION_ID || `${os.hostname()}-${process.pid}-${crypto.randomBytes(3).toString('hex')}`,
     cwd,
-    // The claude process pid: what bridge-hook.js reports, and stable across /clear.
-    claudePid: Number(process.env.CLAUDE_PID) || null,
   };
   // Claude Code swallows an MCP server's stderr, so the reason this process ends goes to a
   // machine-local file as well; a channel that vanishes silently is otherwise undiagnosable.
@@ -187,7 +185,7 @@ function main() {
   server = createChannelServer({ write, link });
   process.stdin.on('data', jsonLines((m) => server.onMessage(m)));
   process.stdin.on('end', () => { log('stdin closed by Claude Code'); link.stop(); process.exit(0); });
-  log(`start session=${session.sessionId} claudePid=${session.claudePid} cwd=${cwd} env.CLAUDE_CODE_SESSION_ID=${process.env.CLAUDE_CODE_SESSION_ID ? 'set' : 'unset'} env.CLAUDE_PID=${process.env.CLAUDE_PID ?? 'unset'}`);
+  log(`start session=${session.sessionId} (${process.env.CLAUDE_CODE_SESSION_ID ? 'CLAUDE_CODE_SESSION_ID' : 'fallback id'}) cwd=${cwd}`);
   link.start();
 }
 
