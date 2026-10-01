@@ -10,6 +10,8 @@ import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { isMain } from '../shared/is-main.mjs';
+import { readBridgeConfig } from '../bridge/context.mjs';
+import { planService, runAction, SERVICE_NAME } from '../bridge/install-service.mjs';
 import { isValidMachineName, readMachineName, writeMachineName, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import {
   resolveSyncDir,
@@ -673,6 +675,17 @@ export function setup(options = {}) {
   // Install standalone wrappers; shell profiles are deliberately not required.
   console.log('\n--- CLI Wrappers ---');
   installCliWrappers(claudeDir);
+
+  // The session bridge (docs/bridge.md) runs only where this machine has its own bot token.
+  const bridge = readBridgeConfig({
+    sharedPath: path.join(claudeDir, 'claude_env_settings.json'),
+    localPath: path.join(claudeDir, 'claude_env_settings.local.json'),
+  });
+  if (bridge.botToken) {
+    console.log('\n--- Session bridge ---');
+    if (runAction('install', planService())) console.log(`OK    ${SERVICE_NAME} service installed`);
+    else { console.log(`ERR   ${SERVICE_NAME} service install failed - see docs/bridge.md`); counters.errors++; }
+  }
 
   console.log(`\nDone: ${counters.created} linked, ${counters.skipped} skipped, ${counters.errors} errors`);
 

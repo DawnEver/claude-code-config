@@ -22,5 +22,13 @@
       "model": "deepseek-v4-flash[1m]"
     },
     "systemPromptFile": "~/.claude/system-prompt/claude-base.md"
+  },
+  "bridge": {
+    "fallbackChatId": null,
+    "projects": {
+      "your-repo-name": {
+        "chatId": -1001234567890
+      }
+    }
   }
 }

@@ -99,6 +99,11 @@ through `~/.claude/...` links (never a machine path — see `sync-architecture.m
 Not a plugin: a plugin lives and dies with one session, while the bridge must outlive
 every session, own the machine's single bot token, and multiplex all its sessions.
 
+v1 is built: setup, config keys, and the as-built protocol notes are in
+[`bridge.md`](bridge.md). The Claude half is a thin channel plugin
+(`claude_plugins/session-bridge/`) that dials the daemon over 127.0.0.1; the daemon,
+not the plugin, owns Telegram.
+
 ## 7. Permissions
 
 - By default approvals stay in the local TUI or the host's official remote. Telegram
@@ -198,12 +203,16 @@ Codex — verified:
   `turn/interrupt` to stop. Approvals arrive as server->client requests
   (`item/*/requestApproval`); the first client to answer wins, and `serverRequest/resolved`
   notifies the rest.
+- (2026-10-01, codex-cli 0.159.3, while building v1) `proxy` is a byte relay and the
+  control socket speaks **WebSocket**: newline JSON is answered with a connection reset,
+  an HTTP Upgrade with `101`. JSON-RPC rides text frames (`scripts/bridge/ws-stream.mjs`).
 - Inferred, not tested: `remote-control` is the same daemon with remote enabled, so local
   clients keep working alongside it.
 
 Claude — doc-stated or inferred:
-- `--channels` exists but is hidden. Channels is a research preview, needs Bun and Anthropic
-  auth, and a custom channel needs `--dangerously-load-development-channels`. Channels can
+- `--channels` exists but is hidden. Channels is a research preview, needs Anthropic
+  auth (the official plugins use Bun, but the channels reference states any Node-compatible
+  MCP stdio server works; session-bridge is plain Node), and a custom channel needs `--dangerously-load-development-channels`. Channels can
   relay permission prompts.
 - Remote Control needs a claude.ai subscription and is disabled when `ANTHROPIC_BASE_URL`
   is not Anthropic.

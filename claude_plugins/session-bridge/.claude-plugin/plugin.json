@@ -1,0 +1,6 @@
+{
+  "name": "session-bridge",
+  "description": "Channel that mirrors this Claude session into its Telegram Topic via the machine's cc-config session bridge daemon.",
+  "version": "0.1.0",
+  "keywords": ["channel", "telegram", "bridge", "mcp"]
+}
