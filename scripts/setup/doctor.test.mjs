@@ -8,7 +8,23 @@ import {
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks,
   checkCodexPluginCache,
   checkPlugins,
+  checkMachineName,
 } from './doctor.js';
+
+// ── machine name (provenance, harness-architecture §8b) ──
+
+test('checkMachineName: WARN when missing or invalid, silent when valid', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-machine-'));
+  const file = path.join(dir, 'machine.json');
+  const [missing] = checkMachineName(file);
+  assert.equal(missing.level, 'WARN');
+  assert.equal(missing.id, 'machine-name');
+  assert.match(missing.detail, /--machine <NAME>/);
+  fs.writeFileSync(file, '{"name":"a b"}');
+  assert.equal(checkMachineName(file).length, 1);
+  fs.writeFileSync(file, '{"name":"WS1-duipezztz"}');
+  assert.deepEqual(checkMachineName(file), []);
+});
 
 // ── the guard detector ──
 // This check exists because the idiom below silently disabled loop-guard-hook.js for

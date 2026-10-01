@@ -10,6 +10,7 @@ import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { isMain } from '../shared/is-main.mjs';
+import { isValidMachineName, readMachineName, writeMachineName, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import {
   resolveSyncDir,
   syncDirSource,
@@ -395,16 +396,39 @@ function expandHome(p, home) {
  */
 export function parseSetupArgs(argv = []) {
   const idx = argv.indexOf('--sync-dir');
+  const mIdx = argv.indexOf('--machine');
   return {
     replace: argv.includes('--replace') || argv.includes('-r'),
     initSyncDir: argv.includes('--init-sync-dir'),
     syncDir: idx !== -1 ? argv[idx + 1] : undefined,
     syncDirFlagPresent: idx !== -1,
+    machine: mIdx !== -1 ? argv[mIdx + 1] : undefined,
+    machineFlagPresent: mIdx !== -1,
   };
+}
+
+// ~/.claude/machine.json is machine-local provenance (docs/harness-architecture.md §8b):
+// written only on an explicit --machine, never overwritten implicitly, never synced.
+function applyMachineName({ machine, machineFlagPresent }) {
+  if (machineFlagPresent) {
+    if (!isValidMachineName(machine)) {
+      console.error(`ERR   --machine requires a name matching [A-Za-z0-9-]+ (got: ${machine ?? '(none)'})`);
+      return false;
+    }
+    writeMachineName(machine);
+    console.log(`MACH  ~/.claude/machine.json - ${machine}`);
+  } else if (!readMachineName()) {
+    console.log(`NOTE  no machine name set; commits from agents will not carry provenance - run: ${MACHINE_FIX_CMD}`);
+  }
+  return true;
 }
 
 export function setup(options = {}) {
   const { replace = false, initSyncDir = false, syncDir: requestedSyncDir, syncDirFlagPresent = false } = options;
+  if (!applyMachineName(options)) {
+    process.exitCode = 1;
+    return;
+  }
   if (syncDirFlagPresent) {
     if (!requestedSyncDir || requestedSyncDir.startsWith('-')) {
       console.error('ERR   --sync-dir requires a path argument');

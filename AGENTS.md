@@ -22,6 +22,11 @@
   on later machines wait for the cloud client to finish downloading instead — setup
   refuses to seed a configured-but-empty dir, which would manufacture conflict copies.
   With no sync dir configured everything resolves inside the repo, exactly as before.
+- `node scripts/setup/setup.js --machine <NAME>` writes the machine-local
+  `~/.claude/machine.json` (fleet: `G-Laptop`, `WS1-duipezztz`, `WS2-duip622037`,
+  `WS3-duip73019`, `WS4-duip77246`, `WSEng`). Read only via `scripts/shared/machine.mjs`;
+  the launchers turn it into committer provenance + `HARNESS_*` env (harness-architecture §8b).
+  Setup without the flag never overwrites it; doctor WARNs when it is missing.
 - The working tree must NOT live inside a cloud-synced folder. See `docs/sync-architecture.md`.
 - `npm run migrate` - Bring `~/.claude`/`~/.codex` symlinks, orphaned CLI aliases, and the
   current project's `.claude/` (cc-market plugin files) up to the latest format.

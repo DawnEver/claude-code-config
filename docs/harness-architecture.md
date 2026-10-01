@@ -32,11 +32,11 @@ anyone who clones the repo obey it? Then lab-commons. Neither depends on the oth
 only contract is git itself (branches, commits, trailers, refs on origin).
 
 - **cc-config:** branch = one main session's line of work; worktree only when concurrent
-  writers would share a checkout (§3); the forge CLI (§8a); agent identity (§8b); bridge,
+  writers would share a checkout (§3); agent identity and the `HARNESS_*` env contract (§8b); bridge,
   Telegram, remotes, launchers, host hooks.
 - **lab-commons:** integration layers (`lane -> integrate/main -> main`, `stage/*`),
   gate tiers and verdicts, the three-participant protocol and its readiness rule, repo
-  deny rules, famconfig, forge protection declarations — and `fanout.md`'s
+  deny rules, famconfig, forge access (issues/PRs, protection declarations; §8a) — and `fanout.md`'s
   every-subagent-gets-its-own-worktree rule, which is a large-project rule (§3).
 
 ## 3. Entities and sources of truth
@@ -117,18 +117,17 @@ Issues fit as **intent, not trigger**: a human files the what and why; lanes ref
 it in commits; closing follows the integration landing. Any issue or label convention is
 specified in lab-commons (rendered per repo like the other family config), not here.
 
-## 8a. Forge CLI — one interface over Gitea and GitHub
+## 8a. Forge access — owned by lab-commons, not here
 
-git itself is forge-neutral; only the forge API (issues, PRs, labels, comments, auth)
-differs. `scripts/forge/` installs a thin `forge` command:
+git itself is forge-neutral; only the forge API (issues, PRs, comments) differs between
+Gitea and GitHub. The only party that needs that API is large-project collaboration — a
+small demo never does, and a teammate without cc-config still must — so it lives in
+lab-commons (`lab_commons.dev.forge`, see its `docs-src/dev/forge.md`), calls both REST
+APIs directly, and needs neither `gh` nor `tea`. cc-config installs no forge tooling.
 
-- Verbs agents need, nothing more: `forge issue list|view|create|comment|close`,
-  `forge pr create|view`.
-- Backend picked from `git remote get-url origin`: GitHub -> `gh`, Gitea -> `tea`. The
-  CLI maps arguments and normalizes output; it has no API client of its own.
-- Auth is each tool's own machine-local login; no token rides the sync payload.
-- Agents write to the forge only through `forge` (a deny rule blocks direct `gh`/`tea`
-  writes), so provenance (§8b) cannot be bypassed.
+The two repos meet only through the `HARNESS_*` env contract (§8b): when present,
+lab-commons' forge prefixes bodies with the provenance line; when absent (a human, a
+teammate), it does not.
 
 ## 8b. Identity and provenance
 
@@ -140,15 +139,21 @@ Every commit or comment carries three layers. Only the first was recorded before
 
 No bot accounts: they multiply credentials and lose layer 1. Instead:
 
-- **Commits:** agent launchers set `GIT_COMMITTER_NAME="<your name> (<machine>/<agent>)"`
-  and leave the author alone, plus trailers `Agent:`, `Machine:`, `Branch:`. Manual
-  commits in any project are untouched, because the variables exist only inside
-  launcher-started processes. No global git hook, so there is no clash with repo hooks.
-  Query: `git log --format='%(trailers:key=Machine)'`.
-- **Issues/comments:** `forge` prefixes each body with
-  `[<machine> · <agent> · <branch> · session <id>]`.
-- **Machine name:** `~/.claude/machine.json` (`{"name": "WS1"}`), written by setup on first
-  run, never synced, never derived from hostname.
+- **Commits (implemented):** the launchers (`cc-launcher.mjs` / `codex-launcher.mjs` via
+  `scripts/shared/machine.mjs`) set `GIT_COMMITTER_NAME="<git user.name> (<machine>/<agent>)"`
+  and never touch `GIT_AUTHOR_*`. A committer name the user set in their shell is kept;
+  one inherited from an outer launcher is replaced. No trailers: the committer name
+  already carries machine and agent, and the branch lives in git. Manual commits in any
+  project are untouched, because the variables exist only inside launcher-started
+  processes; no global git hook, so no clash with repo hooks. Query: `git log --format='%cn'`.
+- **Env contract:** the same launchers export `HARNESS_MACHINE` and `HARNESS_AGENT`
+  (`claude`|`codex`) for other tools (e.g. lab-commons' forge) to read. No machine name →
+  nothing is injected.
+- **Issues/comments:** lab-commons' forge prefixes each body with
+  `[<machine> · <agent> · <branch>]`.
+- **Machine name:** `~/.claude/machine.json` (`{"name": "WS1-duipezztz"}`), written by
+  `setup.js --machine <NAME>`, never synced, never derived from hostname; doctor WARNs
+  when it is missing.
 
 ## 9. Phasing
 

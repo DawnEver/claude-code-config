@@ -23,6 +23,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
+import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
   CLAUDE_LINKS, getCodexLinks, linkSourceRoot,
@@ -317,6 +318,17 @@ export function checkHygiene(root = sourceDir) {
   return out;
 }
 
+// Provenance (docs/harness-architecture.md §8b) fails silent by design: with no
+// machine.json the launchers inject nothing, so agent commits on this host look
+// exactly like manual ones and nobody notices the fleet name was never set. WARN,
+// not FAIL — a host without a name still works, it just loses attribution.
+export function checkMachineName(file = MACHINE_PATH) {
+  if (readMachineName(file)) return [];
+  const why = fs.existsSync(file) ? 'is not valid ({"name": "[A-Za-z0-9-]+"})' : 'is missing';
+  return [finding('WARN', 'machine-name', `~/.claude/machine.json ${why}; agent commits carry no machine/agent provenance`,
+    `fix: ${MACHINE_FIX_CMD}`)];
+}
+
 // ── runner ──
 
 export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME } = {}) {
@@ -332,6 +344,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPlugins(settings, home),
     ...checkCodexPluginCache(repoRoot, home),
     ...checkHygiene(repoRoot),
+    ...checkMachineName(path.join(home, '.claude', 'machine.json')),
   ];
 }
 

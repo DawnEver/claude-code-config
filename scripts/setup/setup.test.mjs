@@ -28,11 +28,20 @@ const fakeHome = () => {
 test('parseSetupArgs: reads the flags setup understands', () => {
   assert.deepEqual(parseSetupArgs(['--replace']), {
     replace: true, initSyncDir: false, syncDir: undefined, syncDirFlagPresent: false,
+    machine: undefined, machineFlagPresent: false,
   });
   assert.deepEqual(parseSetupArgs(['--sync-dir', '/x', '--init-sync-dir']), {
     replace: false, initSyncDir: true, syncDir: '/x', syncDirFlagPresent: true,
+    machine: undefined, machineFlagPresent: false,
   });
   assert.equal(parseSetupArgs(['-r']).replace, true);
+});
+
+test('parseSetupArgs: --machine <NAME>', () => {
+  const { machine, machineFlagPresent } = parseSetupArgs(['--machine', 'WS1-duipezztz']);
+  assert.deepEqual({ machine, machineFlagPresent }, { machine: 'WS1-duipezztz', machineFlagPresent: true });
+  assert.equal(parseSetupArgs(['--machine']).machineFlagPresent, true);
+  assert.equal(parseSetupArgs(['--machine']).machine, undefined);
 });
 
 test('parseSetupArgs: setup() takes options, so a caller cannot leak its own argv', () => {

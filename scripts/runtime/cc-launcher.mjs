@@ -13,6 +13,7 @@
 import { existsSync } from 'fs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
+import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
 
 /**
  * Build the env + args for spawning the `claude` CLI with a given provider.
@@ -24,6 +25,9 @@ import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config
  * @param {string} opts.envSettingsPath  Path to the shared claude_env_settings.json.
  * @param {string} [opts.localPath]  Machine-local overlay path. Defaults to
  *   `~/.claude/claude_env_settings.local.json`.
+ * @param {string|null} [opts.machine]  Fleet name (default: ~/.claude/machine.json).
+ * @param {string|null} [opts.gitUserName]  Default: `git config --global user.name`.
+ *   Together they drive provenanceEnv() — see scripts/shared/machine.mjs.
  * @returns {{
  *   env: NodeJS.ProcessEnv,
  *   args: string[],
@@ -37,9 +41,12 @@ export function buildClaudeInvocation({
   extraArgs = [],
   envSettingsPath,
   localPath = LOCAL_ENV_SETTINGS_PATH,
+  machine = readMachineName(),
+  gitUserName = machine ? readGitUserName() : null,
 }) {
   const env = { ...process.env };
   for (const k of PROVIDER_KEYS) delete env[k];
+  Object.assign(env, provenanceEnv({ machine, agent: 'claude', userName: gitUserName, env }));
 
   if (!provider || provider === 'claude') {
     return { env, args: [...extraArgs], provider: null, available: [], error: null };

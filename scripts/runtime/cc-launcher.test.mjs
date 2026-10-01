@@ -179,3 +179,20 @@ test('cc.js extraArgs pass through unchanged', () => {
   assert.equal(args[args.length - 2], '-r');
   assert.equal(args[args.length - 1], 'find . -name "*.ts"');
 });
+
+// ── provenance (docs/harness-architecture.md §8b) ──
+
+test('provenance: machine name -> committer + HARNESS_* for claude, author untouched', () => {
+  const { env } = buildClaudeInvocation({ provider: null, envSettingsPath: '/nonexistent',
+    machine: 'WS9', gitUserName: 'Me' });
+  assert.equal(env.HARNESS_MACHINE, 'WS9');
+  assert.equal(env.HARNESS_AGENT, 'claude');
+  assert.equal(env.GIT_COMMITTER_NAME, 'Me (WS9/claude)');
+  assert.equal(env.GIT_AUTHOR_NAME, process.env.GIT_AUTHOR_NAME);
+});
+
+test('provenance: no machine name -> nothing injected', () => {
+  const { env } = buildClaudeInvocation({ provider: null, envSettingsPath: '/nonexistent',
+    machine: null, gitUserName: 'Me' });
+  assert.equal(env.HARNESS_MACHINE, process.env.HARNESS_MACHINE);
+});
