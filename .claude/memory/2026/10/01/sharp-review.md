@@ -22,7 +22,8 @@ metadata:
 ### [SR-20261001-001] [MEDIUM] claude_plugins/session-bridge/server.mjs — uncaughtException handler suppresses fail-fast, leaving channel permanently disconnected
 
 - **Category:** Bug
-- **Status:** OPEN
+- **Status:** FIXED
+- **Fixed in:** 7c52098 (uncaughtExceptionMonitor observes without suppressing; bad runtime port is retried)
 - **Confidence:** single-reviewer
 - **Suggestion:** Use process.on('uncaughtExceptionMonitor') to observe without suppressing termination, or log then process.exit(1).
 
@@ -46,7 +47,8 @@ If runtime.json holds an invalid port, net.connect() throws synchronously before
 ### [SR-20261001-002] [MEDIUM] claude_plugins/session-bridge/server.mjs — uncaughtException handler suppresses fail-fast, leaving channel permanently disconnected
 
 - **Category:** Bug
-- **Status:** OPEN
+- **Status:** FIXED
+- **Fixed in:** 7c52098 — duplicate of SR-20261001-001 (same finding re-appended by a follow-up review)
 - **Confidence:** single-reviewer
 - **Suggestion:** Use process.on('uncaughtExceptionMonitor') to observe without suppressing termination, or log then process.exit(1).
 
@@ -69,7 +71,8 @@ If runtime.json holds an invalid port, net.connect() throws synchronously before
 ### [SR-20261001-003] [HIGH] scripts/bridge/daemon.mjs — The sweep can delete the Topic of a session that is live again, leaving it posting into a deleted thread
 
 - **Category:** Bug
-- **Status:** OPEN
+- **Status:** FIXED
+- **Fixed in:** c6b3eda — closedAt cleared on re-attach; active holders are skipped; idle holders are invalidated
 - **Confidence:** single-reviewer
 - **Suggestion:** Skip cache entries whose key belongs to a live session, or clear closedAt in sessionUp when the cached Topic is picked up.
 
@@ -80,7 +83,8 @@ closedAt is only cleared when the lazy reopen runs on the first post; an idle re
 ### [SR-20261001-004] [MEDIUM] scripts/bridge/daemon.mjs — The sweep is not serialized with per-session close/reopen, so a stale cacheSet can write a deleted Topic back into the cache
 
 - **Category:** Bug
-- **Status:** OPEN
+- **Status:** FIXED
+- **Fixed in:** c6b3eda — delete runs in the holder queue and re-checks the cache entry after the await
 - **Confidence:** single-reviewer
 - **Suggestion:** Run deletes through #serial(s) or re-check topicCache[k] === v after the await.
 
@@ -91,7 +95,8 @@ deleteForumTopic is awaited outside the serial queue.
 ### [SR-20261001-005] [LOW] scripts/bridge/daemon.mjs — deleteWarned never resets, so later failures of other kinds are never logged
 
 - **Category:** Bug
-- **Status:** OPEN
+- **Status:** FIXED
+- **Fixed in:** c6b3eda — each distinct error logged once; reset after a success
 - **Confidence:** single-reviewer
 - **Suggestion:** Log again when the error message changes, or reset after a successful delete.
 
@@ -102,7 +107,8 @@ Network errors and 429s are hidden and wrongly blamed on the missing rights.
 ### [SR-20261001-006] [LOW] scripts/bridge/daemon.mjs — The hourly sweep logs even when nothing was deleted or the feature is disabled; the ?? 24 default is duplicated
 
 - **Category:** Performance
-- **Status:** OPEN
+- **Status:** FIXED
+- **Fixed in:** c6b3eda — only deletions are logged; default lives in context.mjs; no sweep scheduled when 0
 - **Confidence:** single-reviewer
 - **Suggestion:** Log only when n > 0, and skip scheduling when hours is 0.
 
@@ -111,7 +117,8 @@ Network errors and 429s are hidden and wrongly blamed on the missing rights.
 ### [SR-20261001-007] [INFO] scripts/bridge/daemon.mjs — daemon.mjs is 469 lines; extract the topic-cache logic into its own module
 
 - **Category:** Feature
-- **Status:** OPEN
+- **Status:** FIXED
+- **Fixed in:** c6b3eda — topic cache extracted to scripts/bridge/topic-cache.mjs with its own tests
 - **Confidence:** single-reviewer
 - **Suggestion:** Move #cachedTopic, #cacheSet and the sweep into their own module.
 
@@ -120,7 +127,8 @@ Network errors and 429s are hidden and wrongly blamed on the missing rights.
 ### [SR-20261001-008] [HIGH] scripts/bridge/daemon.mjs — The sweep permanently deletes the Topic of a live reattached session (closedAt is kept until the first post)
 
 - **Category:** Bug
-- **Status:** OPEN
+- **Status:** FIXED
+- **Fixed in:** c6b3eda — same fix as SR-20261001-003 (duplicate root cause)
 - **Confidence:** single-reviewer
 - **Suggestion:** Serialize deletion against reattach/reopen, re-check eligibility right before deleting, and invalidate any affected session mapping.
 
