@@ -28,13 +28,22 @@ export function unwrapChannel(text) {
   return m ? m[1].trim() : text;
 }
 
+const ENVELOPE_TAGS = 'agent-message|task-notification|system-reminder';
+const ENVELOPES = new RegExp(`^\\s*(?:<(${ENVELOPE_TAGS})\\b[^>]*>[\\s\\S]*?</\\1>\\s*)+$`);
+const STOP_HOOK_FEEDBACK = /^\s*Stop hook feedback:/i;
+
+/** A prompt the harness or a plugin injected (wholly envelopes), not one a person wrote. */
+export function isEnvelope(text) {
+  return ENVELOPES.test(text) || STOP_HOOK_FEEDBACK.test(text);
+}
+
 export class ClaudeAdapter extends EventEmitter {
   constructor({ token = crypto.randomBytes(24).toString('hex'), now = Date.now } = {}) {
     super();
     this.agent = 'claude';
     this.token = token;
     this.now = now;
-    this.sessions = new Map();   // sessionId -> { peer, socket, replies }
+    this.sessions = new Map();   // sessionId -> { peer, socket, replies, humanTurn }
     this.held = [];              // hook calls that arrived before their session registered
   }
 
@@ -119,12 +128,21 @@ export class ClaudeAdapter extends EventEmitter {
       this.held = [...this.held.filter((h) => now - h.at < HOLD_MS), { m, at: now }];
       return;
     }
-    if (m.kind === 'prompt') { this.emit('prompt', { id, text: unwrapChannel(m.text) }); return; }
-    // The model may already have sent this answer with the reply tool.
+    // Only human-initiated turns are mirrored: a prompt typed locally or sent from Telegram.
+    // Envelope prompts, and Stop-hook continuations (a final with no prompt since the last
+    // one), are the harness talking to itself.
     const s = this.sessions.get(id);
+    if (m.kind === 'prompt') {
+      s.humanTurn = !isEnvelope(m.text);
+      if (s.humanTurn) this.emit('prompt', { id, text: unwrapChannel(m.text) });
+      return;
+    }
+    const human = s.humanTurn;
+    s.humanTurn = false;
+    // The model may already have sent this answer with the reply tool.
     const dup = s.replies.includes(m.text.trim());
     s.replies = [];
-    if (m.text.trim() && !dup) this.emit('final', { id, text: m.text });
+    if (human && m.text.trim() && !dup) this.emit('final', { id, text: m.text });
   }
 
   #release() {
@@ -141,6 +159,7 @@ export class ClaudeAdapter extends EventEmitter {
     const s = this.sessions.get(id);
     if (!s) throw new Error('channel disconnected');
     s.peer.notify('inbound', { text, user: user ?? '' });
+    s.humanTurn = true;   // whether or not UserPromptSubmit reports channel prompts
   }
 
   status(id) { return this.sessions.has(id) ? 'channel connected' : 'channel disconnected'; }

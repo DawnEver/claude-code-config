@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'net';
-import { ClaudeAdapter, unwrapChannel } from './claude-adapter.mjs';
+import { ClaudeAdapter, unwrapChannel, isEnvelope } from './claude-adapter.mjs';
 
 /** Drive the adapter over real TCP like the channel and the hook do. */
 async function rig() {
@@ -40,7 +40,9 @@ test('mirror calls route by session id, are held before register, never cross se
     await r.rpc(ch, 'reply', { text: 'done' });
     await r.hook({ sessionIds: ['uuid-1'], kind: 'final', text: 'done\n' });
     await r.hook({ sessionIds: ['uuid-1'], kind: 'final', text: '  ' });
+    await r.hook({ sessionIds: ['parent'], kind: 'prompt', text: 'parent question' });
     await r.hook({ sessionIds: ['parent'], kind: 'final', text: 'parent answer' });
+    await r.hook({ sessionIds: ['uuid-1'], kind: 'prompt', text: 'q2' });
     await r.hook({ sessionIds: ['uuid-1'], kind: 'final', text: 'second turn' });
     await r.hook({ sessionIds: ['stranger'], kind: 'final', text: 'nobody' });
     assert.deepEqual(r.events.map(([k, e]) => [k, e.id, e.text]), [
@@ -49,12 +51,49 @@ test('mirror calls route by session id, are held before register, never cross se
       ['up', 'parent', undefined],
       ['prompt', 'uuid-1', 'from phone'],
       ['final', 'uuid-1', 'done'],
+      ['prompt', 'parent', 'parent question'],
       ['final', 'parent', 'parent answer'],
+      ['prompt', 'uuid-1', 'q2'],
       ['final', 'uuid-1', 'second turn'],
     ]);
     ch.destroy(); parent.destroy();
     await new Promise((res) => setTimeout(res, 50));
     assert.deepEqual(r.events.filter(([k]) => k === 'down').map(([, e]) => e.id).sort(), ['parent', 'uuid-1']);
+  } finally { await r.a.close(); }
+});
+
+test('isEnvelope: harness/plugin injections only, never a prompt that merely mentions a tag', () => {
+  for (const t of [
+    '<agent-message from="a2cc">[Subagent hand-back] done</agent-message>',
+    '<task-notification>\n<task-id>x</task-id>\n</task-notification>',
+    '  <system-reminder>note</system-reminder>\n',
+    '<system-reminder>a</system-reminder>\n<task-notification>b</task-notification>',
+    'Stop hook feedback:\nrun the review',
+  ]) assert.equal(isEnvelope(t), true, t);
+  for (const t of [
+    'why does <system-reminder> show up in my transcript?',
+    'fix the <agent-message> parser\n<agent-message>x</agent-message>',
+    'plain prompt',
+  ]) assert.equal(isEnvelope(t), false, t);
+});
+
+test('envelope prompts and the finals of turns they (or a Stop hook) triggered are not mirrored', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's', cwd: '/repo' });
+    const ids = ['s'];
+    await r.hook({ sessionIds: ids, kind: 'prompt', text: 'human question' });
+    await r.hook({ sessionIds: ids, kind: 'final', text: 'human answer' });
+    await r.hook({ sessionIds: ids, kind: 'final', text: 'stop-hook continuation' });
+    await r.hook({ sessionIds: ids, kind: 'prompt', text: '<agent-message from="x">hand-back</agent-message>' });
+    await r.hook({ sessionIds: ids, kind: 'final', text: 'reaction to the hand-back' });
+    await r.a.inject('s', 'from phone', 'u');   // a Telegram turn counts even if its prompt never mirrors
+    await r.hook({ sessionIds: ids, kind: 'final', text: 'phone answer' });
+    assert.deepEqual(r.events.filter(([k]) => k !== 'up').map(([k, e]) => [k, e.text]), [
+      ['prompt', 'human question'], ['final', 'human answer'], ['final', 'phone answer'],
+    ]);
+    ch.destroy();
   } finally { await r.a.close(); }
 });
 

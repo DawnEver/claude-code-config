@@ -109,6 +109,11 @@ token in `runtime.json`):
   session's output into another's Topic. Channel prompts are unwrapped to their text, so the echo suppression above
   drops them. A final identical to a `reply` of the same turn is not posted twice; `reply`
   stays for explicit mid-task messages.
+- Only human-initiated turns are mirrored: a prompt that is wholly harness/plugin envelopes
+  (`<agent-message>`, `<task-notification>`, `<system-reminder>`, `Stop hook feedback:`) is
+  dropped with its final, and so is a final with no prompt since the last one (a Stop-hook
+  continuation, e.g. sharp-review). A Telegram inject always opens a mirrored turn.
+  Recognition lives in `isEnvelope` (`claude-adapter.mjs`).
 - No `/interrupt` (use Esc locally).
 
 Nothing to do by hand once this machine has a `bridge.botToken`: `npm run setup` registers
