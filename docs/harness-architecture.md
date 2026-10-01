@@ -99,10 +99,8 @@ through `~/.claude/...` links (never a machine path — see `sync-architecture.m
 Not a plugin: a plugin lives and dies with one session, while the bridge must outlive
 every session, own the machine's single bot token, and multiplex all its sessions.
 
-v1 is built: setup, config keys, and the as-built protocol notes are in
-[`bridge.md`](bridge.md). The Claude half is a thin channel plugin
-(`claude_plugins/session-bridge/`) that dials the daemon over 127.0.0.1; the daemon,
-not the plugin, owns Telegram.
+Built. How it works — the host adapters, the one session lifecycle shared by Claude and
+Codex, setup and config — is described once, in [`bridge.md`](bridge.md).
 
 ## 7. Permissions
 

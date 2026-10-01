@@ -1,75 +1,146 @@
-# Session bridge (v1): Telegram <-> live sessions
+# Session bridge: Telegram <-> live sessions
 
 Per-machine daemon that mirrors every live Claude Code and Codex session on this machine
-into Telegram, and injects your replies back into the **same** session. Design:
-[`harness-architecture.md`](harness-architecture.md) §4-7. This page covers setup and the
-as-built behaviour.
+into Telegram, and injects your replies back into the **same** session. Why it is shaped
+this way: [`harness-architecture.md`](harness-architecture.md) §4-7. This page is the
+single description of how it works.
 
 ```
-Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, owns the bot token)
-                                           ├─ codex-adapter.mjs ── codex app-server proxy ──> shared Codex daemon
-                                           └─ channel-hub.mjs  <── 127.0.0.1 TCP ── session-bridge channel (in each Claude session)
+Telegram ── getUpdates / sendMessage ──> daemon.mjs  (one per machine, owns the bot token; host-agnostic)
+                                           ├─ codex-adapter.mjs  ── codex app-server proxy ──> shared Codex daemon
+                                           └─ claude-adapter.mjs <── 127.0.0.1 TCP ── session-bridge channel + bridge-hook.js
 ```
 
-## Topology
+## One model for both hosts
 
-- **One bot per machine.** `getUpdates` allows a single consumer per token, so each
-  machine gets its own bot from BotFather. The daemon refuses to start twice.
-- **One forum group per project**, Topics enabled. Project = the origin repo name of the
-  session's cwd (all worktrees of a repo share a group). Unknown projects go to
-  `bridge.fallbackChatId`; no fallback means the session is not mirrored.
-- **One Topic per session**, titled `<machine>/<agent>/<branch>` (`#2`, `#3` when two live
-  sessions share a branch). Telegram is a stateless view: the mapping is rebuilt from live
-  sessions. `~/.claude/bridge/topics.json` (keyed by session id) only avoids creating a new
-  Topic after a daemon restart; delete it freely. A re-attached session posts nothing.
-- **Ended sessions close their Topic**: `session ended: <title>`, then `closeForumTopic`.
-  A session re-attached to a cached Topic calls `reopenForumTopic` once before its next post
-  (`TOPIC_NOT_MODIFIED` ignored). Needs the bot's Manage Topics right.
-- **Old closed Topics are deleted**: closing records `closedAt` in `topics.json` (reopen
-  clears it). At startup and hourly the daemon calls `deleteForumTopic` for every Topic it
-  closed more than `bridge.deleteClosedAfterHours` ago (default 24, `0` = never), then drops
-  the entry. Entries without a `closedAt` (never closed by the bridge, or written before this
-  existed) are never deleted, and neither is a Topic still held by a registered session.
-- **Idle Codex Topics close**: a Codex thread never ends on its own (the app-server keeps it
-  loaded), so after `bridge.codexIdleCloseMinutes` (default 30, `0` = never) with no prompt,
-  progress, final, approval or Telegram inject, its Topic is closed quietly (no message) and
-  gets a `closedAt`. The session stays registered, so the delete sweep skips it however long
-  it stays closed; any new activity reopens the **same** Topic and clears `closedAt`. Only
-  once the thread is unloaded (`session ended`) does the 24 h deletion clock apply.
-  Telegram lets only admins post in a closed Topic: as the group owner your messages still
-  reach the bot and reopen it; a non-admin member cannot post there at all.
-- **No pin noise**: Telegram auto-pins a new Topic's first message; the daemon calls
-  `unpinAllForumTopicMessages` right after `session up` (a missing pin right is logged once).
-- Claude sessions are keyed by `CLAUDE_CODE_SESSION_ID`, so `--resume` / `--continue` reuses
-  the cached Topic (reopened) instead of creating a new one.
-- **Leftovers stay quiet.** The Codex daemon keeps a thread loaded after its TUI exits, so
-  a bridge (re)start sees every thread opened since the daemon started. Those get no Topic
-  and no `session up` until they show activity again; sessions that appear while the
-  bridge runs open their Topic at once.
+Each host adapter turns its host's protocol into the same events — `up {id, cwd, branch?,
+preexisting, backlog[]}`, `prompt {id, text, turnId?}`, `progress {id, text}`,
+`final {id, text, turnId?, status?}`, `approval {id, ref, summary, answerable}`, `down {id}`
+— and offers the same interface: `inject`, `status`, `answerApproval`, and `interrupt` where
+the host has one (Codex only). `daemon.mjs` has no host-specific branch; everything below
+holds for Claude and Codex alike.
+
+### Topics
+
+- **One bot per machine** (`getUpdates` allows one consumer per token); the daemon refuses
+  to start twice.
+- **One forum group per project**, Topics enabled. Project = origin repo name of the
+  session's cwd, so all worktrees of a repo share a group. Unknown projects go to
+  `bridge.fallbackChatId`; without one the session is registered but not mirrored.
+- **One Topic per session**, titled `<machine>/<agent>/<branch>`, `#2`, `#3` when sessions
+  holding a Topic in the same group share a branch.
+- `~/.claude/bridge/topics.json` (`chatId|<agent>:<id>` -> `{topicId, title, closedAt?}`) lets
+  a session re-attach to its Topic after a daemon restart or a `--resume`; it is a cache,
+  deleting it only means new Topics.
+
+### Session lifecycle (`scripts/bridge/lifecycle.mjs`)
+
+| From | Event | To | Telegram |
+| --- | --- | --- | --- |
+| — | `up` (new session) | open | create Topic, `session up: <title> (<project>)`, unpin |
+| — | `up` (leftover, see below) | none | nothing |
+| — | `up` (cached Topic) | open / closed as cached | nothing (a closed one reopens on activity) |
+| none | activity | open | create Topic |
+| open | no activity for `idleCloseMinutes` | closed | close Topic, record `closedAt` (no message) |
+| closed | activity | open | reopen the **same** Topic, clear `closedAt` |
+| open | `down` | ended | `session ended: <title>`, close Topic, record `closedAt` |
+| closed / none | `down` | ended | nothing |
+
+- **Activity** = any prompt, progress, final, approval, or Telegram inject.
+- **Leftovers**: the Codex daemon keeps threads loaded after their TUI exits, so a bridge
+  (re)start sees threads that are long idle. Sessions already loaded at the first sync stay
+  registered without a Topic until they show activity.
+- **Deletion**: at startup and hourly, a Topic closed more than `deleteClosedAfterHours`
+  ago is deleted (`deleteForumTopic`) and dropped from the cache, **unless a registered
+  session holds it** — an idle-closed session may come back. So an idle-closed Codex
+  thread keeps its Topic until the thread is unloaded; then the clock runs from that close.
+- **Telegram drift**: a post refused because the Topic was closed by hand reopens it; a
+  Topic deleted by hand is recreated; either way the post is resent once.
+
+### Ordering and echoes
+
+- Every Telegram write of a session runs on one queue, so a final never overtakes its
+  prompt and the close never overtakes `session ended`.
+- While a session is brought up (Topic opening, backlog replay), its live events are held,
+  then released after the backlog minus the turns the backlog already carried (keyed by
+  turn id: a turn that completes during bring-up is reported both ways).
+- A prompt injected from the Topic is not echoed back as `> <prompt>`; an inject that
+  never echoes is forgotten after 10 minutes.
+
+## Hosts
+
+### Codex
+
+Start sessions with `codc`. A plain `codex` TUI runs its own embedded app-server, which the
+bridge cannot see; with `bridge.botToken` set, `codc` adds `--remote unix://` to every
+interactive launch (bare, a prompt, `resume`, `fork`) so the TUI attaches to the shared
+app-server daemon. `exec` and other non-interactive subcommands, an explicit `--remote`,
+and third-party providers (`cods`, whose overrides the daemon would not apply) are left as
+they are.
+
+- Live sessions = `thread/loaded/list`, polled every 15 s plus `thread/started`; each is
+  subscribed with `thread/resume` (needs a rollout, so ephemeral threads are skipped).
+  `thread/resume` also yields the backlog: turns that started after the bridge connected.
+- Output: prompts, one `working…` message per turn edited in place with compact progress
+  lines (throttled to one edit per 3 s), then the final agent message.
+- Inject: `turn/start` when idle, `turn/steer {expectedTurnId}` mid-turn; `/interrupt` =
+  `turn/interrupt`.
+- `codex app-server proxy` relays bytes to the control socket, which speaks **WebSocket**;
+  JSON-RPC rides text frames (`ws-stream.mjs`; Node's `WebSocket` needs a URL, not a stream).
+
+### Claude
+
+Claude has no shared daemon. Two pieces dial the Claude adapter on 127.0.0.1 (port and
+token in `runtime.json`):
+
+- **The session-bridge channel** (`claude_plugins/session-bridge/server.mjs`, an MCP stdio
+  server on plain Node) stays connected for the life of the session:
+  `register {token, sessionId, cwd, claudePid}` (`sessionId` = `CLAUDE_CODE_SESSION_ID`, so
+  `--resume` re-attaches; `claudePid` = `CLAUDE_PID`), then `reply`, `permission_request`.
+  Inbound Telegram text arrives in the session as a `<channel source="session-bridge">`
+  event. Its socket closing is `down`.
+- **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit` and `Stop`) mirrors every
+  prompt and the turn's final assistant text with a one-shot `mirror` call, so output does
+  not depend on the model calling `reply`. Calls are routed by `CLAUDE_PID` (stable across
+  `/clear`, which mints a new session id) and held up to 30 s if they beat the channel's
+  registration. Channel prompts are unwrapped to their text, so the echo suppression above
+  drops them. A final identical to a `reply` of the same turn is not posted twice; `reply`
+  stays for explicit mid-task messages.
+- No `/interrupt` (use Esc locally).
+
+Nothing to do by hand once this machine has a `bridge.botToken`: `npm run setup` registers
+the user-scope MCP server (`claude mcp add -s user session-bridge -- node
+<repo>/claude_plugins/session-bridge/server.mjs`; the absolute path lives in this machine's
+`~/.claude.json`, never in synced config), and `ccc` (any official-provider `cc.js` launch)
+adds `--dangerously-load-development-channels server:session-bridge`, because custom
+channels are not on the research-preview allowlist. A plain `claude` still starts the MCP
+server, so a Topic appears, but Claude Code drops channel messages without the flag.
+Requires Anthropic auth; third-party providers (`ccds`) lack channels.
 
 ## Setup (per machine)
 
 1. **Machine name**: `node scripts/setup/setup.js --machine <NAME>` (writes
    `~/.claude/machine.json`). The daemon will not start without it.
-2. **Bot**: in Telegram, talk to `@BotFather` -> `/newbot` -> copy the token. Name it after
-   the machine (e.g. `ws1_bridge_bot`). `/setprivacy` -> **Disable**, so the bot sees plain
-   messages in groups, not only commands.
-3. **Groups**: per project, create a group, enable **Topics** (group settings), add every
-   machine's bot, and promote each bot to **admin with "Manage Topics"** (close/reopen/unpin) and **"Delete
-   messages"** (needed to delete old closed Topics; without it the sweep logs once and retries).
+2. **Bot**: `@BotFather` -> `/newbot` -> copy the token; name it after the machine.
+   `/setprivacy` -> **Disable**, so the bot sees plain messages in groups.
+3. **Groups**: per project, create a group, enable **Topics**, add every machine's bot, and
+   make each bot an **admin with "Manage Topics"** (create/close/reopen/unpin) and
+   **"Delete messages"** (delete old closed Topics; without it the sweep logs the error once
+   and retries every hour).
 4. **Chat ids**: send a message in the group, then open
    `https://api.telegram.org/bot<TOKEN>/getUpdates` *before* the daemon runs (it would
-   consume the update) and read `message.chat.id` (`-100...`). Your own user id is
-   `message.from.id`.
+   consume the update) and read `message.chat.id` (`-100...`) and your `message.from.id`.
 5. **Shared config** (non-secret, synced) in `~/.claude/claude_env_settings.json`:
    ```json
    "bridge": {
      "fallbackChatId": -1001111111111,
      "projects": { "claude-code-config": { "chatId": -1002222222222 } },
-     "deleteClosedAfterHours": 24,
-     "codexIdleCloseMinutes": 30
+     "idleCloseMinutes": 30,
+     "deleteClosedAfterHours": 24
    }
    ```
+   Both tunables default as shown (`BRIDGE_DEFAULTS` in `scripts/bridge/context.mjs`);
+   `0` = never.
 6. **Secrets** (machine-local, never synced) in `~/.claude/claude_env_settings.local.json`:
    ```json
    "bridge": {
@@ -79,77 +150,36 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
    }
    ```
    `allowedUserIds` gates **every** inbound message by sender (not by chat). Empty = all
-   inbound is dropped.
-7. **Run**: `npm run bridge` (foreground) or `npm run bridge:install` (service:
-   Task Scheduler at logon via `conhost --headless` on Windows, launchd LaunchAgent on
-   macOS, `systemd --user` on Linux). Also `bridge:status`, `bridge:uninstall`. The service
-   runs `~/.claude/scripts/bridge/daemon.mjs` through the link, and logs to
+   inbound is dropped. Any key may be set in either layer; local wins.
+7. **Run**: `npm run bridge` (foreground) or `npm run bridge:install` (service: Task
+   Scheduler at logon via `conhost --headless` on Windows, launchd on macOS,
+   `systemd --user` on Linux). Also `bridge:status`, `bridge:uninstall`. The service runs
+   `~/.claude/scripts/bridge/daemon.mjs` through the link and logs to
    `~/.claude/bridge/daemon.log` (Windows) or the service manager (others).
-
-### Codex sessions
-
-Start sessions with `codc`. A plain `codex` TUI runs its own embedded app-server, which the
-bridge cannot see; with `bridge.botToken` set, `codc` adds `--remote unix://` to every
-interactive launch (bare, a prompt, `resume`, `fork`) so the TUI attaches to the shared
-app-server daemon. `exec` and other non-interactive subcommands, an explicit `--remote`,
-and third-party providers (`cods`, whose overrides the daemon would not apply) are left as
-they are. Any persisted thread loaded in the shared daemon is picked up within ~15 s.
-Prompts typed in the TUI are mirrored into the Topic as `> <prompt>`; ones sent from the
-Topic are not echoed back. Ephemeral threads cannot be
-subscribed (`thread/resume` needs a rollout) and are skipped. If the daemon is not running
-(`codex app-server daemon version`), the bridge keeps retrying.
-
-### Claude sessions
-
-Claude has no shared daemon; each session loads the **session-bridge** channel
-(`claude_plugins/session-bridge/`, plain Node, no dependencies, no Bun). Nothing to do by
-hand once this machine has a `bridge.botToken`:
-
-- `npm run setup` registers the user-scope MCP server (`claude mcp add -s user
-  session-bridge -- node <repo>/claude_plugins/session-bridge/server.mjs`; the absolute
-  path lives in this machine's `~/.claude.json`, never in synced config).
-- `ccc` (and any official-provider `cc.js` launch) adds
-  `--dangerously-load-development-channels server:session-bridge` by itself, because
-  custom channels are not on the research-preview allowlist. Third-party providers
-  (`ccds`) never get it — they lack channels.
-
-Caveat: a session started with plain `claude` (not `ccc`) still starts the user-scope MCP
-server, so a Topic appears, but without the flag Claude Code silently drops channel
-messages there. Start sessions you want to drive with `ccc`.
-
-Requires Anthropic auth (claude.ai login); third-party providers (`ccds`) lack channels.
 
 ## Using it
 
-In a session's Topic (only allowlisted senders):
+In a session's Topic (allowlisted senders only):
 
-- plain text -> injected. Codex: `turn/start` when idle, `turn/steer {expectedTurnId}`
-  mid-turn. Claude: a `<channel source="session-bridge">` event.
-- `/status` -> idle / turn in progress / channel connected.
-- `/interrupt` -> `turn/interrupt` (Codex only; Claude: Esc locally).
+- plain text -> injected into the session.
+- `/status` -> the host's status (`idle`, `turn in progress (…)`, `channel connected`).
+- `/interrupt` -> interrupts the turn where the host supports it.
 
-Output: Codex posts one `working…` message per turn, edited in place with compact progress
-lines (commands, file edits, tool calls; throttled to one edit per 3 s), then the final
-agent message as a new message. Claude: `scripts/hooks/bridge-hook.js`
-(wired for `UserPromptSubmit` and `Stop`) mirrors every typed prompt as `> <prompt>` and the
-turn's final assistant text, mechanically — the model is not relied on to call `reply`. The
-hook makes one authenticated `mirror {token, claudePid, sessionId, kind, text}` call to the
-hub; the daemon matches `claudePid` (`CLAUDE_PID`, stable across `/clear`) to the session's
-registered channel. Prompts that came from the Topic (`<channel ...>`) are not echoed, and a
-final identical to a `reply` tool message of the same turn is not posted twice. `reply`
-stays available for explicit mid-task messages. Long text is split at 4096 chars; 429s honour `retry_after`.
+Telegram lets only admins post in a closed Topic: as an admin your message reaches the bot
+and reopens the Topic; a non-admin member cannot post there. Long text is split at 4096
+chars; 429s honour `retry_after`.
 
 ## Approvals
 
-Default: the bridge posts `approval needed on <machine>, answer locally or via official
-remote` and never answers. Opt-in per machine with `bridge.approvalsFromTelegram: true`:
-Accept/Decline buttons appear, and only presses from `allowedUserIds` count — anything
-else is dropped. Codex: only `item/commandExecution/requestApproval` and
-`item/fileChange/requestApproval` get buttons (`{decision: accept|decline}`); other request
-kinds stay notice-only. The first answer wins (TUI, remote, or Telegram); the daemon
-forgets an approval once `serverRequest/resolved` arrives. Claude: the channel declares
-`claude/channel/permission`, so tool prompts are relayed; a button press becomes
-`notifications/claude/channel/permission`.
+Default: `approval needed on <machine>, answer locally or via official remote`, never
+answered. Opt-in per machine with `bridge.approvalsFromTelegram: true`: Accept/Decline
+buttons appear, and only presses from `allowedUserIds` count. The first answer wins (TUI,
+remote, or Telegram). Codex: only `item/commandExecution/requestApproval` and
+`item/fileChange/requestApproval` are answerable (`{decision}`); the approval is forgotten
+on `serverRequest/resolved`. Claude: the channel declares `claude/channel/permission`; a
+press becomes `notifications/claude/channel/permission`. Claude sends no "resolved" signal,
+so a prompt answered locally keeps its buttons; what Claude Code does with a late verdict is
+unverified.
 
 ## Runtime files (machine-local, `~/.claude/bridge/`)
 
@@ -157,23 +187,13 @@ forgets an approval once `serverRequest/resolved` arrives. Claude: the channel d
 | --- | --- |
 | `runtime.json` | daemon pid, IPC port, IPC token (0600 on POSIX; profile ACL on Windows) |
 | `offset.json` | last `update_id` (cache) |
-| `topics.json` | `chatId|session key -> {topicId, closedAt?}` (cache; also drives the closed-Topic sweep) |
-| `daemon.log` | Windows service log |
-
-## Protocol notes (as built)
-
-- `codex app-server proxy` relays bytes to the control socket, which speaks **WebSocket**;
-  JSON-RPC rides text frames. `ws-stream.mjs` frames by hand (Node's `WebSocket` needs a
-  URL, not a stream).
-- Live Codex sessions = `thread/loaded/list`; each is subscribed with `thread/resume`.
-- Daemon <-> channel IPC: newline JSON-RPC over `127.0.0.1:<random>`; the channel's first
-  call must be `register {token, sessionId, cwd, branch, claudePid}` (`sessionId` =
-  `CLAUDE_CODE_SESSION_ID`, `claudePid` = `CLAUDE_PID`, both set by Claude Code for its MCP
-  servers and hooks). Hooks use a one-shot connection whose only call is `mirror`.
+| `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
+| `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
+| `channel-<pid>.log` | one per Claude channel process: start (session id, `CLAUDE_PID`), connect, exit |
 
 ## Unverified
 
-- Real Telegram traffic (no token used in tests; the Bot API is faked locally).
+- A Telegram message posted into a closed Topic (expected: reaches the bot for admins).
+- Whether `UserPromptSubmit` fires for channel-injected prompts (either way no echo:
+  the unwrap path drops it, and an unechoed inject expires).
 - Channels together with `--remote-control` in one Claude session.
-- Loading as a `--plugin-dir` plugin vs the `server:` entry (only the `server:` form is
-  documented for development channels).
