@@ -101,7 +101,7 @@ const promptText = (item) => (item.content ?? []).filter((c) => c?.type === 'tex
  * Turns a session ran before the bridge subscribed to it — the opening prompt of a fresh
  * thread lands before the next poll. Only turns that started after the bridge connected
  * count, so a bridge restart never replays a thread's whole history.
- * @returns {{kind: 'prompt'|'final', text: string, status?: string}[]}
+ * @returns {{kind: 'prompt'|'final', text: string, status?: string, turnId: string|null}[]}
  */
 export function backlogSince(turns = [], sinceMs) {
   const out = [];
@@ -109,10 +109,10 @@ export function backlogSince(turns = [], sinceMs) {
     if (!t?.startedAt || t.startedAt * 1000 < sinceMs) continue;
     let agent = null;
     for (const item of t.items ?? []) {
-      if (item.type === 'userMessage') { const text = promptText(item); if (text) out.push({ kind: 'prompt', text }); }
+      if (item.type === 'userMessage') { const text = promptText(item); if (text) out.push({ kind: 'prompt', text, turnId: t.id ?? null }); }
       if (item.type === 'agentMessage' && item.text) agent = item.text;
     }
-    if (t.status !== 'inProgress') out.push({ kind: 'final', text: agent ?? '', status: t.status });
+    if (t.status !== 'inProgress') out.push({ kind: 'final', text: agent ?? '', status: t.status, turnId: t.id ?? null });
   }
   return out;
 }
@@ -238,7 +238,7 @@ export class CodexAdapter extends EventEmitter {
         const item = p.item ?? {};
         if (item.type === 'userMessage') {
           const text = promptText(item);
-          if (text) this.emit('prompt', { threadId: p.threadId, text });
+          if (text) this.emit('prompt', { threadId: p.threadId, turnId: p.turnId ?? null, text });
         }
         if (item.type === 'agentMessage' && th) {
           th.lastAgent = item.text ?? th.deltas.get(item.id) ?? th.lastAgent;
@@ -253,7 +253,7 @@ export class CodexAdapter extends EventEmitter {
         let text = th?.lastAgent;
         if (!text && th?.deltas.size) text = [...th.deltas.values()].join('\n');
         if (th) { th.activeTurnId = null; th.deltas.clear(); th.lastAgent = null; }
-        this.emit('final', { threadId: p.threadId, status, text: text ?? '' });
+        this.emit('final', { threadId: p.threadId, turnId: p.turn?.id ?? null, status, text: text ?? '' });
         break;
       }
       case 'serverRequest/resolved': {

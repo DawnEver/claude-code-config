@@ -91,19 +91,19 @@ test('deltas aggregate; final message is emitted on turn/completed; progress per
   srv.push('item/completed', { threadId: 't1', turnId: 'turnA', item: { type: 'commandExecution', id: 'c', command: 'npm test', exitCode: 0 } });
   srv.push('turn/completed', { threadId: 't1', turn: { id: 'turnA', status: 'completed' } });
   assert.deepEqual(progress, ['$ npm test (exit 0)']);
-  assert.deepEqual(finals, [{ threadId: 't1', status: 'completed', text: 'Hello' }]);
+  assert.deepEqual(finals, [{ threadId: 't1', turnId: 'turnA', status: 'completed', text: 'Hello' }]);
   assert.equal(a.status('t1'), 'idle');
 });
 
 test('backlogSince replays only turns started after the bridge connected', () => {
   const turns = [
     { startedAt: 100, status: 'completed', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'old' }] }] },
-    { startedAt: 200, status: 'completed', items: [
+    { id: 'T2', startedAt: 200, status: 'completed', items: [
       { type: 'userMessage', content: [{ type: 'text', text: 'hi' }] }, { type: 'agentMessage', text: 'Hello!' }] },
-    { startedAt: 201, status: 'inProgress', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'next' }] }] },
+    { id: 'T3', startedAt: 201, status: 'inProgress', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'next' }] }] },
   ];
   assert.deepEqual(backlogSince(turns, 150_000), [
-    { kind: 'prompt', text: 'hi' }, { kind: 'final', text: 'Hello!', status: 'completed' }, { kind: 'prompt', text: 'next' }]);
+    { kind: 'prompt', text: 'hi', turnId: 'T2' }, { kind: 'final', text: 'Hello!', status: 'completed', turnId: 'T2' }, { kind: 'prompt', text: 'next', turnId: 'T3' }]);
   assert.deepEqual(backlogSince(turns, Infinity), []);
 });
 
@@ -118,7 +118,7 @@ test('thread/started subscribes at once, once, and carries the backlog', async (
   await tick(); await tick();
   assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 1, 'resumed once despite the race');
   assert.equal(ups.length, 1);
-  assert.deepEqual(ups[0].backlog, [{ kind: 'prompt', text: 'hi' }, { kind: 'final', text: 'Hello!', status: 'completed' }]);
+  assert.deepEqual(ups[0].backlog, [{ kind: 'prompt', text: 'hi', turnId: null }, { kind: 'final', text: 'Hello!', status: 'completed', turnId: null }]);
 });
 
 test('an ephemeral thread that cannot be resumed is not retried every poll', async () => {
@@ -147,10 +147,10 @@ test('a completed userMessage item is emitted as the prompt text', async () => {
   const { a, srv } = await started();
   const prompts = [];
   a.on('prompt', (p) => prompts.push(p));
-  srv.push('item/completed', { threadId: 't1', item: { type: 'userMessage', id: 'u', content: [
+  srv.push('item/completed', { threadId: 't1', turnId: 'tu', item: { type: 'userMessage', id: 'u', content: [
     { type: 'text', text: 'fix the build' }, { type: 'image', url: 'x' }] } });
   srv.push('item/completed', { threadId: 't1', item: { type: 'userMessage', id: 'v', content: [{ type: 'image', url: 'x' }] } });
-  assert.deepEqual(prompts, [{ threadId: 't1', text: 'fix the build' }]);
+  assert.deepEqual(prompts, [{ threadId: 't1', turnId: 'tu', text: 'fix the build' }]);
 });
 
 test('inject uses turn/start when idle and turn/steer with expectedTurnId mid-turn', async () => {

@@ -88,19 +88,38 @@ export class Bridge {
   #wire() {
     const c = this.codex;
     if (c) {
-      c.on('session-up', (s) => this.sessionUp('codex', s.threadId, s)
-        .then(async () => {
-          for (const b of s.backlog ?? []) {
-            if (b.kind === 'prompt') await this.prompt(`codex:${s.threadId}`, b.text);
-            else await this.final(`codex:${s.threadId}`, b.text, b.status);
-          }
-        })
-        .catch((e) => this.log(`codex up: ${e.message}`)));
+      // While a thread is brought up (Topic opening, backlog replay pending) its live events
+      // are held, then flushed after the backlog minus the turns the backlog already had:
+      // a turn that completes during bring-up shows up both in thread/resume and live.
+      const held = new Map();   // key -> [{ kind, turnId, run }]
+      const live = (kind) => (e, run) => {
+        const q = held.get(`codex:${e.threadId}`);
+        if (q) q.push({ kind, turnId: e.turnId ?? null, run }); else run();
+      };
+      c.on('session-up', (s) => {
+        const key = `codex:${s.threadId}`;
+        if (!held.has(key) && !this.sessions.has(key)) held.set(key, []);
+        const backlog = s.backlog ?? [];
+        const seen = new Set(backlog.filter((b) => b.turnId).map((b) => `${b.kind}:${b.turnId}`));
+        this.sessionUp('codex', s.threadId, s)
+          .then(async () => {
+            for (const b of backlog) {
+              if (b.kind === 'prompt') await this.prompt(key, b.text);
+              else await this.final(key, b.text, b.status);
+            }
+          })
+          .catch((e) => this.log(`codex up: ${e.message}`))
+          .finally(async () => {
+            const q = held.get(key) ?? [];
+            held.delete(key);
+            for (const ev of q) if (!(ev.turnId && seen.has(`${ev.kind}:${ev.turnId}`))) await ev.run();
+          });
+      });
       c.on('session-down', (s) => this.sessionDown(`codex:${s.threadId}`));
-      c.on('prompt', (e) => this.prompt(`codex:${e.threadId}`, e.text));
-      c.on('progress', (e) => this.progress(`codex:${e.threadId}`, e.text));
-      c.on('final', (e) => this.final(`codex:${e.threadId}`, e.text, e.status));
-      c.on('approval', (a) => this.approval(`codex:${a.threadId}`, { kind: 'codex', ref: a.key, summary: a.summary, answerable: a.answerable }));
+      c.on('prompt', (e) => live('prompt')(e, () => this.prompt(`codex:${e.threadId}`, e.text)));
+      c.on('progress', (e) => live('progress')(e, () => this.progress(`codex:${e.threadId}`, e.text)));
+      c.on('final', (e) => live('final')(e, () => this.final(`codex:${e.threadId}`, e.text, e.status)));
+      c.on('approval', (a) => live('approval')(a, () => this.approval(`codex:${a.threadId}`, { kind: 'codex', ref: a.key, summary: a.summary, answerable: a.answerable })));
       c.on('approval-resolved', (a) => this.approvalResolved('codex', a.key));
       c.on('warn', (m) => this.log(m));
     }

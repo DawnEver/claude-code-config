@@ -452,3 +452,20 @@ test('codex idle close: at 30m not 29m, quietly; new activity reopens the same T
     assert.equal(r.telegram.closed.length, 1, '0 = never');
   } finally { r.cleanup(); }
 });
+
+test('live codex events during bring-up wait for the backlog and skip turns it already replayed', async () => {
+  const { codex, telegram } = make();
+  let openTopic;
+  telegram.createForumTopic = (chatId, name) => { telegram.topics.push([chatId, name]); return new Promise((r) => { openTopic = () => r({ message_thread_id: 100 }); }); };
+  codex.emit('session-up', { threadId: 't9', cwd: '/proj', backlog: [{ kind: 'prompt', text: 'hi', turnId: 'T1' }] });
+  // The turn finishes while the Topic is still being created; its prompt also arrives live.
+  codex.emit('prompt', { threadId: 't9', turnId: 'T1', text: 'hi' });
+  codex.emit('final', { threadId: 't9', turnId: 'T1', text: 'Hello!', status: 'completed' });
+  await until(() => openTopic);
+  openTopic();
+  await until(() => telegram.sent.length === 3);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(telegram.sent.map((s) => s.text), ['session up: WS1/codex/main (proj)', '> hi', 'Hello!']);
+  codex.emit('prompt', { threadId: 't9', turnId: 'T2', text: 'next' }); await until(() => telegram.sent.length === 4);
+  assert.equal(telegram.sent.at(-1).text, '> next', 'live again once flushed');
+});
