@@ -143,6 +143,19 @@ test('a fresh thread whose rollout is not written yet is retried until it subscr
   assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 2);
 });
 
+test('an empty rollout (the same race, other wording) is retried without a warning', async () => {
+  const err = String.raw`thread/resume: failed to read thread: thread-store internal error: failed to read session metadata C:\x\rollout-t4.jsonl: rollout at C:\x\rollout-t4.jsonl is empty`;
+  const srv = fakeAppServer({ loaded: [], threads: { t4: { failTimes: 1, readFails: true, error: err, id: 't4', cwd: '/w', ephemeral: false, turns: [] } } });
+  const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({ status: 'running' }), resumeRetryMs: 5 });
+  const ups = [], warns = [];
+  a.on('up', (s) => ups.push(s.id));
+  a.on('warn', (w) => warns.push(w));
+  await a.start(); await a.refresh();
+  srv.push('thread/started', { thread: { id: 't4', ephemeral: false } });
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual([ups, warns], [['t4'], []]);
+});
+
 test('a completed userMessage item is emitted as the prompt text', async () => {
   const { a, srv } = await started();
   const prompts = [];

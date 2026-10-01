@@ -127,6 +127,7 @@ export class Bridge {
    * registered, and a Topic it got before that was known is closed quietly, then ages out.
    */
   dismiss(key) {
+    this.log(`skip ${key}: not a main session`);
     for (const [k, cached] of Object.entries(this.topics.entries)) {
       if (!k.endsWith(`|${key}`)) continue;
       const s = { ...newSession({ key, cached, now: this.now() }), chatId: TopicCache.chatIdOf(k), title: cached.title ?? key, chain: Promise.resolve() };

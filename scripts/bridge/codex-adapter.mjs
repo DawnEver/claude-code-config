@@ -196,7 +196,7 @@ export class CodexAdapter extends EventEmitter {
     try {
       await this.#resume(threadId, opts);
     } catch (e) {
-      if (!/no rollout found/i.test(e.message)) throw e;
+      if (!/no rollout found|rollout at .* is empty/i.test(e.message)) throw e;
       // No rollout yet is normal for a fresh thread: Codex writes it once the first turn
       // starts, so retry shortly (the poll is the backstop). An ephemeral thread never gets
       // one, so it is skipped for good instead of failing every poll.
