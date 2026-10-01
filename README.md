@@ -33,10 +33,13 @@ npm test                       # unit tests
 
 `--machine <NAME>` writes `~/.claude/machine.json` (machine-local, never synced; names
 match `[A-Za-z0-9-]+` — fleet: `G-Laptop`, `WS1-duipezztz`, `WS2-duip622037`,
-`WS3-duip73019`, `WS4-duip77246`, `WSEng`). With it, the `ccc`/`ccds`/`codc`/`cods`
-launchers set `GIT_COMMITTER_NAME="<git user.name> (<machine>/<claude|codex>)"` plus
-`HARNESS_MACHINE` / `HARNESS_AGENT` in the agent's env; the git author and your manual
-commits are untouched. A `GIT_COMMITTER_NAME` you set yourself in the shell is kept.
+`WS3-duip73019`, `WS4-duip77246`, `WSEng`). With it, agent commands get
+`GIT_COMMITTER_NAME="<git user.name> (<machine>/<claude|codex>)"` plus
+`HARNESS_MACHINE` / `HARNESS_AGENT`; the git author and your manual commits are untouched.
+Claude gets them from the `ccc`/`ccds` launchers (a `GIT_COMMITTER_NAME` you set in the
+shell is kept). Codex gets them from `[shell_environment_policy.set]` in the per-host
+`~/.codex/config.toml` that setup composes, so they apply however Codex was started
+(including the shared app-server daemon) and always tag.
 
 Creates symlinks from `~/.claude/` and `~/.codex/` to this repo. Re-run to verify - won't overwrite.
 Claude links `skills/` as one directory. Codex keeps its own `~/.codex/skills`

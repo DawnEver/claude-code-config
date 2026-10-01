@@ -9,6 +9,7 @@ import {
   checkCodexPluginCache,
   checkPlugins,
   checkMachineName,
+  checkCodexShellEnv,
 } from './doctor.js';
 
 // ── machine name (provenance, harness-architecture §8b) ──
@@ -24,6 +25,19 @@ test('checkMachineName: WARN when missing or invalid, silent when valid', () => 
   assert.equal(checkMachineName(file).length, 1);
   fs.writeFileSync(file, '{"name":"WS1-duipezztz"}');
   assert.deepEqual(checkMachineName(file), []);
+});
+
+test('checkCodexShellEnv: FAIL when a named host composed config lacks the policy', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-codex-env-'));
+  const cfg = path.join(dir, 'config.toml');
+  assert.deepEqual(checkCodexShellEnv({ machine: null, configPath: cfg }), []);
+  fs.writeFileSync(cfg, 'model = "x"\n');
+  const [f] = checkCodexShellEnv({ machine: 'WS9', configPath: cfg });
+  assert.equal(f.level, 'FAIL');
+  assert.equal(f.id, 'codex-provenance');
+  fs.writeFileSync(cfg, '[shell_environment_policy.set]\nHARNESS_MACHINE = "WS9"\n');
+  assert.deepEqual(checkCodexShellEnv({ machine: 'WS9', configPath: cfg }), []);
+  assert.deepEqual(checkCodexShellEnv({ machine: 'WS9', configPath: path.join(dir, 'none') }), []);
 });
 
 // ── the guard detector ──

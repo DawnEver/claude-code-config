@@ -141,3 +141,12 @@ test('a missing payload yields no-head rather than throwing', () => {
   });
   assert.equal(r.status, 'no-head');
 });
+
+test('composeCodexConfigFile writes shellEnv into the host file, never into the payload', () => {
+  const { syncDir, codexDir, envSettingsPath } = fixture({ payload: 'model = "x"\n' });
+  composeCodexConfigFile({ syncDir, envSettingsPath, codexDir,
+    shellEnv: { HARNESS_MACHINE: 'WS9', HARNESS_AGENT: 'codex' } });
+  const host = fs.readFileSync(path.join(codexDir, 'config.toml'), 'utf8');
+  assert.match(host, /\[shell_environment_policy\.set\]\nHARNESS_MACHINE = "WS9"\nHARNESS_AGENT = "codex"/);
+  assert.equal(fs.readFileSync(path.join(syncDir, 'codex_config.toml'), 'utf8'), 'model = "x"\n');
+});

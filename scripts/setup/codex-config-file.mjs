@@ -15,8 +15,10 @@ import {
   splitCodexConfig,
   composeCodexConfig,
   assertLossless,
+  withShellEnvSet,
 } from './codex-config-compose.mjs';
 import { generateModelProvidersBlock } from './inject-codex-providers.mjs';
+import { codexShellEnv } from '../shared/machine.mjs';
 
 /**
  * Write atomically: a crash mid-write must not leave a truncated config, and a reader
@@ -60,10 +62,13 @@ export function localSectionsForThisHost(text) {
 /**
  * Compose this host's `~/.codex/config.toml` and normalize the shared payload head.
  *
- * @param {{syncDir: string, envSettingsPath: string, codexDir: string}} opts
+ * `shellEnv` (default: codexShellEnv() from machine.json) lands in this host file only as
+ * `[shell_environment_policy.set]` — machine-specific, so never in the shared head.
+ *
+ * @param {{syncDir: string, envSettingsPath: string, codexDir: string, shellEnv?: object}} opts
  * @returns {{status: string, [k: string]: any}}
  */
-export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir }) {
+export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, shellEnv = codexShellEnv() }) {
   const payloadPath = path.join(syncDir, 'codex_config.toml');
 
   let payloadText;
@@ -120,7 +125,7 @@ export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir }) {
     }
   }
 
-  const next = composeCodexConfig({ head, providersBlock, localSections: localText });
+  const next = composeCodexConfig({ head: withShellEnvSet(head, shellEnv), providersBlock, localSections: localText });
 
   fs.mkdirSync(codexDir, { recursive: true });
   if (before && before.isSymbolicLink()) fs.unlinkSync(target);

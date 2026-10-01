@@ -329,6 +329,20 @@ export function checkMachineName(file = MACHINE_PATH) {
     `fix: ${MACHINE_FIX_CMD}`)];
 }
 
+// Codex provenance rides ~/.codex/config.toml [shell_environment_policy.set], composed by
+// setup (Codex may run commands in a shared daemon no launcher env reaches). A host that
+// was named after its last setup run silently tags nothing, so check the composed file
+// actually carries this machine's name. No config file = no Codex here = nothing to check.
+export function checkCodexShellEnv({ machine = readMachineName(), configPath = path.join(HOME, '.codex', 'config.toml') } = {}) {
+  if (!machine) return [];
+  let text;
+  try { text = fs.readFileSync(configPath, 'utf8'); } catch { return []; }
+  if (text.includes(`HARNESS_MACHINE = ${JSON.stringify(machine)}`)) return [];
+  return [finding('FAIL', 'codex-provenance',
+    `~/.codex/config.toml lacks shell_environment_policy.set HARNESS_MACHINE = "${machine}"; Codex commits carry no provenance`,
+    'fix: node scripts/setup/setup.js')];
+}
+
 // ── runner ──
 
 export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME } = {}) {
@@ -345,6 +359,8 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkCodexPluginCache(repoRoot, home),
     ...checkHygiene(repoRoot),
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
+    ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),
+      configPath: path.join(home, '.codex', 'config.toml') }),
   ];
 }
 

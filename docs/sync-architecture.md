@@ -85,6 +85,7 @@ other hosts' dead paths forever. So the file is split by owner:
 | preamble + `[tui]`, `[plugins.*]`, `[features]`, … | human | **Tier B**, the sync payload |
 | `[model_providers.*]` between the setup-managed markers | `claude_env_settings.json` | Tier D, regenerated |
 | `[projects.*]`, `[hooks.*]`, `[notice]` | Codex itself | **Tier C**, machine-only |
+| `shell_environment_policy.set` provenance keys (merged into the head's table if any) | `~/.claude/machine.json` + git `user.name` | per-host only, regenerated (harness §8b) |
 
 `~/.codex/config.toml` is therefore **a real file composed per host**, not a symlink into
 the payload: shared head + generated providers block + this host's own state. Splitting

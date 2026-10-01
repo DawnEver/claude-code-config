@@ -25,7 +25,9 @@
 - `node scripts/setup/setup.js --machine <NAME>` writes the machine-local
   `~/.claude/machine.json` (fleet: `G-Laptop`, `WS1-duipezztz`, `WS2-duip622037`,
   `WS3-duip73019`, `WS4-duip77246`, `WSEng`). Read only via `scripts/shared/machine.mjs`;
-  the launchers turn it into committer provenance + `HARNESS_*` env (harness-architecture §8b).
+  the Claude launchers and, for Codex, setup's composed `~/.codex/config.toml`
+  `[shell_environment_policy.set]` turn it into committer provenance + `HARNESS_*` env
+  (harness-architecture §8b; Codex commands may run in a shared daemon no launcher env reaches).
   Setup without the flag never overwrites it; doctor WARNs when it is missing.
 - The working tree must NOT live inside a cloud-synced folder. See `docs/sync-architecture.md`.
 - `npm run migrate` - Bring `~/.claude`/`~/.codex` symlinks, orphaned CLI aliases, and the

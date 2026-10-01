@@ -44,7 +44,7 @@ machine by `build.mjs` and is gitignored.
 
 Dropping `name.md` with frontmatter into any discovered output-styles dir adds a
 style (`~/.claude/output-styles/`, project `.claude/output-styles/`, or
-`STYLE_SEARCH_DIRS`); build happens automatically when missing/stale.
+`STYLE_SEARCH_DIRS`); `node system-prompt/build.mjs <name>` builds it into `dist/`.
 `keep-coding-instructions: false` = the style body carries the persona
 (post/academic); `true` layers on top.
 

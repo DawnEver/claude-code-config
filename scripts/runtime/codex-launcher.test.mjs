@@ -204,10 +204,9 @@ test('codex.js returns an error when codexApiKeyEnv is declared but apiKey is mi
 
 // ── provenance (docs/harness-architecture.md §8b) ──
 
-test('provenance: machine name -> committer + HARNESS_* for codex', () => {
-  const { env } = buildCodexInvocation({ provider: null, envSettingsPath: '/nonexistent',
-    machine: 'WS9', gitUserName: 'Me' });
-  assert.equal(env.HARNESS_MACHINE, 'WS9');
-  assert.equal(env.HARNESS_AGENT, 'codex');
-  assert.equal(env.GIT_COMMITTER_NAME, 'Me (WS9/codex)');
+test('provenance: the codex launcher injects nothing (config.toml shell_environment_policy does)', () => {
+  const { env } = buildCodexInvocation({ provider: null, envSettingsPath: '/nonexistent' });
+  assert.equal(env.HARNESS_MACHINE, process.env.HARNESS_MACHINE);
+  assert.equal(env.HARNESS_AGENT, process.env.HARNESS_AGENT);
+  assert.equal(env.GIT_COMMITTER_NAME, process.env.GIT_COMMITTER_NAME);
 });

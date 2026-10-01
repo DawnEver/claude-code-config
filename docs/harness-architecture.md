@@ -139,16 +139,28 @@ Every commit or comment carries three layers. Only the first was recorded before
 
 No bot accounts: they multiply credentials and lose layer 1. Instead:
 
-- **Commits (implemented):** the launchers (`cc-launcher.mjs` / `codex-launcher.mjs` via
-  `scripts/shared/machine.mjs`) set `GIT_COMMITTER_NAME="<git user.name> (<machine>/<agent>)"`
-  and never touch `GIT_AUTHOR_*`. A committer name the user set in their shell is kept;
-  one inherited from an outer launcher is replaced. No trailers: the committer name
-  already carries machine and agent, and the branch lives in git. Manual commits in any
-  project are untouched, because the variables exist only inside launcher-started
-  processes; no global git hook, so no clash with repo hooks. Query: `git log --format='%cn'`.
-- **Env contract:** the same launchers export `HARNESS_MACHINE` and `HARNESS_AGENT`
+- **Commits (implemented):** agent commands get
+  `GIT_COMMITTER_NAME="<git user.name> (<machine>/<agent>)"`; `GIT_AUTHOR_*` is never
+  touched. No trailers: the committer name already carries machine and agent, and the
+  branch lives in git. Manual commits are untouched — the variables exist only in agent
+  command envs; no global git hook. Query: `git log --format='%cn'`. Two mechanisms, one
+  per host, both from `scripts/shared/machine.mjs`:
+  - **Claude** runs commands in its own process, so `cc-launcher.mjs` injects the env.
+    A committer name the user set in their shell is kept; one inherited from an outer
+    launcher is replaced.
+  - **Codex** may run commands in a shared app-server daemon
+    (`~/.codex/app-server-control/`) started by anything — desktop app, VS Code,
+    remote-control, an earlier session — whose env a launcher cannot reach. So setup
+    writes the values into the per-host composed `~/.codex/config.toml` as
+    `[shell_environment_policy.set]` (`codexShellEnv()`, merged into a head-side table if
+    the shared head has one; never in the shared payload). Every Codex command tags,
+    however Codex was started; a static file cannot see the caller's shell, so a user-set
+    committer name is **not** preserved in Codex sessions. `codex-launcher.mjs` injects
+    nothing. Doctor FAILs (`codex-provenance`) when a named host's composed config lacks
+    its machine name — re-run setup after `--machine`.
+- **Env contract:** the same paths export `HARNESS_MACHINE` and `HARNESS_AGENT`
   (`claude`|`codex`) for other tools (e.g. lab-commons' forge) to read. No machine name →
-  nothing is injected.
+  nothing is injected. `setup-vscode.js` (Claude in VS Code) carries no provenance.
 - **Issues/comments:** lab-commons' forge prefixes each body with
   `[<machine> · <agent> · <branch>]`.
 - **Machine name:** `~/.claude/machine.json` (`{"name": "WS1-duipezztz"}`), written by

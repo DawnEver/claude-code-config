@@ -59,3 +59,14 @@ export function provenanceEnv({ machine, agent, userName, env = process.env }) {
   if (userName && !userSet) out.GIT_COMMITTER_NAME = `${userName} (${machine}/${agent})`;
   return out;
 }
+
+/**
+ * Provenance for Codex, written by setup into ~/.codex/config.toml as
+ * `[shell_environment_policy.set]`. Codex may run commands in a shared app-server daemon
+ * started by anything (desktop app, VS Code, an earlier session), so launcher env cannot
+ * reach them; config can. A static file cannot see the caller's shell, so a user-set
+ * GIT_COMMITTER_NAME is NOT preserved: Codex commands always tag.
+ */
+export function codexShellEnv({ machine = readMachineName(), userName = machine ? readGitUserName() : null } = {}) {
+  return provenanceEnv({ machine, agent: 'codex', userName, env: {} });
+}

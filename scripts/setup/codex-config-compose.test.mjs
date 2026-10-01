@@ -7,6 +7,7 @@ import {
   sharedHeadOf,
   assertLossless,
   partition,
+  withShellEnvSet,
   LOCAL_SECTION_PREFIXES,
   CODEX_TOML_START_MARKER,
   CODEX_TOML_END_MARKER,
@@ -217,4 +218,42 @@ test('splitCodexConfig: an unterminated generated block does not swallow the res
   // Local sections must still be recoverable even if the end marker was lost, otherwise
   // a truncated file would silently drop this host's project trust list.
   assert.deepEqual(parts.local.map(s => s.header), ["projects.'/tmp/a'"]);
+});
+
+// ── per-host shell_environment_policy.set (provenance, harness-architecture §8b) ──
+
+const VARS = { HARNESS_MACHINE: 'WS9', GIT_COMMITTER_NAME: 'Me "Q" (WS9/codex)' };
+
+test('withShellEnvSet: appends a set table when the head has none', () => {
+  const out = withShellEnvSet('model = "x"\n', VARS);
+  assert.match(out, /^\[shell_environment_policy\.set\]$/m);
+  assert.match(out, /^HARNESS_MACHINE = "WS9"$/m);
+  assert.match(out, /^GIT_COMMITTER_NAME = "Me \\"Q\\" \(WS9\/codex\)"$/m);
+  assert.equal(withShellEnvSet('model = "x"\n', {}), 'model = "x"\n');
+});
+
+test('withShellEnvSet: keeps the head table and its keys, adds set once', () => {
+  const head = 'model = "x"\n\n[shell_environment_policy]\ninherit = "core"\n\n[tui]\ntheme = "a"\n';
+  const out = withShellEnvSet(head, VARS);
+  assert.equal(out.match(/^\[shell_environment_policy\]$/gm).length, 1);
+  assert.match(out, /inherit = "core"/);
+  assert.match(out, /theme = "a"/);
+  assert.equal(out.match(/HARNESS_MACHINE/g).length, 1);
+});
+
+test('withShellEnvSet: merges into an existing [shell_environment_policy.set] table', () => {
+  const head = '[shell_environment_policy.set]\nFOO = "1"\nHARNESS_MACHINE = "stale"\n';
+  const out = withShellEnvSet(head, VARS);
+  assert.equal(out.match(/^\[shell_environment_policy\.set\]$/gm).length, 1);
+  assert.match(out, /FOO = "1"/);
+  assert.doesNotMatch(out, /stale/);
+  assert.match(out, /HARNESS_MACHINE = "WS9"/);
+});
+
+test('withShellEnvSet: merges into an inline set = { ... }', () => {
+  const head = '[shell_environment_policy]\ninherit = "all"\nset = { FOO = "1", HARNESS_AGENT = "old" }\n';
+  const out = withShellEnvSet(head, { HARNESS_AGENT: 'codex' });
+  assert.doesNotMatch(out, /\[shell_environment_policy\.set\]/);
+  assert.match(out, /^set = \{ FOO = "1", HARNESS_AGENT = "codex" \}$/m);
+  assert.match(out, /inherit = "all"/);
 });

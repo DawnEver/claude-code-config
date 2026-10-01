@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  isValidMachineName, readMachineName, writeMachineName, provenanceEnv,
+  isValidMachineName, readMachineName, writeMachineName, provenanceEnv, codexShellEnv,
 } from './machine.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'machine-'));
@@ -55,4 +55,11 @@ test('provenanceEnv: keeps a user-set committer name, replaces an inherited laun
   const nested = provenanceEnv({ machine: 'WS1', agent: 'claude', userName: 'Me',
     env: { GIT_COMMITTER_NAME: 'Me (WS1/codex)', HARNESS_AGENT: 'codex' } });
   assert.equal(nested.GIT_COMMITTER_NAME, 'Me (WS1/claude)');
+});
+
+test('codexShellEnv: fixed codex provenance, independent of the calling env', () => {
+  assert.deepEqual(codexShellEnv({ machine: null, userName: 'Me' }), {});
+  assert.deepEqual(codexShellEnv({ machine: 'WS1', userName: 'Me' }), {
+    HARNESS_MACHINE: 'WS1', HARNESS_AGENT: 'codex', GIT_COMMITTER_NAME: 'Me (WS1/codex)',
+  });
 });

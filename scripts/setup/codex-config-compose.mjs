@@ -215,6 +215,63 @@ export function assertLossless(text = '') {
   return true;
 }
 
+const POLICY = 'shell_environment_policy';
+const POLICY_SET = `${POLICY}.set`;
+// JSON string escaping is a valid TOML basic string.
+const tomlStr = (v) => JSON.stringify(String(v));
+const keyRe = (k, prefix = '') => new RegExp(`^\\s*${prefix.replace('.', '\\.')}"?${k}"?\\s*=`);
+
+/**
+ * Merge `vars` into the head's `shell_environment_policy.set`, in whichever of TOML's
+ * three spellings the head already uses (a `[..set]` table, an inline `set = { }`, or
+ * dotted `set.K =` keys), else append a `[shell_environment_policy.set]` table. Never
+ * duplicates a table and keeps the head's other keys. Our values win over the head's.
+ *
+ * Used only for the per-host file: the values are machine-specific (harness §8b).
+ */
+export function withShellEnvSet(head = '', vars = {}) {
+  const keys = Object.keys(vars);
+  if (keys.length === 0) return head;
+  const lines = String(head).replace(/\s+$/, '').split('\n');
+  const region = (name) => {
+    const start = lines.findIndex(l => parseHeader(l) === name);
+    if (start < 0) return null;
+    let end = lines.findIndex((l, i) => i > start && parseHeader(l) !== null);
+    if (end < 0) end = lines.length;
+    while (end - 1 > start && !lines[end - 1].trim()) end--;
+    return { start, end };
+  };
+  const insertKeys = ({ start, end }, prefix) => {
+    const body = lines.slice(start + 1, end).filter(l => !keys.some(k => keyRe(k, prefix).test(l)));
+    const ours = keys.map(k => `${prefix}${k} = ${tomlStr(vars[k])}`);
+    lines.splice(start + 1, end - start - 1, ...body, ...ours);
+  };
+
+  const setTable = region(POLICY_SET);
+  const policy = region(POLICY);
+  if (setTable) {
+    insertKeys(setTable, '');
+  } else if (policy) {
+    const inlineAt = lines.findIndex((l, i) => i > policy.start && i < policy.end
+      && /^\s*set\s*=\s*\{.*\}\s*(#.*)?$/.test(l));
+    const dotted = lines.some((l, i) => i > policy.start && i < policy.end && /^\s*set\./.test(l));
+    if (inlineAt >= 0) {
+      const merged = new Map();
+      const inner = /\{(.*)\}/.exec(lines[inlineAt])[1];
+      for (const m of inner.matchAll(/"?([A-Za-z0-9_-]+)"?\s*=\s*("(?:[^"\\]|\\.)*"|'[^']*')/g)) merged.set(m[1], m[2]);
+      for (const k of keys) merged.set(k, tomlStr(vars[k]));
+      lines[inlineAt] = `set = { ${[...merged].map(([k, v]) => `${k} = ${v}`).join(', ')} }`;
+    } else if (dotted) {
+      insertKeys(policy, 'set.');
+    } else {
+      lines.push('', `[${POLICY_SET}]`, ...keys.map(k => `${k} = ${tomlStr(vars[k])}`));
+    }
+  } else {
+    lines.push('', `[${POLICY_SET}]`, ...keys.map(k => `${k} = ${tomlStr(vars[k])}`));
+  }
+  return lines.join('\n').replace(/^\n+/, '') + '\n';
+}
+
 /**
  * Build the per-host `~/.codex/config.toml`.
  */

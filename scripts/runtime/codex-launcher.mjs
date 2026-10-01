@@ -14,7 +14,6 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
-import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
 
 // Codex-specific env vars we strip from the parent so the launcher's projection
 // (or codex's own defaults) is the only source. `OPENAI_BASE_URL` is in here
@@ -46,9 +45,6 @@ function codexModel(models) {
  * @param {string} opts.envSettingsPath  Path to the shared claude_env_settings.json.
  * @param {string} [opts.localPath]  Machine-local overlay path. Defaults to
  *   `~/.claude/claude_env_settings.local.json`.
- * @param {string|null} [opts.machine]  Fleet name (default: ~/.claude/machine.json).
- * @param {string|null} [opts.gitUserName]  Default: `git config --global user.name`.
- *   Together they drive provenanceEnv() — see scripts/shared/machine.mjs.
  * @returns {{
  *   env: NodeJS.ProcessEnv,
  *   args: string[],
@@ -62,13 +58,13 @@ export function buildCodexInvocation({
   extraArgs = [],
   envSettingsPath,
   localPath = LOCAL_ENV_SETTINGS_PATH,
-  machine = readMachineName(),
-  gitUserName = machine ? readGitUserName() : null,
 }) {
+  // Provenance (HARNESS_*, GIT_COMMITTER_NAME) is NOT injected here: Codex may run
+  // commands in a shared daemon this env never reaches. setup writes it into
+  // ~/.codex/config.toml [shell_environment_policy.set] instead — see codexShellEnv().
   const env = { ...process.env };
   for (const k of PROVIDER_KEYS) delete env[k];
   for (const k of CODEX_STRIP_KEYS) delete env[k];
-  Object.assign(env, provenanceEnv({ machine, agent: 'codex', userName: gitUserName, env }));
 
   if (!provider || provider === 'codex') {
     return { env, args: [...extraArgs], provider: null, available: [], error: null };
