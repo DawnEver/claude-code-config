@@ -55,6 +55,15 @@ export function onDown(s, now) {
   return ['notice-ended', 'close'];
 }
 
+/** The session turned out not to be a main session: close its Topic, no notice. */
+export function onDismiss(s, now) {
+  const was = s.state;
+  s.state = 'ended';
+  if (was !== 'open' || !s.topicId) return [];
+  s.closedAt = now;
+  return ['close'];
+}
+
 /** Telegram says the Topic no longer exists. */
 export function onTopicGone(s) {
   s.topicId = null;

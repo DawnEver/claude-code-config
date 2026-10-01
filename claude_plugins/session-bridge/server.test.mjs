@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import net from 'net';
 import path from 'path';
-import { DaemonLink, createChannelServer } from './server.mjs';
+import { DaemonLink, createChannelServer, isMainSession, ancestorsOf } from './server.mjs';
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
 
 const until = async (fn, ms = 3000) => {
@@ -140,4 +140,27 @@ test('a one-shot mirror call needs the token and a known kind', async () => {
     assert.deepEqual((await call({ token: hub.token, sessionIds: ['u'], kind: 'final', text: 'yes' })).result, { ok: true });
     assert.ok((await call({ token: hub.token, sessionIds: ['u'], kind: 'other', text: 'x' })).error, 'unknown kind rejected');
   } finally { await hub.close(); }
+});
+
+test('isMainSession: a channel whose claude was started from inside another claude is nested', () => {
+  const claude = { pid: 10, cmd: String.raw`C:\Users\u\.local\bin\claude.exe --dangerously-load-development-channels server:session-bridge` };
+  const shell = { pid: 9, cmd: String.raw`C:\Program Files\Git\bin\bash.exe -c ccc -p hi` };
+  const launcher = { pid: 8, cmd: String.raw`node C:\Users\u\.claude\scripts\runtime\cc.js` };
+  const outer = { pid: 7, cmd: '/usr/local/bin/claude' };
+  const term = { pid: 6, cmd: 'WindowsTerminal.exe' };
+  // top level: no inherited CLAUDE_PID, no claude above our own
+  assert.equal(isMainSession({ ppid: 10, claudePid: null, ancestors: [claude, launcher, term] }), true);
+  assert.equal(isMainSession({ ppid: 10, claudePid: '10', ancestors: [claude, launcher, term] }), true, 'CLAUDE_PID naming our own parent');
+  // nested: inherited CLAUDE_PID of an outer session
+  assert.equal(isMainSession({ ppid: 10, claudePid: '7', ancestors: [] }), false);
+  // nested without CLAUDE_PID (spawned by a plugin's MCP server): a claude further up
+  assert.equal(isMainSession({ ppid: 10, claudePid: null, ancestors: [claude, shell, launcher, outer] }), false);
+  assert.equal(isMainSession({ ppid: 10, claudePid: null, ancestors: [claude, { pid: 5, cmd: 'node /x/node_modules/@anthropic-ai/claude-code/cli.js' }] }), false);
+  assert.equal(isMainSession({ ppid: 10, claudePid: null, ancestors: [claude, { pid: 5, cmd: String.raw`node C:\Users\u\.claude\scripts\hooks\x.js` }] }), true, '.claude paths are not claude');
+});
+
+test('ancestorsOf walks a process table upward from a pid', () => {
+  const table = new Map([[10, { ppid: 9, cmd: 'claude' }], [9, { ppid: 8, cmd: 'bash' }], [8, { ppid: 8, cmd: 'init' }]]);
+  assert.deepEqual(ancestorsOf(10, table).map((a) => a.pid), [10, 9, 8]);
+  assert.deepEqual(ancestorsOf(99, table), []);
 });

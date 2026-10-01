@@ -20,6 +20,7 @@ import os from 'os';
 import net from 'net';
 import path from 'path';
 import crypto from 'crypto';
+import { execFileSync } from 'child_process';
 import { lineSplitter } from '../../scripts/bridge/jsonrpc.mjs';
 import { RUNTIME_FILE } from '../../scripts/bridge/context.mjs';
 import { isMain } from '../../scripts/shared/is-main.mjs';
@@ -154,6 +155,50 @@ export function createChannelServer({ write, link }) {
   };
 }
 
+const CLAUDE_CMD = /(^|[\s"\\/])claude(\.exe)?("|\s|$)|@anthropic-ai[\\/]claude-code[\\/]/i;
+
+/** pid -> {ppid, cmd} for every process; empty when the OS will not say. */
+export function processTable() {
+  const table = new Map();
+  try {
+    const out = process.platform === 'win32'
+      ? execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$(if ($_.CommandLine) { $_.CommandLine } else { $_.Name })" }'],
+        { encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] })
+      : execFileSync('ps', ['-A', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+        .replace(/^\s*(\d+)\s+(\d+)\s+/gm, '$1\t$2\t');
+    for (const line of out.split(/\r?\n/)) {
+      const [pid, ppid, ...cmd] = line.split('\t');
+      if (pid && ppid) table.set(Number(pid), { ppid: Number(ppid), cmd: cmd.join('\t') });
+    }
+  } catch { /* unknown ancestry: only the CLAUDE_PID rule applies */ }
+  return table;
+}
+
+/** [{pid, cmd}] from `pid` upward. */
+export function ancestorsOf(pid, table, max = 10) {
+  const out = [];
+  while (table.has(pid) && out.length < max && !out.some((a) => a.pid === pid)) {
+    const p = table.get(pid);
+    out.push({ pid, cmd: p.cmd });
+    pid = p.ppid;
+  }
+  return out;
+}
+
+/**
+ * Only a main session talks to Telegram. A `claude` started from inside another session
+ * (a plugin's `claude -p`, `ccc -p` in a session's shell) is nested: it either inherited
+ * the outer session's CLAUDE_PID (a top-level session sets none for its MCP servers), or
+ * has a second claude above its own in the process tree.
+ */
+export function isMainSession({ ppid, claudePid, ancestors }) {
+  const claudes = ancestors.filter((a) => CLAUDE_CMD.test(a.cmd));
+  const own = claudes[0]?.pid ?? ppid;
+  if (claudePid && String(claudePid) !== String(own)) return false;
+  return claudes.length <= 1;
+}
+
 function main() {
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const session = {
@@ -186,6 +231,12 @@ function main() {
   process.stdin.on('data', jsonLines((m) => server.onMessage(m)));
   process.stdin.on('end', () => { log('stdin closed by Claude Code'); link.stop(); process.exit(0); });
   log(`start session=${session.sessionId} (${process.env.CLAUDE_CODE_SESSION_ID ? 'CLAUDE_CODE_SESSION_ID' : 'fallback id'}) cwd=${cwd}`);
+  const ancestors = ancestorsOf(process.ppid, processTable());
+  if (!isMainSession({ ppid: process.ppid, claudePid: process.env.CLAUDE_PID, ancestors })) {
+    // Keep serving MCP so Claude Code sees a healthy server; just never register.
+    log(`nested session (CLAUDE_PID=${process.env.CLAUDE_PID ?? 'unset'}, ancestry ${ancestors.map((a) => a.pid).join('<')}): not bridged`);
+    return;
+  }
   link.start();
 }
 

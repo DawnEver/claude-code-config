@@ -20,6 +20,24 @@ preexisting, backlog[]}`, `prompt {id, text, turnId?}`, `progress {id, text}`,
 the host has one (Codex only). `daemon.mjs` has no host-specific branch; everything below
 holds for Claude and Codex alike.
 
+**Only main sessions are bridged.** Each adapter decides with one predicate,
+`isMainSession`, before it emits `up`; anything else never registers, never gets a Topic,
+and is never mirrored:
+
+- Codex (`codex-adapter.mjs`, from the Thread fields): main iff `parentThreadId` is null,
+  `source` is not `{subAgent: review | compact | memory_consolidation | thread_spawn | …}`,
+  and `source` is not `exec` (automated runs such as fabric or sharp-review reviewers). A
+  user fork (`forkedFromId`, no parent) is main. `thread/started` is judged from its payload
+  without a resume; other threads are resumed once to learn it, and never again.
+- Claude (`claude_plugins/session-bridge/server.mjs`): in-process subagents never touch the
+  bridge. A nested `claude` process (a plugin's `claude -p`, `ccc -p` run from a session's
+  shell) is detected because it inherited an outer session's `CLAUDE_PID` (a top-level
+  session sets none for its MCP servers), or because a second claude sits above its own in
+  the process tree. Its channel keeps serving MCP but never registers; its hook calls are
+  dropped after the 30 s hold.
+- A Topic a session got before it was known to be non-main is closed quietly
+  (`dismiss`) and deleted with the other ended Topics.
+
 ### Topics
 
 - **One bot per machine** (`getUpdates` allows one consumer per token); the daemon refuses

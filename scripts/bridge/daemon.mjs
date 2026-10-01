@@ -23,7 +23,7 @@ import { TelegramClient } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
-import { newSession, onUp, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
+import { newSession, onUp, onActivity, onIdleTick, onDown, onDismiss, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
 const PROGRESS_MIN_INTERVAL_MS = 3000;
@@ -59,6 +59,7 @@ export class Bridge {
   #wire(a) {
     a.on('up', (e) => this.sessionUp(a.agent, e).catch((err) => this.log(`${a.agent} up: ${err.message}`)));
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
+    a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
     for (const kind of ['prompt', 'progress', 'final', 'approval']) {
       a.on(kind, (e) => {
         const key = sessionKey(a.agent, e.id);
@@ -119,6 +120,18 @@ export class Bridge {
     this.sessions.delete(key);
     this.log(`down ${key}`);
     if (s.chatId !== null) this.#apply(s, onDown(s, this.now())).catch(() => {});
+  }
+
+  /**
+   * A host found this session is not a main session (subagent, automated run): it is never
+   * registered, and a Topic it got before that was known is closed quietly, then ages out.
+   */
+  dismiss(key) {
+    for (const [k, cached] of Object.entries(this.topics.entries)) {
+      if (!k.endsWith(`|${key}`)) continue;
+      const s = { ...newSession({ key, cached, now: this.now() }), chatId: TopicCache.chatIdOf(k), title: cached.title ?? key, chain: Promise.resolve() };
+      this.#apply(s, onDismiss(s, this.now())).catch(() => {});
+    }
   }
 
   /** Close the Topics of sessions idle for `idleCloseMinutes`; the session stays registered. */

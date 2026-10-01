@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newSession, onUp, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
+import { newSession, onUp, onActivity, onIdleTick, onDown, onDismiss, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 
 const M = 60000;
 
@@ -81,4 +81,13 @@ test('Telegram-side drift: a deleted Topic is recreated, a closed one reopened',
   const c = newSession({ key: 'k', cached: { topicId: 5 }, now: 0 });
   assert.deepEqual(onTopicFoundClosed(c), ['reopen']);
   assert.equal(c.state, 'open');
+});
+
+test('a session found not to be a main session has its open Topic closed quietly', () => {
+  const s = newSession({ key: 'k', cached: { topicId: 5 }, now: 0 });
+  assert.deepEqual(onDismiss(s, 7), ['close']);
+  assert.deepEqual([s.state, s.closedAt], ['ended', 7]);
+  const closed = newSession({ key: 'k', cached: { topicId: 5, closedAt: 3 }, now: 0 });
+  assert.deepEqual(onDismiss(closed, 7), []);
+  assert.equal(closed.closedAt, 3);
 });

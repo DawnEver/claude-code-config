@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CodexAdapter, progressLine, probeDaemon, backlogSince, unwrapShell } from './codex-adapter.mjs';
+import { CodexAdapter, progressLine, probeDaemon, backlogSince, unwrapShell, isMainSession } from './codex-adapter.mjs';
 
 /** Fake app-server behind the adapter's transport interface. */
 function fakeAppServer({ loaded = ['t1'], threads = {} } = {}) {
@@ -220,4 +220,36 @@ test('integration: real codex app-server answers initialize and thread/loaded/li
     const r = await a.rpc.request('thread/loaded/list', {});
     assert.ok(Array.isArray(r.data));
   } finally { a.stop(); }
+});
+
+test('isMainSession: only top-level, non-automated threads; a user fork is main', () => {
+  assert.equal(isMainSession({ source: 'cli' }), true);
+  assert.equal(isMainSession({ source: 'appServer', forkedFromId: 'x' }), true);
+  assert.equal(isMainSession({ source: { custom: 'ide' } }), true);
+  assert.equal(isMainSession({}), true);
+  assert.equal(isMainSession({ source: 'cli', parentThreadId: 'p' }), false);
+  for (const sub of ['review', 'compact', 'memory_consolidation', { thread_spawn: { depth: 1, parent_thread_id: 'p' } }]) {
+    assert.equal(isMainSession({ source: { subAgent: sub } }), false, JSON.stringify(sub));
+  }
+  assert.equal(isMainSession({ source: 'exec' }), false, 'codex exec is automated');
+});
+
+test('non-main threads never come up, are dismissed, and are not resumed again', async () => {
+  const sub = { id: 'sub', cwd: '/w', ephemeral: false, parentThreadId: 't1', source: { subAgent: 'review' }, turns: [] };
+  const srv = fakeAppServer({ loaded: ['t1', 'sub'], threads: { sub } });
+  const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({ status: 'running' }) });
+  const ups = [], dismissed = [];
+  a.on('up', (s) => ups.push(s.id));
+  a.on('dismiss', (d) => dismissed.push(d.id));
+  await a.start();
+  await a.refresh();
+  srv.push('thread/started', { thread: { id: 'spawned', ephemeral: false, source: { subAgent: { thread_spawn: { depth: 1, parent_thread_id: 't1' } } } } });
+  srv.push('thread/started', { thread: { id: 'execd', ephemeral: false, source: 'exec' } });
+  srv.setLoaded(['t1', 'sub', 'spawned', 'execd']);
+  await tick(); await tick();
+  await a.refresh();
+  assert.deepEqual(ups, ['t1']);
+  const resumes = srv.calls.filter((c) => c.method === 'thread/resume').map((c) => c.params.threadId);
+  assert.deepEqual(resumes, ['t1', 'sub'], 'sub resumed once to learn it is a subagent; started ones never');
+  assert.deepEqual(dismissed.sort(), ['execd', 'spawned', 'sub']);
 });

@@ -316,3 +316,21 @@ test('runningDaemonPid: live pid detected, dead or own pid ignored', () => {
     assert.equal(runningDaemonPid(f), process.ppid);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a dismissed (non-main) session never gets a Topic; one it already had is closed quietly', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const topicCacheFile = path.join(dir, 'topics.json');
+  try {
+    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|codex:sub': { topicId: 77, title: 'WS1/codex/main #3' } }));
+    const r = make({ topicCacheFile });
+    r.at(5);
+    r.hosts.codex.emit('dismiss', { id: 'sub' });
+    r.hosts.codex.emit('dismiss', { id: 'never-had-one' });
+    await until(() => r.telegram.closed.length === 1);
+    await settle();
+    assert.deepEqual([r.telegram.closed, r.telegram.sent], [[[-100, 77]], []]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(topicCacheFile, 'utf8'))['-100|codex:sub'], { topicId: 77, title: 'WS1/codex/main #3', closedAt: 5 });
+    r.at(5 + 24 * H); await r.bridge.sweepClosedTopics();
+    assert.deepEqual(r.telegram.deleted, [[-100, 77]], 'then deleted like any ended session');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

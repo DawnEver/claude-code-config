@@ -117,6 +117,16 @@ export function backlogSince(turns = [], sinceMs) {
   return out;
 }
 
+/**
+ * Only main sessions are bridged: not a subagent (`parentThreadId`, `source.subAgent` —
+ * review, compact, memory_consolidation, thread_spawn), not `codex exec` (automated, e.g.
+ * fabric or sharp-review reviewers). A user fork (`forkedFromId`, no parent) is main.
+ */
+export function isMainSession(thread) {
+  const src = thread?.source;
+  return !thread?.parentThreadId && !(src && typeof src === 'object' && 'subAgent' in src) && src !== 'exec';
+}
+
 export class CodexAdapter extends EventEmitter {
   constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000 } = {}) {
     super();
@@ -125,7 +135,7 @@ export class CodexAdapter extends EventEmitter {
     this.resumeRetryMs = resumeRetryMs;
     this.connectedAt = Infinity;
     this.pending = new Set();
-    this.unresumable = new Set();
+    this.skipped = new Set();    // ephemeral or non-main threads: never subscribed
     this.connect = connect;
     this.probe = probe;
     this.clientName = clientName;
@@ -181,7 +191,7 @@ export class CodexAdapter extends EventEmitter {
 
   async #subscribe(threadId, opts = {}) {
     // thread/started and the poll can race for the same thread; resume it once.
-    if (this.threads.has(threadId) || this.pending.has(threadId) || this.unresumable.has(threadId)) return;
+    if (this.threads.has(threadId) || this.pending.has(threadId) || this.skipped.has(threadId)) return;
     this.pending.add(threadId);
     try {
       await this.#resume(threadId, opts);
@@ -193,7 +203,7 @@ export class CodexAdapter extends EventEmitter {
       // thread/read fails too before the rollout exists, so only an explicit `ephemeral`
       // answer gives up; anything else is retried.
       const read = await this.rpc?.request('thread/read', { threadId }).catch(() => null);
-      if (read?.thread?.ephemeral === true) { this.unresumable.add(threadId); return; }
+      if (read?.thread?.ephemeral === true) { this.skipped.add(threadId); return; }
       const t = setTimeout(() => this.#subscribe(threadId, opts).catch((err) => this.emit('warn', `resume ${threadId}: ${err.message}`)), this.resumeRetryMs);
       t.unref?.();
     } finally { this.pending.delete(threadId); }
@@ -203,6 +213,7 @@ export class CodexAdapter extends EventEmitter {
     const r = await this.rpc.request('thread/resume', { threadId });
     const th = r.thread ?? {};
     if (th.ephemeral) return;
+    if (!isMainSession(th)) { this.#dismiss(threadId); return; }
     const running = (th.turns ?? []).findLast?.((t) => t.status === 'inProgress');
     const info = {
       cwd: th.cwd ?? r.cwd,
@@ -214,6 +225,13 @@ export class CodexAdapter extends EventEmitter {
     this.threads.set(threadId, info);
     this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch,
       preexisting, backlog: backlogSince(th.turns, this.connectedAt) });
+  }
+
+  /** A non-main thread: never subscribed again; `dismiss` lets the daemon close any Topic it has. */
+  #dismiss(threadId) {
+    if (this.skipped.has(threadId)) return;
+    this.skipped.add(threadId);
+    this.emit('dismiss', { id: threadId });
   }
 
   #drop(threadId) {
@@ -265,6 +283,7 @@ export class CodexAdapter extends EventEmitter {
         // Subscribe at once instead of waiting for the next poll; the backlog covers any
         // turn that still slipped in first.
         const id = p.thread?.id;
+        if (id && !isMainSession(p.thread)) { this.#dismiss(id); break; }
         if (id && !this.threads.has(id) && !p.thread.ephemeral) {
           this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
         }
