@@ -55,7 +55,14 @@ export class Bridge {
   #wire() {
     const c = this.codex;
     if (c) {
-      c.on('session-up', (s) => this.sessionUp('codex', s.threadId, s).catch((e) => this.log(`codex up: ${e.message}`)));
+      c.on('session-up', (s) => this.sessionUp('codex', s.threadId, s)
+        .then(async () => {
+          for (const b of s.backlog ?? []) {
+            if (b.kind === 'prompt') await this.prompt(`codex:${s.threadId}`, b.text);
+            else await this.final(`codex:${s.threadId}`, b.text, b.status);
+          }
+        })
+        .catch((e) => this.log(`codex up: ${e.message}`)));
       c.on('session-down', (s) => this.sessionDown(`codex:${s.threadId}`));
       c.on('prompt', (e) => this.prompt(`codex:${e.threadId}`, e.text));
       c.on('progress', (e) => this.progress(`codex:${e.threadId}`, e.text));

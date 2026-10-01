@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CodexAdapter, progressLine, probeDaemon } from './codex-adapter.mjs';
+import { CodexAdapter, progressLine, probeDaemon, backlogSince } from './codex-adapter.mjs';
 
 /** Fake app-server behind the adapter's transport interface. */
 function fakeAppServer({ loaded = ['t1'], threads = {} } = {}) {
@@ -58,7 +58,7 @@ test('start() returns false when the daemon probe fails, without connecting', as
 test('handshake then subscribe every loaded thread via thread/resume', async () => {
   const { srv, ups } = await started();
   assert.deepEqual(srv.calls.map((c) => c.method), ['initialize', 'initialized', 'thread/loaded/list', 'thread/resume']);
-  assert.deepEqual(ups, [{ threadId: 't1', cwd: '/w', branch: 'feat/x', name: null }]);
+  assert.deepEqual(ups, [{ threadId: 't1', cwd: '/w', branch: 'feat/x', name: null, backlog: [] }]);
 });
 
 test('ephemeral threads are skipped; unloaded threads go down on refresh', async () => {
@@ -85,6 +85,32 @@ test('deltas aggregate; final message is emitted on turn/completed; progress per
   assert.deepEqual(progress, ['$ npm test (exit 0)']);
   assert.deepEqual(finals, [{ threadId: 't1', status: 'completed', text: 'Hello' }]);
   assert.equal(a.status('t1'), 'idle');
+});
+
+test('backlogSince replays only turns started after the bridge connected', () => {
+  const turns = [
+    { startedAt: 100, status: 'completed', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'old' }] }] },
+    { startedAt: 200, status: 'completed', items: [
+      { type: 'userMessage', content: [{ type: 'text', text: 'hi' }] }, { type: 'agentMessage', text: 'Hello!' }] },
+    { startedAt: 201, status: 'inProgress', items: [{ type: 'userMessage', content: [{ type: 'text', text: 'next' }] }] },
+  ];
+  assert.deepEqual(backlogSince(turns, 150_000), [
+    { kind: 'prompt', text: 'hi' }, { kind: 'final', text: 'Hello!', status: 'completed' }, { kind: 'prompt', text: 'next' }]);
+  assert.deepEqual(backlogSince(turns, Infinity), []);
+});
+
+test('thread/started subscribes at once, once, and carries the backlog', async () => {
+  const fresh = { id: 't2', cwd: '/w', ephemeral: false, turns: [
+    { startedAt: Math.floor(Date.now() / 1000) + 5, status: 'completed', items: [
+      { type: 'userMessage', content: [{ type: 'text', text: 'hi' }] }, { type: 'agentMessage', text: 'Hello!' }] }] };
+  const { a, srv, ups } = await started({ loaded: [], threads: { t2: fresh } });
+  srv.push('thread/started', { thread: { id: 't2', ephemeral: false } });
+  srv.setLoaded(['t2']);
+  await a.refresh();
+  await tick(); await tick();
+  assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 1, 'resumed once despite the race');
+  assert.equal(ups.length, 1);
+  assert.deepEqual(ups[0].backlog, [{ kind: 'prompt', text: 'hi' }, { kind: 'final', text: 'Hello!', status: 'completed' }]);
 });
 
 test('a completed userMessage item is emitted as the prompt text', async () => {

@@ -83,9 +83,34 @@ export function progressLine(item) {
   }
 }
 
+const promptText = (item) => (item.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n').trim();
+
+/**
+ * Turns a session ran before the bridge subscribed to it — the opening prompt of a fresh
+ * thread lands before the next poll. Only turns that started after the bridge connected
+ * count, so a bridge restart never replays a thread's whole history.
+ * @returns {{kind: 'prompt'|'final', text: string, status?: string}[]}
+ */
+export function backlogSince(turns = [], sinceMs) {
+  const out = [];
+  for (const t of turns) {
+    if (!t?.startedAt || t.startedAt * 1000 < sinceMs) continue;
+    let agent = null;
+    for (const item of t.items ?? []) {
+      if (item.type === 'userMessage') { const text = promptText(item); if (text) out.push({ kind: 'prompt', text }); }
+      if (item.type === 'agentMessage' && item.text) agent = item.text;
+    }
+    if (t.status !== 'inProgress') out.push({ kind: 'final', text: agent ?? '', status: t.status });
+  }
+  return out;
+}
+
 export class CodexAdapter extends EventEmitter {
-  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge' } = {}) {
+  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now } = {}) {
     super();
+    this.now = now;
+    this.connectedAt = Infinity;
+    this.pending = new Set();
     this.connect = connect;
     this.probe = probe;
     this.clientName = clientName;
@@ -118,6 +143,7 @@ export class CodexAdapter extends EventEmitter {
     rpc.notify('initialized');
     this.rpc = rpc;
     this.transport = t;
+    this.connectedAt = this.now();
     return true;
   }
 
@@ -138,6 +164,13 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async #subscribe(threadId) {
+    // thread/started and the poll can race for the same thread; resume it once.
+    if (this.threads.has(threadId) || this.pending.has(threadId)) return;
+    this.pending.add(threadId);
+    try { await this.#resume(threadId); } finally { this.pending.delete(threadId); }
+  }
+
+  async #resume(threadId) {
     const r = await this.rpc.request('thread/resume', { threadId });
     const th = r.thread ?? {};
     if (th.ephemeral) return;
@@ -151,7 +184,8 @@ export class CodexAdapter extends EventEmitter {
       lastAgent: null,
     };
     this.threads.set(threadId, info);
-    this.emit('session-up', { threadId, cwd: info.cwd, branch: info.branch, name: info.name });
+    this.emit('session-up', { threadId, cwd: info.cwd, branch: info.branch, name: info.name,
+      backlog: backlogSince(th.turns, this.connectedAt) });
   }
 
   #drop(threadId) {
@@ -172,7 +206,7 @@ export class CodexAdapter extends EventEmitter {
       case 'item/completed': {
         const item = p.item ?? {};
         if (item.type === 'userMessage') {
-          const text = (item.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n').trim();
+          const text = promptText(item);
           if (text) this.emit('prompt', { threadId: p.threadId, text });
         }
         if (item.type === 'agentMessage' && th) {
@@ -197,6 +231,15 @@ export class CodexAdapter extends EventEmitter {
             this.approvals.delete(key);
             this.emit('approval-resolved', { key, threadId: a.threadId });
           }
+        }
+        break;
+      }
+      case 'thread/started': {
+        // Subscribe at once instead of waiting for the next poll; the backlog covers any
+        // turn that still slipped in first.
+        const id = p.thread?.id;
+        if (id && !this.threads.has(id) && !p.thread.ephemeral) {
+          this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
         }
         break;
       }

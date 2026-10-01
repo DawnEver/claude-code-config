@@ -103,6 +103,17 @@ test('prompts typed in the TUI are mirrored; ones injected from the Topic are no
   assert.equal(telegram.sent.at(-1).text, '> from phone', 'echo suppressed only once');
 });
 
+test('a codex backlog lands in the new Topic, after the session-up notice, in order', async () => {
+  const { codex, telegram } = make();
+  codex.emit('session-up', { threadId: 't9', cwd: '/proj', backlog: [
+    { kind: 'prompt', text: 'hi' }, { kind: 'final', text: 'Hello!', status: 'completed' }] });
+  await flush(); await flush();
+  const texts = telegram.sent.map((s) => s.text);
+  const up = texts.findIndex((t) => t.startsWith('session up'));
+  assert.deepEqual(texts.slice(up), [texts[up], '> hi', 'Hello!']);
+  assert.ok(telegram.sent.slice(up).every((s) => s.threadId === telegram.sent[up].threadId), 'all in the same Topic');
+});
+
 test('/status and /interrupt commands', async () => {
   const { bridge, telegram } = make();
   await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
