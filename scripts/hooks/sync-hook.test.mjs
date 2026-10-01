@@ -134,10 +134,13 @@ function fixture() {
 
 /** Run the hook as a separate process, as the harness would. */
 function runHook(repo, mode, payload = {}) {
+  // A session started by a provider launcher exports the already-synced marker;
+  // inherited here it would make every --pull a no-op.
+  const { CC_CONFIG_STARTUP_SYNCED: _launcherMarker, ...env } = process.env;
   const raw = execFileSync(process.execPath, [path.join(HERE, 'sync-hook.js'), mode], {
     cwd: repo, encoding: 'utf8', input: JSON.stringify(payload),
     stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-    env: { ...process.env, ...IDENT, CLAUDE_SYNC_REPO: repo },
+    env: { ...env, ...IDENT, CLAUDE_SYNC_REPO: repo },
   }).trim();
   return raw ? JSON.parse(raw).systemMessage : null;
 }
