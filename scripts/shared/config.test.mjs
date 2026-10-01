@@ -20,7 +20,7 @@ test('readMergedEnvSettings overlays machine-local keys over the shared config',
   const { shared, local } = fixture();
   writeFileSync(shared, JSON.stringify({
     'env:deepseek': { ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic', ANTHROPIC_MODEL: 'deepseek-v4-flash[1m]' },
-    fabric: { token: 'shared-token' },
+    fabric: { sessionDefaults: { provider: 'shared-provider' } },
   }));
   writeFileSync(local, JSON.stringify({
     'env:deepseek': { ANTHROPIC_API_KEY: 'sk-machine-local' },
@@ -29,7 +29,7 @@ test('readMergedEnvSettings overlays machine-local keys over the shared config',
   assert.equal(merged['env:deepseek'].ANTHROPIC_API_KEY, 'sk-machine-local');
   assert.equal(merged['env:deepseek'].ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic'); // shared non-secret preserved
   assert.equal(merged['env:deepseek'].ANTHROPIC_MODEL, 'deepseek-v4-flash[1m]');
-  assert.equal(merged.fabric.token, 'shared-token'); // untouched blocks untouched
+  assert.equal(merged.fabric.sessionDefaults.provider, 'shared-provider'); // untouched blocks untouched
 });
 
 test('readMergedEnvSettings returns the shared config unchanged when no local file exists', () => {

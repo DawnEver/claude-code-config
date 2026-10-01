@@ -20,11 +20,9 @@ file keeps base URLs / model pins and the local file keeps keys:
 
 Consumers: root `scripts/shared/config.mjs` `readMergedEnvSettings()` (`cc.js`,
 `codex.js`, `setup-vscode.js`) and fabric `engine/providers.mjs` `readRegistry()` +
-`engine/node-config.mjs` `loadFabricConfig()` (`~/.claude/claude_env_settings.local.json`).
+`engine/fabric-config.mjs` `loadFabricConfig()` (`~/.claude/claude_env_settings.local.json`).
 A machine without a local file fails with a clear "no apiKey for provider '<name>'" error
 from the launcher (each host must supply its own key — see `scripts/runtime/cc-launcher.mjs`).
-The same mechanism can override `fabric.token`/`fabric.tokens` per machine if you ever
-want per-host node tokens.
 
 ### Migrating from the legacy `env:<provider>` shape
 

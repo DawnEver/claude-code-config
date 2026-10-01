@@ -35,6 +35,9 @@ Cross-platform Claude Code & Codex config sync. The working tree lives OUTSIDE a
 cloud-synced folder and travels via git; only a three-file config payload rides cloud
 storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-architecture.md`
 — read it before touching anything path-related.
+The multi-workstation / multi-task collaboration harness (lane = branch + worktree + main session, family process owned by lab-commons,
+Telegram + remote control on the same live session, per-machine bridge in
+`scripts/bridge/`) is designed in `docs/harness-architecture.md`.
 
 ### Structure
 - `scripts/setup/`: `setup.js` (OS detection, symlinks), `install-cli-wrappers.js` (standalone cross-platform wrappers beside each host binary; no shell-profile dependency), `check-links.js` (shared self-heal for setup links — invoked by `scripts/hooks/setup-check-hook.js` on SessionStart and by both runtime launchers), `doctor.js` (the invariant checker — `npm run doctor`), `check-mac-notify.js` (macOS notification helper), `setup-vscode.js` (VS Code provider switching)
@@ -51,7 +54,7 @@ storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-archi
   `--replace` fix command; shared logic in `scripts/setup/check-links.js`, also run by
   `codex.js` since Codex has no session hooks)
 - `system-prompt/`: per-host platform prompts (`claude-base.md`, `codex-base.md`). Linked to `~/.claude/system-prompt` and `~/.codex/system-prompt` so `fabric.systemPromptFile` / `codex_config.toml model_instructions_file` resolve through a per-host junction, not a hardcoded OneDrive path. See `.claude/memory/2026/08/11/system-prompt-paths-symlink.md`.
-- `cc-market/`: the plugin marketplace (gitignored, its own repo — `DawnEver/cc-market`, cloned by setup). Five of its plugins are enabled and load-bearing here: `rem` (memory lifecycle, task engine `task-engine.js`, `/rem` + `/todo`), `sharp-review` (post-task review: hook, skill, workflow, findings sync via `post-review.js`), `evolve` (iterative review→fix loop), `traceme` (token/cost observability), `fabric` (multi-provider sessions and handoff). Three more are dormant — `watch`, `cc-latex`, `cc-academia` — installed or present but not enabled. See `cc-market/AGENTS.md`
+- `cc-market/`: the plugin marketplace (gitignored, its own repo — `DawnEver/cc-market`, cloned by setup). Five of its plugins are enabled and load-bearing here: `rem` (memory lifecycle, task engine `task-engine.js`, `/rem` + `/todo`), `sharp-review` (post-task review: hook, skill, workflow, findings sync via `post-review.js`), `evolve` (iterative review→fix loop), `traceme` (token/cost observability), `fabric` (single-machine multi-provider calls — `call`/`fan_out` — and handoff; its cross-machine node feature is retired — see `docs/harness-architecture.md`). Three more are dormant — `watch`, `cc-latex`, `cc-academia` — installed or present but not enabled. See `cc-market/AGENTS.md`
 - `skills/`: Custom skills (`migrate`) — the whole dir is symlinked to
   `~/.claude/skills`. Codex needs each skill linked **individually**
   (`discoverCodexSkillLinks()` in setup.js, because `~/.codex/skills` also holds Codex's own

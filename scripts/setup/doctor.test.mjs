@@ -6,7 +6,6 @@ import path from 'node:path';
 import {
   looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, parseHookCommands,
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks,
-  checkHostKeyedPaths,
   checkCodexPluginCache,
   checkPlugins,
 } from './doctor.js';
@@ -109,43 +108,17 @@ test('a clean payload passes', () => {
   assert.deepEqual(checkPayloadPaths(dir, ['x.json']), []);
 });
 
-// The invariant is "no value that would be WRONG on another host", not "no absolute path
-// ever". A path under byHost.<hostname> is read only by the host it names, so it cannot be
-// wrong elsewhere — failing on it would enforce a rule stricter than the design.
-test('a path under a byHost override is reported, but is not a failure', () => {
-  const dir = tmp();
-  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
-    serve: { byHost: { ws1: { projects: { p: 'D:/work/thing' } } } },
-  }));
-  const out = checkPayloadPaths(dir, ['x.json']);
-  assert.equal(out.length, 1);
-  assert.equal(out[0].level, 'WARN');
-  assert.equal(out[0].id, 'payload-host-keyed-path');
-});
-
-test('a path outside byHost in the same file is still a failure', () => {
-  const dir = tmp();
-  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
-    shared: { p: 'C:/Users/someone/thing' },
-    serve: { byHost: { ws1: { projects: { p: 'D:/work/thing' } } } },
-  }));
-  const out = checkPayloadPaths(dir, ['x.json']);
-  const levels = out.map((f) => f.level).sort();
-  assert.deepEqual(levels, ['FAIL', 'WARN']);
-});
-
 // Values are inspected through the parsed tree, so a compact file cannot hide a violation
-// behind a formatting accident — nor can a byHost exemption leak onto a value that merely
-// shares the line.
+// behind a formatting accident.
 test('the check is independent of JSON formatting', () => {
   const pretty = tmp(); const compact = tmp();
-  const data = { shared: { p: 'C:/Users/someone/thing' }, serve: { byHost: { a: { p: 'D:/ok' } } } };
+  const data = { shared: { p: 'C:/Users/someone/thing' }, other: { q: '~/fine' } };
   fs.writeFileSync(path.join(pretty, 'x.json'), JSON.stringify(data, null, 2));
   fs.writeFileSync(path.join(compact, 'x.json'), JSON.stringify(data));
   const a = checkPayloadPaths(pretty, ['x.json']).map((f) => f.level).sort();
   const b = checkPayloadPaths(compact, ['x.json']).map((f) => f.level).sort();
   assert.deepEqual(a, b);
-  assert.deepEqual(a, ['FAIL', 'WARN']);
+  assert.deepEqual(a, ['FAIL']);
 });
 
 // The 2026-08-29 incident in miniature: the payload kept an old shape, nothing
@@ -252,36 +225,3 @@ test('the payload check can actually fail on the real sync dir', () => {
   assert.ok(out.some((f) => f.level === 'FAIL'), 'a real violation must produce a FAIL');
 });
 
-// ── a host's own byHost entry, sitting in the shared file ──
-// Not a leak (only this host reads it) but the wrong file: the payload should carry no
-// machine path, and ~/.claude/claude_env_settings.local.json is the designed home for
-// per-machine values. Reported on the host it names, so each machine is told what to move
-// and the shared file drains host by host — rather than the cleanup living as a note in a
-// design document that nobody acts on.
-
-test('a byHost entry for THIS host is reported with the file to move it to', () => {
-  const dir = tmp();
-  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
-    serve: { byHost: { 'THIS-BOX': { projects: { p: 'D:/work/thing' } } } },
-  }));
-  const out = checkHostKeyedPaths(dir, ['x.json'], 'this-box');   // hostname match is case-insensitive
-  assert.equal(out.length, 1);
-  assert.equal(out[0].id, 'payload-own-host-path');
-  assert.match(out[0].detail, /claude_env_settings\.local\.json/);
-});
-
-test("another host's byHost entry is not this host's problem", () => {
-  const dir = tmp();
-  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
-    serve: { byHost: { 'OTHER-BOX': { projects: { p: 'D:/work/thing' } } } },
-  }));
-  assert.deepEqual(checkHostKeyedPaths(dir, ['x.json'], 'this-box'), []);
-});
-
-test('a portable value under this host\'s byHost entry is already fine', () => {
-  const dir = tmp();
-  fs.writeFileSync(path.join(dir, 'x.json'), JSON.stringify({
-    serve: { byHost: { 'THIS-BOX': { projects: { p: '~/work/thing' } } } },
-  }));
-  assert.deepEqual(checkHostKeyedPaths(dir, ['x.json'], 'this-box'), []);
-});

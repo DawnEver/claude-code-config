@@ -27,53 +27,26 @@ clean/keep).
 
 ## Injection wiring (fabric)
 
-`claude_env_settings.json` → `fabric.systemPromptFile` = platform default;
-`fabric.profiles.*` may override:
+`claude_env_settings.json` -> `fabric.systemPromptFile` is the platform default for
+fabric's `call`/`fan_out` spawns:
 
 ```json
-{ "fabric": {
-    "systemPromptFile": "~/.claude/system-prompt/claude-base.md",
-    "profiles": {
-      "writer":   { "style": "academic" },
-      "executor": { "toolsPreset": "exec", "systemPromptFile": "~/.claude/system-prompt/dist/academic.claude.md" },
-      "planner":  { "toolsPreset": "coord", "allowedTools": "Read,Glob,Grep,SendMessage" }
-    }
-}}
+{ "fabric": { "systemPromptFile": "~/.claude/system-prompt/claude-base.md" } }
 ```
 
 Paths go through `~/.claude/system-prompt`, never a machine path: `setup.js` links the repo's
 `system-prompt/` there on every host, so the same config file resolves correctly on a machine
 with a different username, drive letter, or checkout location. A hardcoded path here is the
-bug `.claude/rules/rem/path-conventions.md` exists to prevent — this doc previously taught one
-by example. `dist/` is generated per machine by `build.mjs` and is gitignored.
-
-Priority: `profile.systemPromptFile` > `profile.style` (auto-built) >
-`fabric.systemPromptFile`. Both spawn paths (persistent `openSession`,
-stateless `spawnChild`) honor it; `--system-prompt-file`/`--tools` are
-profile-owned (extraArgs cannot override). codex ignores profiles (app-server
-has no tool/permission surface) — it uses `model_instructions_file` + AGENTS.md.
-
-## Tool presets (`toolsPreset` → `--tools`, schema trimming, NOT permissions)
-
-| preset | tools | schema |
-|--------|-------|--------|
-| exec | Bash, Read, Write, Edit, Glob, Grep | ~6.1k tok |
-| coord | Read, Glob, Grep, Bash, SendMessage, PushNotification, WebFetch, WebSearch | ~7.7k tok |
-| daily | exec + Skill, Agent, Worktree×2, Monitor, ScheduleWakeup, WebFetch, WebSearch, SendMessage, PushNotification | ~16.4k tok |
-| full | (no `--tools`) all 31 | ~33.6k tok |
-
-`--tools` trims the injected schema; `--allowedTools` is the permission control
-(keep them aligned: a coord agent with only `--tools` still gets asked before
-every action — set `allowedTools` to the same list when the role should act
-unprompted). MCP tools (fabric's 15) auto-attach and are unaffected.
+bug `.claude/rules/rem/path-conventions.md` exists to prevent. `dist/` is generated per
+machine by `build.mjs` and is gitignored.
 
 ## Styles
 
 Dropping `name.md` with frontmatter into any discovered output-styles dir adds a
 style (`~/.claude/output-styles/`, project `.claude/output-styles/`, or
-`STYLE_SEARCH_DIRS`). `profile.style: "academic"` picks it; build happens
-automatically when missing/stale. `keep-coding-instructions: false` = the style
-body carries the persona (post/academic); `true` layers on top.
+`STYLE_SEARCH_DIRS`); build happens automatically when missing/stale.
+`keep-coding-instructions: false` = the style body carries the persona
+(post/academic); `true` layers on top.
 
 ## codex notes
 

@@ -137,20 +137,15 @@ export function checkPayloadPaths(syncDir, files = SYNC_PAYLOAD_FILES) {
     try { text = fs.readFileSync(p, 'utf8'); } catch { continue; }
 
     // JSON payloads are inspected value-by-value rather than line-by-line, so a compact
-    // file cannot hide a violation behind a formatting accident and a byHost exemption
-    // cannot leak onto a neighbouring value that merely shares the line.
+    // file cannot hide a violation behind a formatting accident.
     if (name.endsWith('.json')) {
       let parsed;
       try { parsed = JSON.parse(text); } catch { continue; }   // reported by checkPayloadShape
       for (const { keyPath, value } of walkStrings(parsed)) {
         const kinds = absolutePathKinds(value);
         if (!kinds.length) continue;
-        const exempt = keyPath.includes('byHost');
-        out.push(finding(exempt ? 'WARN' : 'FAIL', exempt ? 'payload-host-keyed-path' : 'payload-abs-path',
-          `${name} ${keyPath.join('.')} has a ${kinds.join(' + ')}${exempt ? ', under a byHost override' : ''}`,
-          exempt
-            ? `${value} — read only by the host it names, so it cannot be wrong elsewhere; move it to that host's claude_env_settings.local.json to get it out of the shared file`
-            : `${value} — this file syncs to every host, so no host's path may appear in it`));
+        out.push(finding('FAIL', 'payload-abs-path', `${name} ${keyPath.join('.')} has a ${kinds.join(' + ')}`,
+          `${value} — this file syncs to every host, so no host's path may appear in it`));
       }
       continue;
     }
@@ -322,49 +317,6 @@ export function checkHygiene(root = sourceDir) {
   return out;
 }
 
-/**
- * A `byHost` entry for THIS host, sitting in the shared payload.
- *
- * It is not a leak — only this host reads it — but it is in the wrong file. The shared
- * payload should carry no machine path at all, and each host's own
- * `~/.claude/claude_env_settings.local.json` is the designed home for per-machine values
- * (readers deep-merge local over shared). This check reports it on the host it names, so
- * each machine is told what to move and the shared file drains itself host by host, rather
- * than the cleanup living as a note in a design document that nobody acts on.
- */
-export function checkHostKeyedPaths(syncDir, files = SYNC_PAYLOAD_FILES, hostname = os.hostname()) {
-  const out = [];
-  for (const name of files) {
-    if (!name.endsWith('.json')) continue;
-    const p = path.join(syncDir, name);
-    if (!fs.existsSync(p)) continue;
-    let parsed;
-    try { parsed = JSON.parse(fs.readFileSync(p, 'utf8')); } catch { continue; }
-
-    const visit = (node, keyPath) => {
-      if (!node || typeof node !== 'object') return;
-      for (const [key, value] of Object.entries(node)) {
-        if (key === 'byHost' && value && typeof value === 'object') {
-          for (const [host, block] of Object.entries(value)) {
-            if (host.toLowerCase() !== String(hostname).toLowerCase()) continue;
-            for (const { keyPath: inner, value: v } of walkStrings(block)) {
-              if (!absolutePathKinds(v).length) continue;
-              out.push(finding('WARN', 'payload-own-host-path',
-                `${name} ${[...keyPath, 'byHost', host, ...inner].join('.')} is this host's own path, in the shared file`,
-                `${v} — move it to ~/.claude/claude_env_settings.local.json under the same key path; ` +
-                'readers deep-merge local over shared, so the shared entry can then be deleted'));
-            }
-          }
-        } else {
-          visit(value, [...keyPath, key]);
-        }
-      }
-    };
-    visit(parsed, []);
-  }
-  return out;
-}
-
 // ── runner ──
 
 export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME } = {}) {
@@ -375,7 +327,6 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
   return [
     ...checkHooks(settings, home),
     ...checkPayloadPaths(syncDir),
-    ...checkHostKeyedPaths(syncDir),
     ...checkPayloadShape(syncDir, repoRoot),
     ...checkLinks({ repoRoot, syncDir }),
     ...checkPlugins(settings, home),

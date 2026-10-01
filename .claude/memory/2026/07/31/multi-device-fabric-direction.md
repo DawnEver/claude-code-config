@@ -2,6 +2,8 @@
 name: multi-device-fabric-direction
 ---
 
+> SUPERSEDED 2026-10-01 by `2026/10/01/harness-session-bridge-design.md` (fabric cross-machine is being archived).
+
 # Multi-device direction: message-passing teammates, no shared FS
 
 Session decision (2026-07-31): multi-device work distribution for fabric uses a **pure

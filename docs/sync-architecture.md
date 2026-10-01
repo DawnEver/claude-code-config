@@ -347,13 +347,8 @@ rolling back before step 7.
   (`payload-abs-path` / `hygiene-abs-path`), and runs the same checks at SessionStart via
   `--hook`. This section previously said the invariant was "asserted but not yet enforced";
   it is now a check, and the `motronics-studio` example it cited is fixed — this host's
-  entry is `~/Documents/PEMC/motronics-studio`, which fabric expands (`node-config.mjs`).
-  The exception is a path under `fabric.serve.byHost.<hostname>`. The invariant that
-  matters is "no value that would be *wrong* on another host", and a byHost-keyed value is
-  read only by the host it names, so the doctor reports those as warnings rather than
-  failures. Two remain (WS1's and WS2's `D:` paths) — `~` cannot express another drive, and
-  moving each into that host's own `~/.claude/claude_env_settings.local.json` is the way to
-  get it out of the shared file entirely. Worth doing on each host; not urgent.
+  entry is `~/Documents/PEMC/motronics-studio`, which fabric expands (`fabric-config.mjs`).
+  There is no exception: every absolute path in the payload fails.
 
 - **Files-On-Demand placeholders.** A dehydrated cloud file satisfies `existsSync` but its
   first read can block on a network fetch or fail offline, and the launchers read

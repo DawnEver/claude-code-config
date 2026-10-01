@@ -97,14 +97,14 @@ test('migrated: non-env:* top-level keys (e.g. fabric overrides) are preserved v
   const { path } = fixture();
   writeFileSync(path, JSON.stringify({
     'env:deepseek': { ANTHROPIC_API_KEY: 'sk-x' },
-    fabric: { token: 'local-fabric-override' },
+    fabric: { sessionDefaults: { provider: 'local-override' } },
   }));
   const result = migrateLocalEnvSettings({ localPath: path });
   assert.equal(result.status, 'migrated');
   const after = JSON.parse(readFileSync(path, 'utf8'));
   assert.deepEqual(after, {
     providers: { deepseek: { apiKey: 'sk-x' } },
-    fabric: { token: 'local-fabric-override' },
+    fabric: { sessionDefaults: { provider: 'local-override' } },
   });
 });
 
