@@ -14,6 +14,9 @@ import { existsSync } from 'fs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
+import { readBridgeConfig } from '../bridge/context.mjs';
+
+export const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
 
 /**
  * Build the env + args for spawning the `claude` CLI with a given provider.
@@ -49,7 +52,11 @@ export function buildClaudeInvocation({
   Object.assign(env, provenanceEnv({ machine, agent: 'claude', userName: gitUserName, env }));
 
   if (!provider || provider === 'claude') {
-    return { env, args: [...extraArgs], provider: null, available: [], error: null };
+    // A machine with its own bot token runs the session bridge (docs/bridge.md), so every
+    // official session loads its channel. Third-party providers lack channels entirely.
+    const channel = readBridgeConfig({ sharedPath: envSettingsPath, localPath }).botToken
+      && !extraArgs.includes(BRIDGE_CHANNEL_ARGS[0]) ? BRIDGE_CHANNEL_ARGS : [];
+    return { env, args: [...channel, ...extraArgs], provider: null, available: [], error: null };
   }
 
   if (!existsSync(envSettingsPath)) {

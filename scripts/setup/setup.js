@@ -2,7 +2,8 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
+import { prepareSpawn } from '../runtime/win-spawn.mjs';
 import { fileURLToPath } from 'url';
 import { checkMacNotify } from './check-mac-notify.js';
 import { installCliWrappers } from './install-cli-wrappers.js';
@@ -685,6 +686,16 @@ export function setup(options = {}) {
     console.log('\n--- Session bridge ---');
     if (runAction('install', planService())) console.log(`OK    ${SERVICE_NAME} service installed`);
     else { console.log(`ERR   ${SERVICE_NAME} service install failed - see docs/bridge.md`); counters.errors++; }
+    // ccc loads `server:session-bridge` as a channel; the user-scope MCP server it names
+    // lives in this machine's ~/.claude.json, so the absolute repo path never syncs.
+    const server = path.join(sourceDir, 'claude_plugins', 'session-bridge', 'server.mjs');
+    const claude = (args) => {
+      const s = prepareSpawn('claude', args);
+      return spawnSync(s.command, s.args, { ...s.options, encoding: 'utf8', windowsHide: true });
+    };
+    if (claude(['mcp', 'get', 'session-bridge']).status === 0) console.log('OK    session-bridge MCP server already registered');
+    else if (claude(['mcp', 'add', '-s', 'user', 'session-bridge', '--', 'node', server]).status === 0) console.log('OK    session-bridge MCP server registered (user scope)');
+    else { console.log('ERR   could not register the session-bridge MCP server - see docs/bridge.md'); counters.errors++; }
   }
 
   console.log(`\nDone: ${counters.created} linked, ${counters.skipped} skipped, ${counters.errors} errors`);

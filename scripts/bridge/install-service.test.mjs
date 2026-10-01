@@ -7,14 +7,18 @@ import { planService, runAction, SERVICE_NAME } from './install-service.mjs';
 
 const home = path.join(os.tmpdir(), 'svc-home');
 
-test('windows: logon task, hidden via conhost --headless, daemon via the ~/.claude link', () => {
+test('windows: per-user Run key (no admin), hidden via conhost --headless, daemon via the ~/.claude link', () => {
   const p = planService({ platform: 'win32', home, nodePath: 'C:\\node\\node.exe' });
-  const create = p.install[0];
-  assert.deepEqual(create.slice(0, 8), ['schtasks', '/Create', '/F', '/TN', SERVICE_NAME, '/SC', 'ONLOGON', '/RL']);
-  const tr = create.at(-1);
-  assert.match(tr, /^conhost\.exe --headless "C:\\node\\node\.exe" /);
-  assert.ok(tr.includes(path.join(home, '.claude', 'scripts', 'bridge', 'daemon.mjs')));
-  assert.ok(tr.length < 262, 'schtasks /TR limit');
+  const [reg, start] = p.install;
+  assert.deepEqual(reg.slice(0, 5), ['reg', 'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', SERVICE_NAME]);
+  const cmd = reg[reg.indexOf('/d') + 1];
+  assert.match(cmd, /^conhost\.exe --headless "C:\\node\\node\.exe" /);
+  assert.ok(cmd.includes(path.join(home, '.claude', 'scripts', 'bridge', 'daemon.mjs')));
+  // Starts now too, detached and hidden; a second daemon refuses to start, so re-install is safe.
+  assert.equal(start[0], 'powershell');
+  assert.match(start.at(-1), /^Start-Process -WindowStyle Hidden -FilePath 'conhost\.exe' -ArgumentList /);
+  assert.ok(!p.install.flat().includes('schtasks'), 'ONLOGON tasks need admin');
+  assert.equal(p.uninstall[0][1], 'delete');
   assert.deepEqual(p.files, []);
 });
 

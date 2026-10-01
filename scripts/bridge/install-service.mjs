@@ -3,7 +3,7 @@
 //
 //   node scripts/bridge/install-service.mjs [install|uninstall|status]
 //
-// Windows: Task Scheduler task at logon, run through `conhost --headless` so no window.
+// Windows: HKCU Run key (starts at logon, no admin), run through `conhost --headless` so no window.
 // macOS:   launchd LaunchAgent (~/Library/LaunchAgents), KeepAlive.
 // Linux:   systemd --user unit, Restart=on-failure.
 //
@@ -19,6 +19,7 @@ import { isMain } from '../shared/is-main.mjs';
 
 export const SERVICE_NAME = 'cc-config-bridge';
 export const LAUNCHD_LABEL = 'com.cc-config.bridge';
+const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 
 const xml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const q = (s) => `"${String(s).replace(/"/g, '\\"')}"`;
@@ -32,13 +33,18 @@ export function planService({ platform = process.platform, home = os.homedir(), 
   const daemon = path.join(home, '.claude', 'scripts', 'bridge', 'daemon.mjs');
   const log = path.join(home, '.claude', 'bridge', 'daemon.log');
   if (platform === 'win32') {
-    const tr = `conhost.exe --headless ${q(nodePath)} ${q(daemon)} --log ${q(log)}`;
+    // A per-user Run key, not a Task Scheduler ONLOGON task: creating one of those needs an
+    // elevated shell, and setup runs unelevated.
+    const args = `--headless ${q(nodePath)} ${q(daemon)} --log ${q(log)}`;
+    const ps = (script) => ['powershell', '-NoProfile', '-NonInteractive', '-Command', script];
+    const mine = `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*bridge*daemon.mjs*' }`;
     return {
       files: [],
-      install: [['schtasks', '/Create', '/F', '/TN', SERVICE_NAME, '/SC', 'ONLOGON', '/RL', 'LIMITED', '/TR', tr],
-        ['schtasks', '/Run', '/TN', SERVICE_NAME]],
-      uninstall: [['schtasks', '/End', '/TN', SERVICE_NAME], ['schtasks', '/Delete', '/F', '/TN', SERVICE_NAME]],
-      status: [['schtasks', '/Query', '/TN', SERVICE_NAME, '/V', '/FO', 'LIST']],
+      install: [['reg', 'add', RUN_KEY, '/v', SERVICE_NAME, '/t', 'REG_SZ', '/d', `conhost.exe ${args}`, '/f'],
+        ps(`Start-Process -WindowStyle Hidden -FilePath 'conhost.exe' -ArgumentList '${args}'`)],
+      uninstall: [['reg', 'delete', RUN_KEY, '/v', SERVICE_NAME, '/f'],
+        ps(`${mine} | ForEach-Object { Stop-Process -Id $_.ProcessId }`)],
+      status: [['reg', 'query', RUN_KEY, '/v', SERVICE_NAME], ps(`${mine} | Select-Object ProcessId, CommandLine`)],
       remove: [],
     };
   }

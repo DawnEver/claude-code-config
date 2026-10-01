@@ -68,24 +68,21 @@ subscribed (`thread/resume` needs a rollout) and are skipped. If the daemon is n
 
 ### Claude sessions
 
-Claude has no shared daemon; each session must load the **session-bridge** channel
-(`claude_plugins/session-bridge/`, plain Node, no dependencies, no Bun). Channels are a
-research preview and custom channels are not on the allowlist, so:
+Claude has no shared daemon; each session loads the **session-bridge** channel
+(`claude_plugins/session-bridge/`, plain Node, no dependencies, no Bun). Nothing to do by
+hand once this machine has a `bridge.botToken`:
 
-```sh
-# once per machine: register the MCP server (user scope)
-claude mcp add -s user session-bridge -- node "<repo>/claude_plugins/session-bridge/server.mjs"
-# per session
-claude --dangerously-load-development-channels server:session-bridge
-```
+- `npm run setup` registers the user-scope MCP server (`claude mcp add -s user
+  session-bridge -- node <repo>/claude_plugins/session-bridge/server.mjs`; the absolute
+  path lives in this machine's `~/.claude.json`, never in synced config).
+- `ccc` (and any official-provider `cc.js` launch) adds
+  `--dangerously-load-development-channels server:session-bridge` by itself, because
+  custom channels are not on the research-preview allowlist. Third-party providers
+  (`ccds`) never get it — they lack channels.
 
-Alternatively load it as a plugin: `claude --plugin-dir <repo>/claude_plugins/session-bridge
---dangerously-load-development-channels plugin:session-bridge@<marketplace>` (the exact
-`@marketplace` for a `--plugin-dir` plugin is unverified).
-
-Caveat: a user-scope MCP server also starts in sessions launched **without** the channel
-flag; it still registers with the daemon (so a Topic appears) but Claude Code silently
-drops channel messages there. Launch with the flag in sessions you want to drive.
+Caveat: a session started with plain `claude` (not `ccc`) still starts the user-scope MCP
+server, so a Topic appears, but without the flag Claude Code silently drops channel
+messages there. Start sessions you want to drive with `ccc`.
 
 Requires Anthropic auth (claude.ai login); third-party providers (`ccds`) lack channels.
 

@@ -22,11 +22,11 @@ function fixture() {
 }
 
 test('default Claude (provider=null) leaves env untouched beyond PROVIDER_KEYS strip', () => {
-  const { shared } = fixture();
+  const { shared, local } = fixture();
   writeFileSync(shared, '{}');
   const before = { ...process.env };
   const { env, args, provider: used, error } = buildClaudeInvocation({
-    provider: null, extraArgs: ['--foo'], envSettingsPath: shared,
+    provider: null, extraArgs: ['--foo'], envSettingsPath: shared, localPath: local,
   });
   assert.equal(error, null);
   assert.equal(used, null);
@@ -195,4 +195,43 @@ test('provenance: no machine name -> nothing injected', () => {
   const { env } = buildClaudeInvocation({ provider: null, envSettingsPath: '/nonexistent',
     machine: null, gitUserName: 'Me' });
   assert.equal(env.HARNESS_MACHINE, process.env.HARNESS_MACHINE);
+});
+
+// ── session bridge channel (docs/bridge.md) ──
+
+const CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
+
+function bridgeFixture(botToken) {
+  const f = fixture();
+  writeFileSync(f.shared, JSON.stringify({
+    providers: { deepseek: { url: 'https://api.deepseek.com' } },
+    bridge: { fallbackChatId: -100, projects: {} },
+  }));
+  writeFileSync(f.local, JSON.stringify(botToken ? { bridge: { botToken } } : {}));
+  return f;
+}
+
+test('bridge: a configured bot token loads the session-bridge channel on official Claude', () => {
+  const { shared, local } = bridgeFixture('123:abc');
+  const { args } = buildClaudeInvocation({ provider: null, extraArgs: ['-c'], envSettingsPath: shared, localPath: local });
+  assert.deepEqual(args, [...CHANNEL_ARGS, '-c']);
+});
+
+test('bridge: no bot token -> no channel flag', () => {
+  const { shared, local } = bridgeFixture(null);
+  const { args } = buildClaudeInvocation({ provider: null, envSettingsPath: shared, localPath: local });
+  assert.deepEqual(args, []);
+});
+
+test('bridge: a third-party provider never gets the channel (channels need Anthropic auth)', () => {
+  const { shared, local } = bridgeFixture('123:abc');
+  const { args, error } = buildClaudeInvocation({ provider: 'deepseek', envSettingsPath: shared, localPath: local });
+  assert.equal(error, null);
+  assert.ok(!args.includes('--dangerously-load-development-channels'));
+});
+
+test('bridge: an explicit channel flag from the user is not duplicated', () => {
+  const { shared, local } = bridgeFixture('123:abc');
+  const { args } = buildClaudeInvocation({ provider: null, extraArgs: [...CHANNEL_ARGS], envSettingsPath: shared, localPath: local });
+  assert.deepEqual(args, CHANNEL_ARGS);
 });
