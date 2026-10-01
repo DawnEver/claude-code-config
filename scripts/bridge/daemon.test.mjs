@@ -285,3 +285,15 @@ test('a mirror that beats the channel registration is held until the session is 
   await until(() => telegram.sent.length === 2);
   assert.deepEqual(telegram.sent.map((s) => s.text), ['session up: WS1/claude/main (proj)', '> early']);
 });
+
+test('a new Topic is unpinned after its first post; a failure is logged once and ignored', async () => {
+  const { bridge, telegram } = make();
+  const logs = [];
+  bridge.log = (m) => logs.push(m);
+  const unpinned = [];
+  telegram.unpinAllForumTopicMessages = async (c, t) => { unpinned.push([c, t, telegram.sent.length]); throw new Error('not enough rights'); };
+  await bridge.sessionUp('codex', 't1', { cwd: '/proj' });
+  await bridge.sessionUp('codex', 't2', { cwd: '/proj' });
+  assert.deepEqual(unpinned, [[-100, 100, 1], [-100, 101, 2]], 'after the session-up post');
+  assert.equal(logs.filter((l) => /unpin/.test(l)).length, 1);
+});

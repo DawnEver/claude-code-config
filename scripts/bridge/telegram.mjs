@@ -158,6 +158,10 @@ export class TelegramClient {
     return this.call('reopenForumTopic', { chat_id: chatId, message_thread_id: threadId });
   }
 
+  unpinAllForumTopicMessages(chatId, threadId) {
+    return this.call('unpinAllForumTopicMessages', { chat_id: chatId, message_thread_id: threadId });
+  }
+
   answerCallbackQuery(id, text) {
     return this.call('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}) });
   }

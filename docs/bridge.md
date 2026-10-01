@@ -25,6 +25,10 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs (one per machine, ow
 - **Ended sessions close their Topic**: `session ended: <title>`, then `closeForumTopic`.
   A session re-attached to a cached Topic calls `reopenForumTopic` once before its next post
   (`TOPIC_NOT_MODIFIED` ignored). Needs the bot's Manage Topics right.
+- **No pin noise**: Telegram auto-pins a new Topic's first message; the daemon calls
+  `unpinAllForumTopicMessages` right after `session up` (a missing pin right is logged once).
+- Claude sessions are keyed by `CLAUDE_CODE_SESSION_ID`, so `--resume` / `--continue` reuses
+  the cached Topic (reopened) instead of creating a new one.
 - **Leftovers stay quiet.** The Codex daemon keeps a thread loaded after its TUI exits, so
   a bridge (re)start sees every thread opened since the daemon started. Those get no Topic
   and no `session up` until they show activity again; sessions that appear while the

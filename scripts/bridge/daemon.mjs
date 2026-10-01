@@ -168,6 +168,13 @@ export class Bridge {
         this.log(`createForumTopic ${s.title}: ${e.message} (posting without a Topic)`);
       }
       await this.#post(s, `session up: ${s.title}${s.project ? ` (${s.project})` : ''}`);
+      // Telegram auto-pins a Topic's first message; that pin is noise here.
+      if (s.topicId) {
+        await this.#serial(s, () => this.telegram.unpinAllForumTopicMessages(s.chatId, s.topicId)).catch((e) => {
+          if (!this.unpinWarned) this.log(`unpinAllForumTopicMessages: ${e.message} (further failures not logged)`);
+          this.unpinWarned = true;
+        });
+      }
     })();
     return s.opening;
   }
