@@ -23,7 +23,7 @@ test('checkMachineName: WARN when missing or invalid, silent when valid', () => 
   assert.match(missing.detail, /--machine <NAME>/);
   fs.writeFileSync(file, '{"name":"a b"}');
   assert.equal(checkMachineName(file).length, 1);
-  fs.writeFileSync(file, '{"name":"WS1-duipezztz"}');
+  fs.writeFileSync(file, '{"name":"WS1"}');
   assert.deepEqual(checkMachineName(file), []);
 });
 

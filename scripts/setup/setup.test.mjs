@@ -38,8 +38,8 @@ test('parseSetupArgs: reads the flags setup understands', () => {
 });
 
 test('parseSetupArgs: --machine <NAME>', () => {
-  const { machine, machineFlagPresent } = parseSetupArgs(['--machine', 'WS1-duipezztz']);
-  assert.deepEqual({ machine, machineFlagPresent }, { machine: 'WS1-duipezztz', machineFlagPresent: true });
+  const { machine, machineFlagPresent } = parseSetupArgs(['--machine', 'WS1']);
+  assert.deepEqual({ machine, machineFlagPresent }, { machine: 'WS1', machineFlagPresent: true });
   assert.equal(parseSetupArgs(['--machine']).machineFlagPresent, true);
   assert.equal(parseSetupArgs(['--machine']).machine, undefined);
 });
