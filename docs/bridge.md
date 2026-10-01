@@ -32,8 +32,11 @@ and is never mirrored:
 - Claude (`claude_plugins/session-bridge/server.mjs`): in-process subagents never touch the
   bridge. A nested `claude` process (a plugin's `claude -p`, `ccc -p` run from a session's
   shell) is detected because it inherited an outer session's `CLAUDE_PID` (a top-level
-  session sets none for its MCP servers), or because a second claude sits above its own in
-  the process tree. Its channel keeps serving MCP but never registers; its hook calls are
+  session sets none for its MCP servers), or because a second claude process (the CLI
+  binary itself, not a shim or launcher naming it) sits above its own in the process tree.
+  The tree walk is best-effort: under Git Bash (MSYS) the Windows parent chain stops at
+  `sh.exe`, but a session's shell always carries `CLAUDE_PID`. `channel-<pid>.log` records
+  the ancestry and the decision. Its channel keeps serving MCP but never registers; its hook calls are
   dropped after the 30 s hold.
 - A Topic a session got before it was known to be non-main is closed quietly
   (`dismiss`) and deleted with the other ended Topics.

@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import net from 'net';
 import path from 'path';
-import { DaemonLink, createChannelServer, isMainSession, ancestorsOf } from './server.mjs';
+import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess } from './server.mjs';
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
 
 const until = async (fn, ms = 3000) => {
@@ -157,6 +157,25 @@ test('isMainSession: a channel whose claude was started from inside another clau
   assert.equal(isMainSession({ ppid: 10, claudePid: null, ancestors: [claude, shell, launcher, outer] }), false);
   assert.equal(isMainSession({ ppid: 10, claudePid: null, ancestors: [claude, { pid: 5, cmd: 'node /x/node_modules/@anthropic-ai/claude-code/cli.js' }] }), false);
   assert.equal(isMainSession({ ppid: 10, claudePid: null, ancestors: [claude, { pid: 5, cmd: String.raw`node C:\Users\u\.claude\scripts\hooks\x.js` }] }), true, '.claude paths are not claude');
+});
+
+test('isClaudeProcess judges the program, not its arguments (real Windows shapes)', () => {
+  assert.equal(isClaudeProcess(String.raw`"C:\Users\linxu\nodejs\\node_modules\@anthropic-ai\claude-code\bin\claude.exe"    `), true);
+  assert.equal(isClaudeProcess('/usr/local/bin/claude --resume x'), true);
+  assert.equal(isClaudeProcess('node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js -p hi'), true);
+  assert.equal(isClaudeProcess(String.raw`C:\WINDOWS\system32\cmd.exe /d /s /c "C:\Users\linxu\nodejs\claude.CMD"`), false, 'npm shim');
+  assert.equal(isClaudeProcess('node  "C:/Users/linxu/.claude/scripts/runtime/cc.js" claude'), false, 'ccc launcher');
+  assert.equal(isClaudeProcess(String.raw`"C:\Program Files\Git\bin\bash.exe" -c "claude -p x"`), false);
+});
+
+test('a top-level ccc session (launcher, shim, claude) is main; one started from a session shell is not', () => {
+  const own = { pid: 4, cmd: String.raw`"C:\n\node_modules\@anthropic-ai\claude-code\bin\claude.exe"` };
+  const shim = { pid: 3, cmd: String.raw`C:\WINDOWS\system32\cmd.exe /d /s /c "C:\n\claude.CMD"` };
+  const cc = { pid: 2, cmd: 'node  "C:/u/.claude/scripts/runtime/cc.js" claude' };
+  const term = { pid: 1, cmd: 'cmd.exe' };
+  assert.equal(isMainSession({ ppid: 4, claudePid: undefined, ancestors: [own, shim, cc, term] }), true);
+  const outer = { pid: 0, cmd: String.raw`"C:\n\node_modules\@anthropic-ai\claude-code\bin\claude.exe"` };
+  assert.equal(isMainSession({ ppid: 4, claudePid: undefined, ancestors: [own, shim, cc, { pid: 9, cmd: 'bash.exe' }, outer] }), false);
 });
 
 test('ancestorsOf walks a process table upward from a pid', () => {

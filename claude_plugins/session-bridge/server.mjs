@@ -155,7 +155,19 @@ export function createChannelServer({ write, link }) {
   };
 }
 
-const CLAUDE_CMD = /(^|[\s"\\/])claude(\.exe)?("|\s|$)|@anthropic-ai[\\/]claude-code[\\/]/i;
+/** The first `n` tokens of a command line, honouring double quotes. */
+function tokens(cmd, n) {
+  return [...String(cmd).matchAll(/"([^"]*)"|(\S+)/g)].slice(0, n).map((m) => m[1] ?? m[2]);
+}
+
+const base = (p) => String(p ?? '').split(/[\\/]/).pop().toLowerCase();
+
+/** Is this command line the claude CLI itself (not a shim, launcher or shell that names it)? */
+export function isClaudeProcess(cmd) {
+  const [prog, script] = tokens(cmd, 2);
+  if (/^claude(\.exe)?$/.test(base(prog))) return true;
+  return /^node(\.exe)?$/.test(base(prog)) && /@anthropic-ai[\\/]claude-code[\\/]/i.test(script ?? '');
+}
 
 /** pid -> {ppid, cmd} for every process; empty when the OS will not say. */
 export function processTable() {
@@ -176,7 +188,7 @@ export function processTable() {
 }
 
 /** [{pid, cmd}] from `pid` upward. */
-export function ancestorsOf(pid, table, max = 10) {
+export function ancestorsOf(pid, table, max = 64) {
   const out = [];
   while (table.has(pid) && out.length < max && !out.some((a) => a.pid === pid)) {
     const p = table.get(pid);
@@ -193,7 +205,7 @@ export function ancestorsOf(pid, table, max = 10) {
  * has a second claude above its own in the process tree.
  */
 export function isMainSession({ ppid, claudePid, ancestors }) {
-  const claudes = ancestors.filter((a) => CLAUDE_CMD.test(a.cmd));
+  const claudes = ancestors.filter((a) => isClaudeProcess(a.cmd));
   const own = claudes[0]?.pid ?? ppid;
   if (claudePid && String(claudePid) !== String(own)) return false;
   return claudes.length <= 1;
@@ -232,6 +244,7 @@ function main() {
   process.stdin.on('end', () => { log('stdin closed by Claude Code'); link.stop(); process.exit(0); });
   log(`start session=${session.sessionId} (${process.env.CLAUDE_CODE_SESSION_ID ? 'CLAUDE_CODE_SESSION_ID' : 'fallback id'}) cwd=${cwd}`);
   const ancestors = ancestorsOf(process.ppid, processTable());
+  log(`ancestry ${ancestors.map((a) => `${a.pid}:${base(tokens(a.cmd, 1)[0])}${isClaudeProcess(a.cmd) ? '*' : ''}`).join(' < ') || 'unknown'}`);
   if (!isMainSession({ ppid: process.ppid, claudePid: process.env.CLAUDE_PID, ancestors })) {
     // Keep serving MCP so Claude Code sees a healthy server; just never register.
     log(`nested session (CLAUDE_PID=${process.env.CLAUDE_PID ?? 'unset'}, ancestry ${ancestors.map((a) => a.pid).join('<')}): not bridged`);
