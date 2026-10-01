@@ -32,7 +32,7 @@ npm test                       # unit tests
 ```
 
 `--machine <NAME>` writes `~/.claude/machine.json` (machine-local, never synced; names
-match `[A-Za-z0-9-]+` — fleet: `G-Laptop`, `WS1-duipezztz`, `WS2-duip622037`,
+match `[A-Za-z0-9-]+` — fleet: `G`, `WS1-duipezztz`, `WS2-duip622037`,
 `WS3-duip73019`, `WS4-duip77246`, `WSEng`). With it, agent commands get
 `GIT_COMMITTER_NAME="<git user.name> (<machine>/<claude|codex>)"` plus
 `HARNESS_MACHINE` / `HARNESS_AGENT`; the git author and your manual commits are untouched.

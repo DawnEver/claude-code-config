@@ -23,7 +23,7 @@
   refuses to seed a configured-but-empty dir, which would manufacture conflict copies.
   With no sync dir configured everything resolves inside the repo, exactly as before.
 - `node scripts/setup/setup.js --machine <NAME>` writes the machine-local
-  `~/.claude/machine.json` (fleet: `G-Laptop`, `WS1-duipezztz`, `WS2-duip622037`,
+  `~/.claude/machine.json` (fleet: `G`, `WS1-duipezztz`, `WS2-duip622037`,
   `WS3-duip73019`, `WS4-duip77246`, `WSEng`). Read only via `scripts/shared/machine.mjs`;
   the Claude launchers and, for Codex, setup's composed `~/.codex/config.toml`
   `[shell_environment_policy.set]` turn it into committer provenance + `HARNESS_*` env
