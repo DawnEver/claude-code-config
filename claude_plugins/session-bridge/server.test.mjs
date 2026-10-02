@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import net from 'net';
 import path from 'path';
-import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity } from './server.mjs';
+import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity, pruneChannelLogs } from './server.mjs';
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
 
 const until = async (fn, ms = 3000) => {
@@ -189,4 +189,18 @@ test('sessionIdentity: CLAUDE_CODE_SESSION_ID, else a fallback whose inputs are 
     { sessionId: 'u-1', source: 'CLAUDE_CODE_SESSION_ID' });
   assert.deepEqual(sessionIdentity({}, { hostname: 'h', pid: 7, rand: 'ab' }),
     { sessionId: 'h-7-ab', source: 'fallback (CLAUDE_CODE_SESSION_ID unset; hostname=h pid=7 random=ab)' });
+});
+
+test('pruneChannelLogs: drops channel logs older than the cutoff, keeps fresh ones and others', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-logs-'));
+  const now = Date.now();
+  const make = (name, ageDays) => {
+    const f = path.join(dir, name);
+    fs.writeFileSync(f, 'x');
+    const t = new Date(now - ageDays * 86400e3);
+    fs.utimesSync(f, t, t);
+  };
+  make('channel-1.log', 8); make('channel-2.log', 1); make('daemon.log', 30);
+  pruneChannelLogs(dir, { now, maxAgeDays: 7 });
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['channel-2.log', 'daemon.log']);
 });

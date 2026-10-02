@@ -120,7 +120,12 @@ export class Observer {
     const mine = commits.some((x) => x.who?.machine === this.machine);
     const human = commits.every((x) => !x.who);
     if (!mine && !(human && this.coordinator)) return;   // another machine reports it
-    const session = r.sessions.find((s) => s.branch === branch);
+    // Several sessions can share a branch (main, typically): narrow to the pushing agent's
+    // host; a push no single session owns goes to lanes rather than to a guessed Topic.
+    let on = r.sessions.filter((s) => s.branch === branch);
+    const agents = new Set(commits.map((x) => x.who?.agent).filter(Boolean));
+    if (on.length > 1 && agents.size === 1) on = on.filter((s) => s.key.startsWith(`${[...agents][0]}:`));
+    const session = on.length === 1 ? on[0] : null;
     const dest = session ? { key: session.key } : this.coordinator ? { chatId: r.chatId, project: r.project } : null;
     if (!dest) return;
     this.#say(dest, `pushed ${short(sha)} → ${branch} (+${commits.length})`);

@@ -35,11 +35,12 @@ A tip is reported once; the cache remembers it.
 
 ## Where it goes
 
-- **A live main session on this machine is on that branch** -> that session's Topic:
+- **Exactly one live main session on this machine is on that branch** (several, e.g. on
+  `main`, narrow to the pushing agent's host: `claude:` or `codex:`) -> that session's Topic:
   `pushed <shortsha> → <branch> (+N)`. When the tip later gets a `lab/gate` or `lab/heavy`
   status, the same Topic gets `lab/gate PASS <shortsha>` / `lab/heavy FAIL <shortsha>`, once
   each (other contexts are ignored; a pending status is not a verdict).
-- **Otherwise** -> the project group's **`lanes`** Topic, which only the coordinator machine
+- **Otherwise** (none, or still ambiguous) -> the project group's **`lanes`** Topic, which only the coordinator machine
   owns and posts to (a non-coordinator posts only into its own session Topics). `lanes` is
   an ordinary bridge Topic: it idle-closes and reopens like any other, and is never deleted
   while the daemon runs. Messages sent into it are ignored.

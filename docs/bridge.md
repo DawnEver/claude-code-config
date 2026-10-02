@@ -222,7 +222,7 @@ unverified.
 | `offset.json` | last `update_id` (cache) |
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
-| `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit |
+| `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit; pruned after 7 days |
 | `observer.json` | last seen remote tips, issues and pending verdicts per observed repo ([`coordination.md`](coordination.md)) |
 
 These files are **machine-local and contain local paths** (cwds, which include the user

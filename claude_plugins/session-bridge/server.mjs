@@ -217,7 +217,19 @@ export function sessionIdentity(env, { hostname, pid, rand }) {
   return { sessionId: `${hostname}-${pid}-${rand}`, source: `fallback (CLAUDE_CODE_SESSION_ID unset; hostname=${hostname} pid=${pid} random=${rand})` };
 }
 
+/** One log per channel process accumulates forever; drop the ones nobody will read again. */
+export function pruneChannelLogs(dir, { now = Date.now(), maxAgeDays = 7 } = {}) {
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    if (!/^channel-\d+\.log$/.test(name)) continue;
+    const f = path.join(dir, name);
+    try { if (now - fs.statSync(f).mtimeMs > maxAgeDays * 86400e3) fs.unlinkSync(f); } catch { /* raced or locked */ }
+  }
+}
+
 function main() {
+  pruneChannelLogs(path.dirname(RUNTIME_FILE));
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const identity = sessionIdentity(process.env, { hostname: os.hostname(), pid: process.pid, rand: crypto.randomBytes(3).toString('hex') });
   const session = {

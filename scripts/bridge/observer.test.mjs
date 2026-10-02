@@ -152,6 +152,21 @@ test('a push to the branch a session is on goes to that session, whoever pushed 
   assert.deepEqual([w.posts, w.lanes], [[['codex:main', 'pushed a1 → main (+1)']], []]);
 });
 
+test('several sessions on one branch: the pushing agent\'s session, else lanes — never a guess', async () => {
+  const { w, obs } = world();
+  w.sessions = [{ ...lanesSession }, { ...lanesSession, key: 'claude:m' }];
+  w.branchOf['/r'] = 'main';
+  await obs.poll();
+  w.tips.main = 'a1';
+  w.commits['a0..a1'] = [{ sha: 'a1', committer: 'M (host-c/claude)' }];
+  await obs.poll();
+  w.tips.main = 'a2';
+  w.commits['a1..a2'] = [{ sha: 'a2', committer: 'M' }];
+  await obs.poll();
+  assert.deepEqual(w.posts, [['claude:m', 'pushed a1 → main (+1)']]);
+  assert.deepEqual(w.lanes.map(([, , t]) => t), ['pushed a2 → main (+1)']);
+});
+
 test('comment @machine hints: since the last poll, once per comment id, self-mentions skipped', async () => {
   const { w, obs } = world();
   w.sessions = [lanesSession];
