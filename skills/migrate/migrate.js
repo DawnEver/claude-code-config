@@ -17,7 +17,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_WRAPPER_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
-import { isManagedWrapper } from '../../scripts/setup/install-cli-wrappers.js';
+import { isManagedWrapper, resolveWrapperBinDirs } from '../../scripts/setup/install-cli-wrappers.js';
 import {
   CLAUDE_GITIGNORE_TEMPLATE,
   migrateGitignore,
@@ -111,28 +111,20 @@ export function migrateRepoLinks({ dryRun } = {}) {
 // up and `cogmi.cmd` was left behind, even though the `.cmd`-stripping below exists for
 // exactly this case.
 
-function findClaudeBin() {
-  const isWindows = os.platform() === 'win32';
-  try {
-    const raw = execFileSync(isWindows ? 'where' : 'which', ['claude'], { stdio: 'pipe' })
-      .toString().trim().split(/\r?\n/)[0].trim();
-    return path.dirname(raw);
-  } catch { return null; }
-}
-
 export function migrateOrphanedWrappers({ dryRun } = {}) {
-  const claudeBin = findClaudeBin();
-  if (!claudeBin || !fs.existsSync(claudeBin)) return [];
+  // Same resolver as the installer, so the sweep covers exactly the dir wrappers live in.
+  const { binDir } = resolveWrapperBinDirs();
+  if (!binDir || !fs.existsSync(binDir)) return [];
 
   const known = new Set(KNOWN_WRAPPER_NAMES);
   const removed = [];
 
   let entries;
-  try { entries = fs.readdirSync(claudeBin, { withFileTypes: true }); } catch { return []; }
+  try { entries = fs.readdirSync(binDir, { withFileTypes: true }); } catch { return []; }
 
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    const full = path.join(claudeBin, entry.name);
+    const full = path.join(binDir, entry.name);
     // Check if it's one of our managed alias files (has the marker)
     let content;
     try { content = fs.readFileSync(full, 'utf8'); } catch { continue; }

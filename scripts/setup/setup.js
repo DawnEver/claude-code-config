@@ -721,6 +721,14 @@ export function setup(options = {}) {
 // invoked through the ~/.claude/scripts link — which is exactly how SETUP_FIX_CMD
 // (check-links.js) tells the user to run it, so the self-heal advice would be a
 // silent no-op. See scripts/shared/is-main.mjs.
+// Under sudo, HOME stays the user's, so every file setup touches — and the `claude mcp`
+// call, which rewrites ~/.claude.json — would become root-owned and lock the user out
+// (Claude then asks to log in on every start). Refuse instead.
 if (isMain(import.meta.url)) {
-  setup(parseSetupArgs(process.argv.slice(2)));
+  if (process.getuid?.() === 0) {
+    console.error('ERROR setup must not run as root (sudo): it would leave ~/.claude.json and ~/.claude root-owned. Re-run as your user.');
+    process.exitCode = 1;
+  } else {
+    setup(parseSetupArgs(process.argv.slice(2)));
+  }
 }

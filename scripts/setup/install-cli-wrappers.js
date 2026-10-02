@@ -17,7 +17,14 @@ const CMD_MARKER = 'rem claude-code-alias';
 export const isManagedWrapper = (content) => content.includes(MARKER) || content.includes(CMD_MARKER);
 
 // Returns 'written' | 'ok' | 'skipped'
-function writeIfChanged(filePath, content, label) {
+// `mode` is (re)applied to every wrapper we own, so a lost execute bit self-heals.
+function writeIfChanged(filePath, content, label, mode) {
+  const result = writeWrapper(filePath, content, label);
+  if (mode && !isWindows && result !== 'skipped') fs.chmodSync(filePath, mode);
+  return result;
+}
+
+function writeWrapper(filePath, content, label) {
   const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
   if (existing === null) {
     fs.writeFileSync(filePath, content);
@@ -46,16 +53,17 @@ export function locateBinDir(cmd, run = (c) => execFileSync(isWindows ? 'where' 
   }
 }
 
-// Decide where to drop the CLI wrappers. Provider-independent tools (todo,
-// traceme) only need *some* bin dir on PATH; the claude-bound launchers
-// (ccc/ccds) additionally need the claude binary, and the codex-bound launcher
-// (cods) needs the codex binary. `targetBin` is the fallback for the
-// provider-independent tools — prefer claude, fall back to codex.
-export function resolveWrapperBinDirs(locate = locateBinDir) {
+const isWritableDir = (dir) => { try { fs.accessSync(dir, fs.constants.W_OK); return true; } catch { return false; } };
+
+// Every wrapper lives in ONE dir: the first host bin dir (claude, then codex) that is on
+// PATH by construction and writable by this user. A host installed into a root-owned dir
+// (e.g. /usr/local/bin) is skipped — setup must never need sudo, because a root run also
+// leaves ~/.claude.json root-owned and forces a re-login on every start.
+export function resolveWrapperBinDirs(locate = locateBinDir, writable = isWritableDir) {
   const claudeBin = locate('claude');
   const codexBin = locate('codex');
-  const targetBin = claudeBin || codexBin;
-  return { claudeBin, codexBin, targetBin };
+  const binDir = [claudeBin, codexBin].find((d) => d && writable(d)) ?? null;
+  return { hasClaude: !!claudeBin, hasCodex: !!codexBin, binDir };
 }
 export function wrapperPaths(binDir, name, windows = isWindows) {
   return windows ? [path.join(binDir, `${name}.cmd`), path.join(binDir, name)] : [path.join(binDir, name)];
@@ -82,12 +90,11 @@ export function removeLegacyProfileSources(home = os.homedir(), platform = proce
 
 export function installCliWrappers(claudeDir) {
   removeLegacyProfileSources();
-  // Place wrappers alongside an installed host binary so they land on PATH.
   // On Windows: write .cmd (CMD/PowerShell) + no-extension script (Git Bash).
   // On macOS/Linux: write no-extension shell script only.
-  const { claudeBin, codexBin, targetBin } = resolveWrapperBinDirs();
-  if (!targetBin) {
-    console.log('SKIP  wrappers - could not locate claude or codex executable');
+  const { hasClaude, hasCodex, binDir } = resolveWrapperBinDirs();
+  if (!binDir) {
+    console.log('SKIP  wrappers - no user-writable claude/codex bin dir (never re-run setup with sudo)');
     return;
   }
 
@@ -110,7 +117,7 @@ export function installCliWrappers(claudeDir) {
 
   // ccc/ccds launch the `claude` binary (see cc.js), so install them only when
   // claude is present — they are inert under a Codex-only install.
-  if (claudeBin) {
+  if (hasClaude) {
     const ALIASES = [
       { name: 'ccc',  provider: 'claude'   },
       { name: 'ccds', provider: 'deepseek' },
@@ -119,14 +126,12 @@ export function installCliWrappers(claudeDir) {
     for (const { name, provider } of ALIASES) {
       if (isWindows) {
         const cmdContent = `@echo off\nrem claude-code-alias\nnode "${ccJsPath}" ${provider} %*\n`;
-        writeIfChanged(path.join(claudeBin, `${name}.cmd`), cmdContent, `${name}.cmd`);
+        writeIfChanged(path.join(binDir, `${name}.cmd`), cmdContent, `${name}.cmd`);
       }
 
       const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${ccJsPath}" ${provider} "$@"\n`;
-      const shPath = path.join(claudeBin, name);
-      const result = writeIfChanged(shPath, shContent, name);
-      // chmod whenever the file is ours (written or already up-to-date), not for skipped third-party files
-      if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
+      const shPath = path.join(binDir, name);
+      writeIfChanged(shPath, shContent, name, 0o755);
     }
 
     console.log('      ccc     - Claude (official subscription)');
@@ -138,7 +143,7 @@ export function installCliWrappers(claudeDir) {
   // cods launches the `codex` binary (see codex.js), so install it only when codex is
   // present — it is inert under a Claude-only install.
   //
-  if (codexBin) {
+  if (hasCodex) {
     const CODEX_ALIASES = [
       { name: 'codc',  provider: 'codex' },
       { name: 'cods',  provider: 'deepseek' },
@@ -147,13 +152,12 @@ export function installCliWrappers(claudeDir) {
     for (const { name, provider } of CODEX_ALIASES) {
       if (isWindows) {
         const cmdContent = `@echo off\nrem claude-code-alias\nnode "${codexJsPath}" ${provider} %*\n`;
-        writeIfChanged(path.join(codexBin, `${name}.cmd`), cmdContent, `${name}.cmd`);
+        writeIfChanged(path.join(binDir, `${name}.cmd`), cmdContent, `${name}.cmd`);
       }
 
       const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${codexJsPath}" ${provider} "$@"\n`;
-      const shPath = path.join(codexBin, name);
-      const result = writeIfChanged(shPath, shContent, name);
-      if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
+      const shPath = path.join(binDir, name);
+      writeIfChanged(shPath, shContent, name, 0o755);
     }
 
     console.log('      codc    - Codex official provider + startup sync');
@@ -162,17 +166,15 @@ export function installCliWrappers(claudeDir) {
     console.log('      codc/cods - skipped (codex binary not found)');
   }
 
-  // Provider-independent tools install to whichever host bin dir we found.
   // TraceMe CLI wrapper — dynamic launcher survives plugin version updates
   const tracemeLauncher = resolveScript('runtime/traceme-launcher.mjs');
   if (isWindows) {
     const cmdContent = `@echo off\nrem claude-code-alias\nnode "${tracemeLauncher}" %*\n`;
-    writeIfChanged(path.join(targetBin, 'traceme.cmd'), cmdContent, 'traceme.cmd');
+    writeIfChanged(path.join(binDir, 'traceme.cmd'), cmdContent, 'traceme.cmd');
   }
   const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${tracemeLauncher}" "$@"\n`;
-  const shPath = path.join(targetBin, 'traceme');
-  const result = writeIfChanged(shPath, shContent, 'traceme');
-  if (!isWindows && result !== 'skipped') fs.chmodSync(shPath, 0o755);
+  const shPath = path.join(binDir, 'traceme');
+  writeIfChanged(shPath, shContent, 'traceme', 0o755);
 
   console.log('      traceme - Claude Code observability (token/cost reports)');
 
@@ -180,13 +182,12 @@ export function installCliWrappers(claudeDir) {
   const todoLauncher = resolveScript('runtime/todo-launcher.mjs');
   if (isWindows) {
     const cmdContent = `@echo off\nrem claude-code-alias\nnode "${todoLauncher}" %*\n`;
-    writeIfChanged(path.join(targetBin, 'todo.cmd'), cmdContent, 'todo.cmd');
+    writeIfChanged(path.join(binDir, 'todo.cmd'), cmdContent, 'todo.cmd');
   }
   const todoShContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${todoLauncher}" "$@"\n`;
-  const todoShPath = path.join(targetBin, 'todo');
-  const todoResult = writeIfChanged(todoShPath, todoShContent, 'todo');
-  if (!isWindows && todoResult !== 'skipped') fs.chmodSync(todoShPath, 0o755);
+  const todoShPath = path.join(binDir, 'todo');
+  writeIfChanged(todoShPath, todoShContent, 'todo', 0o755);
 
   console.log('      todo    - Task management CLI');
-  console.log(`      installed to: ${targetBin}`);
+  console.log(`      installed to: ${binDir}`);
 }

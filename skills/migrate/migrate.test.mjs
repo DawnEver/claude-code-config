@@ -357,29 +357,23 @@ describe('migrateGitignore (integration)', () => {
 });
 
 describe('resolveWrapperBinDirs', () => {
-  const sep = path.sep;
+  const C = path.join(path.sep, 'opt', 'claude', 'bin');
+  const X = path.join(path.sep, 'opt', 'codex', 'bin');
+  const both = (cmd) => (cmd === 'claude' ? C : X);
+  const all = () => true;
 
-  test('prefers the claude bin dir for both target and claude when claude exists', () => {
-    const locate = (cmd) => (cmd === 'claude' ? `${sep}opt${sep}claude${sep}bin` : `${sep}opt${sep}codex${sep}bin`);
-    const { claudeBin, codexBin, targetBin } = resolveWrapperBinDirs(locate);
-    assert.equal(claudeBin, `${sep}opt${sep}claude${sep}bin`);
-    assert.equal(codexBin, `${sep}opt${sep}codex${sep}bin`);
-    assert.equal(targetBin, `${sep}opt${sep}claude${sep}bin`);
+  test('one bin dir for every wrapper: the claude dir when writable', () => {
+    assert.deepEqual(resolveWrapperBinDirs(both, all), { hasClaude: true, hasCodex: true, binDir: C });
   });
 
-  test('falls back to codex bin dir when only codex is installed', () => {
-    const locate = (cmd) => (cmd === 'codex' ? `${sep}opt${sep}codex${sep}bin` : null);
-    const { claudeBin, codexBin, targetBin } = resolveWrapperBinDirs(locate);
-    assert.equal(claudeBin, null);
-    assert.equal(codexBin, `${sep}opt${sep}codex${sep}bin`);
-    assert.equal(targetBin, `${sep}opt${sep}codex${sep}bin`);
+  test('skips a root-owned host dir rather than requiring sudo', () => {
+    assert.deepEqual(resolveWrapperBinDirs(both, (d) => d === X), { hasClaude: true, hasCodex: true, binDir: X });
+    assert.equal(resolveWrapperBinDirs(both, () => false).binDir, null);
   });
 
-  test('returns null target when neither host is installed', () => {
-    const { claudeBin, codexBin, targetBin } = resolveWrapperBinDirs(() => null);
-    assert.equal(claudeBin, null);
-    assert.equal(codexBin, null);
-    assert.equal(targetBin, null);
+  test('codex-only and no-host installs', () => {
+    assert.deepEqual(resolveWrapperBinDirs((cmd) => (cmd === 'codex' ? X : null), all), { hasClaude: false, hasCodex: true, binDir: X });
+    assert.deepEqual(resolveWrapperBinDirs(() => null, all), { hasClaude: false, hasCodex: false, binDir: null });
   });
 });
 
