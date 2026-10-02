@@ -124,11 +124,13 @@ token in `runtime.json`):
 - **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit` and `Stop`) mirrors every
   prompt and the turn's final assistant text with a one-shot `mirror` call, so output does
   not depend on the model calling `reply`. Calls name the payload's `session_id` and the
-  hook's `CLAUDE_CODE_SESSION_ID` (the id the process started with, which is what the channel
-  registered; `/clear` mints a new payload id), and are held up to 30 s if they beat the
-  channel's registration. `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g.
-  `ccc -p` run from inside a session) inherits its parent's, which once routed one
-  session's output into another's Topic. Channel prompts are unwrapped to their text, so the echo suppression above
+  hook's `CLAUDE_CODE_SESSION_ID`, and are held up to 30 s if they beat the channel's
+  registration. `/clear` evidently changes **both** ids (after it, the mirror stopped — 2026-10-02), so when no session
+  matches, the hook retries naming its own nearest `claude` process (a process-table walk,
+  done only on a miss because it is slow); the channel registered under that same process.
+  `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g. `ccc -p` run from inside a
+  session) inherits its parent's, which once routed one session's output into another's
+  Topic — the walk finds the nested process instead. Channel prompts are unwrapped to their text, so the echo suppression above
   drops them. A final identical to a `reply` of the same turn is not posted twice; `reply`
   stays for explicit mid-task messages.
 - Only human-initiated turns are mirrored: a prompt that is wholly harness/plugin envelopes
@@ -233,11 +235,16 @@ These files are **machine-local and contain local paths** (cwds, which include t
 name) and process ids. They are never mirrored to Telegram and never part of the synced
 payload; do not paste them into shared places unredacted.
 
+## Verified live (2026-10-02)
+
+- A message posted into a closed Topic reaches the session (the Topic reopens).
+- Channels together with `--remote-control` in one Claude session.
+- Telegram approval buttons answer a Claude permission request.
+- `deleteForumTopic` on a closed Topic (create, close, delete; a later send fails).
+
 ## Unverified
 
-- A Telegram message posted into a closed Topic (expected: reaches the bot for admins).
-- Mirroring after `/clear` (relies on the hook's `CLAUDE_CODE_SESSION_ID` keeping the
-  startup id).
+- Mirroring after `/clear` through the process-id retry; a channel registers its process only from a fresh `ccc` start.
 - Whether `UserPromptSubmit` fires for channel-injected prompts (either way no echo:
   the unwrap path drops it, and an unechoed inject expires).
-- Channels together with `--remote-control` in one Claude session.
+- What Claude Code does with a Telegram verdict for a prompt already answered locally.

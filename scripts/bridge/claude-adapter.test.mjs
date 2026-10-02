@@ -25,6 +25,24 @@ test('unwrapChannel returns the text of a channel prompt, anything else unchange
   assert.equal(unwrapChannel('plain'), 'plain');
 });
 
+test('after /clear both hook ids are new: the claude process id still routes it', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 'boot', cwd: '/repo', claudePid: 77 });
+    // The hook's first call names only ids and misses; its retry names its own claude process.
+    await r.hook({ sessionIds: ['cleared'], kind: 'prompt', text: 'after clear' });
+    await r.hook({ sessionIds: ['cleared'], claudePid: 77, retry: true, kind: 'prompt', text: 'after clear' });
+    // A nested claude's retry names ITS process, so it never lands in the parent's Topic.
+    await r.hook({ sessionIds: ['nested'], kind: 'prompt', text: 'nested' });
+    await r.hook({ sessionIds: ['nested'], claudePid: 78, retry: true, kind: 'prompt', text: 'nested' });
+    assert.deepEqual(r.events.filter(([k]) => k === 'prompt').map(([, e]) => [e.id, e.text]), [['boot', 'after clear']]);
+    assert.deepEqual(r.a.held.map((h) => h.m.text), ['nested'], 'the routed retry dropped its held first copy');
+    ch.destroy();
+    await new Promise((res) => setTimeout(res, 50));
+  } finally { await r.a.close(); }
+});
+
 test('mirror calls route by session id, are held before register, never cross sessions, and dedupe against reply', async () => {
   const r = await rig();
   try {

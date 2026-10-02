@@ -20,10 +20,12 @@ import os from 'os';
 import net from 'net';
 import path from 'path';
 import crypto from 'crypto';
-import { execFileSync } from 'child_process';
 import { lineSplitter } from '../../scripts/bridge/jsonrpc.mjs';
 import { RUNTIME_FILE } from '../../scripts/bridge/context.mjs';
 import { isMain } from '../../scripts/shared/is-main.mjs';
+import { tokens, base, isClaudeProcess, processTable, ancestorsOf } from '../../scripts/shared/process-tree.mjs';
+
+export { isClaudeProcess, processTable, ancestorsOf };
 const RECONNECT_MS = 5000;
 
 export const INSTRUCTIONS = [
@@ -155,49 +157,6 @@ export function createChannelServer({ write, link }) {
   };
 }
 
-/** The first `n` tokens of a command line, honouring double quotes. */
-function tokens(cmd, n) {
-  return [...String(cmd).matchAll(/"([^"]*)"|(\S+)/g)].slice(0, n).map((m) => m[1] ?? m[2]);
-}
-
-const base = (p) => String(p ?? '').split(/[\\/]/).pop().toLowerCase();
-
-/** Is this command line the claude CLI itself (not a shim, launcher or shell that names it)? */
-export function isClaudeProcess(cmd) {
-  const [prog, script] = tokens(cmd, 2);
-  if (/^claude(\.exe)?$/.test(base(prog))) return true;
-  return /^node(\.exe)?$/.test(base(prog)) && /@anthropic-ai[\\/]claude-code[\\/]/i.test(script ?? '');
-}
-
-/** pid -> {ppid, cmd} for every process; empty when the OS will not say. */
-export function processTable() {
-  const table = new Map();
-  try {
-    const out = process.platform === 'win32'
-      ? execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
-        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$(if ($_.CommandLine) { $_.CommandLine } else { $_.Name })" }'],
-        { encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] })
-      : execFileSync('ps', ['-A', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
-        .replace(/^\s*(\d+)\s+(\d+)\s+/gm, '$1\t$2\t');
-    for (const line of out.split(/\r?\n/)) {
-      const [pid, ppid, ...cmd] = line.split('\t');
-      if (pid && ppid) table.set(Number(pid), { ppid: Number(ppid), cmd: cmd.join('\t') });
-    }
-  } catch { /* unknown ancestry: only the CLAUDE_PID rule applies */ }
-  return table;
-}
-
-/** [{pid, cmd}] from `pid` upward. */
-export function ancestorsOf(pid, table, max = 64) {
-  const out = [];
-  while (table.has(pid) && out.length < max && !out.some((a) => a.pid === pid)) {
-    const p = table.get(pid);
-    out.push({ pid, cmd: p.cmd });
-    pid = p.ppid;
-  }
-  return out;
-}
-
 /**
  * Only a main session talks to Telegram. A `claude` started from inside another session
  * (a plugin's `claude -p`, `ccc -p` in a session's shell) is nested: it either inherited
@@ -269,6 +228,8 @@ function main() {
     log(`nested session (CLAUDE_PID=${process.env.CLAUDE_PID ?? 'unset'}, ancestry ${ancestors.map((a) => a.pid).join('<')}): not bridged`);
     return;
   }
+  // The hook routes by this after /clear, when the session id it reports is new.
+  session.claudePid = ancestors.find((a) => isClaudeProcess(a.cmd))?.pid ?? process.ppid;
   link.start();
 }
 

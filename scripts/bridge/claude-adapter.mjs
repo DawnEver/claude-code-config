@@ -77,7 +77,7 @@ export class ClaudeAdapter extends EventEmitter {
           clearTimeout(authTimer);
           sessionId = String(p.sessionId);
           this.sessions.get(sessionId)?.socket.destroy();
-          this.sessions.set(sessionId, { peer, socket, replies: [] });
+          this.sessions.set(sessionId, { peer, socket, replies: [], claudePid: Number(p.claudePid) || null });
           this.emit('up', { id: sessionId, cwd: p.cwd, preexisting: false, backlog: [] });
           this.#release();
           return { ok: true };
@@ -85,8 +85,9 @@ export class ClaudeAdapter extends EventEmitter {
         if (method === 'mirror') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
           if (p.kind !== 'prompt' && p.kind !== 'final') throw Object.assign(new Error('bad kind'), { code: -32602 });
-          this.#mirror({ sessionIds: (Array.isArray(p.sessionIds) ? p.sessionIds : []).map(String), kind: p.kind, text: String(p.text ?? '') });
-          return { ok: true };
+          const routed = this.#mirror({ sessionIds: (Array.isArray(p.sessionIds) ? p.sessionIds : []).map(String),
+            claudePid: Number(p.claudePid) || null, retry: p.retry === true, kind: p.kind, text: String(p.text ?? '') });
+          return { ok: true, routed };
         }
         if (!sessionId) throw unauthorized();
         if (method === 'reply') {
@@ -117,17 +118,24 @@ export class ClaudeAdapter extends EventEmitter {
     });
   }
 
-  #route({ sessionIds }) {
-    return sessionIds.find((id) => this.sessions.has(id)) ?? null;
+  #route({ sessionIds, claudePid }) {
+    const byId = sessionIds.find((id) => this.sessions.has(id));
+    if (byId || !claudePid) return byId ?? null;
+    // After /clear no id matches; the claude process that owns the channel still does.
+    for (const [id, s] of this.sessions) if (s.claudePid === claudePid) return id;
+    return null;
   }
 
   #mirror(m) {
     const id = this.#route(m);
     if (!id) {
+      // Held in case its channel has not registered yet; a retry's first copy already is.
       const now = this.now();
-      this.held = [...this.held.filter((h) => now - h.at < HOLD_MS), { m, at: now }];
-      return;
+      this.held = [...this.held.filter((h) => now - h.at < HOLD_MS), ...(m.retry ? [] : [{ m, at: now }])];
+      return false;
     }
+    // A retry routed by process: its unroutable first copy must not be released later.
+    if (m.retry) this.held = this.held.filter((h) => !(h.m.kind === m.kind && h.m.text === m.text));
     // Only human-initiated turns are mirrored: a prompt typed locally or sent from Telegram.
     // Envelope prompts, and Stop-hook continuations (a final with no prompt since the last
     // one), are the harness talking to itself.
@@ -135,7 +143,7 @@ export class ClaudeAdapter extends EventEmitter {
     if (m.kind === 'prompt') {
       s.humanTurn = !isEnvelope(m.text);
       if (s.humanTurn) this.emit('prompt', { id, text: unwrapChannel(m.text) });
-      return;
+      return true;
     }
     const human = s.humanTurn;
     s.humanTurn = false;
@@ -143,6 +151,7 @@ export class ClaudeAdapter extends EventEmitter {
     const dup = s.replies.includes(m.text.trim());
     s.replies = [];
     if (human && m.text.trim() && !dup) this.emit('final', { id, text: m.text });
+    return true;
   }
 
   #release() {

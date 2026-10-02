@@ -15,6 +15,7 @@ import fs from 'fs';
 import net from 'net';
 import { isMain } from '../shared/is-main.mjs';
 import { RUNTIME_FILE } from '../bridge/context.mjs';
+import { nearestClaude } from '../shared/process-tree.mjs';
 
 const TIMEOUT_MS = 2000;
 
@@ -64,25 +65,25 @@ export function mirrorFor(payload, env = process.env) {
   return null;
 }
 
-/** One authenticated `mirror` call to the hub. Resolves true on success, false otherwise. */
+/** One authenticated `mirror` call to the hub. Resolves its result ({ok, routed}), or null. */
 export function sendMirror(params, { runtimeFile = RUNTIME_FILE, timeoutMs = TIMEOUT_MS } = {}) {
   let rt;
-  try { rt = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { return Promise.resolve(false); }
-  if (!Number.isInteger(rt?.port) || typeof rt.token !== 'string') return Promise.resolve(false);
+  try { rt = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { return Promise.resolve(null); }
+  if (!Number.isInteger(rt?.port) || typeof rt.token !== 'string') return Promise.resolve(null);
   return new Promise((resolve) => {
     const sock = net.connect({ host: '127.0.0.1', port: rt.port });
     const done = (v) => { clearTimeout(timer); sock.destroy(); resolve(v); };
-    const timer = setTimeout(() => done(false), timeoutMs);
+    const timer = setTimeout(() => done(null), timeoutMs);
     let buf = '';
     sock.setEncoding('utf8');
     sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'mirror', params: { token: rt.token, ...params } }) + '\n'));
     sock.on('data', (d) => {
       buf += d;
       if (!buf.includes('\n')) return;
-      try { done(!!JSON.parse(buf.slice(0, buf.indexOf('\n'))).result?.ok); } catch { done(false); }
+      try { done(JSON.parse(buf.slice(0, buf.indexOf('\n'))).result ?? null); } catch { done(null); }
     });
-    sock.on('error', () => done(false));
-    sock.on('close', () => done(false));
+    sock.on('error', () => done(null));
+    sock.on('close', () => done(null));
   });
 }
 
@@ -92,7 +93,14 @@ async function main() {
   let raw = '';
   for await (const c of process.stdin) raw += c;
   const call = mirrorFor(JSON.parse(raw || '{}'));
-  if (call) await sendMirror(call);
+  if (!call) return;
+  // No session matched: after /clear both ids are new. Retry naming this hook's own claude
+  // process (the one owning the channel). Looked up only now — a process-table query is slow —
+  // and never from CLAUDE_PID, which a nested `claude` inherits from its parent.
+  if ((await sendMirror(call))?.routed === false) {
+    const claudePid = nearestClaude(process.ppid);
+    if (claudePid) await sendMirror({ ...call, claudePid, retry: true });
+  }
 }
 
 if (isMain(import.meta.url)) main().catch(() => {}).finally(() => process.exit(0));

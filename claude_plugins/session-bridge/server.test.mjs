@@ -137,7 +137,7 @@ test('a one-shot mirror call needs the token and a known kind', async () => {
   });
   try {
     assert.equal((await call({ token: 'x'.repeat(hub.token.length), sessionIds: ['u'], kind: 'final', text: 'no' }))?.error?.code, 401);
-    assert.deepEqual((await call({ token: hub.token, sessionIds: ['u'], kind: 'final', text: 'yes' })).result, { ok: true });
+    assert.deepEqual((await call({ token: hub.token, sessionIds: ['u'], kind: 'final', text: 'yes' })).result, { ok: true, routed: false });
     assert.ok((await call({ token: hub.token, sessionIds: ['u'], kind: 'other', text: 'x' })).error, 'unknown kind rejected');
   } finally { await hub.close(); }
 });

@@ -50,8 +50,8 @@ test('sendMirror delivers to a live hub, and resolves quietly when none runs', a
     const port = await hub.listen(0);
     const runtimeFile = path.join(dir, 'runtime.json');
     fs.writeFileSync(runtimeFile, j({ port, token: hub.token }));
-    assert.equal(await sendMirror({ sessionIds: ['s'], kind: 'final', text: 'ok' }, { runtimeFile }), true);
-    assert.deepEqual(hub.held.map((h) => h.m), [{ sessionIds: ['s'], kind: 'final', text: 'ok' }], 'held until its session registers');
-    assert.equal(await sendMirror({ sessionIds: ['s'], kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), false);
+    assert.deepEqual(await sendMirror({ sessionIds: ['s'], kind: 'final', text: 'ok' }, { runtimeFile }), { ok: true, routed: false });
+    assert.deepEqual(hub.held.map((h) => h.m), [{ sessionIds: ['s'], claudePid: null, retry: false, kind: 'final', text: 'ok' }], 'held until its session registers');
+    assert.equal(await sendMirror({ sessionIds: ['s'], kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), null);
   } finally { await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
