@@ -44,6 +44,20 @@ test('sendMessage chunks, targets the topic, and puts the token only in the path
   } finally { api.close(); }
 });
 
+test('sendMessage is silent unless it alerts; an alert mentions each user by id', async () => {
+  const api = await fakeApi((m, p) => ({ ok: true, result: { message_id: 1, text: p.text } }));
+  try {
+    const tg = new TelegramClient({ token: '1:x', apiBase: api.base });
+    await tg.sendMessage(-100, 'quiet');
+    await tg.sendMessage(-100, 'look', { alert: [42] });
+    assert.equal(api.calls[0].params.disable_notification, true);
+    const loud = api.calls[1].params;
+    assert.equal(loud.disable_notification, undefined);
+    assert.equal(loud.text, '@you look');
+    assert.deepEqual(loud.entities, [{ type: 'text_mention', offset: 0, length: 4, user: { id: 42 } }]);
+  } finally { api.close(); }
+});
+
 test('429 is retried after retry_after seconds', async () => {
   let n = 0;
   const api = await fakeApi(() => (n++ === 0

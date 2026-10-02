@@ -323,7 +323,9 @@ export class Bridge {
     if (s.progress?.timer) clearTimeout(s.progress.timer);
     s.progress = null;
     const body = text?.trim() ? text : `(turn ${status ?? 'completed'}, no message)`;
-    await this.#send(s, status && status !== 'completed' ? `[${status}] ${body}` : body);
+    // A failed turn has stopped and waits for the human, like an approval.
+    await this.#send(s, status && status !== 'completed' ? `[${status}] ${body}` : body,
+      status === 'failed' ? { alert: [...this.allowed] } : {});
   }
 
   async approval(key, { ref, summary, answerable }) {
@@ -336,7 +338,7 @@ export class Bridge {
     const replyMarkup = offer ? { inline_keyboard: [[
       { text: 'Accept', callback_data: `ap:${id}:y` }, { text: 'Decline', callback_data: `ap:${id}:n` },
     ]] } : undefined;
-    await this.#send(s, `${head}\n${summary}`, { replyMarkup });
+    await this.#send(s, `${head}\n${summary}`, { replyMarkup, alert: [...this.allowed] });
   }
 
   // ── Telegram inbound ──

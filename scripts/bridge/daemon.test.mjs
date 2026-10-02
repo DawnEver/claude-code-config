@@ -189,6 +189,16 @@ for (const agent of HOSTS) {
     await until(() => on.telegram.sent.length === 3);
     assert.equal(on.telegram.sent[2].replyMarkup, undefined, 'unanswerable kinds never get buttons');
   });
+
+  test(`${agent}: only what needs the human alerts them; the rest is silent`, async () => {
+    const r = make();
+    await up(r, agent, 'x');
+    r.hosts[agent].emit('final', { id: 'x', text: 'done' });
+    r.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
+    r.hosts[agent].emit('final', { id: 'x', text: 'boom', status: 'failed' });
+    await until(() => r.telegram.sent.length === 4);
+    assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [null, [ALICE], [ALICE]]);
+  });
 }
 
 test('strangers are dropped; /status, /interrupt go through the host interface', async () => {

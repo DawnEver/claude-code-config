@@ -204,6 +204,10 @@ chars; 429s honour `retry_after`.
 
 ## Approvals
 
+Notifications: every mirrored message is sent silently. Only what waits for the human —
+an approval, or a turn that ended `failed` — notifies, and it mentions each `allowedUserIds`
+user by id (`@you`), so it gets through a muted group or Topic.
+
 Default: `approval needed on <machine>, answer locally or via official remote`, never
 answered. Opt-in per machine with `bridge.approvalsFromTelegram: true`: Accept/Decline
 buttons appear, and only presses from `allowedUserIds` count. The first answer wins (TUI,

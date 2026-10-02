@@ -111,14 +111,20 @@ export class TelegramClient {
     return fresh;
   }
 
-  /** Send plain text, chunked to 4096. Returns the sent messages. */
-  async sendMessage(chatId, text, { threadId, replyMarkup } = {}) {
+  /**
+   * Send plain text, chunked to 4096. Returns the sent messages. Silent by default; `alert`
+   * (user ids) makes it notify and mentions each user — a mention gets through a muted chat.
+   */
+  async sendMessage(chatId, text, { threadId, replyMarkup, alert } = {}) {
     const sent = [];
     const parts = chunkText(text);
     for (let i = 0; i < parts.length; i++) {
+      const loud = alert?.length && i === 0;
       const params = {
         chat_id: chatId,
-        text: parts[i],
+        text: loud ? `${alert.map(() => '@you').join(' ')} ${parts[i]}` : parts[i],
+        ...(loud ? { entities: alert.map((id, k) => ({ type: 'text_mention', offset: k * 5, length: 4, user: { id } })) }
+          : { disable_notification: true }),
         ...(threadId ? { message_thread_id: threadId } : {}),
         ...(replyMarkup && i === parts.length - 1 ? { reply_markup: replyMarkup } : {}),
         link_preview_options: { is_disabled: true },
