@@ -32,13 +32,13 @@ chat/notification is a hint, never a trigger.
   commit statuses and issue comments via that repo's `python -m lab_commons.dev.forge ... --json`
   (family repos only; others skip; cc-config never imports lab-commons).
 - No duplicate posts across 6 bots: each machine reports only pushes whose committer carries
-  its own machine name (provenance `Name (WS1/codex)`); unprovenanced (human) pushes are
-  reported by `bridge.coordinator` (G-Laptop) only.
+  its own machine name (provenance `Name (<machine-b>/codex)`); unprovenanced (human) pushes are
+  reported by `bridge.coordinator` (<machine-a>) only.
 - Session Topic: `pushed abc123 → feat/x (+3)`, `lab/gate PASS abc123`. Project group gets a
   `lanes` Topic (created by the coordinator machine): new issues, lane state changes, `@machine`
   hints for machines with no live session. Docs `docs/coordination.md`.
 
 ## Order
-1. wait for the running bridge unified-lifecycle refactor (cc-config) and the PEMC closing pass
-   (lab-commons/optimi-lab/wdg-lab) to avoid conflicts; 2. Part A; 3. Part B with live checks;
+1. wait for the running bridge unified-lifecycle refactor (cc-config) and the <group> closing pass
+   (lab-commons/<project-c>/<project-b>) to avoid conflicts; 2. Part A; 3. Part B with live checks;
 4. Layer C protection — after a real `lab/heavy` status exists, with user confirmation.

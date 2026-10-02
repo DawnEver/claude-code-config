@@ -20,7 +20,7 @@ Codex **writes to this file itself**. It appends a `[projects.'<absolute path>']
 block on every new project directory it visits, plus `[hooks.state.*]` and `[notice]`
 runtime state. The live file held:
 
-- **30** `[projects.*]` blocks, spanning two usernames (`linxu`, `ezxmb14`) and three drive
+- **30** `[projects.*]` blocks, spanning two usernames (`<user-a>`, `<user-b>`) and three drive
   letters (`c:`, `d:`, plus macOS `/Users/...`)
 - 8 `[hooks.state.*]` blocks, 1 `[notice]`
 - 21 Windows absolute paths vs 4 macOS ones in a single file

@@ -27,10 +27,10 @@ ${CODEX_TOML_START_MARKER}
 name = "deepseek"
 ${CODEX_TOML_END_MARKER}
 
-[projects.'c:\\users\\linxu\\somewhere']
+[projects.'c:\\users\\user\\somewhere']
 trust_level = "trusted"
 
-[projects."/Users/linxu/elsewhere"]
+[projects."/Users/user/elsewhere"]
 trust_level = "trusted"
 
 [hooks.state]
@@ -60,8 +60,8 @@ test('splitCodexConfig: separates preamble, shared sections, generated block and
 
   const localHeaders = parts.local.map(s => s.header);
   assert.deepEqual(localHeaders, [
-    "projects.'c:\\users\\linxu\\somewhere'",
-    'projects."/Users/linxu/elsewhere"',
+    "projects.'c:\\users\\user\\somewhere'",
+    'projects."/Users/user/elsewhere"',
     'hooks.state',
     'hooks.state."rem@cc-market:hooks/hooks.json:stop:0:0"',
     'notice',

@@ -20,7 +20,7 @@ OneDrive any more.
 
 The working tree used to sit at `../claude`. OneDrive replicated `.git/` between
 machines, which produced conflict copies of `.git/index` and `.git/FETCH_HEAD`,
-overwrote `.git/logs/HEAD` (destroying the reflog), and left a divergent `main-G`
+overwrote `.git/logs/HEAD` (destroying the reflog), and left a divergent `main-<machine-a>`
 branch on GitHub. Git assumes it owns `.git/` exclusively on one machine; a file-sync
 daemon breaks that assumption. Three small hand-edited files are a workload OneDrive
 *does* handle correctly — a `.git` directory is not.
@@ -39,8 +39,8 @@ node migrate-host.mjs               # do it
 Optional: `--target <path>` to clone somewhere other than `~/Documents/Code/AI/cc-config`.
 
 The script locates the payload and the old tree relative to itself, so it needs no
-per-machine configuration — it works across the fleet's mixed usernames (`linxu`,
-`ezxmb14`) and mixed OS. It will:
+per-machine configuration — it works across the fleet's mixed usernames (`<user-a>`,
+`<user-b>`) and mixed OS. It will:
 
 1. Check node/git, and **read** all three payload files — a OneDrive Files-On-Demand
    placeholder passes `existsSync` but fails on read, and migrating against a

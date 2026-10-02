@@ -46,7 +46,7 @@ function make({ config = {}, topicCacheFile = null } = {}) {
   const logs = [];
   let t = 0;
   const bridge = new Bridge({
-    telegram, adapters: Object.values(hosts), machine: 'WS1', config: { ...baseConfig, ...config }, topicCacheFile,
+    telegram, adapters: Object.values(hosts), machine: 'host-a', config: { ...baseConfig, ...config }, topicCacheFile,
     resolveContext: (cwd, h) => ({ project: cwd === '/proj' ? 'proj' : 'other', branch: h.branch ?? 'main' }),
     log: (m) => logs.push(m), now: () => t,
   });
@@ -67,7 +67,7 @@ test('topics: <machine>/<agent>/<branch> in the project group, fallback otherwis
   await up(r, 'codex', 't1', { branch: 'feat/x' });
   await r.bridge.sessionUp('claude', { id: 's1', cwd: '/elsewhere' });
   await up(r, 'codex', 't2', { branch: 'feat/x' });
-  assert.deepEqual(r.telegram.topics, [[-100, 'WS1/codex/feat/x'], [-999, 'WS1/claude/main'], [-100, 'WS1/codex/feat/x #2']]);
+  assert.deepEqual(r.telegram.topics, [[-100, 'host-a/codex/feat/x'], [-999, 'host-a/claude/main'], [-100, 'host-a/codex/feat/x #2']]);
   assert.deepEqual(r.telegram.unpinned, [[-100, 100], [-999, 101], [-100, 102]], 'auto-pinned first message is unpinned');
 });
 
@@ -83,7 +83,7 @@ for (const agent of HOSTS) {
       host.emit('prompt', { id: 'x', text: 'hi' });
       host.emit('final', { id: 'x', text: 'Hello!' });
       await until(() => r.telegram.sent.length === 3);
-      assert.deepEqual(texts(r.telegram), [`session up: WS1/${agent}/main (proj)`, '> hi', 'Hello!']);
+      assert.deepEqual(texts(r.telegram), [`session up: host-a/${agent}/main (proj)`, '> hi', 'Hello!']);
 
       r.at(29 * M); await r.bridge.closeIdle();
       assert.deepEqual(r.telegram.closed, [], '29m: still open');
@@ -110,7 +110,7 @@ for (const agent of HOSTS) {
       r.at(40 * H);
       host.emit('down', { id: 'x' });
       await until(() => r.telegram.closed.length === 2);
-      assert.equal(texts(r.telegram).at(-1), `session ended: WS1/${agent}/main`);
+      assert.equal(texts(r.telegram).at(-1), `session ended: host-a/${agent}/main`);
       r.at(40 * H + 23 * H); await r.bridge.sweepClosedTopics();
       assert.deepEqual(r.telegram.deleted, []);
       r.at(40 * H + 24 * H); await r.bridge.sweepClosedTopics();
@@ -149,7 +149,7 @@ for (const agent of HOSTS) {
     open();
     await until(() => r.telegram.sent.length === 3);
     await settle();
-    assert.deepEqual(texts(r.telegram), [`session up: WS1/${agent}/main (proj)`, '> hi', 'Hello!']);
+    assert.deepEqual(texts(r.telegram), [`session up: host-a/${agent}/main (proj)`, '> hi', 'Hello!']);
   });
 
   test(`${agent}: a leftover gets no Topic until activity`, async () => {
@@ -162,7 +162,7 @@ for (const agent of HOSTS) {
     await up(r, agent, 'idle', { preexisting: true });
     r.hosts[agent].emit('prompt', { id: 'idle', text: 'back again' });
     await until(() => r.telegram.sent.length === 2);
-    assert.deepEqual(texts(r.telegram), [`session up: WS1/${agent}/main (proj)`, '> back again']);
+    assert.deepEqual(texts(r.telegram), [`session up: host-a/${agent}/main (proj)`, '> back again']);
   });
 
   test(`${agent}: approvals are notices by default; opt-in buttons honour only the allowlist`, async () => {
@@ -200,7 +200,7 @@ test('strangers are dropped; /status, /interrupt go through the host interface',
   assert.deepEqual(r.hosts.codex.injected, []);
   assert.equal(r.telegram.sent.length, before);
   await r.bridge.handleUpdate(msg(ALICE, '/status@my_bot', 100));
-  await until(() => /WS1\/codex\/main: idle/.test(texts(r.telegram).at(-1)));
+  await until(() => /host-a\/codex\/main: idle/.test(texts(r.telegram).at(-1)));
   await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 100));
   await until(() => texts(r.telegram).at(-1) === 'interrupt sent');
   await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 101));
@@ -321,7 +321,7 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
   const topicCacheFile = path.join(dir, 'topics.json');
   try {
-    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|codex:sub': { topicId: 77, title: 'WS1/codex/main #3' } }));
+    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|codex:sub': { topicId: 77, title: 'host-a/codex/main #3' } }));
     const r = make({ topicCacheFile });
     r.at(5);
     r.hosts.codex.emit('dismiss', { id: 'sub' });
@@ -329,7 +329,7 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
     await until(() => r.telegram.closed.length === 1);
     await settle();
     assert.deepEqual([r.telegram.closed, r.telegram.sent], [[[-100, 77]], []]);
-    assert.deepEqual(JSON.parse(fs.readFileSync(topicCacheFile, 'utf8'))['-100|codex:sub'], { topicId: 77, title: 'WS1/codex/main #3', closedAt: 5 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(topicCacheFile, 'utf8'))['-100|codex:sub'], { topicId: 77, title: 'host-a/codex/main #3', closedAt: 5 });
     r.at(5 + 24 * H); await r.bridge.sweepClosedTopics();
     assert.deepEqual(r.telegram.deleted, [[-100, 77]], 'then deleted like any ended session');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }

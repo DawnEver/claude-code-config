@@ -83,7 +83,7 @@ test('a symlinked pre-split config keeps THIS host\'s trust entries, not the who
   // whose [projects.*] list spans every machine. Previously all of it was discarded.
   const here = tmp('here');
   const fleet = `[projects.'${here}']\ntrust_level = "trusted"\n\n`
-    + `[projects.'c:\\users\\someoneelse\\proj']\ntrust_level = "trusted"\n`;
+    + `[projects.'c:\\users\\someone\\proj']\ntrust_level = "trusted"\n`;
   const { syncDir, codexDir, envSettingsPath } = fixture({
     existingCodexConfig: fleet,
     codexIsSymlink: true,
@@ -96,7 +96,7 @@ test('a symlinked pre-split config keeps THIS host\'s trust entries, not the who
   assert.ok(!fs.lstatSync(target).isSymbolicLink(), 'must become a real file');
   const out = fs.readFileSync(target, 'utf8');
   assert.ok(out.includes(here), 'this host\'s trusted path survives');
-  assert.doesNotMatch(out, /someoneelse/);
+  assert.doesNotMatch(out, /someone/);
 });
 
 test('composeCodexConfigFile is idempotent and reports no change on a second run', () => {

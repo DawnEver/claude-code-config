@@ -3,3 +3,4 @@
 # Windows checkout and silently breaks task parsing.
 .claude/memory/**/*.md text eol=lf
 .claude/rules/**/*.md  text eol=lf
+.githooks/*            text eol=lf

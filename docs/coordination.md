@@ -28,7 +28,7 @@ Every machine's bot sees every push, so each push is reported by exactly one mac
 - commits whose committer carries **this** machine's provenance (`Name (<machine>/<agent>)`)
   are reported by this machine;
 - commits without provenance (a human's) are reported by the machine named in
-  `bridge.coordinator` (shared config, e.g. `"coordinator": "G"`);
+  `bridge.coordinator` (shared config, e.g. `"coordinator": "<machine>"`);
 - commits provenanced to another machine are that machine's to report.
 
 A tip is reported once; the cache remembers it.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // migrate-host.mjs — migrate ONE machine off the cloud-synced working tree.
 //
-// Run this on each remaining host (G, WS1/duip622037). It is deliberately
+// Run this on each remaining host (<machine-a>, <machine-b>/<ws-host>). It is deliberately
 // self-contained: it must run BEFORE the repo is cloned, so it imports nothing
 // from the repo.
 //
@@ -12,7 +12,7 @@
 //     <payload>   = the directory holding this script
 //     <old repo>  = ../claude   (the OneDrive working tree being retired)
 // which means it needs no per-machine configuration and works regardless of the
-// host's username or OS — the fleet has both `linxu` and `ezxmb14`, macOS and Windows.
+// host's username or OS — the fleet has both `<user-a>` and `<user-b>`, macOS and Windows.
 //
 // Background: OneDrive was replicating .git/ between machines, corrupting the index
 // and destroying the reflog. See docs/sync-architecture.md in the repo.

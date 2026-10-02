@@ -65,7 +65,7 @@ Try the raw bytes and both line-ending normalisations before concluding a file i
 SAFE — and yet **not deleted**. 115 *tracked* files under `cc-academia/` (src, tests,
 `uv.lock`) are placeholders macOS never downloaded. Their committed content is safe in git;
 what cannot be checked from here is whether a host that *has* them left uncommitted edits.
-Since G/WS1 use the OneDrive folder **as** their working tree, such edits would exist
+Since <machine-a>/<machine-b> use the OneDrive folder **as** their working tree, such edits would exist
 nowhere else. A placeholder can only be verified on the host where it is real — so each
 host runs the check itself, and the last one deletes.
 

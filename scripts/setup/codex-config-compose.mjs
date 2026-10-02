@@ -3,7 +3,7 @@
 // codex_config.toml is NOT a hand-edited file, despite looking like one. Codex appends a
 // `[projects.'<abs path>']` trust block on every new project directory it visits, plus
 // `[hooks.state.*]` and `[notice]` runtime state. A live config held 30 project blocks
-// spanning two usernames (linxu / ezxmb14) and three drive letters. Cloud-syncing the
+// spanning two usernames and three drive letters. Cloud-syncing the
 // whole file therefore recreates the two-writers problem this repo's sync split exists to
 // eliminate, and pollutes every host with the other hosts' dead absolute paths.
 //

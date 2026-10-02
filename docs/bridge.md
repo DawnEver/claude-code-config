@@ -165,7 +165,7 @@ Requires Anthropic auth; third-party providers (`ccds`) lack channels.
    "bridge": {
      "fallbackChatId": -1001111111111,
      "projects": { "claude-code-config": { "chatId": -1002222222222 } },
-     "coordinator": "G",
+     "coordinator": "<machine>",
      "idleCloseMinutes": 30,
      "deleteClosedAfterHours": 24,
      "observeIntervalSeconds": 60

@@ -6,7 +6,7 @@ import { Observer, provenanceOf } from './observer.mjs';
  * A fake world: one repo at /r with remote tips, commits (sha -> committer), statuses and
  * issues the test edits between polls.
  */
-function world({ machine = 'G-Laptop', coordinator = 'G-Laptop', family = true } = {}) {
+function world({ machine = 'host-c', coordinator = 'host-c', family = true } = {}) {
   const w = {
     tips: { main: 'a0' },
     commits: {},          // range "old..new" or "new" -> [{sha, committer}]
@@ -52,8 +52,8 @@ const lanesSession = { key: 'codex:main', cwd: '/r', chatId: -100, project: 'p' 
 const subSession = { key: 'claude:s', cwd: '/r/sub', chatId: -100, project: 'p' };
 
 test('provenanceOf reads `Name (<machine>/<agent>)` from a committer name', () => {
-  assert.deepEqual(provenanceOf('Mingyang Bao (WS1/codex)'), { machine: 'WS1', agent: 'codex' });
-  assert.equal(provenanceOf('Mingyang Bao'), null);
+  assert.deepEqual(provenanceOf('Me (host-a/codex)'), { machine: 'host-a', agent: 'codex' });
+  assert.equal(provenanceOf('Me'), null);
 });
 
 test('the first poll of a repo only seeds; later moves are reported once, where they belong', async () => {
@@ -63,7 +63,7 @@ test('the first poll of a repo only seeds; later moves are reported once, where 
   assert.deepEqual([w.posts, w.lanes], [[], []], 'nothing historic is reported');
 
   w.tips['feat/x'] = 'b2';
-  w.commits['b2 --not a0'] = [{ sha: 'b2', committer: 'M (G-Laptop/claude)' }, { sha: 'b1', committer: 'M (G-Laptop/claude)' }];
+  w.commits['b2 --not a0'] = [{ sha: 'b2', committer: 'M (host-c/claude)' }, { sha: 'b1', committer: 'M (host-c/claude)' }];
   w.tips.main = 'a1';
   w.commits['a0..a1'] = [{ sha: 'a1', committer: 'M' }];
   await obs.poll();
@@ -73,23 +73,23 @@ test('the first poll of a repo only seeds; later moves are reported once, where 
 });
 
 test("another machine's push is never reported here; unprovenanced pushes only by the coordinator", async () => {
-  const other = world({ machine: 'WS1', coordinator: 'G-Laptop' });
+  const other = world({ machine: 'host-a', coordinator: 'host-c' });
   other.w.sessions = [lanesSession];
   await other.obs.poll();
   other.w.tips.main = 'a1';
   other.w.commits['a0..a1'] = [{ sha: 'a1', committer: 'M' }];
   other.w.tips['feat/y'] = 'c1';
-  other.w.commits['c1 --not a1'] = [{ sha: 'c1', committer: 'M (G-Laptop/codex)' }];
+  other.w.commits['c1 --not a1'] = [{ sha: 'c1', committer: 'M (host-c/codex)' }];
   await other.obs.poll();
   assert.deepEqual([other.w.posts, other.w.lanes], [[], []]);
 });
 
 test('own push with no session on its branch goes to lanes only on the coordinator', async () => {
-  const { w, obs } = world({ machine: 'WS1', coordinator: 'G-Laptop' });
+  const { w, obs } = world({ machine: 'host-a', coordinator: 'host-c' });
   w.sessions = [lanesSession];
   await obs.poll();
   w.tips['feat/z'] = 'd1';
-  w.commits['d1 --not a0'] = [{ sha: 'd1', committer: 'M (WS1/codex)' }];
+  w.commits['d1 --not a0'] = [{ sha: 'd1', committer: 'M (host-a/codex)' }];
   await obs.poll();
   assert.deepEqual([w.posts, w.lanes], [[], []], 'non-coordinators post only into their own session Topics');
 });
@@ -99,7 +99,7 @@ test('lab/gate and lab/heavy verdicts on a reported tip follow it, once each', a
   w.sessions = [lanesSession, subSession];
   await obs.poll();
   w.tips['feat/x'] = 'b2';
-  w.commits['b2 --not a0'] = [{ sha: 'b2', committer: 'M (G-Laptop/claude)' }];
+  w.commits['b2 --not a0'] = [{ sha: 'b2', committer: 'M (host-c/claude)' }];
   await obs.poll();
   w.statuses.b2 = [{ context: 'lab/gate', state: 'success' }, { context: 'lab/test', state: 'success' }];
   await obs.poll();
@@ -114,14 +114,14 @@ test('issues: seeded first, then new ones and @machine hints go to lanes (coordi
   w.sessions = [lanesSession];
   w.issues = [{ number: 1, title: 'old', body: '' }];
   await obs.poll();
-  w.issues = [...w.issues, { number: 2, title: 'flaky gate', body: 'seen on main' }, { number: 3, title: 'port solver', body: 'for @WS2 and @G-Laptop' }];
+  w.issues = [...w.issues, { number: 2, title: 'flaky gate', body: 'seen on main' }, { number: 3, title: 'port solver', body: 'for @host-b and @host-c' }];
   await obs.poll();
   await obs.poll();
-  assert.deepEqual(w.lanes.map(([, , t]) => t), ['issue #2: flaky gate', 'issue #3: port solver', 'hint: @WS2 #3 port solver', 'hint: @G-Laptop #3 port solver']);
-  const nonCoord = world({ machine: 'WS1' });
+  assert.deepEqual(w.lanes.map(([, , t]) => t), ['issue #2: flaky gate', 'issue #3: port solver', 'hint: @host-b #3 port solver', 'hint: @host-c #3 port solver']);
+  const nonCoord = world({ machine: 'host-a' });
   nonCoord.w.sessions = [lanesSession];
   await nonCoord.obs.poll();
-  nonCoord.w.issues = [{ number: 9, title: 'x', body: '@WS1' }];
+  nonCoord.w.issues = [{ number: 9, title: 'x', body: '@host-a' }];
   await nonCoord.obs.poll();
   assert.deepEqual(nonCoord.w.lanes, []);
 });
@@ -156,24 +156,24 @@ test('comment @machine hints: since the last poll, once per comment id, self-men
   const { w, obs } = world();
   w.sessions = [lanesSession];
   w.issues = [{ number: 3, title: 'port solver', body: '' }];
-  w.comments = [{ issue: 3, id: 1, author: 'bot', body: 'old @WS2', created: 'x' }];
+  w.comments = [{ issue: 3, id: 1, author: 'bot', body: 'old @host-b', created: 'x' }];
   await obs.poll();   // seeds: nothing historic
   assert.deepEqual(w.sinceAsked, []);
   w.clock = '2026-10-01T10:05:00.000Z';
   w.comments = [
-    { issue: 3, id: 2, author: 'bot', body: 'can @WS2 take this?\nsecond line', created: 'x' },
-    { issue: 3, id: 3, author: 'bot', body: '[WS1 · codex · feat/x]\n\nhanding back, @WS1 and @G-Laptop', created: 'x' },
-    { issue: 8, id: 4, author: 'bot', body: 'hey @WS1', created: 'x' },
+    { issue: 3, id: 2, author: 'bot', body: 'can @host-b take this?\nsecond line', created: 'x' },
+    { issue: 3, id: 3, author: 'bot', body: '[host-a · codex · feat/x]\n\nhanding back, @host-a and @host-c', created: 'x' },
+    { issue: 8, id: 4, author: 'bot', body: 'hey @host-a', created: 'x' },
   ];
   await obs.poll();
   await obs.poll();   // same ids again: posted once
   assert.deepEqual(w.sinceAsked, ['2026-10-01T10:00:00.000Z', '2026-10-01T10:05:00.000Z']);
   assert.deepEqual(w.lanes.map(([, , t]) => t), [
-    'hint: @WS2 #3 port solver — can @WS2 take this?',
-    'hint: @G-Laptop #3 port solver — handing back, @WS1 and @G-Laptop',
-    'hint: @WS1 #8 — hey @WS1',
+    'hint: @host-b #3 port solver — can @host-b take this?',
+    'hint: @host-c #3 port solver — handing back, @host-a and @host-c',
+    'hint: @host-a #8 — hey @host-a',
   ]);
-  const nonCoord = world({ machine: 'WS1' });
+  const nonCoord = world({ machine: 'host-a' });
   nonCoord.w.sessions = [lanesSession];
   await nonCoord.obs.poll();
   await nonCoord.obs.poll();

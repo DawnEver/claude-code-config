@@ -20,10 +20,10 @@ honour that. Observed on the macOS host:
 
 | Artifact | Meaning |
 | --- | --- |
-| `.git/index-G`, `index-G-2`, `index-Linxu's MacBook Air`, `-2` | conflict copies of the git index |
-| `.git/FETCH_HEAD-G`, `-G-2`, `FETCH_HEAD-Linxu's MacBook Air-1..6` | conflict copies of `FETCH_HEAD` |
-| `.git/logs/HEAD` frozen at 08-07 while commits ran to 08-27, plus `logs/HEAD-G` | **the reflog was overwritten — git's undo history was gone** |
-| `origin/main-G` on GitHub | a host pushed a divergent branch instead of merging |
+| `.git/index-<machine-a>`, `index-<machine-a>-2`, `index-<mac-host>`, `-2` | conflict copies of the git index |
+| `.git/FETCH_HEAD-<machine-a>`, `-<machine-a>-2`, `FETCH_HEAD-<mac-host>-1..6` | conflict copies of `FETCH_HEAD` |
+| `.git/logs/HEAD` frozen at 08-07 while commits ran to 08-27, plus `logs/HEAD-<machine-a>` | **the reflog was overwritten — git's undo history was gone** |
+| `origin/main-<machine-a>` on GitHub | a host pushed a divergent branch instead of merging |
 | local `main` 11 behind; working tree `+1111/−4106` vs origin | the local tree was a stale partial replica, not new work |
 
 That last row is the one that nearly caused data loss: committing the "dirty" working tree
@@ -73,7 +73,7 @@ pre-migration behaviour — there is a regression test guarding exactly that.
 
 - macOS host done; tree at `~/Documents/Code/AI/cc-config`, payload at `<OneDrive>/Sync/cc-config/`.
 - `<OneDrive>/Sync/claude/` deliberately retained as the rollback.
-- G and WS1 (`duip622037`) not yet migrated. Tooling for them lives in the payload dir:
+- <machine-a> and <machine-b> (`<ws-host>`) not yet migrated. Tooling for them lives in the payload dir:
   `migrate-host.mjs`, `rescue-cc-market.mjs`, `HANDOFF.md`, `READ-ME-FIRST.md`.
 - The old tree is **not inert**: `setup.js` runs `git pull` inside `<sourceDir>/cc-market`
   on every run, so an un-migrated host keeps exercising git inside cloud storage. Delete

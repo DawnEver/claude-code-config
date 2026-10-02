@@ -1,6 +1,6 @@
 ---
 name: host-migration-retired
-description: The cloud-git migration finished 2026-08-30 when host G moved onto the split layout; all three hosts are done, so scripts/migration/ and the payload bootstrap copies were retired into .claude/memory/2026/08/30/.archive/. Records two defects the last host surfaced.
+description: The cloud-git migration finished 2026-08-30 when host <machine-a> moved onto the split layout; all three hosts are done, so scripts/migration/ and the payload bootstrap copies were retired into .claude/memory/2026/08/30/.archive/. Records two defects the last host surfaced.
 metadata:
   node_type: memory
   type: project
@@ -14,8 +14,8 @@ The move off cloud-synced git working trees (see [[cloud-sync-split]] for the la
 | Host | Migrated | Working tree |
 | --- | --- | --- |
 | macOS | 2026-08-29 | — |
-| WS1 `duip622037` | 2026-08-29 | `C:\Users\ezxmb14\Documents\MingyangBao` — see [[windows-launcher-quoting-and-links]] |
-| G | 2026-08-30 | `C:\Users\linxu\Documents\AI\{cc-config,ai-agents}` |
+| <machine-b> `<ws-host>` | 2026-08-29 | `C:\Users\<user>\Documents\<owner>` — see [[windows-launcher-quoting-and-links]] |
+| <machine-a> | 2026-08-30 | `C:\Users\<user>\Documents\AI\{cc-config,ai-agents}` |
 
 `scripts/migration/README.md` declared the tooling disposable once every host had migrated
 and the old trees were gone. Both conditions held, so it was retired.
@@ -65,5 +65,5 @@ find ~/.claude ~/.codex -maxdepth 4 -type l ! -exec test -e {} \; -print   # dan
 find "<OneDrive>/Sync" -name .git            # must be empty — the invariant
 ```
 
-Handoff docs pin a test count (it said **151**); the repo had **170** by the time G migrated. Treat a
+Handoff docs pin a test count (it said **151**); the repo had **170** by the time <machine-a> migrated. Treat a
 count mismatch as doc drift, not failure — `fail 0` is the gate.

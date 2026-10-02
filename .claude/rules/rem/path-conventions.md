@@ -1,7 +1,6 @@
 # Path Conventions — never name a machine-specific path in a shared file
 
-The fleet has mixed usernames (`linxu` on G/WS2, **`ezxmb14`** on WS1), mixed OS, and mixed
-drive letters. Two rules follow, and both have already caused live outages.
+Hosts differ in username, OS, and drive letters. Two rules follow, and both have already caused live outages.
 
 ## 1. No absolute cloud/machine path in any shared or tracked file
 
@@ -13,7 +12,7 @@ Shared config names `~/.claude/...` or `~/.codex/...` and lets the per-host link
 `setup.js` creates those junctions (`CLAUDE_LINKS` / `CODEX_LINKS`), so the resolved path
 contains no cloud folder and no username.
 
-**Why:** these once hardcoded G's absolute OneDrive path. On WS1 that path does not exist,
+**Why:** these once hardcoded one host's absolute cloud-folder path. On another host that path did not exist,
 and the CLI exited 1 at startup for *every* session there.
 
 ## 2. A git working tree NEVER lives in cloud storage
@@ -27,7 +26,7 @@ Layout:
 
 | What | Where |
 | --- | --- |
-| working tree + `.git` | `<repo>` — wherever you cloned it (`~/Documents/AI/cc-config` on this host); **never** a synced folder |
+| working tree + `.git` | `<repo>` — wherever you cloned it **never** a synced folder |
 | sync payload — `claude_settings.json`, `claude_env_settings.json`, `codex_config.toml` | the sync dir |
 | API keys | `~/.claude/claude_env_settings.local.json` — machine-local, never synced |
 | `models.json`, `system-prompt/dist/` | generated per machine |

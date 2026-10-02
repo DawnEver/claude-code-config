@@ -160,11 +160,11 @@ test('isMainSession: a channel whose claude was started from inside another clau
 });
 
 test('isClaudeProcess judges the program, not its arguments (real Windows shapes)', () => {
-  assert.equal(isClaudeProcess(String.raw`"C:\Users\linxu\nodejs\\node_modules\@anthropic-ai\claude-code\bin\claude.exe"    `), true);
+  assert.equal(isClaudeProcess(String.raw`"C:\Users\user\nodejs\\node_modules\@anthropic-ai\claude-code\bin\claude.exe"    `), true);
   assert.equal(isClaudeProcess('/usr/local/bin/claude --resume x'), true);
   assert.equal(isClaudeProcess('node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js -p hi'), true);
-  assert.equal(isClaudeProcess(String.raw`C:\WINDOWS\system32\cmd.exe /d /s /c "C:\Users\linxu\nodejs\claude.CMD"`), false, 'npm shim');
-  assert.equal(isClaudeProcess('node  "C:/Users/linxu/.claude/scripts/runtime/cc.js" claude'), false, 'ccc launcher');
+  assert.equal(isClaudeProcess(String.raw`C:\WINDOWS\system32\cmd.exe /d /s /c "C:\Users\user\nodejs\claude.CMD"`), false, 'npm shim');
+  assert.equal(isClaudeProcess('node  "C:/Users/user/.claude/scripts/runtime/cc.js" claude'), false, 'ccc launcher');
   assert.equal(isClaudeProcess(String.raw`"C:\Program Files\Git\bin\bash.exe" -c "claude -p x"`), false);
 });
 

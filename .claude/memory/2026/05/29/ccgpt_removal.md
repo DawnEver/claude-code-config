@@ -18,6 +18,6 @@ ChatGPT subscription bridge (`ccgpt`, `/chatgpt` proxy route) fully removed.
 - `setup.js`: removed `ccgpt` alias install entry
 - `claude_env_settings.json` / `.template.json`: removed `env:gpt` and `proxy.chatgpt`
 - `AGENTS.md`: updated provider switching docs
-- Installed binaries `ccgpt.cmd` / `ccgpt` deleted from `C:\Users\linxu\nodejs`
+- Installed binaries `ccgpt.cmd` / `ccgpt` deleted from `C:\Users\<user>\nodejs`
 
 **How to apply:** Do not re-add a ChatGPT/OpenAI bridge unless using a real OpenAI API key (not Codex subscription tokens).

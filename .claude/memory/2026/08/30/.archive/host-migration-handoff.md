@@ -1,6 +1,6 @@
 # Handoff — set this workstation up on the new layout
 
-**For:** G and WS1 (`duip622037`). The macOS host is done.
+**For:** <machine-a> and <machine-b> (`<ws-host>`). The macOS host is done.
 **Date:** 2026-08-29 · **Repos:** `DawnEver/claude-code-config` and `DawnEver/ai-agents`
 
 Hand this file to a person, or paste it whole into a Claude Code session. It is
@@ -19,7 +19,7 @@ hundred files are modified and I didn't touch them" actually were. Confirmed dam
 
 | Evidence | Meaning |
 | --- | --- |
-| `.git/index-G`, `index-<hostname>`, `FETCH_HEAD-<hostname>-1..6` | OneDrive conflict copies of the index and `FETCH_HEAD` |
+| `.git/index-<machine-a>`, `index-<hostname>`, `FETCH_HEAD-<hostname>-1..6` | OneDrive conflict copies of the index and `FETCH_HEAD` |
 | `.git/logs/HEAD` frozen at Aug 7 while commits ran to Aug 27 | **the reflog was overwritten — git's undo history is gone** |
 | `main` 11 behind `origin/main`, tree at `+1111 / −4106` | the checkout was a stale partial replica; committing it would have deleted ~4100 published lines |
 | `ai-agents` index: 393 entries against 284 real files | `reviewer-discovery/` reported untracked while present on the remote; three committed memory files reported as staged deletions |
@@ -125,7 +125,7 @@ gitignored symlinks into `agent-data/`; it resolves that directory from an argum
 
 ## 5. Windows gotchas
 
-All of these were hit for real while onboarding `duip622037` on 2026-08-29. The first is
+All of these were hit for real while onboarding `<ws-host>` on 2026-08-29. The first is
 the one that will cost you data if you skip it.
 
 - **`ln -s` in Git Bash makes a COPY, not a link — and `link-agent-data.sh` reported `LINK`

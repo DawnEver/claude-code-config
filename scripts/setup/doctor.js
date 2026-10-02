@@ -16,11 +16,13 @@
 //   node ~/.claude/scripts/setup/doctor.js          full report
 //   node ~/.claude/scripts/setup/doctor.js --hook   SessionStart: silent unless something is wrong
 //   node ~/.claude/scripts/setup/doctor.js --json   machine-readable
+//   node ~/.claude/scripts/setup/doctor.js --public-hygiene   pre-commit gate (.githooks)
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 import { isMain } from '../shared/is-main.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
@@ -318,6 +320,88 @@ export function checkHygiene(root = sourceDir) {
   return out;
 }
 
+// ── public hygiene ──
+// This repo is published. A tracked file must not name the owner's machines, accounts,
+// hosts, chat ids or private projects. Two layers: generic shapes of personal data
+// (below), plus a PRIVATE denylist in the machine-local ~/.claude/private-markers —
+// never tracked, never synced — because the concrete names are themselves the secret.
+// A justified exception carries the inline marker `public-hygiene: allow (<reason>)`.
+
+export const PRIVATE_MARKERS_PATH = path.join(HOME, '.claude', 'private-markers');
+
+// Path segments that are obviously placeholders, not someone's account.
+// A segment starting with `<` (`<user>`) never matches the patterns at all.
+const NEUTRAL_USER = /^(?:user\d*|username|u|x|me|you|someone|other|name|example|runner|test|\.\.\.|…)$/i;
+// RFC 2606 / 6761 reserved names, plus GitHub's privacy address.
+const NEUTRAL_MAIL_DOMAINS = /(?:^|\.)(?:example\.(?:com|org|net)|users\.noreply\.github\.com|example|invalid|test|localhost)$/i;
+const PLACEHOLDER_CHAT = /^-100(?:1234567890|(\d)\1{9,})$/;
+const homeUser = (m) => !NEUTRAL_USER.test(m[1]);
+
+export const PUBLIC_PATTERNS = [
+  { what: 'Windows home path', re: /[A-Za-z]:[\\/]+Users[\\/]+([^\\/\s"'`<>*),;]+)/gi, bad: homeUser },
+  { what: 'macOS home path', re: /(?<![\w.:])\/Users\/([^\\/\s"'`<>*),;]+)/g, bad: homeUser },
+  { what: 'Linux home path', re: /(?<![\w.:])\/home\/([^\\/\s"'`<>*),;]+)/g, bad: homeUser },
+  { what: 'email address', re: /\b([A-Za-z0-9._%+-]+)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})\b/g,
+    bad: (m) => m[1] !== 'git' && !NEUTRAL_MAIL_DOMAINS.test(m[2]) },
+  { what: 'Telegram chat id', re: /-100\d{9,}/g, bad: (m) => !PLACEHOLDER_CHAT.test(m[0]) },
+  { what: 'org cloud folder', re: /OneDrive - [A-Za-z]/g, bad: () => true },
+];
+
+/** Parse private-markers text: one literal or /regex/flags per line, # comments. */
+export function parseMarkers(text) {
+  const out = [];
+  for (const raw of String(text ?? '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const rx = /^\/(.+)\/([a-z]*)$/.exec(line);
+    try {
+      out.push(rx
+        ? new RegExp(rx[1], rx[2].includes('i') ? rx[2] : `${rx[2]}i`)
+        : new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+    } catch { /* an unparsable marker is skipped, not fatal */ }
+  }
+  return out;
+}
+
+/** Lines of `text` that carry personal data; `markers` are the private denylist. */
+export function scanPublicHygiene(text, markers = []) {
+  const hits = [];
+  String(text).split(/\r?\n/).forEach((line, i) => {
+    if (/public-hygiene: allow/.test(line)) return;
+    const kinds = [];
+    for (const p of PUBLIC_PATTERNS) {
+      for (const m of line.matchAll(p.re)) if (p.bad(m)) { kinds.push(p.what); break; }
+    }
+    if (markers.some((re) => re.test(line))) kinds.push('private marker');
+    if (kinds.length) hits.push({ line: i + 1, what: kinds.join(' + ') });
+  });
+  return hits;
+}
+
+function trackedFiles(root) {
+  try {
+    return execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      .split('\0').filter(Boolean);
+  } catch { return []; }
+}
+
+export function checkPublicHygiene({ root = sourceDir, files = trackedFiles(root), markersFile = PRIVATE_MARKERS_PATH } = {}) {
+  let markers = [];
+  try { markers = parseMarkers(fs.readFileSync(markersFile, 'utf8')); } catch { /* absent: generic layer only */ }
+  const out = [];
+  for (const rel of files) {
+    let buf;
+    try { buf = fs.readFileSync(path.join(root, rel)); } catch { continue; }
+    if (buf.subarray(0, 8000).includes(0)) continue;          // binary
+    for (const hit of scanPublicHygiene(buf.toString('utf8'), markers)) {
+      // The matched text is deliberately not echoed: the report may itself be shared.
+      out.push(finding('FAIL', 'public-hygiene', `${rel}:${hit.line} has a ${hit.what}`,
+        'replace with a placeholder (<machine>, <chat-id>, <project>, ~/...) or mark `public-hygiene: allow (<reason>)`'));
+    }
+  }
+  return out;
+}
+
 // Provenance (docs/harness-architecture.md §8b) fails silent by design: with no
 // machine.json the launchers inject nothing, so agent commits on this host look
 // exactly like manual ones and nobody notices the fleet name was never set. WARN,
@@ -358,6 +442,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPlugins(settings, home),
     ...checkCodexPluginCache(repoRoot, home),
     ...checkHygiene(repoRoot),
+    ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers') }),
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
     ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),
       configPath: path.join(home, '.codex', 'config.toml') }),
@@ -368,7 +453,8 @@ const MARK = { FAIL: 'FAIL ', WARN: 'WARN ', OK: 'OK   ' };
 
 function main() {
   const args = process.argv.slice(2);
-  const findings = runChecks();
+  // --public-hygiene: the pre-commit gate (.githooks/pre-commit) — that check alone.
+  const findings = args.includes('--public-hygiene') ? checkPublicHygiene() : runChecks();
   const failed = findings.filter((f) => f.level === 'FAIL');
   const warned = findings.filter((f) => f.level === 'WARN');
 

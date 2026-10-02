@@ -25,7 +25,7 @@ The two repos differ in **whom they serve and how they ship**, which decides own
 | --- | --- | --- |
 | Serves | one person: their machines and agents | a family of repos and everyone who contributes |
 | Ships with | the machine (setup) | the repo (pip dependency) |
-| Applies to | every project, including small personal ones | motronics-studio, wdg-lab, optimi-lab, ... |
+| Applies to | every project, including small personal ones | a family of large consumer projects |
 
 The test for any rule: does it still hold in an unrelated repo? Then cc-config. Must
 anyone who clones the repo obey it? Then lab-commons. Neither depends on the other; their
@@ -168,7 +168,7 @@ No bot accounts: they multiply credentials and lose layer 1. Instead:
   nothing is injected. `setup-vscode.js` (Claude in VS Code) carries no provenance.
 - **Issues/comments:** lab-commons' forge prefixes each body with
   `[<machine> · <agent> · <branch>]`.
-- **Machine name:** `~/.claude/machine.json` (`{"name": "WS1"}`), written by
+- **Machine name:** `~/.claude/machine.json` (`{"name": "<machine>"}`), written by
   `setup.js --machine <NAME>`, never synced, never derived from hostname; doctor WARNs
   when it is missing.
 

@@ -5,7 +5,7 @@ name: harness-session-bridge-design
 # Multi-workstation harness: session bridge design (supersedes multi-device-fabric-direction)
 
 Decision (2026-10-01, design only, nothing implemented yet). Goal: a general collaborative
-dev harness — many workstations x many projects (motronics, wdg lab, ...) x many tasks per
+dev harness — many workstations x many projects (<project>, <project-b>, ...) x many tasks per
 machine, cross-platform, Claude Code + Codex. Principles: first principles, Occam, single
 source of truth, no backward compat.
 
@@ -43,7 +43,7 @@ to resolve the open questions.
   (attach with `app-server proxy`, subscribe with `thread/resume`, inject with `turn/start`/`turn/steer`).
   Claude can only be injected into through channels, which are hidden and need Bun plus
   Anthropic auth. DeepSeek sessions are out of v1.
-- Fabric usage on host G only (from transcript tool_use records; traceme has no per-tool data):
+- Fabric usage on host <machine-a> only (from transcript tool_use records; traceme has no per-tool data):
   `call` 88, `list_providers` 26, everything else 0 calls (including `fan_out`, and all
   session/team/node tools and skills). The proposed removal tiers A (node), B (session/team),
   C (introspection tools + skills) await the user's choice. Keep `call`, `fan_out`, `list_providers`.

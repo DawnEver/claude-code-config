@@ -7,9 +7,9 @@ tags: [system-prompt, fabric, codex, setup, paths]
 # Platform prompt paths — symlink convention (2026-08-11)
 
 The shared configs (`claude_env_settings.json` `fabric.systemPromptFile`,
-`codex_config.toml` `model_instructions_file`) used to hardcode G's absolute OneDrive path
-(`C:/Users/linxu/OneDrive - The University of Nottingham/Sync/claude/system-prompt/...`).
-The fleet has mixed usernames (G/WS2 = linxu, WS1 = **ezxmb14**): on WS1 that path does not
+`codex_config.toml` `model_instructions_file`) used to hardcode <machine-a>'s absolute OneDrive path
+(`<cloud>/Sync/claude/system-prompt/...`).
+The fleet has mixed usernames (<machine-a>/<machine-c> = <user-a>, <machine-b> = **<user-b>**): on <machine-b> that path does not
 exist, and the CLI exited 1 at startup for EVERY session there (reproduced live).
 
 **New convention — never a OneDrive path in shared config.**

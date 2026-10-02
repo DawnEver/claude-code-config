@@ -677,6 +677,12 @@ export function setup(options = {}) {
   console.log('\n--- CLI Wrappers ---');
   installCliWrappers(claudeDir);
 
+  // The repo is public: .githooks/pre-commit runs doctor's public-hygiene gate.
+  try {
+    execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: sourceDir, stdio: 'ignore' });
+    console.log('OK    git core.hooksPath -> .githooks (public-hygiene pre-commit)');
+  } catch { /* not a git checkout: nothing to gate */ }
+
   // The session bridge (docs/bridge.md) runs only where this machine has its own bot token.
   const bridge = readBridgeConfig({
     sharedPath: path.join(claudeDir, 'claude_env_settings.json'),

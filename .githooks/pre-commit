@@ -1,0 +1,5 @@
+#!/bin/sh
+# Public-repo gate: refuse a commit while any tracked file carries personal/local data.
+# Wired by setup.js (git config core.hooksPath .githooks). Private markers come from the
+# machine-local ~/.claude/private-markers; see scripts/setup/doctor.js checkPublicHygiene.
+exec node "$(git rev-parse --show-toplevel)/scripts/setup/doctor.js" --public-hygiene

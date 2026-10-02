@@ -10,7 +10,7 @@ import {
 const tmp = () => mkdtempSync(join(tmpdir(), 'machine-'));
 
 test('isValidMachineName: [A-Za-z0-9-]+ only', () => {
-  for (const ok of ['G-Laptop', 'WS1', 'WSEng']) assert.equal(isValidMachineName(ok), true);
+  for (const ok of ['host-c', 'host-a', 'host-d']) assert.equal(isValidMachineName(ok), true);
   for (const bad of ['', ' ', 'a b', 'WS_1', 'x/y', null, 42]) assert.equal(isValidMachineName(bad), false);
 });
 
@@ -25,9 +25,9 @@ test('readMachineName: null when missing, unparsable, or invalid', () => {
 
 test('writeMachineName round-trips and rejects invalid names', () => {
   const p = join(tmp(), 'sub', 'machine.json');
-  writeMachineName('WS2', p);
-  assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { name: 'WS2' });
-  assert.equal(readMachineName(p), 'WS2');
+  writeMachineName('host-b', p);
+  assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { name: 'host-b' });
+  assert.equal(readMachineName(p), 'host-b');
   assert.throws(() => writeMachineName('bad name', p));
 });
 
@@ -36,30 +36,30 @@ test('provenanceEnv: nothing without a machine name', () => {
 });
 
 test('provenanceEnv: committer name + HARNESS_*, never author', () => {
-  const out = provenanceEnv({ machine: 'WS1', agent: 'codex', userName: 'Me', env: {} });
+  const out = provenanceEnv({ machine: 'host-a', agent: 'codex', userName: 'Me', env: {} });
   assert.deepEqual(out, {
-    HARNESS_MACHINE: 'WS1', HARNESS_AGENT: 'codex', GIT_COMMITTER_NAME: 'Me (WS1/codex)',
+    HARNESS_MACHINE: 'host-a', HARNESS_AGENT: 'codex', GIT_COMMITTER_NAME: 'Me (host-a/codex)',
   });
   assert.ok(!Object.keys(out).some((k) => k.startsWith('GIT_AUTHOR')));
 });
 
 test('provenanceEnv: no git user.name -> HARNESS_* only', () => {
-  assert.deepEqual(provenanceEnv({ machine: 'WS1', agent: 'claude', userName: null, env: {} }),
-    { HARNESS_MACHINE: 'WS1', HARNESS_AGENT: 'claude' });
+  assert.deepEqual(provenanceEnv({ machine: 'host-a', agent: 'claude', userName: null, env: {} }),
+    { HARNESS_MACHINE: 'host-a', HARNESS_AGENT: 'claude' });
 });
 
 test('provenanceEnv: keeps a user-set committer name, replaces an inherited launcher one', () => {
-  const user = provenanceEnv({ machine: 'WS1', agent: 'claude', userName: 'Me',
+  const user = provenanceEnv({ machine: 'host-a', agent: 'claude', userName: 'Me',
     env: { GIT_COMMITTER_NAME: 'Custom' } });
   assert.equal('GIT_COMMITTER_NAME' in user, false);
-  const nested = provenanceEnv({ machine: 'WS1', agent: 'claude', userName: 'Me',
-    env: { GIT_COMMITTER_NAME: 'Me (WS1/codex)', HARNESS_AGENT: 'codex' } });
-  assert.equal(nested.GIT_COMMITTER_NAME, 'Me (WS1/claude)');
+  const nested = provenanceEnv({ machine: 'host-a', agent: 'claude', userName: 'Me',
+    env: { GIT_COMMITTER_NAME: 'Me (host-a/codex)', HARNESS_AGENT: 'codex' } });
+  assert.equal(nested.GIT_COMMITTER_NAME, 'Me (host-a/claude)');
 });
 
 test('codexShellEnv: fixed codex provenance, independent of the calling env', () => {
   assert.deepEqual(codexShellEnv({ machine: null, userName: 'Me' }), {});
-  assert.deepEqual(codexShellEnv({ machine: 'WS1', userName: 'Me' }), {
-    HARNESS_MACHINE: 'WS1', HARNESS_AGENT: 'codex', GIT_COMMITTER_NAME: 'Me (WS1/codex)',
+  assert.deepEqual(codexShellEnv({ machine: 'host-a', userName: 'Me' }), {
+    HARNESS_MACHINE: 'host-a', HARNESS_AGENT: 'codex', GIT_COMMITTER_NAME: 'Me (host-a/codex)',
   });
 });

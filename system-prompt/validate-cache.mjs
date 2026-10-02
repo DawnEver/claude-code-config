@@ -29,7 +29,7 @@ function claudeBin() {
   if (process.env.CLAUDE_EXE) return process.env.CLAUDE_EXE;
   if (process.platform !== "win32") return "claude";
   // The npm-global layout, derived from this process's own node rather than written out
-  // as an absolute path: the previous literal ("C:/Users/linxu/nodejs/...") was both a
+  // as an absolute path: the previous literal (a user-profile nodejs path) was both a
   // machine path in a tracked file and wrong for every other host. Deliberately NOT
   // realpath'd — under nvm the bin dir is a symlink, and this wants the sibling
   // node_modules, which sits next to the link rather than its target.

@@ -27,13 +27,12 @@ effect.
 ```sh
 npm run setup                  # create symlinks
 npm run setup -- --replace     # overwrite existing files
-npm run setup -- --machine WS1   # name this host (once per machine)
+npm run setup -- --machine host-a   # name this host (once per machine)
 npm test                       # unit tests
 ```
 
 `--machine <NAME>` writes `~/.claude/machine.json` (machine-local, never synced; names
-match `[A-Za-z0-9-]+` — fleet: `G`, `WS1`, `WS2`,
-`WS3`, `WS4`, `WSEng`). With it, agent commands get
+match `[A-Za-z0-9-]+`, one unique name per host). With it, agent commands get
 `GIT_COMMITTER_NAME="<git user.name> (<machine>/<claude|codex>)"` plus
 `HARNESS_MACHINE` / `HARNESS_AGENT`; the git author and your manual commits are untouched.
 Claude gets them from the `ccc`/`ccds` launchers (a `GIT_COMMITTER_NAME` you set in the

@@ -14,10 +14,10 @@ Observed damage on the macOS host:
 
 | Artifact | Meaning |
 | --- | --- |
-| `.git/index-G`, `index-G-2`, `index-Linxu's MacBook Air`, `-2` | OneDrive conflict copies of the git index |
-| `.git/FETCH_HEAD-G`, `-G-2`, `FETCH_HEAD-Linxu's MacBook Air-1..6` | conflict copies of `FETCH_HEAD` |
-| `.git/logs/HEAD` frozen at 2026-08-07 while commits ran to 08-27, plus `logs/HEAD-G` | **the reflog was overwritten — git's undo history was gone** |
-| `origin/main-G` on GitHub | a host pushed a divergent branch instead of merging |
+| `.git/index-<machine>`, `index-<machine>-2` | OneDrive conflict copies of the git index |
+| `.git/FETCH_HEAD-<machine>`, `FETCH_HEAD-<machine>-1..6` | conflict copies of `FETCH_HEAD` |
+| `.git/logs/HEAD` frozen at 2026-08-07 while commits ran to 08-27, plus `logs/HEAD-<machine>` | **the reflog was overwritten — git's undo history was gone** |
+| `origin/main-<machine>` on GitHub | a host pushed a divergent branch instead of merging |
 | local `main` 11 commits behind `origin/main`, working tree at `+1111/-4106` vs origin | the local tree was a stale partial replica, not new work |
 
 Root cause is not git and not OneDrive individually: it is **two writers against one
@@ -35,8 +35,8 @@ GitHub *is* the compact-packfile remote that idea is reaching for.
 3. **Not every user of this repo has OneDrive**, or any cloud sync at all. This repo is
    public. The zero-config default must be a plain single-machine install that behaves
    exactly as it does today.
-4. No absolute cloud path may appear in any shared or tracked file. The fleet has mixed
-   usernames (`linxu` on G/WS2, `ezxmb14` on WS1) and mixed OS. This is the same
+4. No absolute cloud path may appear in any shared or tracked file. Hosts differ in
+   username, drive letter and OS. This is the same
    constraint that produced the `~/.claude/system-prompt` convention — see
    `.claude/memory/2026/08/11/system-prompt-paths-symlink.md`.
 5. Secrets must not enter the cloud payload or git.
@@ -73,7 +73,7 @@ The obvious classification — "a config file, therefore hand-edited, therefore 
 is wrong, and a review caught it before this shipped. Codex *writes to this file itself*:
 it appends a `[projects.'<absolute path>']` trust block on every new project directory it
 visits, plus `[hooks.state.*]` and `[notice]` runtime state. The live file held **30
-project blocks spanning two usernames (`linxu`, `ezxmb14`) and three drive letters**,
+project blocks spanning two usernames and three drive letters**,
 alongside 21 Windows and 4 macOS absolute paths.
 
 Cloud-syncing that whole file would reproduce the exact two-writers problem this design
@@ -347,8 +347,8 @@ rolling back before step 7.
   exception.** `npm run doctor` fails on a machine path in the payload or in tracked code
   (`payload-abs-path` / `hygiene-abs-path`), and runs the same checks at SessionStart via
   `--hook`. This section previously said the invariant was "asserted but not yet enforced";
-  it is now a check, and the `motronics-studio` example it cited is fixed — this host's
-  entry is `~/Documents/PEMC/motronics-studio`, which fabric expands (`fabric-config.mjs`).
+  it is now a check, and the project-path example it cited is fixed — such an entry is
+  written as `~/<project>`, which fabric expands (`fabric-config.mjs`).
   There is no exception: every absolute path in the payload fails.
 
 - **Files-On-Demand placeholders.** A dehydrated cloud file satisfies `existsSync` but its

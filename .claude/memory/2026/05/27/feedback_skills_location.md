@@ -7,7 +7,7 @@ metadata:
   originSessionId: 2007c28a-2bde-485d-9e8f-3e92612b025f
 ---
 
-All custom skills and agents must be placed in the repo at `skills/<name>/SKILL.md` (i.e., `C:\Users\linxu\OneDrive - The University of Nottingham\Sync\claude\skills\`), which is symlinked to `~/.claude/skills`.
+All custom skills and agents must be placed in the repo at `skills/<name>/SKILL.md` (i.e., `<cloud>\Sync\claude\skills\`), which is symlinked to `~/.claude/skills`.
 
 **Why:** Skills live in the repo so they are version-controlled, synced across machines via OneDrive, and survive cache clears. The symlink `~/.claude/skills → repo/skills/` is created by `setup.js`.
 

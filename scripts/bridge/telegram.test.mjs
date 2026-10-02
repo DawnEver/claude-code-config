@@ -52,7 +52,7 @@ test('429 is retried after retry_after seconds', async () => {
   const sleeps = [];
   try {
     const tg = new TelegramClient({ token: 't', apiBase: api.base, sleep: async (ms) => sleeps.push(ms) });
-    const r = await tg.createForumTopic(-1, 'WS1/codex/main');
+    const r = await tg.createForumTopic(-1, 'host-a/codex/main');
     assert.equal(r.message_thread_id, 55);
     assert.deepEqual(sleeps, [3000]);
   } finally { api.close(); }

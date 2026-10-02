@@ -26,7 +26,7 @@ metadata:
 - **Confidence:** single-reviewer
 - **Suggestion:** Split codex_config.toml: sync only the hand-edited head (model/sandbox/TUI) and generate ~/.codex/config.toml per host as synced-head + local [projects.*] + the setup-managed marker block (a marker protocol already exists in inject-codex-providers.mjs). At minimum drop it from Tier B and correct §3/§10.
 
-§3 claims Tier B files are 'small, hand-edited, rarely written concurrently'. The live codex_config.toml disproves this: ~25 auto-appended [projects.'...'] trust blocks written by Codex on every new project directory, mixed OS and mixed absolute paths (c:\users\linxu\onedrive - ... alongside /Users/linxu/Library/CloudStorage/...). Written by a daemon-like process on every host without coordination. Putting it in a cloud folder reproduces the two-writers problem the design exists to eliminate, at lower frequency. §10 dismisses this on a false premise. Each host also accumulates other hosts' dead project paths forever.
+§3 claims Tier B files are 'small, hand-edited, rarely written concurrently'. The live codex_config.toml disproves this: ~25 auto-appended [projects.'...'] trust blocks written by Codex on every new project directory, mixed OS and mixed absolute paths (c:\users\<user>\<cloud> ... alongside /Users/<user>/Library/CloudStorage/...). Written by a daemon-like process on every host without coordination. Putting it in a cloud folder reproduces the two-writers problem the design exists to eliminate, at lower frequency. §10 dismisses this on a false premise. Each host also accumulates other hosts' dead project paths forever.
 
 ---
 
@@ -112,9 +112,9 @@ findOrphanedLinks (migrate.js:53-58) resolves each symlink with realpathSync and
 - **Category:** Bug
 - **Status:** OPEN
 - **Confidence:** single-reviewer
-- **Suggestion:** State the invariant per tier (tracked: enforced; Tier B: currently violated) and add a setup-time lint that greps resolved Tier B files for /Users/, C:\, c:/ and warns. Fix the motronics-studio entry to a ~-relative or per-host local override before the first cross-machine sync.
+- **Suggestion:** State the invariant per tier (tracked: enforced; Tier B: currently violated) and add a setup-time lint that greps resolved Tier B files for /Users/, C:\, c:/ and warns. Fix the <project> entry to a ~-relative or per-host local override before the first cross-machine sync.
 
-§2 constraint 4 states it as an invariant and §5 rests on it. Live payload: claude_env_settings.json:52 contains "motronics-studio": "C:/Users/linxu/Documents/PEMC/motronics-studio" — a Windows absolute path in a file about to be shared with a macOS host; codex_config.toml is saturated with them. The invariant holds for tracked files but is false for the Tier B payload, which is exactly where it matters since those files cross the username/OS boundary. The doc asserts rather than checks.
+§2 constraint 4 states it as an invariant and §5 rests on it. Live payload: claude_env_settings.json:52 contains "<project>": "C:/Users/<user>/Documents/<group>/<project>" — a Windows absolute path in a file about to be shared with a macOS host; codex_config.toml is saturated with them. The invariant holds for tracked files but is false for the Tier B payload, which is exactly where it matters since those files cross the username/OS boundary. The doc asserts rather than checks.
 
 ---
 

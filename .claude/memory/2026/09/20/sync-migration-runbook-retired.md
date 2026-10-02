@@ -34,7 +34,7 @@ and it still holds the other machines' state until they migrate. It must be dele
 only after step 7 completes everywhere, because while it exists it keeps replicating a
 poisoned `.git` between hosts.
 
-### Each other machine (G, WS1/`duip622037`)
+### Each other machine (<machine-a>, <machine-b>/`<ws-host>`)
 1. Let OneDrive settle, confirm `<OneDrive>/Sync/cc-config/` has arrived **with all
    three files**. Do not run setup against an empty payload dir — it now refuses, but
    check anyway.

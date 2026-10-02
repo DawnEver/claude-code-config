@@ -10,6 +10,7 @@ import {
   checkPlugins,
   checkMachineName,
   checkCodexShellEnv,
+  scanPublicHygiene, parseMarkers, checkPublicHygiene,
 } from './doctor.js';
 
 // ── machine name (provenance, harness-architecture §8b) ──
@@ -23,7 +24,7 @@ test('checkMachineName: WARN when missing or invalid, silent when valid', () => 
   assert.match(missing.detail, /--machine <NAME>/);
   fs.writeFileSync(file, '{"name":"a b"}');
   assert.equal(checkMachineName(file).length, 1);
-  fs.writeFileSync(file, '{"name":"WS1"}');
+  fs.writeFileSync(file, '{"name":"host-a"}');
   assert.deepEqual(checkMachineName(file), []);
 });
 
@@ -77,7 +78,7 @@ test('prose about the idiom is not an instance of it', () => {
 // `env:/` and `https://`, which is most of what a naive version reports.
 
 test('catches real machine paths in values', () => {
-  const hits = findAbsolutePaths('"project": "C:/Users/linxu/Documents/PEMC/x",\n"other": "D:\\\\Work\\\\y",');
+  const hits = findAbsolutePaths('"project": "C:/Users/user/Documents/proj/x",\n"other": "D:\\\\Work\\\\y",');
   assert.equal(hits.length, 2);
   assert.match(hits[0].what, /drive-letter/);
 });
@@ -92,7 +93,7 @@ test('does not mistake colons inside words or URLs for drive letters', () => {
 });
 
 test('a commented-out path is not a value', () => {
-  assert.deepEqual(findAbsolutePaths('// realpath was C:/Users/linxu/foo\n# /Users/x/bar'), []);
+  assert.deepEqual(findAbsolutePaths('// realpath was C:/Users/user/foo\n# /Users/x/bar'), []);
 });
 
 // ── key sets ──
@@ -255,3 +256,64 @@ test('the payload check can actually fail on the real sync dir', () => {
   assert.ok(out.some((f) => f.level === 'FAIL'), 'a real violation must produce a FAIL');
 });
 
+
+// ── public hygiene (tracked files must carry no personal/local information) ──
+// Planted positives are assembled at runtime so this source file itself stays clean.
+
+const J = (...p) => p.join('');
+
+test('scanPublicHygiene: generic patterns hit real-looking personal data', () => {
+  const text = [
+    J('p = "C:', '\\Users\\alice\\proj"'),
+    J('p = "/Users/', 'alice/proj"'),
+    J('p = "/home/', 'alice/proj"'),
+    J('mail alice', '@uni.ac.uk'),
+    J('chat -100', '9876543210'),
+    J('dir OneDrive', ' - Acme University/x'),
+  ].join('\n');
+  const hits = scanPublicHygiene(text);
+  assert.deepEqual(hits.map((h) => h.line), [1, 2, 3, 4, 5, 6]);
+});
+
+test('scanPublicHygiene: placeholders and neutral fixtures are clean', () => {
+  const text = [
+    String.raw`C:\Users\<user>\x`,'C:/Users/u/.claude', '/Users/x/bar', '/home/u/.claude',
+    'user@example.com', 'a@example.org', '1+me@users.noreply.github.com', 'git@github.com:o/r.git',
+    'chatId: -1001234567890', 'chat -1001111111111', 'OneDrive - <Org>', 'npm i -g @openai/codex',
+    'pkg@1.2.3', 't@t',
+  ].join('\n');
+  assert.deepEqual(scanPublicHygiene(text), []);
+});
+
+test('scanPublicHygiene: private markers (literal and /regex/), inline allow marker', () => {
+  const markers = parseMarkers(['# comment', '', 'SecretLab', String.raw`/\bhost-z\d\b/`, '/bad[/'].join('\n'));
+  assert.equal(markers.length, 2, 'invalid regex is dropped, comments/blank skipped');
+  const text = ['we use secretlab here', 'on host-z9 today', 'host-zz is fine',
+    J('secretlab ', 'public-hygiene: allow (fixture)')].join('\n');
+  assert.deepEqual(scanPublicHygiene(text, markers).map((h) => h.line), [1, 2]);
+});
+
+test('checkPublicHygiene: FAILs every tracked hit (memory included), skips binary', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-pub-'));
+  const files = {
+    'a.md': J('reach me at bob', '@corp.io'),
+    'b.md': 'clean',
+    '.claude/memory/2026/x.md': 'secretlab and secretlab\nsecretlab',
+    'bin.dat': Buffer.from([0, 1, J('bob', '@corp.io').charCodeAt(0)]),
+  };
+  for (const [rel, body] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), body);
+  }
+  const markersFile = path.join(dir, 'markers');
+  fs.writeFileSync(markersFile, 'secretlab\n');
+  const out = checkPublicHygiene({ root: dir, files: Object.keys(files), markersFile });
+  assert.deepEqual(out.map((f) => [f.level, f.title.split(' ')[0]]),
+    [['FAIL', 'a.md:1'], ['FAIL', '.claude/memory/2026/x.md:1'], ['FAIL', '.claude/memory/2026/x.md:2']]);
+  assert.equal(checkPublicHygiene({ root: dir, files: ['b.md'], markersFile: path.join(dir, 'none') }).length, 0);
+});
+
+test('checkPublicHygiene: the real tracked tree is clean', () => {
+  const fails = checkPublicHygiene().filter((f) => f.level === 'FAIL');
+  assert.deepEqual(fails.map((f) => f.title), []);
+});

@@ -1,13 +1,13 @@
 ---
 name: windows-launcher-quoting-and-links
-description: WS1 (duip622037) onboarding onto the post-split layout. Three Windows-only defects found by doing it: shell:true dropped launcher arg quoting, cross-volume hard links broke setup, and Git Bash `ln -s` silently copied 215M instead of linking. Working tree ended at C:\Users\ezxmb14\Documents\MingyangBao.
+description: <machine-b> (<ws-host>) onboarding onto the post-split layout. Three Windows-only defects found by doing it: shell:true dropped launcher arg quoting, cross-volume hard links broke setup, and Git Bash `ln -s` silently copied 215M instead of linking. Working tree ended at C:\Users\<user>\Documents\<owner>.
 metadata:
   type: project
 ---
 
-# Onboarding WS1: three defects that only appear on Windows
+# Onboarding <machine-b>: three defects that only appear on Windows
 
-Host `duip622037`, 2026-08-29, following `HANDOFF.md`. The handoff itself was correct; all
+Host `<ws-host>`, 2026-08-29, following `HANDOFF.md`. The handoff itself was correct; all
 three defects below were latent bugs it could not have anticipated, and each one is
 invisible until a Windows host actually runs the steps.
 
@@ -85,8 +85,8 @@ still false.
 
 ## Layout outcome
 
-Tree moved `~/Documents/Code/AI` → `D:\MingyangBao` → finally
-`C:\Users\ezxmb14\Documents\MingyangBao\{cc-config,ai-agents}`. `C:` is required for the
+Tree moved `~/Documents/Code/AI` → `D:\<owner>` → finally
+`C:\Users\<user>\Documents\<owner>\{cc-config,ai-agents}`. `C:` is required for the
 claude-hud hard link. `Documents` here is **not** Known-Folder-Moved into OneDrive
 (checked `User Shell Folders\Personal`) — worth re-checking per host, since KFM would
 reintroduce the original `.git`-in-cloud bug.

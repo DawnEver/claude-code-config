@@ -16,6 +16,11 @@
   file binary to git). Exits 1 on failure; also runs at SessionStart via `--hook`,
   which reports failures only and is silent when healthy. Add a check here whenever a
   new silent-divergence incident is found — that is the point of the file.
+- Public repo: doctor's `public-hygiene` check FAILs on personal data in any tracked file
+  (home paths, real emails, Telegram chat ids, org cloud folders, plus the machine-local
+  denylist `~/.claude/private-markers` — one literal or `/regex/` per line, never tracked or
+  synced). `.githooks/pre-commit` runs it (`doctor.js --public-hygiene`); setup sets
+  `core.hooksPath`. Exception: inline `public-hygiene: allow (<reason>)`.
 - **Multi-machine only:** `node scripts/setup/setup.js --sync-dir "<path>"` points this
   host at the shared config payload and records `~/.claude/sync-dir`. Add
   `--init-sync-dir` on the FIRST machine to seed an empty payload dir from the templates;
@@ -23,8 +28,8 @@
   refuses to seed a configured-but-empty dir, which would manufacture conflict copies.
   With no sync dir configured everything resolves inside the repo, exactly as before.
 - `node scripts/setup/setup.js --machine <NAME>` writes the machine-local
-  `~/.claude/machine.json` (fleet: `G`, `WS1`, `WS2`,
-  `WS3`, `WS4`, `WSEng`). Read only via `scripts/shared/machine.mjs`;
+  `~/.claude/machine.json` (one unique name per host).
+  Read only via `scripts/shared/machine.mjs`;
   the Claude launchers and, for Codex, setup's composed `~/.codex/config.toml`
   `[shell_environment_policy.set]` turn it into committer provenance + `HARNESS_*` env
   (harness-architecture §8b; Codex commands may run in a shared daemon no launcher env reaches).

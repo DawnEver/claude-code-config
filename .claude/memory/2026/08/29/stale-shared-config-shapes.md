@@ -62,5 +62,5 @@ half git cannot see.
 A setup-time shape check: compare the resolved payload's top-level key set against the
 template's and warn on divergence. Same place would suit the absolute-path lint —
 `claude_env_settings.json` still carries
-`"motronics-studio": "C:/Users/linxu/Documents/PEMC/motronics-studio"`, a Windows path in a
+`"<project>": "C:/Users/<user>/Documents/<group>/<project>"`, a Windows path in a
 file shared with macOS.

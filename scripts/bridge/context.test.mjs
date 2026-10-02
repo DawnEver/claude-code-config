@@ -7,7 +7,7 @@ import { readBridgeConfig, repoNameFromUrl, gitContext } from './context.mjs';
 
 test('repoNameFromUrl handles https, ssh, and no .git', () => {
   assert.equal(repoNameFromUrl('https://github.com/DawnEver/claude-code-config.git'), 'claude-code-config');
-  assert.equal(repoNameFromUrl('git@gitea.local:lab/wdg-lab.git'), 'wdg-lab');
+  assert.equal(repoNameFromUrl('git@forge.example:team/proj-x.git'), 'proj-x');
   assert.equal(repoNameFromUrl('https://h/o/name/'), 'name');
   assert.equal(repoNameFromUrl(null), null);
 });
