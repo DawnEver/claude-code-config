@@ -14,6 +14,7 @@ export function newSession({ key, cached, now }) {
   return {
     key,
     topicId: cached?.topicId ?? null,
+    statusMessageId: Number.isSafeInteger(cached?.statusMessageId) ? cached.statusMessageId : null,
     state: cached ? (cached.closedAt != null ? 'closed' : 'open') : 'none',
     closedAt: cached?.closedAt ?? null,
     lastActivity: now,
@@ -82,5 +83,6 @@ export function onTopicFoundClosed(s) {
 /** The topics.json entry for a session, or null when it holds no Topic. */
 export function cacheEntry(s, title) {
   if (!s.topicId) return null;
-  return { topicId: s.topicId, title, ...(s.closedAt != null ? { closedAt: s.closedAt } : {}) };
+  return { topicId: s.topicId, title, ...(s.closedAt != null ? { closedAt: s.closedAt } : {}),
+    ...(s.statusMessageId ? { statusMessageId: s.statusMessageId } : {}) };
 }

@@ -67,6 +67,7 @@ export class Bridge {
     this.approvals = new Map();  // random id -> native request + delivered message origin
     this.topics = new TopicCache(topicCacheFile);
     this.deletingTopics = new Set();  // in-flight transport only; never rebind a doomed Topic
+    this.retiring = new Map(); // Drain the old session's writes before reusing its Topic/card.
     this.allowed = new Set(config.allowedUserIds);
     this.warned = new Map();     // what -> last logged message (log each distinct failure once)
     for (const a of adapters) this.#wire(a);
@@ -78,6 +79,7 @@ export class Bridge {
     a.on('up', (e) => this.sessionUp(a.agent, e).catch((err) => this.log(`${a.agent} up: ${err.message}`)));
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
     a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
+    a.on('status', e => this.updateStatus(sessionKey(a.agent, e.id)).catch(err => this.#warnOnce('status-card', err.message)));
     for (const kind of ['prompt', 'progress', 'final', 'approval']) {
       a.on(kind, (e) => {
         const key = sessionKey(a.agent, e.id);
@@ -92,6 +94,8 @@ export class Bridge {
       }
       for (const [id, x] of this.approvals) if (x.agent === a.agent && x.ref === e.ref
         && (e.id === undefined || x.session.id === e.id)) this.approvals.delete(id);
+      for (const s of this.sessions.values()) if (s.agent === a.agent && (e.id === undefined || s.id === e.id))
+        this.updateStatus(s.key).catch(err => this.#warnOnce('status-card', err.message));
     });
     a.on('warn', (m) => this.log(m));
   }
@@ -117,6 +121,7 @@ export class Bridge {
     if (this.sessions.has(key) || this.held.has(key)) return this.sessions.get(key);
     this.held.set(key, []);
     try {
+      if (this.retiring.has(key)) await this.retiring.get(key);
       const ctx = this.resolveContext(cwd, { branch });
       const chatId = this.chatFor(ctx.project);
       const cacheKey = chatId === null ? null : TopicCache.key(chatId, key);
@@ -142,6 +147,7 @@ export class Bridge {
       this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting} topic=${s.topicId ?? '-'}`);
       if (chatId === null) this.log(`no chat for project ${ctx.project}; ${key} not mirrored`);
       else await this.#apply(s, onUp(s, { preexisting, now: this.now() }));
+      await this.updateStatus(key).catch(e => this.#warnOnce('status-card', e.message));
       for (const b of backlog) await this.#event(key, b.kind, b);
     } finally {
       const seen = new Set(backlog.filter((b) => b.turnId).map((b) => `${b.kind}:${b.turnId}`));
@@ -170,9 +176,13 @@ export class Bridge {
     const s = this.sessions.get(key);
     if (!s) return;
     this.sessions.delete(key);
+    this.#serial(s, () => this.#statusNow(s, true)).catch(err => this.#warnOnce('status-card', err.message));
     for (const [id, a] of this.approvals) if (a.key === key) this.approvals.delete(id);
     this.log(`down ${key}`);
     if (s.chatId !== null) this.#apply(s, onDown(s, this.now())).catch(() => {});
+    const pending = s.chain.catch(() => {});
+    this.retiring.set(key, pending);
+    pending.finally(() => { if (this.retiring.get(key) === pending) this.retiring.delete(key); });
   }
 
   /**
@@ -251,6 +261,43 @@ export class Bridge {
     if (s.chatId !== null) this.topics.set(TopicCache.key(s.chatId, s.key), cacheEntry(s, s.title));
   }
 
+  updateStatus(key, force = false) {
+    const s = this.sessions.get(key);
+    return s ? this.#serial(s, () => this.#statusNow(s, false, force)) : Promise.resolve();
+  }
+
+  async #statusNow(s, offline = false, force = false) {
+    const host = this.hosts.get(s.agent);
+    if (!s.topicId || s.chatId == null || !host?.statusSnapshot ||
+        (offline ? this.sessions.has(s.key) : this.sessions.get(s.key) !== s)) return;
+    const topicId = s.topicId;
+    const snapshot = offline ? { state: 'disconnected', source: 'transport' } : host.statusSnapshot(s.id);
+    const content = `Session status\n${s.title}\nState: ${snapshot.state}\nEvidence: ${snapshot.source}${snapshot.note ? `\n${snapshot.note}` : ''}`;
+    if (!force && s.statusText === content) return;
+    const text = `${content}\nChecked: ${new Date(this.now()).toISOString()}`;
+    s.statusRef ??= randomBytes(12).toString('hex');
+    const replyMarkup = { inline_keyboard: offline ? [] : [[{ text: 'Refresh status', callback_data: `status:${s.statusRef}` }]] };
+    if (s.statusMessageId) {
+      try { await this.telegram.editMessageText(s.chatId, s.statusMessageId, text, { replyMarkup }); }
+      catch (e) {
+        if (/MESSAGE_NOT_MODIFIED|message is not modified/i.test(e.message)) { s.statusText = content; return; }
+        if (!/message to edit not found|MESSAGE_ID_INVALID/i.test(e.message)) throw e;
+        s.statusMessageId = null;
+      }
+    }
+    if (!s.statusMessageId) {
+      if (offline) return;
+      const [message] = await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId, replyMarkup });
+      if (this.sessions.get(s.key) !== s || s.topicId !== topicId) return;
+      s.statusMessageId = message?.message_id;
+      if (s.statusMessageId) {
+        this.#save(s);
+        await this.telegram.pinChatMessage?.(s.chatId, s.statusMessageId).catch(e => this.#warnOnce('pin-status', e.message));
+      }
+    }
+    s.statusText = content;
+  }
+
   #selectTitle(s, previous) {
     const taken = new Set([...this.sessions.values()]
       .filter(o => o !== s && o.chatId === s.chatId && (o.topicId || o.creating)).map(o => o.title));
@@ -272,6 +319,7 @@ export class Bridge {
     if (action === 'create') {
       s.title = this.#selectTitle(s, s.title);
       s.creating = true;
+      s.statusMessageId = null; s.statusText = null;
       try {
         s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title)).message_thread_id;
         this.#save(s);
@@ -347,6 +395,7 @@ export class Bridge {
   async progress(key, line) {
     const s = this.sessions.get(key);
     if (!s || s.chatId === null) return;
+    if (this.hosts.get(s.agent)?.statusSnapshot) { this.#activity(s); return this.updateStatus(key); }
     this.#activity(s);
     const p = s.progress ??= { lines: [], msgId: null, last: 0, timer: null };
     p.lines = [...p.lines, line].slice(-PROGRESS_LINES);
@@ -468,7 +517,8 @@ export class Bridge {
       }
     }
     const cmd = /^\/(\w+)(?:@\w+)?\s*$/.exec(text)?.[1];
-    if (cmd === 'status') return this.#send(s, `${s.title}: ${host.status(s.id)}`);
+    if (cmd === 'status') return host.statusSnapshot ? this.updateStatus(s.key, true)
+      : this.#send(s, `${s.title}: ${host.status(s.id)}`);
     if (cmd === 'interrupt') {
       if (!host.interrupt) return this.#send(s, `interrupt is not available for ${s.agent}; use Esc locally`);
       const ok = await host.interrupt(s.id).catch(() => false);
@@ -484,6 +534,19 @@ export class Bridge {
   }
 
   async #onCallback(q) {
+    if (/^status:[a-f0-9]{24}$/.test(q.data ?? '')) {
+      const s = [...this.sessions.values()].find(s => `status:${s.statusRef}` === q.data);
+      const allowed = this.allowed.has(Number(q.from?.id));
+      const matches = s && q.message?.chat?.id === s.chatId && q.message?.message_id === s.statusMessageId
+        && q.message?.message_thread_id === s.topicId;
+      let note = allowed ? 'control inactive' : 'not allowed';
+      if (allowed && matches) {
+        try { await this.updateStatus(s.key, true); note = 'status refreshed'; }
+        catch { note = 'status unavailable; check locally'; }
+      }
+      await this.telegram.answerCallbackQuery(q.id, note).catch(() => {});
+      return;
+    }
     const m = /^ap:([a-f0-9]{32}):([yn])$/.exec(q.data ?? '');
     const allowed = this.config.approvalsFromTelegram && this.allowed.has(Number(q.from?.id));
     const a = m && this.approvals.get(m[1]);

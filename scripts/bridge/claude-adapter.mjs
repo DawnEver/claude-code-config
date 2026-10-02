@@ -83,6 +83,7 @@ export class ClaudeAdapter extends EventEmitter {
           }
           this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), claudePid: Number(p.claudePid) || null });
           this.emit('up', { id: sessionId, cwd: p.cwd, preexisting: false, backlog: [] });
+          this.#emitStatus(sessionId);
           this.#release();
           return { ok: true };
         }
@@ -120,6 +121,7 @@ export class ClaudeAdapter extends EventEmitter {
             id: sessionId, ref: p.request_id, answerable: true,
             summary: `${p.tool_name}: ${p.description ?? ''}${p.input_preview ? `\n${String(p.input_preview).slice(0, 1500)}` : ''}`,
           });
+          this.#emitStatus(sessionId);
           return { ok: true };
         }
         throw Object.assign(new Error(`unknown method ${method}`), { code: -32601 });
@@ -133,6 +135,7 @@ export class ClaudeAdapter extends EventEmitter {
       if (sessionId && this.sessions.get(sessionId)?.socket === socket) {
         this.#withdrawApprovals(sessionId, this.sessions.get(sessionId));
         this.sessions.delete(sessionId);
+        this.#emitStatus(sessionId);
         this.emit('down', { id: sessionId });
       }
     });
@@ -142,6 +145,7 @@ export class ClaudeAdapter extends EventEmitter {
     // This invalidates bridge controls; it does not claim Claude accepted a verdict.
     for (const ref of session.approvals) this.emit('approval-resolved', { id, ref, reason: 'correlation-withdrawn' });
     session.approvals.clear();
+    this.#emitStatus(id);
   }
 
   #route({ sessionIds, claudePid }) {
@@ -166,6 +170,9 @@ export class ClaudeAdapter extends EventEmitter {
     // Envelope prompts, and Stop-hook continuations (a final with no prompt since the last
     // one), are the harness talking to itself.
     const s = this.sessions.get(id);
+    s.activity = m.kind === 'prompt' ? 'running' : 'idle';
+    s.activitySource = 'hook-observed';
+    this.#emitStatus(id);
     if (m.kind === 'prompt') {
       s.humanTurn = !isEnvelope(m.text);
       if (s.humanTurn) this.emit('prompt', { id, text: unwrapChannel(m.text) });
@@ -195,14 +202,32 @@ export class ClaudeAdapter extends EventEmitter {
     if (!s) throw new Error('channel disconnected');
     s.peer.notify('inbound', { text, user: user ?? '' });
     s.humanTurn = true;   // whether or not UserPromptSubmit reports channel prompts
+    s.activity = 'running';
+    s.activitySource = 'channel';
+    this.#emitStatus(id);
   }
 
   status(id) { return this.sessions.has(id) ? 'channel connected' : 'channel disconnected'; }
+
+  statusSnapshot(id) {
+    const s = this.sessions.get(id);
+    const pendingApprovals = s?.approvals.size ?? 0;
+    return {
+      state: !s ? 'disconnected' : pendingApprovals ? 'approval-observed' : s.activity ?? 'unknown',
+      source: pendingApprovals ? 'channel' : s?.activitySource ?? 'channel',
+      nativeObserved: false,
+      pendingApprovals,
+      ...(pendingApprovals ? { note: 'Channel approval observed; native local resolution is not observable.' } : {}),
+    };
+  }
+
+  #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }
 
   answerApproval(ref, allow, id) {
     const s = this.sessions.get(id);
     if (!s || s.socket.destroyed || !s.approvals.delete(ref)) return false;
     s.peer.notify('permission', { request_id: ref, behavior: allow ? 'allow' : 'deny' });
+    this.#emitStatus(id);
     return true;
   }
 }

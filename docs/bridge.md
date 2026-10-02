@@ -379,6 +379,31 @@ to 50 MiB and preserve original bytes. Captions are plain text, at most 1024 cha
 Uncertain upload outcomes are not retried; check the Topic before another attempt.
 No directory scanning or automatic artifact publication is performed.
 
+## Session status
+
+Each mirrored live session has one editable, silently pinned status card. It displays
+state, evidence source and last check time. Native transitions update it; the refresh
+button or `/status` rereads the adapter snapshot without starting a model turn.
+Pinning failures do not block the card or conversation. Raw tool/search/edit progress
+is suppressed for both current adapters; final answers and approvals remain visible.
+
+- Codex: running/idle/waiting-approval derives from native turn and pending-request
+  state. Submitting approval does not imply native resolution. `/interrupt` remains
+  the explicit native interrupt command; no unbound stale Stop button is added.
+- Claude: connected starts unknown. Hook prompt/final gives observed running/idle,
+  not a native scheduler verdict. Channel injection is observed activity, not proof
+  a turn started. Pending channel approvals are labelled approval-observed, with a
+  warning that native local resolution is not observable. Reply tool is not completion.
+- Offline is transport-observed. A card is an observation, not a daemon heartbeat;
+  its check time makes stale information visible if the bridge itself stops.
+
+Card message IDs are derived transport pointers in topics.json, never another agent
+state store. Reconnect/restart edits the same card with a new callback reference;
+sender/chat/Topic/message authentication rejects old or foreign controls. The previous
+session's pending writes drain before its replacement updates the card. A deleted
+card can be recreated after a definite not-found response; uncertain creation is not
+retried. Status failures never suppress native replies or backlog replay.
+
 ## Rich replies and acceptance
 
 Final answers use native `sendRichMessage` Markdown. A user screenshot confirmed

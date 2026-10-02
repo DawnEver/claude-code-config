@@ -123,7 +123,7 @@ export class TelegramClient {
       } catch (e) {
         // A transport error may contain the request URL/token or follow a successful write.
         // Never blindly repeat Topic creation after a lost acknowledgement.
-        if (signal?.aborted || attempt >= this.maxRetries || method === 'createForumTopic' || method === 'sendRichMessage') {
+        if (signal?.aborted || attempt >= this.maxRetries || ['createForumTopic', 'sendRichMessage', 'sendMessage'].includes(method)) {
           throw Object.assign(new Error(`telegram ${method}: transport failed (outcome uncertain)`), { uncertain: true });
         }
         await this.sleep(Math.min(30000, 1000 * 2 ** attempt));
@@ -326,6 +326,10 @@ export class TelegramClient {
 
   editForumTopic(chatId, threadId, name) {
     return this.call('editForumTopic', { chat_id: chatId, message_thread_id: threadId, name });
+  }
+
+  pinChatMessage(chatId, messageId) {
+    return this.call('pinChatMessage', { chat_id: chatId, message_id: messageId, disable_notification: true });
   }
 
   reopenForumTopic(chatId, threadId) {

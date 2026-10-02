@@ -92,8 +92,9 @@ test('real HTTP/TCP approval path binds final chunk, authenticates origin and su
     });
     await r.server.onMessage({ method: 'notifications/claude/channel/permission_request',
       params: { request_id: 'native-request', tool_name: 'Write', description: 'x'.repeat(5000) } });
-    await until(() => posts.some((p) => p.reply_markup));
-    const post = posts.find((p) => p.reply_markup);
+    const isApproval = p => p.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('ap:');
+    await until(() => posts.some(isApproval));
+    const post = posts.find(isApproval);
     assert.ok(posts.filter((p) => p.text.includes('xxx')).length >= 2, 'actual client chunks permission details');
     assert.equal(posts.filter((p) => p.text.includes('xxx')).at(-1), post, 'buttons belong to the final approval chunk');
     const callback = (user = 42, chat = -100) => ({ callback_query: {

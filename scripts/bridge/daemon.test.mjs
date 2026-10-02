@@ -9,6 +9,79 @@ import { Bridge, runningDaemonPid, topicTitle } from './daemon.mjs';
 const M = 60000, H = 60 * M;
 const HOSTS = ['codex', 'claude'];
 
+test('one status card follows native state and authenticates refresh', async () => {
+  const r = make();
+  let state = 'idle';
+  r.hosts.codex.statusSnapshot = () => ({ state, source: 'native' });
+  await up(r, 'codex', 'card');
+  const card = r.telegram.sent.find(m => m.text.startsWith('Session status'));
+  assert.ok(card);
+  assert.match(card.text, /idle/);
+  state = 'running';
+  r.hosts.codex.emit('status', { id: 'card' });
+  await settle();
+  assert.match(r.telegram.edits.at(-1).text, /running/);
+  assert.equal(r.telegram.sent.filter(m => m.text.startsWith('Session status')).length, 1);
+  const query = { id: 'refresh', from: { id: ALICE }, data: card.replyMarkup.inline_keyboard[0][0].callback_data,
+    message: { chat: { id: card.chatId }, message_id: card.message_id, message_thread_id: card.threadId } };
+  const count = r.telegram.edits.length;
+  await r.bridge.handleUpdate({ callback_query: { ...query, from: { id: MALLORY } } });
+  await r.bridge.handleUpdate({ callback_query: { ...query, message: { ...query.message, message_id: 999 } } });
+  assert.equal(r.telegram.edits.length, count);
+  state = 'idle';
+  await r.bridge.handleUpdate({ callback_query: query });
+  assert.match(r.telegram.edits.at(-1).text, /idle/);
+  r.bridge.sessionDown('codex:card');
+  await settle();
+  assert.match(r.telegram.edits.at(-1).text, /disconnected/);
+  await r.bridge.handleUpdate({ callback_query: query });
+  assert.equal(r.telegram.answers.at(-1), 'control inactive');
+});
+
+test('status card reuses cached message on restart and status failure does not lose backlog', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-status-'));
+  try {
+    const file = path.join(dir, 'topics.json');
+    fs.writeFileSync(file, JSON.stringify({ '-100|codex:card': { topicId: 77,
+      title: 'host-a | proj | main | codex', statusMessageId: 55 } }));
+    const r = make({ topicCacheFile: file });
+    r.hosts.codex.statusSnapshot = () => ({ state: 'idle', source: 'native' });
+    await up(r, 'codex', 'card', { preexisting: true });
+    assert.equal(r.telegram.edits.at(-1).id, 55);
+    assert.equal(r.telegram.sent.length, 0);
+    const other = make();
+    other.hosts.codex.statusSnapshot = () => ({ state: 'running', source: 'native' });
+    const send = other.telegram.sendMessage;
+    other.telegram.sendMessage = async (chat, text, options) => {
+      if (text.startsWith('Session status')) throw new Error('status send rejected');
+      return send(chat, text, options);
+    };
+    await up(other, 'codex', 's', { backlog: [{ kind: 'final', text: 'complete answer', turnId: 'turn' }] });
+    assert.ok(texts(other.telegram).includes('complete answer'));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('reconnect drains the old offline-card write before showing live status', async () => {
+  const r = make();
+  let state = 'idle';
+  r.hosts.codex.statusSnapshot = () => ({ state, source: 'native' });
+  await up(r, 'codex', 'card');
+  let release;
+  const edit = r.telegram.editMessageText;
+  r.telegram.editMessageText = async (chat, id, text, options) => {
+    if (text.includes('State: disconnected')) await new Promise(resolve => { release = resolve; });
+    return edit(chat, id, text, options);
+  };
+  r.bridge.sessionDown('codex:card');
+  await until(() => release);
+  state = 'running';
+  const pending = up(r, 'codex', 'card');
+  await settle();
+  assert.equal(r.bridge.sessions.has('codex:card'), false);
+  release(); await pending;
+  assert.match(r.telegram.edits.at(-1).text, /State: running/);
+});
+
 test('Topic fields use readable separators and display-only project abbreviations', () => {
   assert.equal(topicTitle('host-a', 'plant-studio', 'feat/example', 'codex'), 'host-a | plant | feat/example | codex');
   assert.equal(topicTitle('host-a', 'sample lab', 'main', 'claude'), 'host-a | sample | main | claude');

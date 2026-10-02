@@ -356,6 +356,40 @@ test('approval submission stays pending until native resolution and is submitted
   assert.deepEqual(resolved, [ref]);
 });
 
+test('status snapshots reflect native running, pending approval, idle and disconnected states', async () => {
+  const { a, srv } = await started(); const events = [];
+  a.on('status', (e) => events.push(e));
+  assert.equal(a.statusSnapshot('t1').state, 'idle');
+  assert.equal(a.statusSnapshot('t1').source, 'native');
+  assert.equal(a.statusSnapshot('missing').state, 'disconnected');
+  srv.push('turn/started', { threadId: 't1', turn: { id: 't' } });
+  assert.equal(a.statusSnapshot('t1').state, 'running');
+  srv.request(900, 'item/fileChange/requestApproval', { threadId: 't1', command: 'PRIVATE TOOL TEXT' });
+  assert.equal(a.statusSnapshot('t1').state, 'waiting-approval');
+  assert.equal(a.answerApproval('c1:900', true), true);
+  assert.equal(a.statusSnapshot('t1').state, 'waiting-approval', 'submission is not native resolution');
+  assert.equal(JSON.stringify(a.statusSnapshot('t1')).includes('PRIVATE'), false);
+  srv.push('serverRequest/resolved', { threadId: 't1', requestId: 900 });
+  assert.equal(a.statusSnapshot('t1').state, 'running');
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed' } });
+  assert.equal(a.statusSnapshot('t1').state, 'idle');
+  assert.deepEqual(events, [{ id: 't1' }, { id: 't1' }, { id: 't1' }, { id: 't1' }]);
+  srv.transport.close();
+  assert.equal(a.statusSnapshot('t1').state, 'disconnected');
+});
+
+test('status stays waiting until every native approval for this session is resolved', async () => {
+  const { a, srv } = await started();
+  srv.request(901, 'item/fileChange/requestApproval', { threadId: 't1' });
+  srv.request(902, 'item/permissions/requestApproval', { threadId: 't1' });
+  srv.push('serverRequest/resolved', { threadId: 'other', requestId: 901 });
+  assert.equal(a.statusSnapshot('t1').state, 'waiting-approval');
+  srv.push('serverRequest/resolved', { threadId: 't1', requestId: 901 });
+  assert.equal(a.statusSnapshot('t1').state, 'waiting-approval');
+  srv.push('serverRequest/resolved', { threadId: 't1', requestId: 902 });
+  assert.equal(a.statusSnapshot('t1').state, 'idle');
+});
+
 test('reconnect invalidates old controls despite reused native request ids', async () => {
   const servers = [fakeAppServer(), fakeAppServer()];
   let index = 0;

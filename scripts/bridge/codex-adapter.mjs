@@ -255,7 +255,10 @@ export class CodexAdapter extends EventEmitter {
     const th = this.threads.get(p.threadId);
     switch (method) {
       case 'turn/started':
-        if (th) { th.activeTurnId = p.turn?.id ?? null; th.agentMessages.clear(); }
+        if (th) {
+          th.activeTurnId = p.turn?.id ?? null; th.agentMessages.clear();
+          this.emit('status', { id: p.threadId });
+        }
         break;
       case 'item/started':
         if (th && p.item?.type === 'agentMessage' && (!th.activeTurnId || !p.turnId || th.activeTurnId === p.turnId))
@@ -291,13 +294,15 @@ export class CodexAdapter extends EventEmitter {
         const text = finalText(items);
         if (th) { th.activeTurnId = null; th.agentMessages.clear(); }
         this.emit('final', { id: p.threadId, turnId: p.turn?.id ?? null, status, text });
+        if (th) this.emit('status', { id: p.threadId });
         break;
       }
       case 'serverRequest/resolved': {
         for (const [key, a] of this.approvals) {
           if (String(a.rpcId) === String(p.requestId) && (!p.threadId || a.threadId === p.threadId)) {
-            this.approvals.delete(key);
-            this.emit('approval-resolved', { ref: key });
+              this.approvals.delete(key);
+              this.emit('approval-resolved', { ref: key });
+              this.emit('status', { id: a.threadId });
           }
         }
         break;
@@ -331,6 +336,7 @@ export class CodexAdapter extends EventEmitter {
       id: p.threadId ?? p.conversationId, ref: key, summary,
       answerable: ANSWERABLE_APPROVALS.has(method),
     });
+    this.emit('status', { id: threadId });
     return undefined;   // answered later via answerApproval, or by another client
   }
 
@@ -371,5 +377,16 @@ export class CodexAdapter extends EventEmitter {
     const th = this.threads.get(threadId);
     if (!th) return 'not loaded';
     return th.activeTurnId ? `turn in progress (${th.activeTurnId})` : 'idle';
+  }
+
+  /** Structured projection of native connection, turn and unresolved approval records. */
+  statusSnapshot(threadId) {
+    const th = this.threads.get(threadId);
+    let state = 'disconnected';
+    if (this.rpc && th) {
+      const waiting = [...this.approvals.values()].some((approval) => approval.threadId === threadId);
+      state = waiting ? 'waiting-approval' : th.activeTurnId ? 'running' : 'idle';
+    }
+    return { state, source: 'native', observedAt: this.now() };
   }
 }
