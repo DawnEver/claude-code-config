@@ -18,8 +18,9 @@
   new silent-divergence incident is found — that is the point of the file.
 - Public repo: doctor's `public-hygiene` check FAILs on personal data in any tracked file
   (home paths, real emails, Telegram chat ids, org cloud folders, plus the machine-local
-  denylist `~/.claude/private-markers` — one literal or `/regex/` per line, never tracked or
-  synced). `.githooks/pre-commit` runs it (`doctor.js --public-hygiene`); setup sets
+  denylist `~/.claude/private-markers` — one literal or `/regex/` per line, never tracked;
+  it lives in the sync dir so every fleet host shares it, linked by setup as an optional
+  payload file, and doctor WARNs when a sync-dir host lacks it). `.githooks/pre-commit` runs it (`doctor.js --public-hygiene`); setup sets
   `core.hooksPath`. Exception: inline `public-hygiene: allow (<reason>)`.
 - **Multi-machine only:** `node scripts/setup/setup.js --sync-dir "<path>"` points this
   host at the shared config payload and records `~/.claude/sync-dir`. Add

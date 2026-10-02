@@ -10,8 +10,9 @@ import {
   checkPlugins,
   checkMachineName,
   checkCodexShellEnv,
-  scanPublicHygiene, parseMarkers, checkPublicHygiene,
+  scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks,
 } from './doctor.js';
+import { CLAUDE_LINKS } from './setup.js';
 
 // ── machine name (provenance, harness-architecture §8b) ──
 
@@ -311,6 +312,25 @@ test('checkPublicHygiene: FAILs every tracked hit (memory included), skips binar
   assert.deepEqual(out.map((f) => [f.level, f.title.split(' ')[0]]),
     [['FAIL', 'a.md:1'], ['FAIL', '.claude/memory/2026/x.md:1'], ['FAIL', '.claude/memory/2026/x.md:2']]);
   assert.equal(checkPublicHygiene({ root: dir, files: ['b.md'], markersFile: path.join(dir, 'none') }).length, 0);
+});
+
+test('checkPublicHygiene: WARN when a fleet host (sync dir) lacks the private markers', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-pub-markers-'));
+  const markersFile = path.join(dir, 'none');
+  const [w] = checkPublicHygiene({ root: dir, files: [], markersFile, requireMarkers: true });
+  assert.equal(w.level, 'WARN');
+  assert.equal(w.id, 'private-markers-missing');
+  assert.deepEqual(checkPublicHygiene({ root: dir, files: [], markersFile }), []);
+  fs.writeFileSync(markersFile, 'x\n');
+  assert.deepEqual(checkPublicHygiene({ root: dir, files: [], markersFile, requireMarkers: true }), []);
+});
+
+test('private-markers rides the sync payload as an optional ~/.claude link', () => {
+  const link = CLAUDE_LINKS.find((l) => l.dest === 'private-markers');
+  assert.deepEqual(link, { src: 'private-markers', dest: 'private-markers', type: 'file', base: 'sync', optional: true });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-optional-'));
+  const out = checkLinks({ repoRoot: dir, syncDir: dir });
+  assert.equal(out.some((f) => f.title.includes('private-markers')), false);
 });
 
 test('checkPublicHygiene: the real tracked tree is clean', () => {

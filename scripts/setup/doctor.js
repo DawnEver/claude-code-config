@@ -204,6 +204,7 @@ export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}
       const src = path.join(linkSourceRoot(link, { repoRoot, syncDir }), link.src);
       const dest = path.join(base, link.dest);
       if (!fs.existsSync(src)) {
+        if (link.optional) continue;
         out.push(finding('FAIL', 'link-src-missing', `${label}: ${link.dest} -> missing source`,
           `expected at ${src}`));
       } else if (!fs.existsSync(dest)) {
@@ -323,8 +324,8 @@ export function checkHygiene(root = sourceDir) {
 // ── public hygiene ──
 // This repo is published. A tracked file must not name the owner's machines, accounts,
 // hosts, chat ids or private projects. Two layers: generic shapes of personal data
-// (below), plus a PRIVATE denylist in the machine-local ~/.claude/private-markers —
-// never tracked, never synced — because the concrete names are themselves the secret.
+// (below), plus a PRIVATE denylist at ~/.claude/private-markers (linked from the sync payload) —
+// never tracked — because the concrete names are themselves the secret.
 // A justified exception carries the inline marker `public-hygiene: allow (<reason>)`.
 
 export const PRIVATE_MARKERS_PATH = path.join(HOME, '.claude', 'private-markers');
@@ -385,10 +386,16 @@ function trackedFiles(root) {
   } catch { return []; }
 }
 
-export function checkPublicHygiene({ root = sourceDir, files = trackedFiles(root), markersFile = PRIVATE_MARKERS_PATH } = {}) {
+export function checkPublicHygiene({ root = sourceDir, files = trackedFiles(root), markersFile = PRIVATE_MARKERS_PATH, requireMarkers = false } = {}) {
   let markers = [];
-  try { markers = parseMarkers(fs.readFileSync(markersFile, 'utf8')); } catch { /* absent: generic layer only */ }
   const out = [];
+  try { markers = parseMarkers(fs.readFileSync(markersFile, 'utf8')); } catch {
+    // A plain clone has no denylist and that is fine. A fleet host (sync dir configured)
+    // without one guards only the generic shapes and lets every private name through.
+    if (requireMarkers) out.push(finding('WARN', 'private-markers-missing',
+      '~/.claude/private-markers is missing; the public-hygiene guards cannot see private names',
+      'put `private-markers` in the sync dir, then run node ~/.claude/scripts/setup/setup.js'));
+  }
   for (const rel of files) {
     let buf;
     try { buf = fs.readFileSync(path.join(root, rel)); } catch { continue; }
@@ -442,7 +449,8 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPlugins(settings, home),
     ...checkCodexPluginCache(repoRoot, home),
     ...checkHygiene(repoRoot),
-    ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers') }),
+    ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers'),
+      requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
     ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),
       configPath: path.join(home, '.codex', 'config.toml') }),

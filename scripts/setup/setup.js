@@ -57,6 +57,11 @@ export const CLAUDE_LINKS = [
   // `~/.codex/system-prompt/...` (see fabric.systemPromptFile / codex model_instructions_file),
   // so every machine resolves them through THIS link regardless of its OneDrive username.
   { src: 'system-prompt', dest: 'system-prompt', type: 'dir' },
+  // The owner's private denylist for the public-hygiene guards (doctor, cc-market,
+  // lab-commons all read ~/.claude/private-markers). It rides the sync payload so every
+  // fleet host guards against the same names, and never git — a committed list of private
+  // names would be the leak itself. Optional: a plain clone has none and never seeds one.
+  { src: 'private-markers', dest: 'private-markers', type: 'file', base: 'sync', optional: true },
 ];
 
 // NOTE: `~/.codex/config.toml` is deliberately NOT in this table. Codex writes to that

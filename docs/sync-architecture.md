@@ -55,13 +55,14 @@ files, `GLOBAL-AGENTS.md`, `keybindings.json`, `AGENTS.md`, `README.md`.
 
 Transport: `git pull` / `git push`. Nothing else.
 
-### Tier B — the sync payload (3 files)
+### Tier B — the sync payload (3 files, plus the optional denylist)
 
 | File | Why it can't be in git | Why it must be shared |
 | --- | --- | --- |
 | `claude_settings.json` | env vars, permissions, hook wiring — historically secret-bearing | one settings surface across machines |
 | `claude_env_settings.json` | non-secret provider config (base URLs, model pins) | `providers.<name>` is the single source of truth for both the `cc*` and `cods` launchers |
 | `codex_config.toml` | host-tuned Codex config (model, sandbox, TUI) | same — **but only its hand-edited head**, see below |
+| `private-markers` (optional) | the owner's private names; committing the list would be the leak | every host's public-hygiene guards must see the same names |
 
 These are small, hand-edited, rarely written concurrently, and contain no `.git`, no
 locks, and no atomic-rename storms. This is a workload a file-sync daemon actually
