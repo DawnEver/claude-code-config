@@ -3,6 +3,52 @@ import assert from 'node:assert/strict';
 import net from 'net';
 import { ClaudeAdapter, unwrapChannel, isEnvelope } from './claude-adapter.mjs';
 
+test('approval answers require a pending request in the exact connected session', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's' });
+    assert.equal(r.a.answerApproval('unknown', true, 's'), false);
+    assert.ok((await r.rpc(ch, 'permission_request', { request_id: '', tool_name: 'Bash' })).error);
+    await r.rpc(ch, 'permission_request', { request_id: 'p', tool_name: 'Bash' });
+    assert.ok((await r.rpc(ch, 'permission_request', { request_id: 'p', tool_name: 'Bash' })).error);
+    assert.equal(r.a.answerApproval('p', true, 'other'), false);
+    assert.equal(r.a.answerApproval('p', true, 's'), true);
+    assert.equal(r.a.answerApproval('p', false, 's'), false);
+    // A reconnect with the same session id cannot inherit the previous channel's requests.
+    const replacement = await r.open();
+    await r.rpc(replacement, 'register', { sessionId: 's' });
+    assert.equal(r.a.answerApproval('p', true, 's'), false);
+    await r.rpc(replacement, 'permission_request', { request_id: 'next', tool_name: 'Write' });
+    replacement.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(r.a.answerApproval('next', true, 's'), false);
+  } finally { await r.a.close(); }
+});
+
+test('replacement and disconnect withdraw old approval correlations before native ref reuse', async () => {
+  const r = await rig();
+  const resolved = [];
+  r.a.on('approval-resolved', (event) => resolved.push(event));
+  try {
+    const first = await r.open();
+    await r.rpc(first, 'register', { sessionId: 's' });
+    await r.rpc(first, 'permission_request', { request_id: 'reused', tool_name: 'Bash' });
+    const replacement = await r.open();
+    await r.rpc(replacement, 'register', { sessionId: 's' });
+    assert.deepEqual(resolved, [{ id: 's', ref: 'reused', reason: 'correlation-withdrawn' }]);
+    await r.rpc(replacement, 'permission_request', { request_id: 'reused', tool_name: 'Write' });
+    assert.equal(resolved.length, 1, 'old socket close cannot withdraw the new correlation');
+    replacement.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(resolved, [
+      { id: 's', ref: 'reused', reason: 'correlation-withdrawn' },
+      { id: 's', ref: 'reused', reason: 'correlation-withdrawn' },
+    ]);
+    assert.equal(r.a.answerApproval('reused', true, 's'), false);
+  } finally { await r.a.close(); }
+});
+
 /** Drive the adapter over real TCP like the channel and the hook do. */
 async function rig() {
   const a = new ClaudeAdapter();

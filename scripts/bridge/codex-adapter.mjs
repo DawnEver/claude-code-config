@@ -66,25 +66,10 @@ function oneLine(s, max = 160) {
   return t.length > max ? t.slice(0, max - 1) + '…' : t;
 }
 
-// Codex runs every command through a shell (`"...\powershell.exe" -Command '...'`,
-// `bash -lc '...'`); the wrapper is noise in a one-line progress view.
-const SHELL_WRAPPER = /^\s*"?(?:[^"\s]*[\\/])?(?:powershell|pwsh|bash|zsh|sh|cmd)(?:\.exe)?"?\s+(?:-NoProfile\s+|-NoLogo\s+|-NonInteractive\s+)*(?:-Command|-lc|-c|\/c)\s+([\s\S]+)$/i;
-
-export function unwrapShell(command) {
-  const m = SHELL_WRAPPER.exec(String(command ?? ''));
-  if (!m) return String(command ?? '');
-  const inner = m[1].trim();
-  const q = inner[0];
-  return (q === '"' || q === "'") && inner.endsWith(q) ? inner.slice(1, -1) : inner;
-}
-
 /** Compact progress line for a completed item, or null for items not worth a line. */
 export function progressLine(item) {
   switch (item?.type) {
-    case 'commandExecution': {
-      const code = item.exitCode ?? item.exit_code;
-      return `$ ${oneLine(unwrapShell(item.command), 120)}${code !== undefined && code !== null ? ` (exit ${code})` : ''}`;
-    }
+    case 'commandExecution': return null; // Commands/output stay local; approvals are separate.
     case 'fileChange': {
       const n = Array.isArray(item.changes) ? item.changes.length : 0;
       return `edited ${n || 'some'} file${n === 1 ? '' : 's'}`;
@@ -97,6 +82,19 @@ export function progressLine(item) {
 
 const promptText = (item) => (item.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n').trim();
 
+/** Native item order and IDs are authoritative; never collapse an answer to its last item. */
+function finalText(items = []) {
+  const messages = new Map();
+  for (const item of items) {
+    if (item?.type !== 'agentMessage') continue;
+    messages.set(item.id ?? Symbol(), item);
+  }
+  const all = [...messages.values()];
+  const hasFinalPhase = all.some((item) => item.phase === 'final_answer');
+  return all.filter((item) => hasFinalPhase ? item.phase === 'final_answer' : item.phase !== 'commentary')
+    .map((item) => item.text ?? '').filter((text) => text.trim()).join('\n\n');
+}
+
 /**
  * Turns a session ran before the bridge subscribed to it — the opening prompt of a fresh
  * thread lands before the next poll. Only turns that started after the bridge connected
@@ -107,12 +105,10 @@ export function backlogSince(turns = [], sinceMs) {
   const out = [];
   for (const t of turns) {
     if (!t?.startedAt || t.startedAt * 1000 < sinceMs) continue;
-    let agent = null;
     for (const item of t.items ?? []) {
       if (item.type === 'userMessage') { const text = promptText(item); if (text) out.push({ kind: 'prompt', text, turnId: t.id ?? null }); }
-      if (item.type === 'agentMessage' && item.text) agent = item.text;
     }
-    if (t.status !== 'inProgress') out.push({ kind: 'final', text: agent ?? '', status: t.status, turnId: t.id ?? null });
+    if (t.status !== 'inProgress') out.push({ kind: 'final', text: finalText(t.items), status: t.status, turnId: t.id ?? null });
   }
   return out;
 }
@@ -140,7 +136,8 @@ export class CodexAdapter extends EventEmitter {
     this.probe = probe;
     this.clientName = clientName;
     this.rpc = null;
-    this.threads = new Map();     // threadId -> { cwd, branch, activeTurnId, deltas, lastAgent }
+    this.connection = 0;
+    this.threads = new Map();     // threadId -> { cwd, branch, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
   }
 
@@ -148,10 +145,11 @@ export class CodexAdapter extends EventEmitter {
   async start() {
     if (this.rpc) return true;
     if (!(await this.probe())) return false;
+    const connection = ++this.connection;
     const t = this.connect();
     const rpc = new JsonRpcPeer((s) => t.send(s), {
-      onRequest: (m, p, id) => this.#onServerRequest(m, p, id),
-      onNotification: (m, p) => this.#onNotification(m, p),
+      onRequest: (m, p, id) => { if (this.rpc === rpc) return this.#onServerRequest(m, p, id); },
+      onNotification: (m, p) => { if (this.rpc === rpc) this.#onNotification(m, p); },
     });
     t.onMessage((s) => rpc.receive(s));
     t.onClose(() => {
@@ -159,9 +157,12 @@ export class CodexAdapter extends EventEmitter {
       if (this.rpc !== rpc) return;
       this.rpc = null;
       for (const id of [...this.threads.keys()]) this.#drop(id);
+      this.pending.clear();
+      this.skipped.clear();
     });
     await new Promise((resolve) => t.onOpen(resolve));
     await rpc.request('initialize', { clientInfo: { name: this.clientName, version: '1' } });
+    if (connection !== this.connection) return false;
     rpc.notify('initialized');
     this.rpc = rpc;
     this.transport = t;
@@ -191,11 +192,13 @@ export class CodexAdapter extends EventEmitter {
 
   async #subscribe(threadId, opts = {}) {
     // thread/started and the poll can race for the same thread; resume it once.
-    if (this.threads.has(threadId) || this.pending.has(threadId) || this.skipped.has(threadId)) return;
+    if (!this.rpc || this.threads.has(threadId) || this.pending.has(threadId) || this.skipped.has(threadId)) return;
+    const connection = this.connection;
     this.pending.add(threadId);
     try {
       await this.#resume(threadId, opts);
     } catch (e) {
+      if (connection !== this.connection || !this.rpc) return;
       if (!/no rollout found|rollout at .* is empty/i.test(e.message)) throw e;
       // No rollout yet is normal for a fresh thread: Codex writes it once the first turn
       // starts, so retry shortly (the poll is the backstop). An ephemeral thread never gets
@@ -204,13 +207,18 @@ export class CodexAdapter extends EventEmitter {
       // answer gives up; anything else is retried.
       const read = await this.rpc?.request('thread/read', { threadId }).catch(() => null);
       if (read?.thread?.ephemeral === true) { this.skipped.add(threadId); return; }
-      const t = setTimeout(() => this.#subscribe(threadId, opts).catch((err) => this.emit('warn', `resume ${threadId}: ${err.message}`)), this.resumeRetryMs);
+      const t = setTimeout(() => {
+        if (connection === this.connection && this.rpc) this.#subscribe(threadId, opts).catch((err) => this.emit('warn', `resume ${threadId}: ${err.message}`));
+      }, this.resumeRetryMs);
       t.unref?.();
-    } finally { this.pending.delete(threadId); }
+    } finally { if (connection === this.connection) this.pending.delete(threadId); }
   }
 
   async #resume(threadId, { preexisting = false } = {}) {
-    const r = await this.rpc.request('thread/resume', { threadId });
+    const rpc = this.rpc;
+    if (!rpc) return;
+    const r = await rpc.request('thread/resume', { threadId });
+    if (this.rpc !== rpc) return;
     const th = r.thread ?? {};
     if (th.ephemeral) return;
     if (!isMainSession(th)) { this.#dismiss(threadId); return; }
@@ -219,8 +227,7 @@ export class CodexAdapter extends EventEmitter {
       cwd: th.cwd ?? r.cwd,
       branch: th.gitInfo?.branch ?? null,
       activeTurnId: running?.id ?? null,
-      deltas: new Map(),
-      lastAgent: null,
+      agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
     };
     this.threads.set(threadId, info);
     this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch,
@@ -235,6 +242,11 @@ export class CodexAdapter extends EventEmitter {
   }
 
   #drop(threadId) {
+    for (const [key, a] of this.approvals) {
+      if (a.threadId !== threadId) continue;
+      this.approvals.delete(key);
+      this.emit('approval-resolved', { ref: key });
+    }
     if (!this.threads.delete(threadId)) return;
     this.emit('down', { id: threadId });
   }
@@ -243,10 +255,17 @@ export class CodexAdapter extends EventEmitter {
     const th = this.threads.get(p.threadId);
     switch (method) {
       case 'turn/started':
-        if (th) { th.activeTurnId = p.turn?.id ?? null; th.lastAgent = null; }
+        if (th) { th.activeTurnId = p.turn?.id ?? null; th.agentMessages.clear(); }
+        break;
+      case 'item/started':
+        if (th && p.item?.type === 'agentMessage' && (!th.activeTurnId || !p.turnId || th.activeTurnId === p.turnId))
+          th.agentMessages.set(p.item.id, { ...th.agentMessages.get(p.item.id), ...p.item });
         break;
       case 'item/agentMessage/delta':
-        if (th) th.deltas.set(p.itemId, (th.deltas.get(p.itemId) ?? '') + (p.delta ?? ''));
+        if (th && (!th.activeTurnId || !p.turnId || th.activeTurnId === p.turnId)) {
+          const previous = th.agentMessages.get(p.itemId);
+          th.agentMessages.set(p.itemId, { ...previous, id: p.itemId, type: 'agentMessage', text: (previous?.text ?? '') + (p.delta ?? '') });
+        }
         break;
       case 'item/completed': {
         const item = p.item ?? {};
@@ -254,25 +273,29 @@ export class CodexAdapter extends EventEmitter {
           const text = promptText(item);
           if (text) this.emit('prompt', { id: p.threadId, turnId: p.turnId ?? null, text });
         }
-        if (item.type === 'agentMessage' && th) {
-          th.lastAgent = item.text ?? th.deltas.get(item.id) ?? th.lastAgent;
-          th.deltas.delete(item.id);
+        if (item.type === 'agentMessage' && th && (!th.activeTurnId || !p.turnId || th.activeTurnId === p.turnId)) {
+          const previous = th.agentMessages.get(item.id);
+          th.agentMessages.set(item.id, { ...previous, ...item, text: item.text ?? previous?.text ?? '' });
         }
         const line = progressLine(item);
         if (line) this.emit('progress', { id: p.threadId, text: line });
         break;
       }
       case 'turn/completed': {
+        if (th?.activeTurnId && p.turn?.id && th.activeTurnId !== p.turn.id) break;
         const status = p.turn?.status;
-        let text = th?.lastAgent;
-        if (!text && th?.deltas.size) text = [...th.deltas.values()].join('\n');
-        if (th) { th.activeTurnId = null; th.deltas.clear(); th.lastAgent = null; }
-        this.emit('final', { id: p.threadId, turnId: p.turn?.id ?? null, status, text: text ?? '' });
+        const snapshot = (p.turn?.items ?? []).filter((item) => item.type === 'agentMessage');
+        const ids = new Set(snapshot.map((item) => item.id));
+        // A completed snapshot repairs missed notifications and wins over partial deltas.
+        const items = [...snapshot, ...[...(th?.agentMessages.values() ?? [])].filter((item) => !ids.has(item.id))];
+        const text = finalText(items);
+        if (th) { th.activeTurnId = null; th.agentMessages.clear(); }
+        this.emit('final', { id: p.threadId, turnId: p.turn?.id ?? null, status, text });
         break;
       }
       case 'serverRequest/resolved': {
         for (const [key, a] of this.approvals) {
-          if (String(a.rpcId) === String(p.requestId)) {
+          if (String(a.rpcId) === String(p.requestId) && (!p.threadId || a.threadId === p.threadId)) {
             this.approvals.delete(key);
             this.emit('approval-resolved', { ref: key });
           }
@@ -297,7 +320,10 @@ export class CodexAdapter extends EventEmitter {
   /** Server->client requests. Approvals are relayed, never auto-answered. */
   #onServerRequest(method, p = {}, rpcId) {
     if (!APPROVAL_RE.test(method)) return undefined;   // leave for the TUI (first answer wins)
-    const key = `c${rpcId}`;
+    const threadId = p.threadId ?? p.conversationId;
+    if (!this.threads.has(threadId)) return undefined;
+    const key = `c${this.connection}:${rpcId}`;
+    if (this.approvals.has(key)) return undefined;
     this.approvals.set(key, { rpcId, method, threadId: p.threadId ?? p.conversationId });
     const summary = p.command ? `$ ${oneLine(Array.isArray(p.command) ? p.command.join(' ') : p.command, 300)}`
       : p.reason ? oneLine(p.reason, 300) : method;
@@ -311,27 +337,26 @@ export class CodexAdapter extends EventEmitter {
   /** Answer a pending approval. Only call this behind the allowlist opt-in. */
   answerApproval(key, accept) {
     const a = this.approvals.get(key);
-    if (!a || !this.rpc || !ANSWERABLE_APPROVALS.has(a.method)) return false;
-    this.approvals.delete(key);
+    if (!a || a.submitted || !this.rpc || !ANSWERABLE_APPROVALS.has(a.method)) return false;
+    a.submitted = true; // Submission is not native resolution; do not replay on uncertainty.
     this.rpc.respond(a.rpcId, { decision: accept ? 'accept' : 'decline' });
     return true;
   }
 
   /** Inject user text: `turn/steer` mid-turn, `turn/start` when idle. */
-  async inject(threadId, text) {
+  async inject(threadId, text, _user, { images = [] } = {}) {
     if (!this.rpc) throw new Error('codex app-server not connected');
     const th = this.threads.get(threadId);
+    if (!th) throw new Error('codex thread not loaded');
+    const rpc = this.rpc;
     const input = [{ type: 'text', text, text_elements: [] }];
+    for (const imagePath of images) input.push({ type: 'localImage', path: imagePath });
     if (th?.activeTurnId) {
-      try {
-        await this.rpc.request('turn/steer', { threadId, expectedTurnId: th.activeTurnId, input });
-        return 'steered';
-      } catch {
-        th.activeTurnId = null;   // turn ended under us: fall through to a fresh turn
-      }
+      await rpc.request('turn/steer', { threadId, expectedTurnId: th.activeTurnId, input });
+      return 'steered';
     }
-    const r = await this.rpc.request('turn/start', { threadId, input });
-    if (th && r?.turn?.id) th.activeTurnId = r.turn.id;
+    const r = await rpc.request('turn/start', { threadId, input });
+    if (this.rpc === rpc && this.threads.get(threadId) === th && r?.turn?.id) th.activeTurnId = r.turn.id;
     return 'started';
   }
 

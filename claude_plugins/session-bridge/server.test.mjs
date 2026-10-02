@@ -5,19 +5,42 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import net from 'net';
+import http from 'http';
 import path from 'path';
 import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity, pruneChannelLogs } from './server.mjs';
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
+import { Bridge } from '../../scripts/bridge/daemon.mjs';
+import { TelegramClient } from '../../scripts/bridge/telegram.mjs';
 
 const until = async (fn, ms = 3000) => {
   const end = Date.now() + ms;
   while (!fn()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 10)); }
 };
 
-async function rig() {
+test('channel only emits one verdict for a valid forwarded request, and invalidates on disconnect', async () => {
+  const out = [];
+  const sent = [];
+  const server = createChannelServer({ write: (m) => out.push(m), link: { request: async (...p) => sent.push(p) } });
+  server.verdict({ request_id: 'missing', behavior: 'allow' });
+  await server.onMessage({ method: 'notifications/claude/channel/permission_request', params: { request_id: '', tool_name: 'Bash' } });
+  assert.equal(sent.length, 0);
+  await server.onMessage({ method: 'notifications/claude/channel/permission_request', params: { request_id: 'p', tool_name: 'Bash' } });
+  server.verdict({ request_id: 'p', behavior: 'invalid' });
+  assert.equal(out.length, 0);
+  server.verdict({ request_id: 'p', behavior: 'allow' });
+  server.verdict({ request_id: 'p', behavior: 'deny' });
+  assert.equal(out.length, 1);
+  await server.onMessage({ method: 'notifications/claude/channel/permission_request', params: { request_id: 'q', tool_name: 'Bash' } });
+  server.disconnected();
+  server.verdict({ request_id: 'q', behavior: 'allow' });
+  assert.equal(out.length, 1);
+});
+
+async function rig(configureHub = () => {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-'));
   const hub = new ClaudeAdapter();
   const port = await hub.listen(0);
+  configureHub(hub);
   const runtimeFile = path.join(dir, 'runtime.json');
   fs.writeFileSync(runtimeFile, JSON.stringify({ port, token: hub.token }));
   const out = [];
@@ -25,14 +48,80 @@ async function rig() {
   const link = new DaemonLink({
     runtimeFile, session: { sessionId: 's1', cwd: '/repo' },
     onInbound: (p) => server.inbound(p), onVerdict: (p) => server.verdict(p),
+    onDisconnect: () => server.disconnected(),
   });
   server = createChannelServer({ write: (m) => out.push(m), link });
   const ups = [];
   hub.on('up', (s) => ups.push(s));
-  link.start();
-  await until(() => link.ready);
-  return { hub, link, server, out, ups, cleanup: async () => { link.stop(); await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
+  const cleanup = async () => { link.stop(); await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); };
+  try {
+    link.start();
+    await until(() => link.ready);
+    return { hub, link, server, out, ups, cleanup };
+  } catch (e) { await cleanup(); throw e; }
 }
+
+test('real HTTP/TCP approval path binds final chunk, authenticates origin and submits once', async () => {
+  const posts = [];
+  let messageId = 10;
+  const api = http.createServer((req, res) => {
+    let data = '';
+    req.on('data', (chunk) => { data += chunk; });
+    req.on('end', () => {
+      const method = req.url.split('/').at(-1);
+      const p = JSON.parse(data);
+      let result = true;
+      if (method === 'createForumTopic') result = { message_thread_id: 77 };
+      if (method === 'sendMessage') {
+        result = { message_id: messageId++ };
+        posts.push({ ...p, ...result });
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ ok: true, result }));
+    });
+  });
+  await new Promise((resolve) => api.listen(0, '127.0.0.1', resolve));
+  let bridge, r;
+  try {
+    const telegram = new TelegramClient({ token: 'fixture', apiBase: `http://127.0.0.1:${api.address().port}` });
+    r = await rig((hub) => {
+      bridge = new Bridge({ telegram, adapters: [hub], machine: 'fixture',
+        config: { projects: {}, fallbackChatId: -100, allowedUserIds: [42], approvalsFromTelegram: true },
+        resolveContext: () => ({ project: 'fixture', branch: 'main' }),
+      });
+    });
+    await r.server.onMessage({ method: 'notifications/claude/channel/permission_request',
+      params: { request_id: 'native-request', tool_name: 'Write', description: 'x'.repeat(5000) } });
+    await until(() => posts.some((p) => p.reply_markup));
+    const post = posts.find((p) => p.reply_markup);
+    assert.ok(posts.filter((p) => p.text.includes('xxx')).length >= 2, 'actual client chunks permission details');
+    assert.equal(posts.filter((p) => p.text.includes('xxx')).at(-1), post, 'buttons belong to the final approval chunk');
+    const callback = (user = 42, chat = -100) => ({ callback_query: {
+      id: 'fixture-callback', data: post.reply_markup.inline_keyboard[0][0].callback_data,
+      from: { id: user }, message: { chat: { id: chat }, message_id: post.message_id,
+        message_thread_id: post.message_thread_id, text: post.text },
+    } });
+    await bridge.handleUpdate(callback(666));
+    await bridge.handleUpdate(callback(42, -200));
+    for (const field of ['message_id', 'message_thread_id']) {
+      const wrong = callback(); wrong.callback_query.message[field] = 999;
+      await bridge.handleUpdate(wrong);
+    }
+    assert.equal(r.out.length, 0);
+    await bridge.handleUpdate(callback());
+    await until(() => r.out.length === 1);
+    assert.deepEqual(r.out[0], { jsonrpc: '2.0', method: 'notifications/claude/channel/permission',
+      params: { request_id: 'native-request', behavior: 'allow' } });
+    await bridge.handleUpdate(callback());
+    assert.equal(r.out.length, 1);
+    r.link.stop();
+    await until(() => !bridge.sessions.has('claude:s1'));
+    assert.equal(bridge.approvals.size, 0);
+  } finally {
+    if (r) await r.cleanup();
+    await new Promise((resolve) => api.close(resolve));
+  }
+});
 
 test('initialize declares channel + permission capabilities and instructions', async () => {
   const out = [];
@@ -44,7 +133,34 @@ test('initialize declares channel + permission capabilities and instructions', a
   assert.match(r.instructions, /reply tool/);
   assert.match(r.instructions, /mirrored automatically/);
   await s.onMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
-  assert.deepEqual(out[1].result.tools.map((t) => t.name), ['reply']);
+  assert.deepEqual(out[1].result.tools.map((t) => t.name), ['reply', 'send_attachment']);
+});
+
+test('send_attachment forwards only explicit file arguments and reports delivery failures', async () => {
+  const out = [], calls = [];
+  let error;
+  const server = createChannelServer({ write: (m) => out.push(m), link: { request: async (...args) => {
+    calls.push(args);
+    if (error) throw new Error(error);
+  } } });
+  const call = (arguments_) => server.onMessage({ id: out.length + 1, method: 'tools/call',
+    params: { name: 'send_attachment', arguments: arguments_ } });
+  await call({ path: '/repo/report.pdf', kind: 'document', caption: 'Report', chat_id: 123 });
+  assert.deepEqual(calls, [['attachment', { path: '/repo/report.pdf', kind: 'document', caption: 'Report' }]]);
+  assert.equal(out.at(-1).result.content[0].text, 'sent');
+  await call({ path: '/repo/image.png' });
+  assert.deepEqual(calls.at(-1), ['attachment', { path: '/repo/image.png', kind: 'document', caption: '' }]);
+  for (const args of [{ path: 'relative.txt' }, { path: '' }, { path: '/repo/a', kind: 'invalid' },
+    { path: '/repo/a', caption: 4 }]) {
+    const count = calls.length;
+    await call(args);
+    assert.equal(calls.length, count);
+    assert.equal(out.at(-1).result.isError, true);
+  }
+  error = 'upload outcome uncertain';
+  await call({ path: '/repo/image.png', kind: 'photo' });
+  assert.equal(out.at(-1).result.isError, true);
+  assert.match(out.at(-1).result.content[0].text, /Delivery unconfirmed; check the Telegram Topic before retrying/);
 });
 
 test('register, inbound -> channel notification, reply tool -> hub, permission round trip', async () => {

@@ -7,6 +7,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'child_process';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 
@@ -15,6 +17,19 @@ export const SHARED_ENV_SETTINGS_PATH = path.join(CLAUDE_DIR, 'claude_env_settin
 /** Machine-local runtime dir: daemon port + IPC token + Telegram caches. Never synced. */
 export const BRIDGE_RUNTIME_DIR = path.join(CLAUDE_DIR, 'bridge');
 export const RUNTIME_FILE = path.join(BRIDGE_RUNTIME_DIR, 'runtime.json');
+
+/** Source-only daemon fingerprint; not config, host binary or channel process identity. */
+export function bridgeSourceRevision(repoRoot = fileURLToPath(new URL('../../', import.meta.url))) {
+  const hash = createHash('sha256');
+  for (const dir of ['scripts/bridge', 'scripts/shared']) {
+    for (const name of fs.readdirSync(path.join(repoRoot, dir)).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs')).sort()) {
+      hash.update(`${dir}/${name}\0`);
+      hash.update(fs.readFileSync(path.join(repoRoot, dir, name)));
+      hash.update('\0');
+    }
+  }
+  return hash.digest('hex');
+}
 
 /** The single source for the bridge's tunable defaults (0 = never for both). */
 export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 24, observeIntervalSeconds: 60 };

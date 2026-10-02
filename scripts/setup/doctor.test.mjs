@@ -7,12 +7,33 @@ import {
   looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, parseHookCommands,
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks,
   checkCodexPluginCache,
-  checkPlugins,
+  checkPlugins, checkBridgeRevision,
   checkMachineName,
   checkCodexShellEnv,
   scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost,
 } from './doctor.js';
 import { CLAUDE_LINKS } from './setup.js';
+
+test('checkBridgeRevision is read-only and distinguishes inactive, unknown, current and stale code', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-revision-'));
+  const runtimeFile = path.join(dir, 'runtime.json');
+  const options = { runtimeFile, isAlive: () => true, revision: () => 'current' };
+  try {
+    assert.deepEqual(checkBridgeRevision(options), []);
+    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 123 }));
+    assert.match(checkBridgeRevision(options)[0].title, /unknown/);
+    assert.deepEqual(checkBridgeRevision({ ...options, isAlive: () => false }), []);
+    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 123, sourceRevision: 'current' }));
+    assert.deepEqual(checkBridgeRevision(options), []);
+    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 123, sourceRevision: 'old' }));
+    const before = fs.readFileSync(runtimeFile, 'utf8');
+    const [stale] = checkBridgeRevision(options);
+    assert.equal(stale.level, 'WARN');
+    assert.match(stale.title, /differs/);
+    assert.equal(fs.readFileSync(runtimeFile, 'utf8'), before);
+    assert.match(checkBridgeRevision({ ...options, revision: () => { throw new Error('unreadable'); } })[0].title, /cannot compare/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 // ── machine name (provenance, harness-architecture §8b) ──
 

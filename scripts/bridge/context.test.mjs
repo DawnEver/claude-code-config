@@ -3,7 +3,24 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { readBridgeConfig, repoNameFromUrl, gitContext } from './context.mjs';
+import { readBridgeConfig, repoNameFromUrl, gitContext, bridgeSourceRevision } from './context.mjs';
+
+test('bridgeSourceRevision follows source edits, ignores tests and config, and exposes only a digest', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-revision-'));
+  try {
+    for (const dir of ['bridge', 'shared']) fs.mkdirSync(path.join(root, 'scripts', dir), { recursive: true });
+    const file = path.join(root, 'scripts', 'bridge', 'daemon.mjs');
+    fs.writeFileSync(file, 'export const version = 1;');
+    fs.writeFileSync(path.join(root, 'scripts', 'shared', 'config.mjs'), 'export const config = {};');
+    const initial = bridgeSourceRevision(root);
+    assert.match(initial, /^[a-f0-9]{64}$/);
+    fs.writeFileSync(path.join(root, 'scripts', 'bridge', 'daemon.test.mjs'), 'test only');
+    fs.writeFileSync(path.join(root, 'secret.json'), 'secret');
+    assert.equal(bridgeSourceRevision(root), initial);
+    fs.writeFileSync(file, 'export const version = 2;');
+    assert.notEqual(bridgeSourceRevision(root), initial);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('repoNameFromUrl handles https, ssh, and no .git', () => {
   assert.equal(repoNameFromUrl('https://github.com/DawnEver/claude-code-config.git'), 'claude-code-config');

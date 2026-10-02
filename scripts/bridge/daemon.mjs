@@ -17,15 +17,16 @@
 
 import fs from 'fs';
 import path from 'path';
+import { randomBytes, createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { readMachineName } from '../shared/machine.mjs';
-import { TelegramClient } from './telegram.mjs';
+import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { Observer } from './observer.mjs';
 import { newSession, onUp, onActivity, onIdleTick, onDown, onDismiss, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
-import { readBridgeConfig, gitContext, writePrivateFile, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
+import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
 const PROGRESS_MIN_INTERVAL_MS = 3000;
 const PROGRESS_LINES = 12;
@@ -35,7 +36,20 @@ const TOPIC_CLOSED = /TOPIC_CLOSED/i;
 const TOPIC_UNCHANGED = /TOPIC_NOT_MODIFIED/i;
 
 export const sessionKey = (agent, id) => `${agent}:${id}`;
-export const topicTitle = (machine, agent, branch) => `${machine}/${agent}/${branch ?? 'detached'}`;
+export function topicTitle(machine, project, branch, agent, suffix = '') {
+  const clean = value => String(value ?? '').replace(/[|\r\n]/g, ' ').trim();
+  const clip = (value, max) => {
+    const chars = Array.from(value);
+    return chars.length > max ? chars.slice(0, max - 1).join('') + '…' : value;
+  };
+  const name = clean(project).replace(/[-_ ]+(?:studio|lab)$/i, '') || 'unknown';
+  const head = `${clip(clean(machine), 24)} | ${clip(name, 32)} | `;
+  const tail = ` | ${clip(clean(agent), 12)}${suffix ? ` · ${suffix}` : ''}`;
+  const available = Math.max(1, 128 - Array.from(head + tail).length);
+  const source = Array.from(clean(branch) || 'detached');
+  const shortened = source.length > available ? source.slice(0, available - 1).join('') + '…' : source.join('');
+  return head + shortened + tail;
+}
 
 export class Bridge {
   /**
@@ -44,20 +58,23 @@ export class Bridge {
    *           topicCacheFile?: string|null, log?: (msg) => void, now?: () => number }} deps
    */
   constructor({ telegram, adapters = [], config, machine, resolveContext = gitContext,
-    topicCacheFile = null, log = () => {}, now = Date.now }) {
-    Object.assign(this, { telegram, config, machine, resolveContext, log, now });
+    topicCacheFile = null, log = () => {}, now = Date.now,
+    uploadsDir = path.join(BRIDGE_RUNTIME_DIR, 'uploads') }) {
+    Object.assign(this, { telegram, config, machine, resolveContext, log, now, uploadsDir });
     this.hosts = new Map(adapters.map((a) => [a.agent, a]));
     this.sessions = new Map();   // key -> session (lifecycle.mjs record + routing fields)
     this.held = new Map();       // key -> live events that arrived during bring-up
-    this.approvals = new Map();  // short id -> { key, agent, ref }
-    this.nextApproval = 1;
+    this.approvals = new Map();  // random id -> native request + delivered message origin
     this.topics = new TopicCache(topicCacheFile);
+    this.deletingTopics = new Set();  // in-flight transport only; never rebind a doomed Topic
     this.allowed = new Set(config.allowedUserIds);
     this.warned = new Map();     // what -> last logged message (log each distinct failure once)
     for (const a of adapters) this.#wire(a);
   }
 
   #wire(a) {
+    if (a.agent === 'claude') a.sendAttachment = (id, p) => this.sendAttachment(sessionKey(a.agent, id), p);
+    if (a.agent === 'claude') a.sendCodexAttachment = (id, p) => this.sendAttachment(sessionKey('codex', id), p);
     a.on('up', (e) => this.sessionUp(a.agent, e).catch((err) => this.log(`${a.agent} up: ${err.message}`)));
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
     a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
@@ -69,7 +86,12 @@ export class Bridge {
       });
     }
     a.on('approval-resolved', (e) => {
-      for (const [id, x] of this.approvals) if (x.agent === a.agent && x.ref === e.ref) this.approvals.delete(id);
+      for (const [key, events] of this.held) {
+        if (!key.startsWith(`${a.agent}:`) || (e.id !== undefined && key !== sessionKey(a.agent, e.id))) continue;
+        this.held.set(key, events.filter(({ kind, e: pending }) => kind !== 'approval' || pending.ref !== e.ref));
+      }
+      for (const [id, x] of this.approvals) if (x.agent === a.agent && x.ref === e.ref
+        && (e.id === undefined || x.session.id === e.id)) this.approvals.delete(id);
     });
     a.on('warn', (m) => this.log(m));
   }
@@ -97,11 +119,26 @@ export class Bridge {
     try {
       const ctx = this.resolveContext(cwd, { branch });
       const chatId = this.chatFor(ctx.project);
-      const cached = chatId === null ? null : this.topics.get(TopicCache.key(chatId, key));
-      const base = topicTitle(this.machine, agent, ctx.branch);
+      const cacheKey = chatId === null ? null : TopicCache.key(chatId, key);
+      const cached = cacheKey === null || this.deletingTopics.has(cacheKey) ? null : this.topics.get(cacheKey);
+      const base = topicTitle(this.machine, ctx.project, ctx.branch, agent);
       const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, base,
-        title: cached?.title ?? base, project: ctx.project, cwd, chain: Promise.resolve(), progress: null, injected: [] };
+        title: base, project: ctx.project, branch: ctx.branch, cwd, chain: Promise.resolve(), progress: null, injected: [] };
       this.sessions.set(key, s);
+      s.title = this.#selectTitle(s, cached?.title);
+      if (cached && cached.title !== s.title) {
+        await this.#serial(s, async () => {
+          try {
+            await this.telegram.editForumTopic(s.chatId, s.topicId, s.title);
+            if (this.sessions.get(key) !== s) return;
+            this.#save(s);
+          } catch (e) {
+            if (TOPIC_UNCHANGED.test(e.message)) this.#save(s);
+            else { s.title = cached.title ?? base; this.#warnOnce('editForumTopic', e.message); }
+          }
+        });
+        if (this.sessions.get(key) !== s) return;
+      }
       this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting} topic=${s.topicId ?? '-'}`);
       if (chatId === null) this.log(`no chat for project ${ctx.project}; ${key} not mirrored`);
       else await this.#apply(s, onUp(s, { preexisting, now: this.now() }));
@@ -133,6 +170,7 @@ export class Bridge {
     const s = this.sessions.get(key);
     if (!s) return;
     this.sessions.delete(key);
+    for (const [id, a] of this.approvals) if (a.key === key) this.approvals.delete(id);
     this.log(`down ${key}`);
     if (s.chatId !== null) this.#apply(s, onDown(s, this.now())).catch(() => {});
   }
@@ -169,16 +207,21 @@ export class Bridge {
     let n = 0;
     const holder = (k) => [...this.sessions.values()].find((s) => s.chatId !== null && TopicCache.key(s.chatId, s.key) === k);
     for (const [k, e] of this.topics.due(this.now(), this.config.deleteClosedAfterHours)) {
-      if (holder(k)) continue;
+      if (holder(k) || this.deletingTopics.has(k)) continue;
+      this.deletingTopics.add(k);
       try {
         await this.telegram.deleteForumTopic(TopicCache.chatIdOf(k), e.topicId);
       } catch (err) {
-        if (!TOPIC_GONE.test(err.message)) { this.#warnOnce('deleteForumTopic', `${err.message} (needs the "Delete messages" right; kept for the next sweep)`); continue; }
-      }
+        if (!TOPIC_GONE.test(err.message)) {
+          // A re-attach may have replaced this cache slot while deletion was in flight.
+          // Preserve only the retired transport identity, never overwrite the live binding.
+          if (this.topics.get(k) !== e) this.topics.set(`${k}|retired:${e.topicId}`, e);
+          this.#warnOnce('deleteForumTopic', `${err.message} (needs the "Delete messages" right; kept for the next sweep)`);
+          continue;
+        }
+      } finally { this.deletingTopics.delete(k); }
       this.warned.delete('deleteForumTopic');
       if (this.topics.get(k) === e) this.topics.set(k, null);
-      const h = holder(k);   // re-attached while the delete was in flight
-      if (h?.topicId === e.topicId) Object.assign(h, { topicId: null, state: 'none', closedAt: null });
       n++;
       this.log(`deleted closed topic ${e.title ?? k} [topic ${e.topicId}]`);
     }
@@ -208,19 +251,33 @@ export class Bridge {
     if (s.chatId !== null) this.topics.set(TopicCache.key(s.chatId, s.key), cacheEntry(s, s.title));
   }
 
+  #selectTitle(s, previous) {
+    const taken = new Set([...this.sessions.values()]
+      .filter(o => o !== s && o.chatId === s.chatId && (o.topicId || o.creating)).map(o => o.title));
+    const hash = createHash('sha256').update(s.key).digest('hex');
+    // Keep an already-derived short identity across reconnects, not historical counters.
+    for (let length = 6; length <= 16; length += 2) {
+      const candidate = topicTitle(this.machine, s.project, s.branch, s.agent, hash.slice(0, length));
+      if (previous === candidate && !taken.has(candidate)) return candidate;
+    }
+    if (!taken.has(s.base)) return s.base;
+    for (let length = 6; length <= 16; length += 2) {
+      const candidate = topicTitle(this.machine, s.project, s.branch, s.agent, hash.slice(0, length));
+      if (!taken.has(candidate)) return candidate;
+    }
+    throw new Error('could not derive a unique live Topic title');
+  }
+
   async #run(s, action) {
     if (action === 'create') {
-      // Number against sessions that hold (or are creating) a Topic in the same group.
-      const taken = new Set([...this.sessions.values()]
-        .filter((o) => o !== s && o.chatId === s.chatId && (o.topicId || o.creating)).map((o) => o.title));
-      s.title = s.base;
-      for (let n = 2; taken.has(s.title); n++) s.title = `${s.base} #${n}`;
+      s.title = this.#selectTitle(s, s.title);
       s.creating = true;
       try {
         s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title)).message_thread_id;
         this.#save(s);
       } catch (e) {
-        this.log(`createForumTopic ${s.title}: ${e.message} (posting without a Topic)`);
+        if (e.code >= 400 && e.code < 500) s.state = 'none'; // confirmed rejection: later activity may retry
+        this.log(`createForumTopic ${s.title}: ${e.message} (not delivered; check Telegram before restarting)`);
       } finally { s.creating = false; }
       await this.#postNow(s, `session up: ${s.title}${s.project ? ` (${s.project})` : ''}`, {}, false);
       // Telegram auto-pins a Topic's first message; that pin is noise here.
@@ -243,8 +300,12 @@ export class Bridge {
   }
 
   async #postNow(s, text, opts = {}, retry = true) {
+    if (!s.topicId) {
+      this.log(`send ${s.title}: not delivered (no confirmed Topic; use native session history)`);
+      return [];
+    }
     try {
-      this.log(`post ${s.title} [topic ${s.topicId ?? '-'}] ${text.replace(/\s+/g, ' ').slice(0, 60)}`);
+      this.log(`post ${s.title} [topic ${s.topicId}] (${text.length} chars)`);
       return await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...opts });
     } catch (e) {
       // Telegram-side drift (Topic deleted or closed by hand): repair once, then resend.
@@ -312,20 +373,48 @@ export class Bridge {
     const body = text?.trim() ? text : `(turn ${status ?? 'completed'}, no message)`;
     // A failed turn has stopped and waits for the human, like an approval.
     await this.#send(s, status && status !== 'completed' ? `[${status}] ${body}` : body,
-      status === 'failed' ? { alert: [...this.allowed] } : {});
+      status === 'failed' ? { alert: [...this.allowed] } : { rich: true });
+  }
+
+  async sendAttachment(key, request) {
+    const s = this.sessions.get(key);
+    if (!s || s.state === 'ended' || s.chatId == null) throw new Error('live attachment session required');
+    if (typeof request.path !== 'string' || !path.isAbsolute(request.path)) throw new Error('absolute file path required');
+    this.#activity(s);
+    return this.#serial(s, async () => {
+      if (this.sessions.get(key) !== s || !s.topicId || s.state === 'ended') throw new Error('no live confirmed attachment Topic');
+      const root = fs.realpathSync(s.cwd);
+      const file = fs.realpathSync(request.path);
+      const selected = path.relative(root, path.resolve(request.path));
+      const relative = path.relative(root, file);
+      const blocked = p => !p || p.startsWith(`..${path.sep}`) || p === '..' || path.isAbsolute(p) ||
+        p.split(path.sep).some(part => /^\.(?:git|claude|codex|ssh|aws|npmrc|netrc|env(?:\..*)?)$/i.test(part)) ||
+        /(?:^|[\\/])(?:credentials|secrets?|private[-_]key)(?:[.\\/]|$)|\.(?:pem|key|p12)$/i.test(p);
+      if (blocked(selected) || blocked(relative)) {
+        throw new Error('attachment must be a non-sensitive workspace file');
+      }
+      return this.telegram.sendAttachment(s.chatId, file, { kind: request.kind ?? 'document',
+        caption: request.caption, threadId: s.topicId, workspaceRoot: root });
+    });
   }
 
   async approval(key, { ref, summary, answerable }) {
     const s = this.sessions.get(key);
     if (!s) return;
-    const id = String(this.nextApproval++);
-    this.approvals.set(id, { key, agent: s.agent, ref });
     const offer = answerable && this.config.approvalsFromTelegram && this.allowed.size > 0;
+    const id = randomBytes(16).toString('hex');
+    const pending = { key, agent: s.agent, ref, session: s, origin: null };
+    if (offer) this.approvals.set(id, pending);
     const head = offer ? `approval needed on ${this.machine}` : `approval needed on ${this.machine}, answer locally or via official remote`;
     const replyMarkup = offer ? { inline_keyboard: [[
       { text: 'Accept', callback_data: `ap:${id}:y` }, { text: 'Decline', callback_data: `ap:${id}:n` },
     ]] } : undefined;
-    await this.#send(s, `${head}\n${summary}`, { replyMarkup, alert: [...this.allowed] });
+    const messages = await this.#send(s, `${head}\n${summary}`, { replyMarkup, alert: [...this.allowed] });
+    const message = messages.at(-1);   // Telegram puts the buttons on the final chunk
+    if (this.approvals.get(id) === pending) {
+      if (message && this.sessions.get(key) === s) pending.origin = { chatId: s.chatId, topicId: s.topicId, messageId: message.message_id };
+      else this.approvals.delete(id);
+    }
   }
 
   // ── Telegram inbound ──
@@ -339,11 +428,45 @@ export class Bridge {
   async handleUpdate(u) {
     if (u.callback_query) return this.#onCallback(u.callback_query);
     const m = u.message;
-    if (!m?.text || !this.allowed.has(Number(m.from?.id))) return;
+    if (!m || !this.allowed.has(Number(m.from?.id))) return;
     const s = this.#sessionAt(m.chat.id, m.is_topic_message ? m.message_thread_id : null);
-    if (!s) return;
+    if (!s || s.state === 'ended') return;
     const host = this.hosts.get(s.agent);
-    const text = m.text.trim();
+    let text = (m.text ?? m.caption ?? '').trim();
+    const attachment = m.document ?? m.photo?.at(-1);
+    if (!text && !attachment) return;
+    const images = [];
+    if (attachment) {
+      const origin = { chatId: s.chatId, topicId: s.topicId };
+      try {
+        const limit = ATTACHMENT_LIMITS.download;
+        if (attachment.file_size > limit) throw new Error('attachment exceeds 20 MiB download limit');
+        const data = await this.telegram.downloadAttachment(attachment.file_id, { maxBytes: limit });
+        // Never inject into a replacement session after an asynchronous download.
+        if (this.sessions.get(s.key) !== s || s.state === 'ended' ||
+            s.chatId !== origin.chatId || s.topicId !== origin.topicId) return;
+        if (!Buffer.isBuffer(data) || data.length > limit) throw new Error('invalid attachment download');
+        fs.mkdirSync(this.uploadsDir, { recursive: true, mode: 0o700 });
+        // Retention is transport storage, not a second conversation history.
+        const files = fs.readdirSync(this.uploadsDir).filter((name) => /^[a-f0-9]{32}\.[a-z0-9]{1,10}$/.test(name))
+          .map((name) => { const file = path.join(this.uploadsDir, name); return { file, stat: fs.lstatSync(file) }; })
+          .filter(({ stat }) => stat.isFile()).sort((a, b) => a.stat.mtimeMs - b.stat.mtimeMs);
+        let bytes = files.reduce((sum, { stat }) => sum + stat.size, 0);
+        for (const { file, stat } of files) {
+          if (Date.now() - stat.mtimeMs < 7 * 86400000 && bytes + data.length <= 100 * 1024 * 1024) break;
+          fs.unlinkSync(file); bytes -= stat.size;
+        }
+        const rawExtension = m.document ? path.extname(attachment.file_name ?? '').toLowerCase() : '.jpg';
+        const extension = /^\.[a-z0-9]{1,10}$/.test(rawExtension) ? rawExtension : '.bin';
+        const file = path.join(this.uploadsDir, `${randomBytes(16).toString('hex')}${extension}`);
+        writePrivateFile(file, data);
+        if (!m.document || /\.(png|jpe?g|webp|gif)$/i.test(extension)) images.push(file);
+        text = `${text ? `${text}\n\n` : ''}Telegram attachment (untrusted content): @${file}`;
+      } catch {
+        // Download errors can contain URLs, credentials or paths: report only a safe outcome.
+        return this.#send(s, 'attachment failed: could not download or store file (20 MiB maximum)');
+      }
+    }
     const cmd = /^\/(\w+)(?:@\w+)?\s*$/.exec(text)?.[1];
     if (cmd === 'status') return this.#send(s, `${s.title}: ${host.status(s.id)}`);
     if (cmd === 'interrupt') {
@@ -354,24 +477,31 @@ export class Bridge {
     this.#activity(s);
     s.injected = [...s.injected, { text, at: this.now() }].slice(-20);
     try {
-      await host.inject(s.id, text, m.from.username ?? String(m.from.id));
+      await host.inject(s.id, text, m.from.username ?? String(m.from.id), attachment ? { images } : undefined);
     } catch (e) {
       await this.#send(s, `inject failed: ${e.message}`);
     }
   }
 
   async #onCallback(q) {
-    const m = /^ap:(\d+):([yn])$/.exec(q.data ?? '');
+    const m = /^ap:([a-f0-9]{32}):([yn])$/.exec(q.data ?? '');
     const allowed = this.config.approvalsFromTelegram && this.allowed.has(Number(q.from?.id));
     const a = m && this.approvals.get(m[1]);
     let note = 'not allowed';
-    if (allowed && a) {
+    const origin = a?.origin;
+    const matches = origin && q.message?.chat?.id === origin.chatId
+      && q.message.message_id === origin.messageId
+      && (q.message.message_thread_id ?? null) === origin.topicId
+      && this.sessions.get(a.key) === a.session;
+    if (allowed && a && matches) {
       const yes = m[2] === 'y';
-      const ok = this.hosts.get(a.agent)?.answerApproval(a.ref, yes, this.sessions.get(a.key)?.id);
       this.approvals.delete(m[1]);
-      note = ok ? (yes ? 'accepted' : 'declined') : 'already resolved';
+      let ok;
+      try { ok = await this.hosts.get(a.agent)?.answerApproval(a.ref, yes, a.session.id); }
+      catch { note = 'submission uncertain; check locally'; }
+      if (note === 'not allowed') note = ok ? 'submitted' : 'control inactive';
       if (ok && q.message) this.telegram.editMessageText(q.message.chat.id, q.message.message_id, `${q.message.text ?? ''}\n-> ${note} by ${q.from.username ?? q.from.id}`).catch(() => {});
-    } else if (allowed) note = 'already resolved';
+    } else if (allowed) note = 'control inactive';
     await this.telegram.answerCallbackQuery(q.id, note).catch(() => {});
   }
 
@@ -410,6 +540,7 @@ export function runningDaemonPid(file = RUNTIME_FILE) {
 }
 
 export async function main() {
+  const sourceRevision = bridgeSourceRevision();
   const logIdx = process.argv.indexOf('--log');
   const logFile = logIdx > 0 ? process.argv[logIdx + 1] : null;
   if (logFile) fs.mkdirSync(path.dirname(logFile), { recursive: true });
@@ -429,7 +560,7 @@ export async function main() {
   const telegram = new TelegramClient({ token: config.botToken, offsetFile: path.join(BRIDGE_RUNTIME_DIR, 'offset.json') });
   const claude = new ClaudeAdapter();
   const port = await claude.listen(0);
-  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid }, null, 2));
+  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, sourceRevision }, null, 2));
   const codex = new CodexAdapter();
   const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, topicCacheFile: path.join(BRIDGE_RUNTIME_DIR, 'topics.json') });
 

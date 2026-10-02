@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CodexAdapter, progressLine, probeDaemon, backlogSince, unwrapShell, isMainSession } from './codex-adapter.mjs';
+import { CodexAdapter, progressLine, probeDaemon, backlogSince, isMainSession } from './codex-adapter.mjs';
 
 /** Fake app-server behind the adapter's transport interface. */
-function fakeAppServer({ loaded = ['t1'], threads = {} } = {}) {
+function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
   const calls = [];
   const responses = [];
   let onMsg, onClose;
@@ -16,6 +16,7 @@ function fakeAppServer({ loaded = ['t1'], threads = {} } = {}) {
       if (m.method === undefined) { responses.push(m); return; }
       calls.push(m);
       if (m.id === undefined) return;
+      if (beforeReply?.(m, onMsg)) return;
       const spec = threads[m.params?.threadId];
       // A fresh thread: resume AND read both fail until the rollout exists (real Codex behaviour).
       const resumeFails = m.method === 'thread/resume' && spec?.error && (spec.failTimes ?? Infinity) > 0;
@@ -90,7 +91,7 @@ test('deltas aggregate; final message is emitted on turn/completed; progress per
   srv.push('item/agentMessage/delta', { threadId: 't1', turnId: 'turnA', itemId: 'i1', delta: 'lo' });
   srv.push('item/completed', { threadId: 't1', turnId: 'turnA', item: { type: 'commandExecution', id: 'c', command: 'npm test', exitCode: 0 } });
   srv.push('turn/completed', { threadId: 't1', turn: { id: 'turnA', status: 'completed' } });
-  assert.deepEqual(progress, ['$ npm test (exit 0)']);
+  assert.deepEqual(progress, []);
   assert.deepEqual(finals, [{ id: 't1', turnId: 'turnA', status: 'completed', text: 'Hello' }]);
   assert.equal(a.status('t1'), 'idle');
 });
@@ -105,6 +106,87 @@ test('backlogSince replays only turns started after the bridge connected', () =>
   assert.deepEqual(backlogSince(turns, 150_000), [
     { kind: 'prompt', text: 'hi', turnId: 'T2' }, { kind: 'final', text: 'Hello!', status: 'completed', turnId: 'T2' }, { kind: 'prompt', text: 'next', turnId: 'T3' }]);
   assert.deepEqual(backlogSince(turns, Infinity), []);
+});
+
+test('backlog keeps every final answer paragraph without commentary or duplicate items', () => {
+  assert.equal(backlogSince([{ id: 't', startedAt: 2, status: 'completed', items: [
+    { type: 'agentMessage', id: 'c', phase: 'commentary', text: 'I will inspect' },
+    { type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'First paragraph' },
+    { type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'First paragraph' },
+    { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' },
+  ] }], 0)[0].text, 'First paragraph\n\nSecond paragraph');
+});
+
+test('live turn keeps multiple final message items and ignores later commentary', async () => {
+  const { a, srv } = await started(); const finals = [];
+  a.on('final', (f) => finals.push(f));
+  srv.push('turn/started', { threadId: 't1', turn: { id: 't' } });
+  for (const item of [
+    { type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'First paragraph' },
+    { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' },
+    { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' },
+    { type: 'agentMessage', id: 'c', phase: 'commentary', text: 'working' },
+  ]) srv.push('item/completed', { threadId: 't1', turnId: 't', item });
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed' } });
+  assert.equal(finals[0].text, 'First paragraph\n\nSecond paragraph');
+});
+
+test('completed turn snapshot supplies lost items and replaces partial streamed text once', async () => {
+  const { a, srv } = await started(); const finals = [];
+  a.on('final', (f) => finals.push(f));
+  srv.push('turn/started', { threadId: 't1', turn: { id: 't' } });
+  srv.push('item/agentMessage/delta', { threadId: 't1', turnId: 't', itemId: 'a', delta: 'Partial' });
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed', items: [
+    { type: 'agentMessage', id: 'c', phase: 'commentary', text: 'working' },
+    { type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'Complete first paragraph' },
+    { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' },
+  ] } });
+  assert.equal(finals[0].text, 'Complete first paragraph\n\nSecond paragraph');
+});
+
+test('unphased legacy final items are complete and cleared for the next turn', async () => {
+  const { a, srv } = await started(); const finals = [];
+  a.on('final', (f) => finals.push(f));
+  for (const turn of ['one', 'two']) {
+    srv.push('turn/started', { threadId: 't1', turn: { id: turn } });
+    for (const [id, text] of [['a', 'first'], ['b', 'second']])
+      srv.push('item/completed', { threadId: 't1', turnId: turn, item: { type: 'agentMessage', id, text: `${turn} ${text}` } });
+    srv.push('turn/completed', { threadId: 't1', turn: { id: turn, status: 'completed' } });
+  }
+  assert.deepEqual(finals.map((f) => f.text), ['one first\n\none second', 'two first\n\ntwo second']);
+});
+
+test('phase from item start filters commentary even when completion notifications are missing', async () => {
+  const { a, srv } = await started(); const finals = [];
+  a.on('final', (f) => finals.push(f));
+  srv.push('turn/started', { threadId: 't1', turn: { id: 't' } });
+  for (const [id, phase, text] of [['c', 'commentary', 'working'], ['f', 'final_answer', 'Answer']]) {
+    srv.push('item/started', { threadId: 't1', turnId: 't', item: { type: 'agentMessage', id, phase, text: '' } });
+    srv.push('item/agentMessage/delta', { threadId: 't1', turnId: 't', itemId: id, delta: text });
+  }
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed' } });
+  assert.equal(finals[0].text, 'Answer');
+});
+
+test('late old-turn message events never contaminate the current final', async () => {
+  const { a, srv } = await started(); const finals = [];
+  a.on('final', (f) => finals.push(f));
+  srv.push('turn/started', { threadId: 't1', turn: { id: 'new' } });
+  srv.push('item/agentMessage/delta', { threadId: 't1', turnId: 'old', itemId: 'old-delta', delta: 'stale delta' });
+  srv.push('item/completed', { threadId: 't1', turnId: 'old', item: { type: 'agentMessage', id: 'old-item', text: 'stale item' } });
+  srv.push('item/completed', { threadId: 't1', turnId: 'new', item: { type: 'agentMessage', id: 'new-item', text: 'Current answer' } });
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 'new', status: 'completed' } });
+  assert.equal(finals[0].text, 'Current answer');
+});
+
+test('subscribe during a turn preserves answer items already present in native history', async () => {
+  const { a, srv } = await started({ threads: { t1: { id: 't1', cwd: '/w', turns: [
+    { id: 'running', status: 'inProgress', items: [{ type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'First paragraph' }] },
+  ] } } });
+  const finals = []; a.on('final', (f) => finals.push(f));
+  srv.push('item/completed', { threadId: 't1', turnId: 'running', item: { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' } });
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 'running', status: 'completed' } });
+  assert.equal(finals[0].text, 'First paragraph\n\nSecond paragraph');
 });
 
 test('thread/started subscribes at once, once, and carries the backlog', async () => {
@@ -178,6 +260,20 @@ test('inject uses turn/start when idle and turn/steer with expectedTurnId mid-tu
   assert.deepEqual(srv.calls.at(-1).params, { threadId: 't1', turnId: 'turnB' });
 });
 
+test('inbound images use native localImage input for both start and steer', async () => {
+  const { a, srv } = await started();
+  const images = ['/fixture/photo.png'];
+  await a.inject('t1', 'describe image', 'remote', { images });
+  assert.deepEqual(srv.calls.at(-1).params.input, [
+    { type: 'text', text: 'describe image', text_elements: [] },
+    { type: 'localImage', path: images[0] },
+  ]);
+  srv.push('turn/started', { threadId: 't1', turn: { id: 'turnB' } });
+  await a.inject('t1', 'another image', 'remote', { images });
+  assert.equal(srv.calls.at(-1).method, 'turn/steer');
+  assert.deepEqual(srv.calls.at(-1).params.input.at(-1), { type: 'localImage', path: images[0] });
+});
+
 test('approvals are relayed and never answered unless answerApproval is called', async () => {
   const { a, srv } = await started();
   const seen = [], resolved = [];
@@ -187,16 +283,16 @@ test('approvals are relayed and never answered unless answerApproval is called',
   srv.request(78, 'item/permissions/requestApproval', { threadId: 't1' });
   srv.request(79, 'account/chatgptAuthTokens/refresh', {});
   await tick();
-  assert.deepEqual(seen.map((s) => [s.id, s.ref, s.answerable, s.summary]), [['t1', 'c77', true, '$ rm -rf build'], ['t1', 'c78', false, 'item/permissions/requestApproval']]);
+  assert.deepEqual(seen.map((s) => [s.id, s.ref, s.answerable, s.summary]), [['t1', 'c1:77', true, '$ rm -rf build'], ['t1', 'c1:78', false, 'item/permissions/requestApproval']]);
   assert.deepEqual(srv.responses, [], 'nothing answered automatically');
-  assert.equal(a.answerApproval('c78', true), false, 'non accept/decline shapes are never answered');
-  assert.equal(a.answerApproval('c77', false), true);
+  assert.equal(a.answerApproval('c1:78', true), false, 'non accept/decline shapes are never answered');
+  assert.equal(a.answerApproval('c1:77', false), true);
   assert.deepEqual(srv.responses, [{ jsonrpc: '2.0', id: 77, result: { decision: 'decline' } }]);
   srv.request(80, 'item/fileChange/requestApproval', { threadId: 't1' });
   await tick();
   srv.push('serverRequest/resolved', { threadId: 't1', requestId: 80 });
-  assert.deepEqual(resolved, ['c80']);
-  assert.equal(a.answerApproval('c80', true), false, 'answered elsewhere first');
+  assert.deepEqual(resolved, ['c1:80']);
+  assert.equal(a.answerApproval('c1:80', true), false, 'answered elsewhere first');
 });
 
 test('transport close drops every session', async () => {
@@ -208,13 +304,84 @@ test('transport close drops every session', async () => {
   assert.equal(a.status('t1'), 'not loaded');
 });
 
-test('progress lines show the command, not the shell Codex wraps it in', () => {
-  assert.equal(unwrapShell('"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command \'git rev-parse --short HEAD\''),
-    'git rev-parse --short HEAD');
-  assert.equal(unwrapShell("/bin/bash -lc 'npm test'"), 'npm test');
-  assert.equal(unwrapShell('pwsh -NoProfile -Command "ls"'), 'ls');
-  assert.equal(unwrapShell('git status'), 'git status');
-  assert.equal(progressLine({ type: 'commandExecution', command: "bash -lc 'make'", exitCode: 0 }), '$ make (exit 0)');
+test('failed steering never starts or redirects an uncertain input', async () => {
+  const { a, srv } = await started({ beforeReply: (m, reply) => {
+    if (m.method !== 'turn/steer') return false;
+    reply(JSON.stringify({ id: m.id, error: { code: -32600, message: 'turn ended' } }));
+    return true;
+  } });
+  srv.push('turn/started', { threadId: 't1', turn: { id: 'old' } });
+  await assert.rejects(a.inject('t1', 'only for old'), /turn ended/);
+  assert.equal(srv.calls.some((c) => c.method === 'turn/start'), false);
+  await assert.rejects(a.inject('unknown', 'hello'), /not loaded/);
+});
+
+test('late old-turn completion does not clear the current steering target', async () => {
+  const { a, srv } = await started();
+  srv.push('turn/started', { threadId: 't1', turn: { id: 'new' } });
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 'old', status: 'completed' } });
+  await a.inject('t1', 'current');
+  assert.equal(srv.calls.at(-1).method, 'turn/steer');
+  assert.equal(srv.calls.at(-1).params.expectedTurnId, 'new');
+});
+
+test('disconnect while steering rejects without replaying input after reconnect', async () => {
+  let srv;
+  const result = await started({ beforeReply: (m) => {
+    if (m.method !== 'turn/steer') return false;
+    srv.transport.close();
+    return true;
+  } });
+  srv = result.srv;
+  srv.push('turn/started', { threadId: 't1', turn: { id: 'old' } });
+  await assert.rejects(result.a.inject('t1', 'uncertain'), /connection closed/);
+  assert.equal(srv.calls.some((c) => c.method === 'turn/start'), false);
+});
+
+test('approval submission stays pending until native resolution and is submitted once', async () => {
+  const { a, srv } = await started();
+  const seen = [], resolved = [];
+  a.on('approval', (x) => seen.push(x));
+  a.on('approval-resolved', (x) => resolved.push(x.ref));
+  srv.request(90, 'item/fileChange/requestApproval', { threadId: 't1' });
+  srv.request(90, 'item/fileChange/requestApproval', { threadId: 't1' });
+  assert.equal(seen.length, 1);
+  const ref = seen[0].ref;
+  assert.equal(a.answerApproval(ref, true), true);
+  assert.equal(a.answerApproval(ref, false), false);
+  assert.equal(a.approvals.has(ref), true);
+  srv.push('serverRequest/resolved', { threadId: 'other', requestId: 90 });
+  assert.deepEqual(resolved, []);
+  srv.push('serverRequest/resolved', { threadId: 't1', requestId: 90 });
+  assert.deepEqual(resolved, [ref]);
+});
+
+test('reconnect invalidates old controls despite reused native request ids', async () => {
+  const servers = [fakeAppServer(), fakeAppServer()];
+  let index = 0;
+  const a = new CodexAdapter({ connect: () => servers[index++].transport, probe: async () => ({}) });
+  const seen = [], resolved = [];
+  a.on('approval', (x) => seen.push(x));
+  a.on('approval-resolved', (x) => resolved.push(x.ref));
+  await a.start(); await a.refresh();
+  servers[0].request(91, 'item/fileChange/requestApproval', { threadId: 't1' });
+  const old = seen[0].ref;
+  servers[0].transport.close();
+  assert.deepEqual(resolved, [old]);
+  await a.start(); await a.refresh();
+  servers[1].request(91, 'item/fileChange/requestApproval', { threadId: 't1' });
+  assert.notEqual(seen[1].ref, old);
+  assert.equal(a.answerApproval(old, true), false);
+  servers[0].push('serverRequest/resolved', { threadId: 't1', requestId: 91 });
+  assert.equal(a.answerApproval(seen[1].ref, true), true);
+  servers[1].request(92, 'item/fileChange/requestApproval', { threadId: 'child' });
+  assert.equal(seen.length, 2, 'unsubscribed/child requests remain native-only');
+});
+
+test('shell commands and execution output never become Telegram progress', () => {
+  for (const command of ['powershell -Command secret', "bash -lc 'make'", 'git status']) {
+    assert.equal(progressLine({ type: 'commandExecution', command, exitCode: 0, aggregatedOutput: 'private output' }), null);
+  }
 });
 
 test('progressLine ignores chatter items', () => {

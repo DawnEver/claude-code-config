@@ -26,7 +26,7 @@ import { execFileSync } from 'child_process';
 import { isMain } from '../shared/is-main.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
-import { readBridgeConfig } from '../bridge/context.mjs';
+import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
   CLAUDE_LINKS, getCodexLinks, linkSourceRoot,
@@ -446,6 +446,23 @@ export function checkBridgeHost({ sharedPath = path.join(HOME, '.claude', 'claud
     'create a bot for this machine and set bridge.botToken in ~/.claude/claude_env_settings.local.json, then run setup (docs/bridge.md § Setup)')];
 }
 
+/** Compare only a live daemon's startup fingerprint; never restart or rewrite it. */
+export function checkBridgeRevision({ runtimeFile = RUNTIME_FILE, repoRoot = sourceDir,
+  isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } },
+  revision = bridgeSourceRevision } = {}) {
+  let runtime;
+  try { runtime = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { return []; }
+  if (!Number.isInteger(runtime.pid) || runtime.pid <= 0 || !isAlive(runtime.pid)) return [];
+  const fix = 'confirm and restart the bridge service to load current source; this check never restarts it (docs/bridge.md)';
+  if (!runtime.sourceRevision) return [finding('WARN', 'bridge-revision', 'live bridge source revision is unknown (started before revision reporting)', fix)];
+  try {
+    if (runtime.sourceRevision === revision(repoRoot)) return [];
+    return [finding('WARN', 'bridge-revision', 'live bridge source differs from current installed source; disk edits are not active', fix)];
+  } catch {
+    return [finding('WARN', 'bridge-revision', 'cannot compare live bridge source with installed source', 'check bridge source readability before any approved restart')];
+  }
+}
+
 // ── runner ──
 
 export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME } = {}) {
@@ -464,6 +481,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers'),
       requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
+    ...checkBridgeRevision({ runtimeFile: path.join(home, '.claude', 'bridge', 'runtime.json'), repoRoot }),
     ...checkBridgeHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
       localPath: path.join(home, '.claude', 'claude_env_settings.local.json') }),
     ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),

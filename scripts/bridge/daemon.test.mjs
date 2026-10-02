@@ -4,17 +4,60 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { EventEmitter } from 'events';
-import { Bridge, runningDaemonPid } from './daemon.mjs';
+import { Bridge, runningDaemonPid, topicTitle } from './daemon.mjs';
 
 const M = 60000, H = 60 * M;
 const HOSTS = ['codex', 'claude'];
 
+test('Topic fields use readable separators and display-only project abbreviations', () => {
+  assert.equal(topicTitle('host-a', 'plant-studio', 'feat/example', 'codex'), 'host-a | plant | feat/example | codex');
+  assert.equal(topicTitle('host-a', 'sample lab', 'main', 'claude'), 'host-a | sample | main | claude');
+  const title = topicTitle('host-a', 'proj', 'x'.repeat(200), 'codex', 'abcdef');
+  assert.ok(Array.from(title).length <= 128);
+  assert.ok(title.endsWith(' | codex · abcdef'));
+  assert.ok(Array.from(topicTitle('m'.repeat(200), 'p'.repeat(200), 'b'.repeat(200), 'codex', 'a'.repeat(16))).length <= 128);
+});
+
+test('cached active Topics are renamed without replacing their Topic identity', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-title-'));
+  try {
+    const file = path.join(dir, 'topics.json');
+    fs.writeFileSync(file, JSON.stringify({ '-100|codex:s': { topicId: 77, title: 'host-a/codex/main #4' } }));
+    const r = make({ topicCacheFile: file });
+    await up(r, 'codex', 's', { preexisting: true });
+    assert.deepEqual(r.telegram.renamed, [[-100, 77, 'host-a | proj | main | codex']]);
+    assert.equal(r.bridge.sessions.get('codex:s').topicId, 77);
+    assert.equal(r.telegram.topics.length, 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('attachments are session scoped and reject files outside the workspace', async () => {
+  const r = make();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-upload-'));
+  try {
+    const file = path.join(dir, 'result.txt');
+    fs.writeFileSync(file, 'safe fixture');
+    await r.bridge.sessionUp('claude', { id: 'upload', cwd: dir });
+    const calls = [];
+    r.telegram.sendAttachment = async (...args) => { calls.push(args); return { message_id: 10 }; };
+    await r.bridge.sendAttachment('claude:upload', { path: file, kind: 'document' });
+    assert.equal(calls[0][0], -999);
+    assert.equal(calls[0][2].threadId, 100);
+    await assert.rejects(r.bridge.sendAttachment('claude:upload', { path: path.join(dir, '..', 'outside.txt') }));
+    await assert.rejects(r.bridge.sendAttachment('claude:missing', { path: file }));
+    fs.writeFileSync(path.join(dir, '.env'), 'secret fixture');
+    await assert.rejects(r.bridge.sendAttachment('claude:upload', { path: path.join(dir, '.env') }));
+    assert.equal(calls.length, 1);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 function fakeTelegram() {
-  const t = { sent: [], edits: [], topics: [], answers: [], closed: [], reopened: [], deleted: [], unpinned: [] };
+  const t = { sent: [], edits: [], topics: [], renamed: [], answers: [], closed: [], reopened: [], deleted: [], unpinned: [] };
   let nextTopic = 100, nextMsg = 1;
   Object.assign(t, {
     createForumTopic: async (chatId, name) => { t.topics.push([chatId, name]); return { message_thread_id: nextTopic++ }; },
-    sendMessage: async (chatId, text, opts = {}) => { t.sent.push({ chatId, text, ...opts }); return [{ message_id: nextMsg++ }]; },
+    editForumTopic: async (chatId, threadId, name) => { t.renamed.push([chatId, threadId, name]); return true; },
+    sendMessage: async (chatId, text, opts = {}) => { const message_id = nextMsg++; t.sent.push({ chatId, text, ...opts, message_id }); return [{ message_id }]; },
     editMessageText: async (chatId, id, text) => { t.edits.push({ chatId, id, text }); },
     answerCallbackQuery: async (id, text) => { t.answers.push(text); },
     closeForumTopic: async (c, id) => { t.closed.push([c, id]); return true; },
@@ -61,13 +104,138 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 const msg = (from, text, thread = 100, chat = -100) => ({ message: { chat: { id: chat }, from: { id: from, username: 'u' }, text, is_topic_message: true, message_thread_id: thread } });
 const up = (r, agent, id, extra = {}) => r.bridge.sessionUp(agent, { id, cwd: '/proj', ...extra });
 const texts = (t) => t.sent.map((s) => s.text);
+const approvalCallback = (post, from = ALICE, accept = true) => ({ callback_query: {
+  id: 'q', from: { id: from }, data: post.replyMarkup.inline_keyboard[0][accept ? 0 : 1].callback_data,
+  message: { chat: { id: post.chatId }, message_id: post.message_id, message_thread_id: post.threadId, text: post.text },
+} });
+
+test('approval buttons cannot be reused across daemon restarts or wrong origins', async () => {
+  const old = make({ config: { approvalsFromTelegram: true } });
+  await up(old, 'codex', 'old');
+  await old.bridge.approval('codex:old', { ref: 'old-ref', summary: 'old', answerable: true });
+  const current = make({ config: { approvalsFromTelegram: true } });
+  await up(current, 'codex', 'new');
+  await current.bridge.approval('codex:new', { ref: 'new-ref', summary: 'new', answerable: true });
+  await current.bridge.handleUpdate(approvalCallback(old.telegram.sent.at(-1)));
+  assert.deepEqual(current.hosts.codex.answered, [], 'old button must not approve a new request');
+  const post = current.telegram.sent.at(-1);
+  for (const field of ['chat', 'message_id', 'message_thread_id']) {
+    const q = approvalCallback(post);
+    q.callback_query.message[field] = field === 'chat' ? { id: -200 } : 999;
+    await current.bridge.handleUpdate(q);
+  }
+  const missing = approvalCallback(post); delete missing.callback_query.message;
+  await current.bridge.handleUpdate(missing);
+  assert.deepEqual(current.hosts.codex.answered, [], 'wrong or missing origin must not dispatch');
+  await current.bridge.handleUpdate(approvalCallback(post));
+  assert.deepEqual(current.hosts.codex.answered, [['new-ref', true, 'new']]);
+  assert.equal(current.telegram.answers.at(-1), 'submitted', 'submission is not proof of native acceptance');
+});
+
+for (const agent of HOSTS) {
+  test(`${agent}: ended sessions and failed sends invalidate approval controls`, async () => {
+    const r = make({ config: { approvalsFromTelegram: true } });
+    await up(r, agent, 'x');
+    await r.bridge.approval(`${agent}:x`, { ref: 'r', summary: 'perm', answerable: true });
+    const post = r.telegram.sent.at(-1);
+    r.bridge.sessionDown(`${agent}:x`);
+    await r.bridge.handleUpdate(approvalCallback(post));
+    assert.deepEqual(r.hosts[agent].answered, []);
+    assert.equal(r.bridge.approvals.size, 0);
+    await up(r, agent, 'y');
+    r.telegram.sendMessage = async () => { throw new Error('offline'); };
+    await r.bridge.approval(`${agent}:y`, { ref: 'failed', summary: 'perm', answerable: true });
+    assert.equal(r.bridge.approvals.size, 0, 'undelivered controls have no pending correlation');
+  });
+}
+
+test('approval binds the last chunk and cannot revive a request resolved during delivery', async () => {
+  const r = make({ config: { approvalsFromTelegram: true } });
+  await up(r, 'codex', 'x');
+  const send = r.telegram.sendMessage;
+  r.telegram.sendMessage = async (...args) => {
+    const messages = await send(...args);
+    return [{ message_id: 999 }, ...messages];
+  };
+  await r.bridge.approval('codex:x', { ref: 'multi', summary: 'long', answerable: true });
+  await r.bridge.handleUpdate(approvalCallback(r.telegram.sent.at(-1)));
+  assert.deepEqual(r.hosts.codex.answered, [['multi', true, 'x']]);
+  r.telegram.sendMessage = async (...args) => {
+    r.hosts.codex.emit('approval-resolved', { ref: 'race' });
+    return send(...args);
+  };
+  await r.bridge.approval('codex:x', { ref: 'race', summary: 'race', answerable: true });
+  await r.bridge.handleUpdate(approvalCallback(r.telegram.sent.at(-1)));
+  assert.equal(r.hosts.codex.answered.length, 1);
+  assert.equal(r.bridge.approvals.size, 0);
+});
+
+test('failed Topic creation never posts into the shared general chat', async () => {
+  const r = make();
+  r.telegram.createForumTopic = async () => { throw new Error('create outcome unknown'); };
+  await up(r, 'codex', 'x');
+  await r.bridge.final('codex:x', 'private answer');
+  assert.deepEqual(r.telegram.sent, []);
+  assert.ok(r.logs.some((line) => /not delivered/.test(line)), 'failure remains visible locally');
+});
+
+test('definite Topic creation rejection retries on later activity, uncertain creation does not', async () => {
+  for (const uncertain of [false, true]) {
+    const r = make();
+    const create = r.telegram.createForumTopic;
+    let calls = 0;
+    r.telegram.createForumTopic = async (...args) => {
+      if (calls++ === 0) throw Object.assign(new Error('creation failed'), uncertain ? { uncertain: true } : { code: 400 });
+      return create(...args);
+    };
+    await up(r, 'codex', 'x');
+    await r.bridge.final('codex:x', 'answer');
+    assert.equal(calls, uncertain ? 1 : 2);
+    assert.equal(r.telegram.sent.length, uncertain ? 0 : 2);
+  }
+});
+
+test('native resolution withdraws approvals held during Topic creation', async () => {
+  const r = make({ config: { approvalsFromTelegram: true } });
+  const create = r.telegram.createForumTopic;
+  r.telegram.createForumTopic = async (...args) => {
+    r.hosts.codex.emit('approval', { id: 'x', ref: 'race', summary: 'race', answerable: true });
+    r.hosts.codex.emit('approval-resolved', { ref: 'race' });
+    return create(...args);
+  };
+  await up(r, 'codex', 'x');
+  assert.equal(r.bridge.approvals.size, 0);
+  assert.equal(r.telegram.sent.length, 1, 'resolved held request never gets buttons');
+});
+
+test('same native refs in two sessions withdraw independently and repeated clicks submit once', async () => {
+  const r = make({ config: { approvalsFromTelegram: true } });
+  await up(r, 'claude', 'x'); await up(r, 'claude', 'y');
+  await r.bridge.approval('claude:x', { ref: 'same', summary: 'x', answerable: true });
+  const old = r.telegram.sent.at(-1);
+  await r.bridge.approval('claude:y', { ref: 'same', summary: 'y', answerable: true });
+  const current = r.telegram.sent.at(-1);
+  r.hosts.claude.emit('approval-resolved', { id: 'x', ref: 'same', reason: 'correlation-withdrawn' });
+  await r.bridge.handleUpdate(approvalCallback(old));
+  let resolve;
+  r.hosts.claude.answerApproval = (ref, yes, id) => {
+    r.hosts.claude.answered.push([ref, yes, id]);
+    return new Promise((r) => { resolve = r; });
+  };
+  const first = r.bridge.handleUpdate(approvalCallback(current));
+  await r.bridge.handleUpdate(approvalCallback(current));
+  assert.deepEqual(r.hosts.claude.answered, [['same', true, 'y']]);
+  resolve(true); await first;
+  assert.equal(r.telegram.answers.at(-1), 'submitted');
+});
 
 test('topics: <machine>/<agent>/<branch> in the project group, fallback otherwise, numbered per group', async () => {
   const r = make();
   await up(r, 'codex', 't1', { branch: 'feat/x' });
   await r.bridge.sessionUp('claude', { id: 's1', cwd: '/elsewhere' });
   await up(r, 'codex', 't2', { branch: 'feat/x' });
-  assert.deepEqual(r.telegram.topics, [[-100, 'host-a/codex/feat/x'], [-999, 'host-a/claude/main'], [-100, 'host-a/codex/feat/x #2']]);
+  assert.deepEqual(r.telegram.topics.slice(0, 2), [[-100, 'host-a | proj | feat/x | codex'], [-999, 'host-a | other | main | claude']]);
+  assert.match(r.telegram.topics[2][1], /^host-a \| proj \| feat\/x \| codex · [a-f0-9]{6}$/);
   assert.deepEqual(r.telegram.unpinned, [[-100, 100], [-999, 101], [-100, 102]], 'auto-pinned first message is unpinned');
 });
 
@@ -83,7 +251,7 @@ for (const agent of HOSTS) {
       host.emit('prompt', { id: 'x', text: 'hi' });
       host.emit('final', { id: 'x', text: 'Hello!' });
       await until(() => r.telegram.sent.length === 3);
-      assert.deepEqual(texts(r.telegram), [`session up: host-a/${agent}/main (proj)`, '> hi', 'Hello!']);
+      assert.deepEqual(texts(r.telegram), [`session up: host-a | proj | main | ${agent} (proj)`, '> hi', 'Hello!']);
 
       r.at(29 * M); await r.bridge.closeIdle();
       assert.deepEqual(r.telegram.closed, [], '29m: still open');
@@ -110,7 +278,7 @@ for (const agent of HOSTS) {
       r.at(40 * H);
       host.emit('down', { id: 'x' });
       await until(() => r.telegram.closed.length === 2);
-      assert.equal(texts(r.telegram).at(-1), `session ended: host-a/${agent}/main`);
+      assert.equal(texts(r.telegram).at(-1), `session ended: host-a | proj | main | ${agent}`);
       r.at(40 * H + 23 * H); await r.bridge.sweepClosedTopics();
       assert.deepEqual(r.telegram.deleted, []);
       r.at(40 * H + 24 * H); await r.bridge.sweepClosedTopics();
@@ -149,7 +317,7 @@ for (const agent of HOSTS) {
     open();
     await until(() => r.telegram.sent.length === 3);
     await settle();
-    assert.deepEqual(texts(r.telegram), [`session up: host-a/${agent}/main (proj)`, '> hi', 'Hello!']);
+    assert.deepEqual(texts(r.telegram), [`session up: host-a | proj | main | ${agent} (proj)`, '> hi', 'Hello!']);
   });
 
   test(`${agent}: a leftover gets no Topic until activity`, async () => {
@@ -162,7 +330,7 @@ for (const agent of HOSTS) {
     await up(r, agent, 'idle', { preexisting: true });
     r.hosts[agent].emit('prompt', { id: 'idle', text: 'back again' });
     await until(() => r.telegram.sent.length === 2);
-    assert.deepEqual(texts(r.telegram), [`session up: host-a/${agent}/main (proj)`, '> back again']);
+    assert.deepEqual(texts(r.telegram), [`session up: host-a | proj | main | ${agent} (proj)`, '> back again']);
   });
 
   test(`${agent}: approvals are notices by default; opt-in buttons honour only the allowlist`, async () => {
@@ -178,13 +346,14 @@ for (const agent of HOSTS) {
     await up(on, agent, 'x');
     on.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
     await until(() => on.telegram.sent.length === 2);
-    assert.deepEqual(on.telegram.sent[1].replyMarkup.inline_keyboard[0].map((b) => b.callback_data), ['ap:1:y', 'ap:1:n']);
-    await on.bridge.handleUpdate({ callback_query: { id: 'q1', data: 'ap:1:y', from: { id: MALLORY } } });
+    const post = on.telegram.sent[1];
+    assert.match(post.replyMarkup.inline_keyboard[0][0].callback_data, /^ap:[a-f0-9]{32}:y$/);
+    await on.bridge.handleUpdate(approvalCallback(post, MALLORY));
     assert.equal(on.telegram.answers.at(-1), 'not allowed');
-    await on.bridge.handleUpdate({ callback_query: { id: 'q2', data: 'ap:1:n', from: { id: ALICE } } });
+    await on.bridge.handleUpdate(approvalCallback(post, ALICE, false));
     assert.deepEqual(on.hosts[agent].answered, [['r1', false, 'x']]);
-    await on.bridge.handleUpdate({ callback_query: { id: 'q3', data: 'ap:1:y', from: { id: ALICE } } });
-    assert.equal(on.telegram.answers.at(-1), 'already resolved');
+    await on.bridge.handleUpdate(approvalCallback(post));
+    assert.equal(on.telegram.answers.at(-1), 'control inactive');
     on.hosts[agent].emit('approval', { id: 'x', ref: 'r2', summary: 'perm', answerable: false });
     await until(() => on.telegram.sent.length === 3);
     assert.equal(on.telegram.sent[2].replyMarkup, undefined, 'unanswerable kinds never get buttons');
@@ -210,7 +379,7 @@ test('strangers are dropped; /status, /interrupt go through the host interface',
   assert.deepEqual(r.hosts.codex.injected, []);
   assert.equal(r.telegram.sent.length, before);
   await r.bridge.handleUpdate(msg(ALICE, '/status@my_bot', 100));
-  await until(() => /host-a\/codex\/main: idle/.test(texts(r.telegram).at(-1)));
+  await until(() => texts(r.telegram).at(-1) === 'host-a | proj | main | codex: idle');
   await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 100));
   await until(() => texts(r.telegram).at(-1) === 'interrupt sent');
   await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 101));
@@ -286,7 +455,7 @@ test('sweep: rights errors logged once per distinct message, entry kept; 0 = nev
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a re-attach during an in-flight delete leaves the session without the deleted Topic', async () => {
+test('a re-attach never binds to a Topic whose deletion is in flight', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
   const topicCacheFile = path.join(dir, 'topics.json');
   try {
@@ -297,12 +466,34 @@ test('a re-attach during an in-flight delete leaves the session without the dele
     r.at(25 * H);
     const sweeping = r.bridge.sweepClosedTopics();
     await until(() => release);
-    await up(r, 'claude', 's1', { preexisting: true });
+    await up(r, 'claude', 's1');
+    assert.notEqual(r.bridge.sessions.get('claude:s1').topicId, 55);
+    await r.bridge.final('claude:s1', 'new answer');
+    assert.equal(r.telegram.sent.at(-1).threadId, 100);
     release(true);
     await sweeping;
-    assert.equal(r.bridge.sessions.get('claude:s1').topicId, null);
-    r.hosts.claude.emit('prompt', { id: 's1', text: 'hi' });
-    await until(() => r.telegram.topics.length === 1);
+    assert.equal(r.bridge.sessions.get('claude:s1').topicId, 100);
+    assert.equal(r.bridge.topics.get('-100|claude:s1').topicId, 100, 'old delete cannot remove replacement cache');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('failed in-flight deletion retains the old Topic retry without replacing the live binding', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  try {
+    const topicCacheFile = path.join(dir, 'topics.json');
+    fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|claude:s1': { topicId: 55, title: 'old', closedAt: 0 } }));
+    const r = make({ topicCacheFile });
+    let reject;
+    r.telegram.deleteForumTopic = () => new Promise((res, rej) => { reject = rej; });
+    r.at(25 * H);
+    const sweeping = r.bridge.sweepClosedTopics();
+    await until(() => reject);
+    await up(r, 'claude', 's1');
+    reject(new Error('offline')); await sweeping;
+    r.telegram.deleteForumTopic = async (c, id) => { r.telegram.deleted.push([c, id]); };
+    await r.bridge.sweepClosedTopics();
+    assert.deepEqual(r.telegram.deleted, [[-100, 55]], 'failed cleanup remains retryable');
+    assert.equal(r.bridge.topics.get('-100|claude:s1').topicId, 100);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

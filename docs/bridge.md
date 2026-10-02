@@ -49,8 +49,13 @@ and is never mirrored:
 - **One forum group per project**, Topics enabled. Project = origin repo name of the
   session's cwd, so all worktrees of a repo share a group. Unknown projects go to
   `bridge.fallbackChatId`; without one the session is registered but not mirrored.
-- **One Topic per session**, titled `<machine>/<agent>/<branch>`, `#2`, `#3` when sessions
-  holding a Topic in the same group share a branch.
+- **One Topic per session**, titled `<machine> | <project> | <branch> | <agent>`.
+  Display-only project names drop a trailing `studio` or `lab` (separated by spaces,
+  hyphens or underscores); configuration/routing still use the full origin repo name.
+  Concurrent same-name live sessions use a stable six-hex session-derived suffix
+  ` · a7c2e1`, extended only on a collision. Ended cached Topics do not reserve names.
+  Reattachments rename old active Topics in place, preserving Topic/session IDs and
+  an existing stable suffix. Historical inactive Topics are not bulk rewritten.
 - `~/.claude/bridge/topics.json` (`chatId|<agent>:<id>` -> `{topicId, title, closedAt?}`) lets
   a session re-attach to its Topic after a daemon restart or a `--resume`; it is a cache,
   deleting it only means new Topics.
@@ -210,19 +215,45 @@ user by id (`@you`), so it gets through a muted group or Topic.
 
 Default: `approval needed on <machine>, answer locally or via official remote`, never
 answered. Opt-in per machine with `bridge.approvalsFromTelegram: true`: Accept/Decline
-buttons appear, and only presses from `allowedUserIds` count. The first answer wins (TUI,
-remote, or Telegram). Codex: only `item/commandExecution/requestApproval` and
+buttons appear, and only presses from `allowedUserIds` on the original delivered message
+count. Random references are not reused across daemon restarts; session end, channel
+replacement and transport loss withdraw old controls. A press reports **submitted**,
+not accepted: the native host arbitrates competing clients. Codex: only `item/commandExecution/requestApproval` and
 `item/fileChange/requestApproval` are answerable (`{decision}`); the approval is forgotten
 on `serverRequest/resolved`. Claude: the channel declares `claude/channel/permission`; a
 press becomes `notifications/claude/channel/permission`. Claude sends no "resolved" signal,
 so a prompt answered locally keeps its buttons; what Claude Code does with a late verdict is
-unverified.
+unverified. Unknown, repeated or disconnected channel request references are rejected;
+no second hook-based approval authority is installed.
+
+### Delivery outcomes
+
+Successful replies return acknowledged message IDs. Failed multi-part messages report
+the acknowledged chunk count; transport errors are **outcome uncertain**, not proof that
+Telegram received nothing. Ordinary message retries may duplicate delivery after a lost
+acknowledgement. There is no exactly-once promise or independent conversation database.
+Retry exhaustion is recorded in the local daemon log; consult the native session history
+for missing replies. Inputs are not automatically resubmitted after an uncertain native
+response, and approval decisions are never replayed across restart.
+
+Topic creation is not retried after an uncertain transport/JSON acknowledgement. Without
+a confirmed Topic the bridge does not post into the group's general chat. A definite API
+rejection permits a retry on later activity; an unknown creation outcome requires checking
+Telegram before restarting (the API cannot discover an orphan whose ID was lost).
+Failed deletion stays in the cache for a later sweep. Do not delete a suspected orphan
+until its identity and lack of a live owner have been verified.
+An in-flight delete prevents re-attachment to that Topic: a returning session creates
+a fresh binding. If old cleanup fails after the binding changed, a retired-topic cache
+entry retains only that old transport identity for retry; it is never a live session route.
+
+Post logs contain routing identifiers and text length, not mirrored prompt/reply content.
+Transport exception URLs are not logged because they can contain bot tokens.
 
 ## Runtime files (machine-local, `~/.claude/bridge/`)
 
 | File | Purpose |
 | --- | --- |
-| `runtime.json` | daemon pid, IPC port, IPC token (0600 on POSIX; profile ACL on Windows) |
+| `runtime.json` | daemon pid, IPC port, IPC token and startup source fingerprint (0600 on POSIX; profile ACL on Windows) |
 | `offset.json` | last `update_id` (cache) |
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
@@ -233,13 +264,152 @@ These files are **machine-local and contain local paths** (cwds, which include t
 name) and process ids. They are never mirrored to Telegram and never part of the synced
 payload; do not paste them into shared places unredacted.
 
-## Verified live (2026-10-02)
+## Acceptance baseline (2026-10-02)
+
+Evidence levels are deliberately separate: **automated** means a named fixture exercised
+the behavior, **live** means an observed native-host/Telegram result, **unverified** means
+no sufficient live evidence, and **unsupported** means use the native surface. A passing
+unit test is not fleet acceptance. Historical live observations below are not a fresh
+retest of a newly edited daemon.
+
+Read-only baseline on Windows: `npm test` passed 367 tests, failed 0, skipped 5.
+All five skips require a second writable volume (`scripts/setup/setup.test.mjs`);
+cross-volume copy/link behavior remains unverified on this host. `npm run doctor`
+reported 0 failures and one `payload-extra-key` warning for `model`: existing tuning
+is present, but a new template-seeded install does not inherit it. Executables report
+Codex 0.159.3 and Claude Code 2.1.287. `npm run bridge:status` confirms the Windows
+Run entry and one live daemon process. This does **not** identify the revision loaded
+by that process; disk changes do not prove running-code changes.
+
+The real Codex integration test passed initialize and `thread/loaded/list` against
+the running app-server. It does not test live injection, steering or approvals.
+Recent daemon logs show successful Codex prompt/progress/final posts, but also earlier
+DNS and Telegram polling failures: transport availability is not assumed continuous.
+No macOS/Linux or multi-machine acceptance was performed in this baseline.
+
+| Capability | Claude evidence | Codex evidence | Remaining live gate |
+| --- | --- | --- | --- |
+| Discovery/main-session filtering | Automated: channel ancestry and adapter registration | Automated: native ancestry/source filtering; live handshake/list | Concurrent main/child sessions on each platform |
+| Prompt/final mirroring | Automated: hook routing, envelopes and dedupe; historical live clear recovery | Automated: deltas/backlog/final; recent live posts | Re-run after deployment, including failed turns |
+| Input and echo suppression | Automated: channel injection/disconnect; historical live closed-topic input | Automated: idle start and expected-turn steering | Local/remote contention and uncertain send outcome |
+| Clear/resume/fork | Historical live Claude clear; automated process-id routing | Automated user-fork classification/backlog | Resume identity and full fork isolation for both hosts |
+| Command/file approvals | Historical live Claude permission button; automated relay | Automated command/file relay | Native acceptance, local-first/remote-first and stale callbacks |
+| Other tool approvals | Unverified: Write/Edit/Bash/WebFetch/MCP coverage under explicit modes | Unsupported remotely outside recognized native methods | Trace emitted request, bridge relay and native outcome separately |
+| Questions | Unverified channel behavior for AskUserQuestion | Native-only request_user_input | Do not infer support from ordinary text injection |
+| Interrupt | Unsupported remotely; use local Esc | Automated native interrupt | Live interruption and session/turn identity |
+| Failure notifications | Automated StopFailure/failure alert formatting | Automated failed-turn alert formatting | Live failure plus muted-group mention delivery |
+| Restart/reconnect | Automated disconnect handling; cached-topic lifecycle | Automated transport close and subscriptions | Approved daemon restart, pending request replay and input uncertainty |
+| Topic recovery/cleanup | Shared automated lifecycle/drift/delete race fixtures | Shared automated lifecycle/drift/delete race fixtures | Timed cleanup, sleep/wake, deletion failure and rebound identities |
+
+### Isolated live verification procedure
+
+1. Obtain confirmation before service restarts, Telegram sends/deletions or changes on
+   another host. Use a dedicated test bot/token and disposable forum group; never run
+   a second `getUpdates` consumer for the production bot.
+2. Use a separate temporary config home and git workspace containing disposable files.
+   Keep credentials machine-local. Point only the test process at its test configuration;
+   do not replace the shared payload or native production trust state.
+3. Run fake-host/fake-Telegram regression tests first. Record executable versions,
+   platform, permission mode, process start and the source revision actually launched.
+   Until running-code identity is observable, label a production process revision unknown.
+4. For each case correlate native session/thread and turn/request IDs with the bridge
+   reference and Telegram chat/topic/message IDs. Record event boundaries and outcomes,
+   not tokens, full prompts, private paths or sensitive tool payloads. No new tracing
+   subsystem is needed: existing logs plus a sanitized acceptance note suffice.
+5. Claude coverage: exercise Write, Edit, safe Bash, disposable-file deletion, WebFetch,
+   MCP and AskUserQuestion in main/child cases. Record local dialog -> channel -> adapter
+   -> Telegram -> native result. If no host request was emitted, attribute it to native
+   behavior/permission mode rather than declaring a bridge failure.
+6. For both hosts test local-first/remote-first, duplicate and stale buttons, disconnect,
+   clear/resume/fork and concurrent sessions. Then test lost acknowledgements, partial
+   chunks, retries exhausted, manual topic drift, sleep/wake and timed cleanup. Never
+   replay an uncertain input or approval merely to obtain a passing result.
+7. Repeat Windows, macOS, Linux and then two-host/multi-session isolation. Unavailable
+   hosts stay unverified. Clean up only the identified disposable fixtures after approval;
+   preserve native operation if a remote capability fails.
+
+Configuration ownership is defined by `sync-architecture.md`, not a second bridge
+configuration manager. Existing compose/provider/setup fixtures cover idempotence and
+local-state preservation; doctor is read-only. `bridge-revision` compares a live daemon's
+startup SHA-256 fingerprint against current non-test bridge/shared source. It warns when
+the revision is unknown or changed and never restarts the process. This is a conservative
+source fingerprint, not CLI version or Claude channel-process identity; channel updates
+still need separate verification. A pre-reporting daemon is revision-unknown until
+an approved restart. Live provider switching and cross-platform service behavior
+require separate acceptance evidence.
+
+## Historical live observations (2026-10-02)
 
 - A message posted into a closed Topic reaches the session (the Topic reopens).
 - Channels together with `--remote-control` in one Claude session.
 - Telegram approval buttons answer a Claude permission request.
 - `deleteForumTopic` on a closed Topic (create, close, delete; a later send fails).
 - Mirroring after `/clear` through the process-id retry.
+
+## Attachments
+
+The native Claude/Codex session owns conversation and execution. Bridge owns live
+session-to-Topic routing and attachment authorization; TelegramClient owns Bot API
+transport and limits (`ATTACHMENT_LIMITS` in telegram.mjs). Host adapters only project
+native inputs/outputs. Downloaded files are bounded transport material, not another
+conversation store. Claude's MCP tool and Codex's shell command use the same Bridge
+upload operation: no independent destination configuration or upload policy.
+
+Both hosts receive photos and documents posted by allowlisted users into their exact
+session Topic. Files download into the machine-local bridge uploads cache (20 MiB per
+file, seven-day retention, 100 MiB cap). Names are random, not sender-controlled paths.
+Codex receives images as native `localImage` inputs; Claude receives a local file
+reference for its Read tool. Attachment content is untrusted, not instructions.
+
+Claude publishes an explicitly selected workspace file with channel tool
+`send_attachment` (`path`, `kind: photo|document`, optional `caption`). A fresh Claude
+session is needed to load the new MCP tool. Codex uses its current `CODEX_THREAD_ID`:
+
+```sh
+node ~/.claude/scripts/bridge/send-attachment.mjs /absolute/workspace/result.png photo
+node ~/.claude/scripts/bridge/send-attachment.mjs /absolute/workspace/report.pdf document
+```
+
+Destinations come from the live session, never from tool arguments. Outgoing paths must
+resolve inside that session's workspace; common credential paths are blocked, but this
+is not a content-based secret scanner. Review selected files before sending. Downloaded
+cache files must first be explicitly copied into the workspace before republishing.
+Photos are limited to 10 MiB and may be compressed by Telegram; documents are limited
+to 50 MiB and preserve original bytes. Captions are plain text, at most 1024 characters.
+Uncertain upload outcomes are not retried; check the Topic before another attempt.
+No directory scanning or automatic artifact publication is performed.
+
+## Rich replies and acceptance
+
+Final answers use native `sendRichMessage` Markdown. A user screenshot confirmed
+headings, tables and code render, but dollar-delimited LaTeX appeared as source text.
+A subsequent screenshot confirmed explicit mathematical_expression blocks render
+powers, an integral and a matrix correctly. Native mathematical block rendering is
+verified on that client. Final-answer Markdown now projects `$...$` and `$$...$$`
+to explicit native math tags, preserving surrounding Markdown, code and escaped dollars.
+An isolated automatic-projection test returned both inline/block mathematical expressions
+and all before/after paragraphs, table, code and final marker. This is API structure
+evidence; the user's earlier screenshot independently confirms native block visuals.
+The subsequent automatic-projection screenshot confirms inline/display formula visuals,
+all surrounding paragraphs, table and END marker, with `$x$` unchanged inside code.
+No image-rendering service or PDF generator
+has been added. Approval controls and failure alerts remain plain text. Definite
+unsupported/format rejection falls back to chunked text; uncertain rich delivery is
+neither retried nor downgraded. Original native answer text remains authoritative.
+
+Shell/PowerShell command executions and their output are not mirrored as progress.
+Approval prompts retain necessary command details for an informed decision.
+Codex answers are assembled from all native final-answer items in order, deduplicated
+by item ID. Turn-completion snapshots repair missed/partial stream content; explicit
+commentary is not mixed into final answers. Backlog replay uses the same assembly.
+
+Synthetic live Telegram document roundtrips preserved exact bytes; photo upload and
+download succeeded with Telegram transformation. Current Codex thread outbound file
+publication passed. Automated fixtures cover both hosts' attachment routing; actual
+phone-originated inbound delivery and fresh Claude native image reading still need
+acceptance. A user screenshot received through the bridge confirmed actual Telegram
+photo download and native Codex image delivery. Claude native image reading remains
+unverified. Native Remote Control attachment UI testing was waived by the user.
 
 ## Unverified
 

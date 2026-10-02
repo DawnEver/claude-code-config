@@ -248,6 +248,8 @@ cannot recur silently. It is read-only. Checks:
 | Payload top-level shape vs its template | The stale-shape drift that produced an empty model catalogue |
 | Link table vs what is on disk | A link entry whose source or destination has gone |
 | Plugin inventory: enabled vs installed | Enabled-but-absent, and orphans whose marketplace no longer exists |
+| Live bridge source fingerprint | A running daemon that predates revision reporting or differs from current bridge source (warns; never restarts it) |
+| Telegram attachments | Both hosts receive photos/files; Claude uses `send_attachment`, Codex uses the session-bound upload CLI. See `docs/bridge.md` Attachments. |
 | No NUL bytes / no broken entry guards in source | A file git calls binary (unreviewable diffs, invisible to ripgrep) |
 
 It is wired into `SessionStart` as `--hook`, which reports **failures only** and stays silent

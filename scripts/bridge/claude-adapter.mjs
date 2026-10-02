@@ -76,8 +76,12 @@ export class ClaudeAdapter extends EventEmitter {
           if (!this.#tokenOk(p.token) || !p.sessionId) throw unauthorized();
           clearTimeout(authTimer);
           sessionId = String(p.sessionId);
-          this.sessions.get(sessionId)?.socket.destroy();
-          this.sessions.set(sessionId, { peer, socket, replies: [], claudePid: Number(p.claudePid) || null });
+          const previous = this.sessions.get(sessionId);
+          if (previous) {
+            this.#withdrawApprovals(sessionId, previous);
+            previous.socket.destroy();
+          }
+          this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), claudePid: Number(p.claudePid) || null });
           this.emit('up', { id: sessionId, cwd: p.cwd, preexisting: false, backlog: [] });
           this.#release();
           return { ok: true };
@@ -89,7 +93,16 @@ export class ClaudeAdapter extends EventEmitter {
             claudePid: Number(p.claudePid) || null, retry: p.retry === true, kind: p.kind, ...(p.status === 'failed' ? { status: 'failed' } : {}), text: String(p.text ?? '') });
           return { ok: true, routed };
         }
-        if (!sessionId) throw unauthorized();
+        if (method === 'codex_attachment') {
+          if (!this.#tokenOk(p.token)) throw unauthorized();
+          if (typeof p.sessionId !== 'string' || !this.sendCodexAttachment) throw new Error('Codex attachment session required');
+          return this.sendCodexAttachment(p.sessionId, p);
+        }
+        if (!sessionId || this.sessions.get(sessionId)?.socket !== socket) throw unauthorized();
+        if (method === 'attachment') {
+          if (!this.sendAttachment) throw new Error('attachment delivery unavailable');
+          return this.sendAttachment(sessionId, p);
+        }
         if (method === 'reply') {
           const text = String(p.text ?? '');
           this.sessions.get(sessionId)?.replies.push(text.trim());
@@ -97,6 +110,12 @@ export class ClaudeAdapter extends EventEmitter {
           return { ok: true };
         }
         if (method === 'permission_request') {
+          const pending = this.sessions.get(sessionId).approvals;
+          if (typeof p.request_id !== 'string' || !p.request_id.trim() ||
+              typeof p.tool_name !== 'string' || !p.tool_name.trim() || pending.has(p.request_id)) {
+            throw Object.assign(new Error('invalid or duplicate permission request'), { code: -32602 });
+          }
+          pending.add(p.request_id);
           this.emit('approval', {
             id: sessionId, ref: p.request_id, answerable: true,
             summary: `${p.tool_name}: ${p.description ?? ''}${p.input_preview ? `\n${String(p.input_preview).slice(0, 1500)}` : ''}`,
@@ -112,10 +131,17 @@ export class ClaudeAdapter extends EventEmitter {
     socket.on('close', () => {
       clearTimeout(authTimer);
       if (sessionId && this.sessions.get(sessionId)?.socket === socket) {
+        this.#withdrawApprovals(sessionId, this.sessions.get(sessionId));
         this.sessions.delete(sessionId);
         this.emit('down', { id: sessionId });
       }
     });
+  }
+
+  #withdrawApprovals(id, session) {
+    // This invalidates bridge controls; it does not claim Claude accepted a verdict.
+    for (const ref of session.approvals) this.emit('approval-resolved', { id, ref, reason: 'correlation-withdrawn' });
+    session.approvals.clear();
   }
 
   #route({ sessionIds, claudePid }) {
@@ -175,7 +201,7 @@ export class ClaudeAdapter extends EventEmitter {
 
   answerApproval(ref, allow, id) {
     const s = this.sessions.get(id);
-    if (!s) return false;
+    if (!s || s.socket.destroyed || !s.approvals.delete(ref)) return false;
     s.peer.notify('permission', { request_id: ref, behavior: allow ? 'allow' : 'deny' });
     return true;
   }
