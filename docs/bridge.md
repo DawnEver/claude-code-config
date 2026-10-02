@@ -184,8 +184,8 @@ Requires Anthropic auth; third-party providers (`ccds`) lack channels.
    ```
    `allowedUserIds` gates **every** inbound message by sender (not by chat). Empty = all
    inbound is dropped. Any key may be set in either layer; local wins.
-7. **Run**: `npm run bridge` (foreground) or `npm run bridge:install` (service: Task
-   Scheduler at logon via `conhost --headless` on Windows, launchd on macOS,
+7. **Run**: `npm run bridge` (foreground) or `npm run bridge:install` (service: a per-user
+   HKCU Run key at logon via `conhost --headless` on Windows (no admin), launchd on macOS,
    `systemd --user` on Linux). Also `bridge:status`, `bridge:uninstall`. The service runs
    `~/.claude/scripts/bridge/daemon.mjs` through the link and logs to
    `~/.claude/bridge/daemon.log` (Windows) or the service manager (others).

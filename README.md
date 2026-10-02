@@ -281,6 +281,20 @@ Hook wiring in `claude_settings.json`:
 
 Codex has no SessionStart hook, so `codex.js` (the launcher) runs the same link self-heal at startup — see `scripts/setup/check-links.js`.
 
+#### Adding a host to the fleet
+
+1. Clone this repo **outside** any synced folder; install Node, Git, and the CLIs.
+2. Wait for the cloud client to finish downloading the sync dir, then
+   `node scripts/setup/setup.js --sync-dir "<cloud>/Sync/cc-config" --machine <NAME>`
+   (`<NAME>` unique per host; `--init-sync-dir` only on the very first host).
+   This links the payload, including the shared `private-markers` denylist, and sets the
+   public-hygiene pre-commit hook.
+3. Fill in this host's secrets in `~/.claude/claude_env_settings.local.json` (API keys; and for
+   the bridge, a bot of its own — [`docs/bridge.md`](docs/bridge.md) § Setup steps 2–3, 6).
+   Re-run setup: with a bot token it installs the bridge service and registers the channel.
+4. `npm run doctor` must report no FAIL. Its WARNs name what this host still lacks:
+   `machine-name`, `private-markers-missing`, `bridge-host`.
+
 ## Notifications
 
 `notify-hook.js` sends native notifications:

@@ -26,6 +26,7 @@ import { execFileSync } from 'child_process';
 import { isMain } from '../shared/is-main.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
+import { readBridgeConfig } from '../bridge/context.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
   CLAUDE_LINKS, getCodexLinks, linkSourceRoot,
@@ -434,6 +435,17 @@ export function checkCodexShellEnv({ machine = readMachineName(), configPath = p
     'fix: node scripts/setup/setup.js')];
 }
 
+// The fleet's bridge config is shared, but each host needs its OWN bot (one getUpdates
+// consumer per token). A host that never got one is silently absent from Telegram.
+export function checkBridgeHost({ sharedPath = path.join(HOME, '.claude', 'claude_env_settings.json'),
+  localPath = path.join(HOME, '.claude', 'claude_env_settings.local.json') } = {}) {
+  const b = readBridgeConfig({ sharedPath, localPath });
+  const fleetBridged = b.fallbackChatId || Object.keys(b.projects).length;
+  if (!fleetBridged || b.botToken) return [];
+  return [finding('WARN', 'bridge-host', 'the fleet runs a session bridge but this host has no bot token; its sessions are not in Telegram',
+    'create a bot for this machine and set bridge.botToken in ~/.claude/claude_env_settings.local.json, then run setup (docs/bridge.md § Setup)')];
+}
+
 // ── runner ──
 
 export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME } = {}) {
@@ -452,6 +464,8 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers'),
       requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
+    ...checkBridgeHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
+      localPath: path.join(home, '.claude', 'claude_env_settings.local.json') }),
     ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),
       configPath: path.join(home, '.codex', 'config.toml') }),
   ];

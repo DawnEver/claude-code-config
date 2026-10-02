@@ -10,7 +10,7 @@ import {
   checkPlugins,
   checkMachineName,
   checkCodexShellEnv,
-  scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks,
+  scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost,
 } from './doctor.js';
 import { CLAUDE_LINKS } from './setup.js';
 
@@ -331,6 +331,19 @@ test('private-markers rides the sync payload as an optional ~/.claude link', () 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-optional-'));
   const out = checkLinks({ repoRoot: dir, syncDir: dir });
   assert.equal(out.some((f) => f.title.includes('private-markers')), false);
+});
+
+test('checkBridgeHost: WARN when the fleet runs a bridge and this host has no bot', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-bridge-'));
+  const sharedPath = path.join(dir, 'shared.json');
+  const localPath = path.join(dir, 'local.json');
+  assert.deepEqual(checkBridgeHost({ sharedPath, localPath }), []);           // no bridge anywhere
+  fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { projects: { p: { chatId: -1001111111111 } } } }));
+  const [w] = checkBridgeHost({ sharedPath, localPath });
+  assert.equal(w.level, 'WARN');
+  assert.equal(w.id, 'bridge-host');
+  fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '1:abc' } }));
+  assert.deepEqual(checkBridgeHost({ sharedPath, localPath }), []);
 });
 
 test('checkPublicHygiene: the real tracked tree is clean', () => {
