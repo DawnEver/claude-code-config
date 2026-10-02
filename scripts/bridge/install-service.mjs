@@ -40,7 +40,10 @@ export function planService({ platform = process.platform, home = os.homedir(), 
     const mine = `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*bridge*daemon.mjs*' }`;
     return {
       files: [],
+      // A re-install replaces the running daemon (the new one would refuse to start beside
+      // it, leaving old code running until the next logon), as systemd's restart does.
       install: [['reg', 'add', RUN_KEY, '/v', SERVICE_NAME, '/t', 'REG_SZ', '/d', `conhost.exe ${args}`, '/f'],
+        ps(`${mine} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; Wait-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }`),
         ps(`Start-Process -WindowStyle Hidden -FilePath 'conhost.exe' -ArgumentList '${args}'`)],
       uninstall: [['reg', 'delete', RUN_KEY, '/v', SERVICE_NAME, '/f'],
         ps(`${mine} | ForEach-Object { Stop-Process -Id $_.ProcessId }`)],

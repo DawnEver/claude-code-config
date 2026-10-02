@@ -9,12 +9,14 @@ const home = path.join(os.tmpdir(), 'svc-home');
 
 test('windows: per-user Run key (no admin), hidden via conhost --headless, daemon via the ~/.claude link', () => {
   const p = planService({ platform: 'win32', home, nodePath: 'C:\\node\\node.exe' });
-  const [reg, start] = p.install;
+  const [reg, stop, start] = p.install;
+  // Re-install replaces a running daemon (like systemd restart); otherwise new code never runs.
+  assert.match(stop.at(-1), /daemon\.mjs.*Stop-Process/);
   assert.deepEqual(reg.slice(0, 5), ['reg', 'add', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', SERVICE_NAME]);
   const cmd = reg[reg.indexOf('/d') + 1];
   assert.match(cmd, /^conhost\.exe --headless "C:\\node\\node\.exe" /);
   assert.ok(cmd.includes(path.join(home, '.claude', 'scripts', 'bridge', 'daemon.mjs')));
-  // Starts now too, detached and hidden; a second daemon refuses to start, so re-install is safe.
+  // Then starts now too, detached and hidden.
   assert.equal(start[0], 'powershell');
   assert.match(start.at(-1), /^Start-Process -WindowStyle Hidden -FilePath 'conhost\.exe' -ArgumentList /);
   assert.ok(!p.install.flat().includes('schtasks'), 'ONLOGON tasks need admin');
