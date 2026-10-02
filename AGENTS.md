@@ -63,7 +63,7 @@ Telegram + remote control on the same live session, per-machine bridge in
   `sync-hook.js` (`--pull` on SessionStart, `--remind` on SessionEnd — see Workflows),
   `prune-cache-hook.js` (SessionStart: drops stale plugin-cache versions),
   `notify-hook.js` (cross-platform notifications), `hud-hook.js` (statusLine),
-  `bridge-hook.js` (UserPromptSubmit + Stop: mirrors Claude prompts/final answers to the
+  `bridge-hook.js` (UserPromptSubmit + Stop + StopFailure: mirrors Claude prompts/final answers to the
   session bridge's Telegram Topic; silent no-op unless the bridge daemon runs — `docs/bridge.md`),
   `setup-check-hook.js` (SessionStart: verifies/heals setup links — recreates missing links,
   converts claude-hud config symlink→hard link, warns on drifted plain files with the

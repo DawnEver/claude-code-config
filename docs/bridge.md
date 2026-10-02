@@ -121,7 +121,7 @@ token in `runtime.json`):
   re-attaches), then `reply`, `permission_request`.
   Inbound Telegram text arrives in the session as a `<channel source="session-bridge">`
   event. Its socket closing is `down`.
-- **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit` and `Stop`) mirrors every
+- **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit`, `Stop` and `StopFailure`) mirrors every
   prompt and the turn's final assistant text with a one-shot `mirror` call, so output does
   not depend on the model calling `reply`. Calls name the payload's `session_id` and the
   hook's `CLAUDE_CODE_SESSION_ID`, and are held up to 30 s if they beat the channel's
@@ -205,7 +205,7 @@ chars; 429s honour `retry_after`.
 ## Approvals
 
 Notifications: every mirrored message is sent silently. Only what waits for the human —
-an approval, or a turn that ended `failed` — notifies, and it mentions each `allowedUserIds`
+an approval, or a turn that ended `failed` (Codex `failed`; Claude `StopFailure`: an API error such as a rate limit) — notifies, and it mentions each `allowedUserIds`
 user by id (`@you`), so it gets through a muted group or Topic.
 
 Default: `approval needed on <machine>, answer locally or via official remote`, never

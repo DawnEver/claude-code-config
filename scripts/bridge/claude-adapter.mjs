@@ -86,7 +86,7 @@ export class ClaudeAdapter extends EventEmitter {
           if (!this.#tokenOk(p.token)) throw unauthorized();
           if (p.kind !== 'prompt' && p.kind !== 'final') throw Object.assign(new Error('bad kind'), { code: -32602 });
           const routed = this.#mirror({ sessionIds: (Array.isArray(p.sessionIds) ? p.sessionIds : []).map(String),
-            claudePid: Number(p.claudePid) || null, retry: p.retry === true, kind: p.kind, text: String(p.text ?? '') });
+            claudePid: Number(p.claudePid) || null, retry: p.retry === true, kind: p.kind, ...(p.status === 'failed' ? { status: 'failed' } : {}), text: String(p.text ?? '') });
           return { ok: true, routed };
         }
         if (!sessionId) throw unauthorized();
@@ -150,7 +150,7 @@ export class ClaudeAdapter extends EventEmitter {
     // The model may already have sent this answer with the reply tool.
     const dup = s.replies.includes(m.text.trim());
     s.replies = [];
-    if (human && m.text.trim() && !dup) this.emit('final', { id, text: m.text });
+    if (human && m.text.trim() && !dup) this.emit('final', { id, text: m.text, ...(m.status ? { status: m.status } : {}) });
     return true;
   }
 

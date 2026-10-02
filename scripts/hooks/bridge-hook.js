@@ -62,6 +62,11 @@ export function mirrorFor(payload, env = process.env) {
     }
     return text.trim() ? { ...base, kind: 'final', text } : null;
   }
+  // A turn ended by an API error fires StopFailure instead of Stop; it waits for the human.
+  if (payload?.hook_event_name === 'StopFailure') {
+    const text = [payload.error_type ?? 'unknown', payload.error_message].filter(Boolean).join(': ');
+    return { ...base, kind: 'final', status: 'failed', text };
+  }
   return null;
 }
 

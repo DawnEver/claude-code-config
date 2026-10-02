@@ -117,6 +117,17 @@
                     }
                 ]
             }
+        ],
+        "StopFailure": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+                        "timeout": 5
+                    }
+                ]
+            }
         ]
     },
     "worktree": {

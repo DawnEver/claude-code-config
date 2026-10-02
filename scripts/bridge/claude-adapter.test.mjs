@@ -43,6 +43,19 @@ test('after /clear both hook ids are new: the claude process id still routes it'
   } finally { await r.a.close(); }
 });
 
+test('a failed final carries its status to the daemon', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 'u', cwd: '/repo' });
+    await r.hook({ sessionIds: ['u'], kind: 'prompt', text: 'go' });
+    await r.hook({ sessionIds: ['u'], kind: 'final', status: 'failed', text: 'rate_limit: slow down' });
+    assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => [e.text, e.status]), [['rate_limit: slow down', 'failed']]);
+    ch.destroy();
+    await new Promise((res) => setTimeout(res, 50));
+  } finally { await r.a.close(); }
+});
+
 test('mirror calls route by session id, are held before register, never cross sessions, and dedupe against reply', async () => {
   const r = await rig();
   try {
