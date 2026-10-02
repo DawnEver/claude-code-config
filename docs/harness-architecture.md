@@ -101,7 +101,7 @@ every session, own the machine's single bot token, and multiplex all its session
 
 Built. How it works — the host adapters, the one session lifecycle shared by Claude and
 Codex, setup and config — is described once, in [`bridge.md`](bridge.md); the coordination
-view it derives from origin (pushes, verdicts, issues, the `lanes` Topic) in
+view it derives from origin (a push and its verdicts, in the owning session's Topic) in
 [`coordination.md`](coordination.md).
 
 ## 7. Permissions
@@ -176,8 +176,9 @@ No bot accounts: they multiply credentials and lose layer 1. Instead:
 
 - **v1 — human <-> session.** Bridge for Codex (app-server) and Claude (custom channel,
   claude.ai subscription), Telegram view, official remotes.
-- **v2 — coordination view.** The bridge surfaces lane-tip movement and gate verdicts
-  in each Topic. It observes; it never triggers.
+- **v2 — coordination view.** The bridge reports a push and its gate verdicts into the
+  one session Topic that owns the branch. It observes; it never triggers. Issues and repo
+  activity stay on the forge (its own notifications), not mirrored.
 - **Later — third-party providers on Claude** (DeepSeek via `ccds`), which lack Remote
   Control and channels.
 

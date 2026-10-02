@@ -3,8 +3,8 @@
 Per-machine daemon that mirrors every live Claude Code and Codex session on this machine
 into Telegram, and injects your replies back into the **same** session. Why it is shaped
 this way: [`harness-architecture.md`](harness-architecture.md) §4-7. This page is the
-single description of how it works. What the bridge reports about pushes, verdicts and
-issues (the `lanes` Topic) is described in [`coordination.md`](coordination.md).
+single description of how it works. What the bridge reports about pushes and verdicts
+is described in [`coordination.md`](coordination.md).
 
 ```
 Telegram ── getUpdates / sendMessage ──> daemon.mjs  (one per machine, owns the bot token; host-agnostic)
@@ -167,14 +167,12 @@ Requires Anthropic auth; third-party providers (`ccds`) lack channels.
    "bridge": {
      "fallbackChatId": -1001111111111,
      "projects": { "claude-code-config": { "chatId": -1002222222222 } },
-     "coordinator": "<machine>",
      "idleCloseMinutes": 30,
      "deleteClosedAfterHours": 24,
      "observeIntervalSeconds": 60
    }
    ```
-   `coordinator` names the machine that reports unprovenanced pushes and owns `lanes`
-   ([`coordination.md`](coordination.md)). The tunables default as shown (`BRIDGE_DEFAULTS` in `scripts/bridge/context.mjs`);
+   The tunables default as shown (`BRIDGE_DEFAULTS` in `scripts/bridge/context.mjs`);
    `0` = never.
 6. **Secrets** (machine-local, never synced) in `~/.claude/claude_env_settings.local.json`:
    ```json
@@ -229,7 +227,7 @@ unverified.
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
 | `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit; pruned after 7 days |
-| `observer.json` | last seen remote tips, issues and pending verdicts per observed repo ([`coordination.md`](coordination.md)) |
+| `observer.json` | last seen remote tips and pending verdicts per observed repo ([`coordination.md`](coordination.md)) |
 
 These files are **machine-local and contain local paths** (cwds, which include the user
 name) and process ids. They are never mirrored to Telegram and never part of the synced

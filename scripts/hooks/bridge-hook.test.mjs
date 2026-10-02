@@ -43,6 +43,12 @@ test('mirrorFor: prompt from payload, channel injections skipped, final prefers 
   assert.equal(mirrorFor({ hook_event_name: 'Stop', transcript_path: '/nope' }, env), null);
 });
 
+test('mirrorFor: StopFailure (a turn ended by an API error) is a failed final', () => {
+  assert.deepEqual(mirrorFor({ hook_event_name: 'StopFailure', session_id: 's', error_type: 'rate_limit', error_message: 'slow down' }, {}),
+    { sessionIds: ['s'], kind: 'final', status: 'failed', text: 'rate_limit: slow down' });
+  assert.equal(mirrorFor({ hook_event_name: 'StopFailure', session_id: 's' }, {}).text, 'unknown');
+});
+
 test('sendMirror delivers to a live hub, and resolves quietly when none runs', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-'));
   const hub = new ClaudeAdapter();

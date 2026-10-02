@@ -23,7 +23,7 @@ const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
 
 /**
  * Normalised bridge config.
- * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId, bridge.coordinator,
+ * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId,
  *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.observeIntervalSeconds
  * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram
  * Either layer may set any key; local wins.
@@ -41,7 +41,6 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
     idleCloseMinutes: nonNegative(b.idleCloseMinutes, BRIDGE_DEFAULTS.idleCloseMinutes),
     deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
     observeIntervalSeconds: nonNegative(b.observeIntervalSeconds, BRIDGE_DEFAULTS.observeIntervalSeconds),
-    coordinator: typeof b.coordinator === 'string' && b.coordinator ? b.coordinator : null,
     projects,
   };
 }

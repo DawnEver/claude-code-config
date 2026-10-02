@@ -345,18 +345,6 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('lanes: one Topic per project group, created on first post and reused; inbound there is ignored', async () => {
-  const r = make();
-  await r.bridge.postLanes(-100, 'proj', 'pushed a1 → main (+1)');
-  await r.bridge.postLanes(-100, 'proj', 'issue #2: flaky gate');
-  await until(() => r.telegram.sent.length === 3);
-  assert.deepEqual(r.telegram.topics, [[-100, 'lanes']]);
-  assert.deepEqual(texts(r.telegram), ['session up: lanes (proj)', 'pushed a1 → main (+1)', 'issue #2: flaky gate']);
-  await r.bridge.handleUpdate(msg(ALICE, 'hello lanes', 100));
-  await settle();
-  assert.equal(r.telegram.sent.length, 3);
-});
-
 test('notify posts into a registered session Topic; observedSessions lists main sessions with their cwd', async () => {
   const r = make();
   await up(r, 'codex', 't1');
@@ -364,6 +352,5 @@ test('notify posts into a registered session Topic; observedSessions lists main 
   await r.bridge.notify('codex:nope', 'dropped');
   await until(() => r.telegram.sent.length === 2);
   assert.equal(texts(r.telegram)[1], 'pushed b2 → main (+1)');
-  await r.bridge.postLanes(-100, 'proj', 'x');
   assert.deepEqual(r.bridge.observedSessions(), [{ key: 'codex:t1', cwd: '/proj', chatId: -100, project: 'proj' }]);
 });

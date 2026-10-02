@@ -129,19 +129,6 @@ export class Bridge {
     return s ? this.#send(s, text) : Promise.resolve([]);
   }
 
-  /** Post into the project group's `lanes` Topic: a session of its own, never ended. */
-  postLanes(chatId, project, text) {
-    const key = sessionKey('lanes', project);
-    let s = this.sessions.get(key);
-    if (!s) {
-      const cached = this.topics.get(TopicCache.key(chatId, key));
-      s = { ...newSession({ key, cached, now: this.now() }), agent: 'lanes', id: project, chatId, base: 'lanes',
-        title: cached?.title ?? 'lanes', project, cwd: null, chain: Promise.resolve(), progress: null, injected: [] };
-      this.sessions.set(key, s);
-    }
-    return this.#send(s, text);
-  }
-
   sessionDown(key) {
     const s = this.sessions.get(key);
     if (!s) return;
@@ -356,7 +343,6 @@ export class Bridge {
     const s = this.#sessionAt(m.chat.id, m.is_topic_message ? m.message_thread_id : null);
     if (!s) return;
     const host = this.hosts.get(s.agent);
-    if (!host) return;   // the lanes Topic is a view, not a session to drive
     const text = m.text.trim();
     const cmd = /^\/(\w+)(?:@\w+)?\s*$/.exec(text)?.[1];
     if (cmd === 'status') return this.#send(s, `${s.title}: ${host.status(s.id)}`);
@@ -456,17 +442,16 @@ export async function main() {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-  log(`up: machine=${machine} ipc=127.0.0.1:${port} idleCloseMinutes=${config.idleCloseMinutes} deleteClosedAfterHours=${config.deleteClosedAfterHours} observeIntervalSeconds=${config.observeIntervalSeconds} coordinator=${config.coordinator ?? '-'}`);
+  log(`up: machine=${machine} ipc=127.0.0.1:${port} idleCloseMinutes=${config.idleCloseMinutes} deleteClosedAfterHours=${config.deleteClosedAfterHours} observeIntervalSeconds=${config.observeIntervalSeconds}`);
   codexLoop(codex, log, ac.signal);
   if (config.idleCloseMinutes > 0) {
     setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)),
       Math.min(60000, config.idleCloseMinutes * 60000)).unref();
   }
   if (config.observeIntervalSeconds > 0) {
-    const observer = new Observer({ machine, config, log, cacheFile: path.join(BRIDGE_RUNTIME_DIR, 'observer.json'),
+    const observer = new Observer({ log, cacheFile: path.join(BRIDGE_RUNTIME_DIR, 'observer.json'),
       sessions: () => bridge.observedSessions(),
-      post: (key, text) => bridge.notify(key, text).catch((e) => log(`observe post: ${e.message}`)),
-      postLanes: (chatId, project, text) => bridge.postLanes(chatId, project, text).catch((e) => log(`lanes post: ${e.message}`)) });
+      post: (key, text) => bridge.notify(key, text).catch((e) => log(`observe post: ${e.message}`)) });
     const observe = () => observer.poll().catch((e) => log(`observe: ${e.message}`));
     observe();
     setInterval(observe, config.observeIntervalSeconds * 1000).unref();

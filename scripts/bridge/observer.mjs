@@ -3,10 +3,9 @@
 //
 // Every poll, for each repo a live main session on this machine works in: fetch origin
 // (remote refs only), diff the remote-tracking tips against the last seen ones, and report
-// a moved branch where it belongs; follow a reported tip until its lab/gate and lab/heavy
-// statuses appear. The coordinator machine also reports new issues and @machine hints (from
-// issue bodies, and from comments since its last poll).
-// Statuses and issues come from the repo's own `python -m lab_commons.dev.forge ... --json`;
+// a moved branch into the one session Topic that owns it; follow a reported tip until its
+// lab/gate and lab/heavy statuses appear. Issues and repo activity are read on the forge.
+// Statuses come from the repo's own `python -m lab_commons.dev.forge ... --json`;
 // a repo without lab_commons in its venv gets the git part only.
 
 import fs from 'fs';
@@ -16,9 +15,7 @@ import { execFile } from 'child_process';
 const VERDICTS = ['lab/gate', 'lab/heavy'];
 const VERDICT_WORD = { success: 'PASS', failure: 'FAIL' };
 const PENDING_MAX = 20;
-const COMMENTS_MAX = 500;
 const short = (sha) => sha.slice(0, 7);
-const mentionsOf = (body) => new Set([...String(body ?? '').matchAll(/(?:^|\s)@([A-Za-z0-9][\w-]*)/g)].map((x) => x[1]));
 
 /** `Name (<machine>/<agent>)` -> {machine, agent}; null for a human (unprovenanced) commit. */
 export function provenanceOf(committer) {
@@ -46,22 +43,17 @@ export function runForge(top, args) {
 
 export class Observer {
   /**
-   * @param {{ machine: string, config: {coordinator: string|null},
-   *           sessions: () => {key, cwd, chatId, project}[],
-   *           post: (key, text) => void, postLanes: (chatId, project, text) => void,
-   *           git?, forge?, exists?, cacheFile?: string|null, log?, now?: () => string }} deps
+   * @param {{ sessions: () => {key, cwd, chatId, project}[],
+   *           post: (key, text) => void, git?, forge?, exists?, cacheFile?: string|null, log? }} deps
    */
-  constructor({ machine, config, sessions, post, postLanes, git = runGit, forge = runForge,
-    exists = fs.existsSync, cacheFile = null, log = () => {}, now = () => new Date().toISOString() }) {
-    Object.assign(this, { machine, config, sessions, post, postLanes, git, forge, exists, cacheFile, log, now });
-    // top -> { tips: {branch: sha}, issues: number[] | undefined, pending: [],
-    //          commentsSince: ISO | undefined, comments: id[] }
+  constructor({ sessions, post, git = runGit, forge = runForge,
+    exists = fs.existsSync, cacheFile = null, log = () => {} }) {
+    Object.assign(this, { sessions, post, git, forge, exists, cacheFile, log });
+    // top -> { tips: {branch: sha}, pending: [{sha, key, done}] }
     this.cache = {};
     try { this.cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')) ?? {}; } catch { /* first run */ }
     this.busy = false;
   }
-
-  get coordinator() { return this.config.coordinator === this.machine; }
 
   #save() {
     if (!this.cacheFile) return;
@@ -99,8 +91,7 @@ export class Observer {
     }
     const c = this.cache[top];
     if (!c) {   // first sight: remember, report nothing historic
-      this.cache[top] = { tips, issues: undefined, pending: [] };
-      await this.#issues(top, r, this.cache[top]);
+      this.cache[top] = { tips, pending: [] };
       return;
     }
     for (const [branch, sha] of Object.entries(tips)) {
@@ -109,31 +100,23 @@ export class Observer {
       const range = old ? [`${old}..${sha}`] : [sha, '--not', ...Object.values(c.tips)];
       const commits = (await this.git(top, ['log', '--format=%H%x09%cn', ...range])).split('\n').filter(Boolean)
         .map((l) => ({ sha: l.split('\t')[0], who: provenanceOf(l.split('\t')[1]) }));
-      if (commits.length) this.#report(top, r, c, branch, sha, commits);
+      if (commits.length) this.#report(r, c, branch, sha, commits);
     }
     c.tips = tips;
     await this.#statuses(top, c);
-    await this.#issues(top, r, c);
   }
 
-  #report(top, r, c, branch, sha, commits) {
-    const mine = commits.some((x) => x.who?.machine === this.machine);
-    const human = commits.every((x) => !x.who);
-    if (!mine && !(human && this.coordinator)) return;   // another machine reports it
+  /** Into the one session on this machine on that branch, whoever pushed; else dropped. */
+  #report(r, c, branch, sha, commits) {
     // Several sessions can share a branch (main, typically): narrow to the pushing agent's
-    // host; a push no single session owns goes to lanes rather than to a guessed Topic.
+    // host; still ambiguous -> drop rather than guess a Topic.
     let on = r.sessions.filter((s) => s.branch === branch);
     const agents = new Set(commits.map((x) => x.who?.agent).filter(Boolean));
     if (on.length > 1 && agents.size === 1) on = on.filter((s) => s.key.startsWith(`${[...agents][0]}:`));
-    const session = on.length === 1 ? on[0] : null;
-    const dest = session ? { key: session.key } : this.coordinator ? { chatId: r.chatId, project: r.project } : null;
-    if (!dest) return;
-    this.#say(dest, `pushed ${short(sha)} → ${branch} (+${commits.length})`);
-    c.pending = [...c.pending, { sha, dest, done: [] }].slice(-PENDING_MAX);
-  }
-
-  #say(dest, text) {
-    if (dest.key) this.post(dest.key, text); else this.postLanes(dest.chatId, dest.project, text);
+    if (on.length !== 1) return;
+    const { key } = on[0];
+    this.post(key, `pushed ${short(sha)} → ${branch} (+${commits.length})`);
+    c.pending = [...c.pending, { sha, key, done: [] }].slice(-PENDING_MAX);
   }
 
   async #statuses(top, c) {
@@ -143,51 +126,9 @@ export class Observer {
       for (const st of list) {
         if (!VERDICTS.includes(st.context) || p.done.includes(st.context) || !VERDICT_WORD[st.state]) continue;
         p.done.push(st.context);
-        this.#say(p.dest, `${st.context} ${VERDICT_WORD[st.state]} ${short(p.sha)}`);
+        this.post(p.key, `${st.context} ${VERDICT_WORD[st.state]} ${short(p.sha)}`);
       }
     }
     c.pending = c.pending.filter((p) => p.done.length < VERDICTS.length);
-  }
-
-  async #issues(top, r, c) {
-    if (!this.coordinator) return;
-    const list = await this.forge(top, ['issue', 'list', '--state', 'open']);
-    if (!Array.isArray(list)) return;
-    const seen = new Set(c.issues ?? []);
-    if (c.issues) {
-      for (const i of list) {
-        if (seen.has(i.number)) continue;
-        this.postLanes(r.chatId, r.project, `issue #${i.number}: ${i.title}`);
-        for (const m of mentionsOf(i.body)) {
-          this.postLanes(r.chatId, r.project, `hint: @${m} #${i.number} ${i.title}`);
-        }
-      }
-    }
-    c.issues = [...new Set([...seen, ...list.map((i) => i.number)])];
-    await this.#comments(top, r, c, list);
-  }
-
-  /** @machine hints from comments since the last poll; once per id; never an agent naming itself. */
-  async #comments(top, r, c, open) {
-    const now = this.now();
-    if (!c.commentsSince) { c.commentsSince = now; c.comments = []; return; }   // first sight
-    const list = await this.forge(top, ['issue', 'comments-since', c.commentsSince]);
-    if (!Array.isArray(list)) return;
-    const seen = new Set(c.comments ?? []);
-    const titles = new Map(open.map((i) => [i.number, i.title]));
-    for (const k of list) {
-      if (seen.has(k.id)) continue;
-      seen.add(k.id);
-      const lines = String(k.body ?? '').split('\n');
-      const stamp = /^\[([^\s·\]]+) · /.exec(lines[0] ?? '')?.[1];
-      const text = lines.slice(stamp ? 1 : 0).find((l) => l.trim())?.trim() ?? '';
-      const title = titles.get(k.issue);
-      for (const m of mentionsOf(k.body)) {
-        if (m === stamp) continue;
-        this.postLanes(r.chatId, r.project, `hint: @${m} #${k.issue}${title ? ` ${title}` : ''} — ${text}`);
-      }
-    }
-    c.comments = [...seen].slice(-COMMENTS_MAX);
-    c.commentsSince = now;
   }
 }

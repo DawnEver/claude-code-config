@@ -42,3 +42,11 @@ chat/notification is a hint, never a trigger.
 1. wait for the running bridge unified-lifecycle refactor (cc-config) and the <group> closing pass
    (lab-commons/<project-c>/<project-b>) to avoid conflicts; 2. Part A; 3. Part B with live checks;
 4. Layer C protection — after a real `lab/heavy` status exists, with user confirmation.
+
+## 2026-10-02 decision: `lanes` and `coordinator` removed
+The `lanes` Topic (unowned pushes, new issues, `@machine` hints) duplicated the forge's own
+activity feed (GitHub/Gitea notifications) — two sources for one fact. Removed with
+`bridge.coordinator`, which existed only for it, and all issue/comment polling. Kept the one
+thing the forge cannot do: a push reported into the single local session Topic on that branch
+(narrowed by the pushing agent's host via provenance, else dropped), whoever pushed, plus that
+tip's `lab/gate`/`lab/heavy` verdicts. See `docs/coordination.md`.
