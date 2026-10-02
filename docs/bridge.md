@@ -241,10 +241,12 @@ payload; do not paste them into shared places unredacted.
 - Channels together with `--remote-control` in one Claude session.
 - Telegram approval buttons answer a Claude permission request.
 - `deleteForumTopic` on a closed Topic (create, close, delete; a later send fails).
+- Mirroring after `/clear` through the process-id retry.
 
 ## Unverified
 
-- Mirroring after `/clear` through the process-id retry; a channel registers its process only from a fresh `ccc` start.
 - Whether `UserPromptSubmit` fires for channel-injected prompts (either way no echo:
   the unwrap path drops it, and an unechoed inject expires).
 - What Claude Code does with a Telegram verdict for a prompt already answered locally.
+- The automatic 24 h sweep deleting a Topic (first candidates are due ~2026-10-03 07:00 UTC).
+- The `@you` alert reaching a muted chat.
