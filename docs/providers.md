@@ -107,6 +107,12 @@ binary:
   explicit `codex` key overrides the derived codex model when a provider's codex
   id differs from its Claude `base`. Both launchers derive their projection, so
   the two hosts cannot drift.
+
+Claude's `/model` picker may save an optional top-level `model` preference in user
+settings. This is CLI-owned selection state, not another provider catalogue. Startup
+`--model` and projected `ANTHROPIC_MODEL` take precedence over that saved preference.
+Doctor validates a present preference as a non-empty string, but its presence/absence
+is not template drift; other unexpected keys and missing required keys remain checked.
 - The `apiKey` value comes from the machine-local
   `~/.claude/claude_env_settings.local.json` overlay (see "Secrets are
   machine-local" above).

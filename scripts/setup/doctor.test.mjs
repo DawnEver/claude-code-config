@@ -195,6 +195,22 @@ test('a live-only key is a WARN, not a failure — that is host tuning', () => {
   assert.equal(out[0].level, 'WARN');
 });
 
+test('Claude CLI model preference is optional and does not mask real payload drift', () => {
+  const live = tmp(); const repo = tmp();
+  fs.writeFileSync(path.join(repo, 'claude_settings.template.json'), '{"env":{}}');
+  const file = path.join(live, 'claude_settings.json');
+  fs.writeFileSync(file, '{"env":{},"model":"haiku"}');
+  assert.deepEqual(checkPayloadShape(live, repo, ['claude_settings.json']), []);
+  fs.writeFileSync(file, '{"env":{}}');
+  assert.deepEqual(checkPayloadShape(live, repo, ['claude_settings.json']), []);
+  fs.writeFileSync(file, '{"env":{},"model":"haiku","unexpected":true}');
+  assert.equal(checkPayloadShape(live, repo, ['claude_settings.json'])[0].id, 'payload-extra-key');
+  fs.writeFileSync(file, '{"model":"haiku"}');
+  assert.equal(checkPayloadShape(live, repo, ['claude_settings.json'])[0].id, 'payload-missing-key');
+  fs.writeFileSync(file, '{"env":{},"model":42}');
+  assert.equal(checkPayloadShape(live, repo, ['claude_settings.json'])[0].id, 'payload-invalid-model');
+});
+
 test('a hook script behind a broken guard is a FAIL', () => {
   const home = tmp();
   const hookDir = path.join(home, '.claude', 'scripts', 'hooks');

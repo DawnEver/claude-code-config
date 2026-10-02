@@ -177,6 +177,16 @@ export function checkPayloadShape(syncDir, repoRoot = sourceDir, files = SYNC_PA
       continue;
     }
     try { template = JSON.parse(fs.readFileSync(templatePath, 'utf8')); } catch { continue; }
+    if (name === 'claude_settings.json') {
+      // /model writes a user preference; choosing Default can remove it. Neither is
+      // template drift. Provider model IDs remain authoritative in providers.*.models.
+      if (Object.hasOwn(live, 'model') && (typeof live.model !== 'string' || !live.model.trim())) {
+        out.push(finding('FAIL', 'payload-invalid-model', 'claude_settings.json has an invalid model preference',
+          'model must be a non-empty model alias or ID when present'));
+      }
+      live = { ...live }; template = { ...template };
+      delete live.model; delete template.model;
+    }
     const { onlyInActual, onlyInTemplate } = compareKeySets(live, template);
     if (onlyInTemplate.length) {
       out.push(finding('FAIL', 'payload-missing-key',
