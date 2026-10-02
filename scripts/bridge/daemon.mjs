@@ -434,7 +434,9 @@ export class Bridge {
       if (this.sessions.get(key) !== s || !s.topicId || s.state === 'ended') throw new Error('no live confirmed attachment Topic');
       const root = fs.realpathSync(s.cwd);
       const file = fs.realpathSync(request.path);
-      const selected = path.relative(root, path.resolve(request.path));
+      // Compare like with like: the path as given against the cwd as given, the realpath
+      // against the real root — a symlinked cwd (macOS /var -> /private/var) otherwise reads as outside.
+      const selected = path.relative(path.resolve(s.cwd), path.resolve(request.path));
       const relative = path.relative(root, file);
       const blocked = p => !p || p.startsWith(`..${path.sep}`) || p === '..' || path.isAbsolute(p) ||
         p.split(path.sep).some(part => /^\.(?:git|claude|codex|ssh|aws|npmrc|netrc|env(?:\..*)?)$/i.test(part)) ||
