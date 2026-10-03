@@ -601,12 +601,3 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('notify posts into a registered session Topic; observedSessions lists main sessions with their cwd', async () => {
-  const r = make();
-  await up(r, 'codex', 't1');
-  await r.bridge.notify('codex:t1', 'pushed b2 → main (+1)');
-  await r.bridge.notify('codex:nope', 'dropped');
-  await until(() => r.telegram.sent.length === 2);
-  assert.equal(texts(r.telegram)[1], 'pushed b2 → main (+1)');
-  assert.deepEqual(r.bridge.observedSessions(), [{ key: 'codex:t1', cwd: '/proj', chatId: -100, project: 'proj' }]);
-});

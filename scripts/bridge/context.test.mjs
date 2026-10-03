@@ -37,7 +37,7 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
   fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '1:abc', allowedUserIds: ['42', 'x'], approvalsFromTelegram: true } }));
   try {
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }), {
-      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, observeIntervalSeconds: 60, projects: { a: { chatId: -100 } },
+      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, projects: { a: { chatId: -100 } },
     });
     fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '123456:your-bot-token' } }));
     const c = readBridgeConfig({ sharedPath, localPath });

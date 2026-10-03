@@ -25,7 +25,6 @@ import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
-import { Observer } from './observer.mjs';
 import { newSession, onUp, onActivity, onIdleTick, onDown, onDismiss, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
@@ -160,20 +159,6 @@ export class Bridge {
       for (const { kind, e } of q) if (!(e.turnId && seen.has(`${kind}:${e.turnId}`))) await this.#event(key, kind, e).catch(() => {});
     }
     return this.sessions.get(key);
-  }
-
-  // ── coordination view (observer.mjs) ──
-
-  /** Main sessions the observer watches: their repo is found from the cwd. */
-  observedSessions() {
-    return [...this.sessions.values()].filter((s) => this.hosts.has(s.agent))
-      .map(({ key, cwd, chatId, project }) => ({ key, cwd, chatId, project }));
-  }
-
-  /** Post into a registered session's Topic (same lifecycle as its own output). */
-  notify(key, text) {
-    const s = this.sessions.get(key);
-    return s ? this.#send(s, text) : Promise.resolve([]);
   }
 
   sessionDown(key) {
@@ -636,19 +621,11 @@ export async function main() {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-  log(`up: machine=${machine} ipc=127.0.0.1:${port} idleCloseMinutes=${config.idleCloseMinutes} deleteClosedAfterHours=${config.deleteClosedAfterHours} observeIntervalSeconds=${config.observeIntervalSeconds}`);
+  log(`up: machine=${machine} ipc=127.0.0.1:${port} idleCloseMinutes=${config.idleCloseMinutes} deleteClosedAfterHours=${config.deleteClosedAfterHours}`);
   codexLoop(codex, log, ac.signal);
   if (config.idleCloseMinutes > 0) {
     setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)),
       Math.min(60000, config.idleCloseMinutes * 60000)).unref();
-  }
-  if (config.observeIntervalSeconds > 0) {
-    const observer = new Observer({ log, cacheFile: path.join(BRIDGE_RUNTIME_DIR, 'observer.json'),
-      sessions: () => bridge.observedSessions(),
-      post: (key, text) => bridge.notify(key, text).catch((e) => log(`observe post: ${e.message}`)) });
-    const observe = () => observer.poll().catch((e) => log(`observe: ${e.message}`));
-    observe();
-    setInterval(observe, config.observeIntervalSeconds * 1000).unref();
   }
   if (config.deleteClosedAfterHours > 0) {
     const sweep = () => bridge.sweepClosedTopics().catch((e) => log(`sweep: ${e.message}`));

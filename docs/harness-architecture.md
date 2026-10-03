@@ -100,9 +100,8 @@ Not a plugin: a plugin lives and dies with one session, while the bridge must ou
 every session, own the machine's single bot token, and multiplex all its sessions.
 
 Built. How it works — the host adapters, the one session lifecycle shared by Claude and
-Codex, setup and config — is described once, in [`bridge.md`](bridge.md); the coordination
-view it derives from origin (a push and its verdicts, in the owning session's Topic) in
-[`coordination.md`](coordination.md).
+Codex, setup and config — is described once, in [`bridge.md`](bridge.md). Pushes, verdicts and issues are
+not mirrored to Telegram: git and the forge own them.
 
 ## 7. Permissions
 
@@ -176,9 +175,9 @@ No bot accounts: they multiply credentials and lose layer 1. Instead:
 
 - **v1 — human <-> session.** Bridge for Codex (app-server) and Claude (custom channel,
   claude.ai subscription), Telegram view, official remotes.
-- **v2 — coordination view.** The bridge reports a push and its gate verdicts into the
-  one session Topic that owns the branch. It observes; it never triggers. Issues and repo
-  activity stay on the forge (its own notifications), not mirrored.
+- **v2 — fleet view.** One Fleet Topic card: per seat quota (5h/weekly, burn rate,
+  ETA, reset) and what each workstation is running. Pushes, verdicts and issues stay on
+  git and the forge, never mirrored.
 - **Later — third-party providers on Claude** (DeepSeek via `ccds`), which lack Remote
   Control and channels.
 
