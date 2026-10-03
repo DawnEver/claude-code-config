@@ -18,6 +18,8 @@ import { WsStreamClient } from './ws-stream.mjs';
 import { JsonRpcPeer } from './jsonrpc.mjs';
 
 const QUOTA_REFRESH_MS = 5 * 60000;
+const isCodexBucket = (l) => Boolean(l) && (l.limitId ?? 'codex') === 'codex';
+const dropNulls = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null));
 const IS_WIN = process.platform === 'win32';
 
 /** Approval requests whose response is `{ decision: 'accept' | 'decline' }`. */
@@ -158,6 +160,7 @@ export class CodexAdapter extends EventEmitter {
       rpc.failAll();
       if (this.rpc !== rpc) return;
       this.rpc = null;
+      this.quota = null;   // a dead feed must not look fresh
       for (const id of [...this.threads.keys()]) this.#drop(id);
       this.pending.clear();
       this.skipped.clear();
@@ -180,7 +183,7 @@ export class CodexAdapter extends EventEmitter {
     // Account quota: pushed on change, re-read every few minutes as a backstop.
     if (!this.quota || this.now() - this.quota.at >= QUOTA_REFRESH_MS) {
       const r = await this.rpc.request('account/rateLimits/read', {}).catch(() => null);
-      if (r?.rateLimits) this.quota = { limits: r.rateLimits, at: this.now() };
+      if (isCodexBucket(r?.rateLimits)) this.quota = { limits: r.rateLimits, at: this.now() };
     }
     const ids = new Set();
     let cursor = null;
@@ -257,7 +260,8 @@ export class CodexAdapter extends EventEmitter {
     const th = this.threads.get(p.threadId);
     switch (method) {
       case 'account/rateLimits/updated':
-        if (p.rateLimits && (p.rateLimits.limitId ?? 'codex') === 'codex') this.quota = { limits: p.rateLimits, at: this.now() };
+        // A push may carry only the windows that changed: keep the others.
+        if (isCodexBucket(p.rateLimits)) this.quota = { limits: { ...this.quota?.limits, ...dropNulls(p.rateLimits) }, at: this.now() };
         break;
       case 'turn/started':
         if (th) {

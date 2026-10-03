@@ -78,6 +78,8 @@ test('account quota: read on refresh, replaced by pushes for the codex bucket on
   assert.equal(a.quota.limits.primary.usedPercent, 20);
   srv.push('account/rateLimits/updated', { rateLimits: { limitId: 'codex', primary: { usedPercent: 30, windowDurationMins: 300, resetsAt: 9 } } });
   assert.equal(a.quota.limits.primary.usedPercent, 30);
+  srv.push('account/rateLimits/updated', { rateLimits: { secondary: { usedPercent: 7, windowDurationMins: 10080, resetsAt: 9 }, primary: null } });
+  assert.deepEqual([a.quota.limits.primary.usedPercent, a.quota.limits.secondary.usedPercent], [30, 7], 'a partial push keeps the other window');
   await a.refresh();
   assert.equal(srv.calls.filter((c) => c.method === 'account/rateLimits/read').length, 1, 'not re-read within 5 minutes');
 });

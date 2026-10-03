@@ -17,8 +17,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-export const CLAUDE_USAGE_FILE = path.join(os.homedir(), '.claude', 'bridge', 'claude-usage.json');
-export const CLAUDE_ACCOUNT_FILE = path.join(os.homedir(), '.claude.json');
+// CLAUDE_CONFIG_DIR moves both the config dir and its .claude.json, as hud-hook.js honours.
+const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
+export const CLAUDE_USAGE_FILE = path.join(CONFIG_DIR || path.join(os.homedir(), '.claude'), 'bridge', 'claude-usage.json');
+export const CLAUDE_ACCOUNT_FILE = CONFIG_DIR ? path.join(CONFIG_DIR, '.claude.json') : path.join(os.homedir(), '.claude.json');
 export const FLEET_REGISTRY_FILE = path.join(os.homedir(), '.claude', 'fleet.json');
 
 const H = 3600000;
@@ -161,21 +163,23 @@ export function renderCard({ machine, registry, account, claude, codex, sessions
   const alerts = [];
   const seat = seatFor(registry, machine);
   const lines = [`${machine} · ${seat?.name ?? (registry ? 'unregistered' : 'no fleet.json')}`];
-  const flag = (key, line, alert = line) => { lines.push(`(!) ${line}`); alerts.push({ key, text: `${machine}: ${alert}` }); };
+  // Alert keys are persisted: they name the condition, never an account.
+  const flag = (key, line, alert = line) => { lines.push(`(!) ${line}`); alerts.push({ key, text: `${machine}: ${alert}`, until: null }); };
   if (registry && !seat) flag('unregistered', 'not in fleet.json');
   if (seat && !account) flag('seat:none', 'no Claude subscription login', `no Claude subscription login (expected ${seat.name})`);
-  else if (seat && seat.email && !sameText(account.email, seat.email)) flag(`seat:${account.email}`, `Claude is logged into another account, expected ${seat.name}`);
-  else if (seat && !orgOk(account, seat)) flag(`seat:${account.orgUuid ?? account.org}`, `Claude org is ${account.org ?? '?'}, expected ${seat.org ?? seat.orgUuid}`);
+  else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `Claude is logged into another account, expected ${seat.name}`);
+  else if (seat && !orgOk(account, seat)) flag('seat:org', `Claude org is ${account.org ?? '?'}, expected ${seat.org ?? seat.orgUuid}`);
   if (seat?.note) lines.push(`note: ${seat.note}`);
   lines.push('', ...quotaLines('Claude', claude, now), ...quotaLines('Codex', codex, now), '');
   for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
     if (!q || now - q.at > STALE_MS) continue;
     for (const [k, v] of Object.entries(q.windows)) {
-      if (v.short && v.resetsAt > now) alerts.push({ key: `short:${host}:${k}:${v.resetsAt}`, text: `${machine} ${host} ${k} at ${Math.round(v.used)}%: runs out ~${when(v.eta, now)}, resets ${when(v.resetsAt, now)}` });
+      // Keyed by the hour of reset (servers jitter it by seconds); held until that reset.
+      if (v.short && v.resetsAt > now) alerts.push({ key: `short:${host}:${k}:${Math.round(v.resetsAt / H)}`, until: v.resetsAt, text: `${machine} ${host} ${k} at ${Math.round(v.used)}%: runs out ~${when(v.eta, now)}, resets ${when(v.resetsAt, now)}` });
     }
   }
   // What is running here: busy sessions by name; idle ones are not news.
-  const busy = sessions.filter((x) => x.status !== 'Idle');
+  const busy = sessions.filter((x) => x.status !== 'Idle' && x.status !== 'Ended');
   lines.push(busy.length ? 'Running' : 'Running: nothing');
   for (const x of busy) lines.push(`  ${x.title}${x.status === 'Working' ? '' : ` · ${x.status}`}`);
   return { text: lines.join('\n'), alerts };
@@ -183,44 +187,68 @@ export function renderCard({ machine, registry, account, claude, codex, sessions
 
 /**
  * The daemon side: render this machine's card into the configured fleet chat/Topic, edit
- * it in place when its text changes, and post an alert only when a new alert key appears.
- * State ({messageId, text, alerts}) is a local transport cache, like topics.json.
+ * it in place when its text changes, and post each alert once. A run-out alert stays
+ * "sent" until its window resets, so a stale gap or a dip does not repeat it; a seat alert
+ * is forgotten once its condition clears. State ({chatId, topicId, messageId, text, sent})
+ * is a local transport cache, like topics.json; a different chat/Topic starts it afresh.
  */
 export class FleetCard {
   constructor({ telegram, chatId, topicId = null, machine, stateFile = null, sessions = () => [],
     codexQuota: codexSource = () => null, alertIds = [], log = () => {}, now = Date.now,
     read = { registry: readRegistry, account: claudeAccount, claudeUsage: readClaudeUsage } }) {
     Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, alertIds, log, now, read });
-    this.state = (stateFile && readJson(stateFile)) ?? { messageId: null, text: null, alerts: [] };
+    const saved = stateFile && readJson(stateFile);
+    this.state = saved?.chatId === chatId && (saved.topicId ?? null) === topicId && saved.sent
+      ? saved : { chatId, topicId, messageId: null, text: null, sent: {} };
+    this.running = null;
   }
 
   #save() {
     if (!this.stateFile) return;
-    try { fs.mkdirSync(path.dirname(this.stateFile), { recursive: true }); fs.writeFileSync(this.stateFile, JSON.stringify(this.state)); } catch { /* cache only */ }
+    try {
+      fs.mkdirSync(path.dirname(this.stateFile), { recursive: true });
+      fs.writeFileSync(this.stateFile, JSON.stringify(this.state), { mode: 0o600 });
+    } catch { /* cache only */ }
   }
 
-  async tick() {
+  /** One tick at a time: an overlapping timer call joins the one in flight. */
+  tick() {
+    this.running ??= this.#tick().finally(() => { this.running = null; });
+    return this.running;
+  }
+
+  async #tick() {
     const now = this.now();
     const cx = this.codexSource();
     const { text, alerts } = renderCard({ machine: this.machine, registry: this.read.registry(),
       account: this.read.account(), claude: claudeQuota(this.read.claudeUsage()),
       codex: cx ? codexQuota(cx.limits, cx.at) : null, sessions: this.sessions(), now });
+    const before = JSON.stringify(this.state);
     const opts = { threadId: this.topicId ?? undefined };
-    if (text !== this.state.text) {
-      let sent = false;
-      if (this.state.messageId) {
-        try { await this.telegram.editMessageText(this.chatId, this.state.messageId, text, { pre: true }); sent = true; }
-        catch (e) {
-          if (/not modified/i.test(e.message)) sent = true;
-          else if (!/message to edit not found|MESSAGE_ID_INVALID/i.test(e.message)) throw e;
+    try {
+      if (text !== this.state.text) {
+        let sent = false;
+        if (this.state.messageId) {
+          try { await this.telegram.editMessageText(this.chatId, this.state.messageId, text, { pre: true }); sent = true; }
+          catch (e) {
+            if (/not modified/i.test(e.message)) sent = true;
+            else if (!/message to edit not found|MESSAGE_ID_INVALID/i.test(e.message)) throw e;
+          }
         }
+        if (!sent) this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, pre: true }))[0]?.message_id ?? null;
+        this.state.text = text;
       }
-      if (!sent) this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, pre: true }))[0]?.message_id ?? null;
-      this.state.text = text;
+      const holding = new Set(alerts.map((a) => a.key));
+      for (const [key, until] of Object.entries(this.state.sent)) {
+        if (until == null ? !holding.has(key) : until <= now) delete this.state.sent[key];
+      }
+      for (const a of alerts) {
+        if (a.key in this.state.sent) continue;
+        await this.telegram.sendMessage(this.chatId, a.text, { ...opts, alert: this.alertIds });
+        this.state.sent[a.key] = a.until;   // recorded per alert: a later failure cannot resend it
+      }
+    } finally {
+      if (JSON.stringify(this.state) !== before) this.#save();
     }
-    const known = new Set(this.state.alerts);
-    for (const a of alerts) if (!known.has(a.key)) await this.telegram.sendMessage(this.chatId, a.text, { ...opts, alert: this.alertIds });
-    this.state.alerts = alerts.map((a) => a.key);
-    this.#save();
   }
 }

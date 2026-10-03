@@ -164,7 +164,7 @@ export class Bridge {
 
   /** What the fleet card lists: sessions that have shown activity (they own a Topic). */
   fleetSessions() {
-    return [...this.sessions.values()].filter((s) => s.topicId && s.state !== 'ended').map((s) => ({
+    return [...this.sessions.values()].filter((s) => s.topicId && s.state !== 'ended' && this.sessions.get(s.key) === s).map((s) => ({
       title: s.title, status: STATUS_LABELS[this.hosts.get(s.agent)?.statusSnapshot?.(s.id).state] ?? 'Unknown' }));
   }
 

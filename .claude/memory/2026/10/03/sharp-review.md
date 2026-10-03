@@ -1,9 +1,10 @@
 ---
 name: sharp-review-2026-10-03
-description: Sharp review findings — 19 total
+description: Sharp review findings — 33 total
 metadata:
   type: project
 ---
+
 
 
 ## Review 2026-10-03 (session) — adversarial review (对抗性审查) + diff review
@@ -233,3 +234,169 @@ Untested branch.
 - **Suggestion:** Validate registry shape and unique machine assignment on load
 
 {seats:{}} throws; readJson swallows all errors.
+
+
+## Review 2026-10-03 (follow-up)
+
+## Review 2026-10-03 (session) — diff review + adversarial review (对抗性审查)
+
+### Reviewer Status
+- Reviewer claude (claude): OK
+- Reviewer codex (codex): skipped
+- Reviewer deepseek (deepseek): OK
+
+### Confirmed findings
+
+---
+
+### [SR-20261003-020] [MEDIUM] scripts/hooks/hud-hook.js — The stdin tee guards the import but not the global process.stdin mutation, leaving a latent crash path in a load-bearing hook
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Wrap the Object.defineProperty(process, 'stdin', ...) and buffering loop in the same try/catch, or pass the raw string to the plugin directly.
+
+defineProperty runs outside the fail-open try; a non-configurable stdin would break the status line. for await also blocks until stdin closes.
+
+---
+
+### [SR-20261003-021] [LOW] scripts/bridge/fleet.mjs — The real account email is embedded in the alert key and persisted to fleet-card.json
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Use a non-PII key such as seat:wrong-account or a hash.
+
+flag(`seat:${account.email}`) stores the email in state.alerts, written every tick.
+
+---
+
+### [SR-20261003-022] [LOW] scripts/bridge/fleet.mjs — FleetCard.#save() rewrites the state file every 60s tick even when nothing changed
+
+- **Category:** Performance
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Save only when text or alerts change.
+
+tick() always calls #save().
+
+---
+
+### [SR-20261003-023] [LOW] scripts/bridge/daemon.mjs — fleetSessions lists a session whose host disconnected under Running as 'Ended'
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Exclude Ended/disconnected sessions from the busy list.
+
+renderCard treats any status !== 'Idle' as busy; disconnected maps to Ended.
+
+---
+
+### [SR-20261003-024] [LOW] scripts/bridge/codex-adapter.mjs — Quota push overwrites the whole snapshot and read path lacks the limitId === 'codex' filter
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Merge pushed windows and apply the same filter on read.
+
+A primary-only push drops secondary until next read; read and push can disagree on the bucket.
+
+---
+
+### [SR-20261003-025] [INFO] docs/bridge.md — Fleet-card docs say idle sessions show as a count, but code neither counts nor lists them
+
+- **Category:** Feature
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Update the docs row to match renderCard.
+
+Doc drift vs 51025f0 behavior.
+
+---
+
+### [SR-20261003-026] [MEDIUM] scripts/bridge/fleet.mjs — Alerts re-fire whenever their condition lapses for one tick, including when the snapshot goes stale
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Retain sent alert keys until the window resets; add hysteresis to the short check.
+
+Stale ticks drop short:* keys from state.alerts, so the next fresh snapshot re-sends the same alert.
+
+---
+
+### [SR-20261003-027] [MEDIUM] scripts/bridge/fleet.mjs — resetsAt in the short-alert key causes duplicate alerts when reset time jitters
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Round resetsAt to a window boundary before building the key.
+
+Key short:${host}:${k}:${v.resetsAt} changes with any reported jitter.
+
+---
+
+### [SR-20261003-028] [MEDIUM] scripts/bridge/fleet.mjs — Saved messageId is reused after fleet chatId/topicId change, so the bot can edit an unrelated message
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Persist chatId/topicId with the state and clear messageId on mismatch.
+
+Message ids are per chat; editMessageText(newChat, oldId) may hit another bot message.
+
+---
+
+### [SR-20261003-029] [MEDIUM] scripts/bridge/daemon.mjs — Fleet ticks on setInterval have no overlap guard; partial alert-send failure resends already sent alerts
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Keep one in-flight tick promise; record each alert key right after its send succeeds.
+
+Slow/429 ticks can overlap and both send cards/alerts.
+
+---
+
+### [SR-20261003-030] [LOW] scripts/bridge/fleet.mjs — Usage and account paths ignore CLAUDE_CONFIG_DIR while hud-hook honours it
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Resolve both paths from CLAUDE_CONFIG_DIR like hud-hook.
+
+Custom config dir produces false seat alerts or wrong quota.
+
+---
+
+### [SR-20261003-031] [LOW] scripts/bridge/fleet.mjs — Account email written in plain text to fleet-card.json via alert key, without private file permissions
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Hash the key and use writePrivateFile.
+
+flag('seat:'+account.email) persists the email.
+
+---
+
+### [SR-20261003-032] [LOW] scripts/bridge/codex-adapter.mjs — Codex quota timestamped at read time and read path lacks limitId filter, so a stuck feed never looks stale
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Apply the limitId filter on read; clear quota on disconnect.
+
+quota.at = now() on every read/push.
+
+---
+
+### [SR-20261003-033] [LOW] scripts/bridge/fleet.test.mjs — No tests for tick overlap, alert re-fire after stale gap, chat/topic change, or partial alert-send failure
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Add FleetCard tests with a fake clock.
+
+Only pure render logic is covered.

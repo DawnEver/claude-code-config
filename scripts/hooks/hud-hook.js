@@ -57,15 +57,17 @@ if (!pluginEntry) {
 
 // Tee the statusLine payload: its rate_limits feed the bridge's fleet card (fleet.mjs).
 // claude-hud then reads the same bytes from a replayed stdin.
+// Never let the tee break the status line: any failure here leaves claude-hud to decide.
 if (!process.stdin.isTTY) {
-    const chunks = [];
-    for await (const c of process.stdin) chunks.push(c);
-    const raw = Buffer.concat(chunks).toString('utf8');
-    // Never let the tee break the status line: a missing/broken fleet.mjs is ignored.
-    try { (await import('../bridge/fleet.mjs')).teeClaudeUsage(JSON.parse(raw)); } catch { /* claude-hud decides */ }
-    const replay = new PassThrough();
-    replay.end(raw);
-    Object.defineProperty(process, 'stdin', { value: replay, configurable: true });
+    try {
+        const chunks = [];
+        for await (const c of process.stdin) chunks.push(c);
+        const raw = Buffer.concat(chunks).toString('utf8');
+        try { (await import('../bridge/fleet.mjs')).teeClaudeUsage(JSON.parse(raw)); } catch { /* not JSON / no fleet.mjs */ }
+        const replay = new PassThrough();
+        replay.end(raw);
+        Object.defineProperty(process, 'stdin', { value: replay, configurable: true });
+    } catch { /* status line still renders */ }
 }
 
 const pluginModule = await import(`file://${pluginEntry.replace(/\\/g, '/')}`);
