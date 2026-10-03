@@ -276,16 +276,13 @@ test('deleteForumTopic targets the Topic', async () => {
   } finally { api.close(); }
 });
 
-test('pre renders the whole text as one monospace entity on send and edit', async () => {
+test('html sends and edits with parse_mode HTML', async () => {
   const calls = [];
   const tg = new TelegramClient({ token: 'test', fetch: async (url, init) => {
     calls.push([url.split('/').pop(), JSON.parse(init.body)]);
     return { ok: true, json: async () => ({ ok: true, result: { message_id: 1 } }) };
   } });
-  await tg.sendMessage(-100, 'a █ b', { pre: true });
-  await tg.editMessageText(-100, 1, 'c ░', { pre: true });
-  assert.deepEqual(calls.map(([m, p]) => [m, p.entities]), [
-    ['sendMessage', [{ type: 'pre', offset: 0, length: 5 }]],
-    ['editMessageText', [{ type: 'pre', offset: 0, length: 3 }]],
-  ]);
+  await tg.sendMessage(-100, '<b>a</b>', { html: true });
+  await tg.editMessageText(-100, 1, '<i>c</i>', { html: true });
+  assert.deepEqual(calls.map(([m, p]) => [m, p.parse_mode]), [['sendMessage', 'HTML'], ['editMessageText', 'HTML']]);
 });

@@ -417,24 +417,28 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
 | running | registered sessions that are not idle (`?` = connected, not yet observed) |
 
-A report is one monospace block, one section per host, each headed by the full account it
-actually runs as; a seat's note and checks belong to Claude, since a seat is a Claude seat:
+A report is Telegram HTML, one section per host, each headed by the full account it
+actually runs as; a seat's note and checks belong to Claude, since a seat is a Claude seat.
+Heads are bold, detail italic, and only the bar is monospace, so bars line up while the rest
+reads in the normal font (every value is HTML-escaped). Rendered, it reads:
 
 ```
-G
+G                                              (bold)
 
-Claude  alice@example.com · Uni Team A
-  5h ██░░░░░░░░  20%  resets 20:00
-  7d ███████░░░  69%  resets 08/Oct 23:00
-     (!) runs out 05/Oct 21:13
-  reset available by 22/Oct
+Claude · alice@example.com                     (bold head)
+Uni Team A                                     (italic)
+5h ██░░░░░░░░  20%  resets 20:00               (bar in monospace)
+7d ███████░░░  69%  resets 08/Oct 23:00
+(!) runs out 05/Oct 21:13                      (bold)
+reset available by 22/Oct                      (italic)
 
-Codex   alice@example.com · plus
-  7d █████░░░░░  51%  resets 09/Oct 22:00
-     data 3h old
+Codex · alice@example.com
+plus
+7d █████░░░░░  51%  resets 09/Oct 22:00
+data 3h old                                    (italic, only when stale)
 
 Running
-  lab-commons | main | G | codex
+• lab-commons | main | G | codex
 ```
 
 `timeFormat` picks how times read: `date` (default; `HH:MM` today, `DD/Mon HH:MM`

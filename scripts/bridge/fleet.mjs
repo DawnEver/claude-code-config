@@ -151,47 +151,52 @@ export function timeFormatter(format) {
 const bar = (used) => { const n = Math.round(used / 10); return '█'.repeat(n) + '░'.repeat(10 - n); };
 const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
 
-/** `  7d ███████░░░  69%  resets 08/Oct 23:00`, + `(!) runs out ...` under it. */
+// The report is Telegram HTML: bold heads, italic detail, and only the bar in monospace so
+// it lines up while the rest reads in the normal font. Every interpolated value is escaped.
+const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** `<code>7d ███████░░░  69%</code>  resets 08/Oct 23:00`, + a bold run-out warning. */
 function windowLines(k, v, now, t) {
-  const label = `  ${k.padEnd(3)}`;
   // A past reset has no countdown: always a date.
-  if (v.resetsAt <= now) return [`${label}reset ${when(v.resetsAt, now)}, awaiting data`];
-  const lines = [`${label}${bar(v.used)} ${`${Math.round(v.used)}%`.padStart(4)}  resets ${t(v.resetsAt, now)}`];
-  if (v.short) lines.push(`${' '.repeat(label.length)}(!) runs out ${t(v.eta, now)}`);
+  if (v.resetsAt <= now) return [`<code>${esc(k.padEnd(3))}</code> reset ${esc(when(v.resetsAt, now))}, awaiting data`];
+  const lines = [`<code>${esc(k.padEnd(3))}${bar(v.used)} ${`${Math.round(v.used)}%`.padStart(4)}</code>  resets ${esc(t(v.resetsAt, now))}`];
+  if (v.short) lines.push(`<b>(!) runs out ${esc(t(v.eta, now))}</b>`);
   return lines;
 }
 
 function quotaLines(q, now, t) {
-  if (!q) return ['  no quota data yet'];
+  if (!q) return ['<i>no quota data yet</i>'];
   const lines = Object.entries(q.windows).flatMap(([k, v]) => windowLines(k, v, now, t));
   // Freshness only when it matters: an old snapshot says how old.
-  if (now - q.at > STALE_MS) lines.push(`     data ${ago(now - q.at)} old`);
+  if (now - q.at > STALE_MS) lines.push(`<i>data ${ago(now - q.at)} old</i>`);
   return lines;
 }
 
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 
 /**
- * Render this machine's report and the alerts that currently hold. One block per host,
- * each headed by the account it actually runs as (full email and organization): a seat
- * (bridge.fleet.seats) is a Claude seat, so its note and checks sit in the Claude block;
- * Codex runs on its own account. Alert keys name the condition, never an account.
+ * Render this machine's report (Telegram HTML) and the alerts that currently hold (plain
+ * text). One block per host, each headed by the account it actually runs as (full email,
+ * organization in italics): a seat (bridge.fleet.seats) is a Claude seat, so its note and
+ * checks sit in the Claude block; Codex runs on its own account. Alert keys name the
+ * condition, never an account.
  * @returns {{text: string, alerts: {key: string, text: string, until: number|null}[]}}
  */
 export function renderCard({ machine, registry, account, codexAccount, claude, codex, sessions = [], now }) {
   const alerts = [];
   const t = timeFormatter(registry?.timeFormat);
   const seat = seatFor(registry, machine);
-  const claudeLines = [`Claude  ${who(account?.email, account?.org)}`, ...quotaLines(claude, now, t)];
-  if (seat?.note) claudeLines.push(`  ${seat.note}`);
-  const flag = (key, text) => { claudeLines.push(`  (!) ${text}`); alerts.push({ key, text: `${machine} Claude: ${text}`, until: null }); };
+  const head = (host, email, detail) => [`<b>${host}</b> · ${esc(email ?? 'not logged in')}`, ...(detail ? [`<i>${esc(detail)}</i>`] : [])];
+  const claudeLines = [...head('Claude', account?.email, account?.org), ...quotaLines(claude, now, t)];
+  if (seat?.note) claudeLines.push(`<i>${esc(seat.note)}</i>`);
+  const flag = (key, text) => { claudeLines.push(`<b>(!) ${esc(text)}</b>`); alerts.push({ key, text: `${machine} Claude: ${text}`, until: null }); };
   const expected = seat && who(seat.email, seat.org ?? seat.orgUuid);
   if (registry?.seats?.length && !seat) flag('unregistered', `${machine} is not in bridge.fleet.seats`);
   else if (seat && !account) flag('seat:none', `no subscription login, expected ${expected}`);
   else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `wrong account, expected ${expected}`);
   else if (seat && !orgOk(account, seat)) flag('seat:org', `wrong team, expected ${expected}`);
-  const codexHead = codexAccount ? who(codexAccount.email, codexAccount.plan) : 'account unknown';
-  const lines = [machine, '', ...claudeLines, '', `Codex   ${codexHead}`, ...quotaLines(codex, now, t), ''];
+  const codexLines = codexAccount ? head('Codex', codexAccount.email, codexAccount.plan) : ['<b>Codex</b> · <i>account unknown</i>'];
+  const lines = [`<b>${esc(machine)}</b>`, '', ...claudeLines, '', ...codexLines, ...quotaLines(codex, now, t), ''];
   for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
     if (!q || now - q.at > STALE_MS) continue;
     for (const [k, v] of Object.entries(q.windows)) {
@@ -201,9 +206,9 @@ export function renderCard({ machine, registry, account, codexAccount, claude, c
   }
   // What is running here: busy sessions by name; idle ones are not news.
   const busy = sessions.filter((x) => x.status !== 'Idle' && x.status !== 'Ended');
-  lines.push(busy.length ? 'Running' : 'Running: nothing');
+  lines.push(busy.length ? '<b>Running</b>' : '<b>Running</b> · <i>nothing</i>');
   // Unknown = connected but not yet observed (e.g. just after a bridge restart): shown as `?`.
-  for (const x of busy) lines.push(`  ${x.title}${x.status === 'Working' ? '' : x.status === 'Unknown' ? ' · ?' : ` · ${x.status}`}`);
+  for (const x of busy) lines.push(`• ${esc(x.title)}${x.status === 'Working' ? '' : x.status === 'Unknown' ? ' · ?' : ` · ${esc(x.status)}`}`);
   return { text: lines.join('\n'), alerts };
 }
 
@@ -264,7 +269,7 @@ export class FleetCard {
       const round = Math.floor((now - reportSlot(registry, this.machine)) / this.cycleMs);
       if (round !== this.state.round) {
         const previous = this.state.messageId;
-        this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, pre: true }))[0]?.message_id ?? null;
+        this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, html: true }))[0]?.message_id ?? null;
         this.state.round = round;
         if (previous) await this.telegram.deleteMessage(this.chatId, previous).catch(() => {});
       }
