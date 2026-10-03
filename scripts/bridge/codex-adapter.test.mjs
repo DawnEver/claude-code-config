@@ -87,6 +87,22 @@ test('account quota: read on refresh, replaced by pushes for the codex bucket on
   assert.equal(srv.calls.filter((c) => c.method === 'account/rateLimits/read').length, 1, 'not re-read within 5 minutes');
 });
 
+test('status follows Codex\'s own thread status, not the adapter\'s turn bookkeeping', async () => {
+  const { a, srv } = await started({ threads: { t1: { id: 't1', cwd: '/w', ephemeral: false, gitInfo: { branch: 'main' }, turns: [], status: { type: 'idle' } } } });
+  const statuses = [];
+  a.on('status', (e) => statuses.push(e.id));
+  srv.push('turn/started', { threadId: 't1', turn: { id: 'T' } });   // a turn whose end is never seen
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'idle' } });
+  assert.equal(a.statusSnapshot('t1').state, 'idle', 'native idle wins over a stale turn record');
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnApproval'] } });
+  assert.equal(a.statusSnapshot('t1').state, 'waiting-approval');
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: [] } });
+  assert.equal(a.statusSnapshot('t1').state, 'running');
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'systemError' } });
+  assert.equal(a.statusSnapshot('t1').state, 'unknown');
+  assert.ok(statuses.length >= 4);
+});
+
 test('ephemeral threads are skipped; unloaded threads go down on refresh', async () => {
   const { a, srv, ups } = await started({ loaded: ['t1', 'e1'], threads: { e1: { id: 'e1', ephemeral: true } } });
   assert.deepEqual(ups.map((u) => u.id), ['t1']);

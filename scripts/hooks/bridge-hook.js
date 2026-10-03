@@ -53,7 +53,8 @@ export function mirrorFor(payload, env = process.env) {
     const text = String(payload.prompt ?? '');
     // A channel prompt (from Telegram) is sent too: the daemon's echo suppression drops it.
     if (!text.trim()) return null;
-    return { ...base, kind: 'prompt', text };
+    // The transcript lets the bridge see a turn the user interrupted (no Stop hook fires).
+    return { ...base, kind: 'prompt', text, ...(payload.transcript_path ? { transcriptPath: String(payload.transcript_path) } : {}) };
   }
   if (payload?.hook_event_name === 'Stop') {
     let text = typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : '';

@@ -140,7 +140,7 @@ export class CodexAdapter extends EventEmitter {
     this.clientName = clientName;
     this.rpc = null;
     this.connection = 0;
-    this.threads = new Map();     // threadId -> { cwd, branch, activeTurnId, agentMessages }
+    this.threads = new Map();     // threadId -> { cwd, branch, status, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
     this.quota = null;            // { limits: RateLimitSnapshot, at, resetCredits } for the fleet report (fleet.mjs)
     this.account = null;          // { email, plan } of the ChatGPT login, for the same report
@@ -236,6 +236,9 @@ export class CodexAdapter extends EventEmitter {
     const info = {
       cwd: th.cwd ?? r.cwd,
       branch: th.gitInfo?.branch ?? null,
+      // Codex's own thread status (idle | active{activeFlags} | systemError): the one source
+      // for what the thread is doing. activeTurnId only addresses steer/interrupt.
+      status: th.status ?? null,
       activeTurnId: running?.id ?? null,
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
     };
@@ -266,6 +269,9 @@ export class CodexAdapter extends EventEmitter {
       case 'account/rateLimits/updated':
         // A push may carry only the windows that changed: keep the others.
         if (isCodexBucket(p.rateLimits)) this.quota = { limits: { ...this.quota?.limits, ...dropNulls(p.rateLimits) }, at: this.now(), resetCredits: this.quota?.resetCredits ?? null };
+        break;
+      case 'thread/status/changed':
+        if (th) { th.status = p.status ?? null; this.emit('status', { id: p.threadId }); }
         break;
       case 'turn/started':
         if (th) {
@@ -392,14 +398,19 @@ export class CodexAdapter extends EventEmitter {
     return th.activeTurnId ? `turn in progress (${th.activeTurnId})` : 'idle';
   }
 
-  /** Structured projection of native connection, turn and unresolved approval records. */
+  /**
+   * The thread's state as Codex itself reports it (thread status, kept current by
+   * thread/status/changed). Before Codex has reported one, fall back to the turn and
+   * approval records this adapter observed.
+   */
   statusSnapshot(threadId) {
     const th = this.threads.get(threadId);
-    let state = 'disconnected';
-    if (this.rpc && th) {
-      const waiting = [...this.approvals.values()].some((approval) => approval.threadId === threadId);
-      state = waiting ? 'waiting-approval' : th.activeTurnId ? 'running' : 'idle';
-    }
-    return { state };
+    if (!this.rpc || !th) return { state: 'disconnected' };
+    const st = th.status;
+    if (st?.type === 'active') return { state: (st.activeFlags ?? []).includes('waitingOnApproval') ? 'waiting-approval' : 'running' };
+    if (st?.type === 'idle') return { state: 'idle' };
+    if (st?.type) return { state: 'unknown' };
+    const waiting = [...this.approvals.values()].some((approval) => approval.threadId === threadId);
+    return { state: waiting ? 'waiting-approval' : th.activeTurnId ? 'running' : 'idle' };
   }
 }

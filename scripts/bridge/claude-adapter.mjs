@@ -14,12 +14,31 @@
 // when it beats the channel's registration. CLAUDE_PID is not usable: a nested `claude`
 // inherits its parent's.
 
+import fs from 'fs';
 import net from 'net';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 
 const AUTH_TIMEOUT_MS = 5000;
+const TAIL_BYTES = 16384;
+// A turn with no transcript write for this long is not shown as running: long tool runs
+// write nothing meanwhile, so it reads unknown rather than idle.
+const QUIET_MS = 30 * 60000;
+
+/**
+ * A turn the hooks last saw start, judged from the transcript's tail: the user interrupted
+ * it (Claude writes `[Request interrupted by user...]` and fires no Stop hook) -> idle; no
+ * write for QUIET_MS -> unknown; else running.
+ */
+export function transcriptState(tail, mtimeMs, now) {
+  const last = String(tail).split('\n').map((l) => l.trim()).filter(Boolean).reverse()
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } }).find(Boolean);
+  const content = last?.message?.content;
+  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => b?.text ?? '').join(' ') : '';
+  if (last?.type === 'user' && /\[Request interrupted by user/.test(text)) return 'idle';
+  return now - mtimeMs > QUIET_MS ? 'unknown' : 'running';
+}
 const HOLD_MS = 30000;
 
 /** A prompt that arrived through a channel, as UserPromptSubmit reports it -> its text. */
@@ -94,7 +113,8 @@ export class ClaudeAdapter extends EventEmitter {
           if (!this.#tokenOk(p.token)) throw unauthorized();
           if (p.kind !== 'prompt' && p.kind !== 'final') throw Object.assign(new Error('bad kind'), { code: -32602 });
           const routed = this.#mirror({ sessionIds: (Array.isArray(p.sessionIds) ? p.sessionIds : []).map(String),
-            claudePid: Number(p.claudePid) || null, retry: p.retry === true, kind: p.kind, ...(p.status === 'failed' ? { status: 'failed' } : {}), text: String(p.text ?? '') });
+            claudePid: Number(p.claudePid) || null, retry: p.retry === true, kind: p.kind, ...(p.status === 'failed' ? { status: 'failed' } : {}), text: String(p.text ?? ''),
+            ...(typeof p.transcriptPath === 'string' ? { transcriptPath: p.transcriptPath } : {}) });
           return { ok: true, routed };
         }
         if (method === 'codex_attachment') {
@@ -174,6 +194,7 @@ export class ClaudeAdapter extends EventEmitter {
     // one), are the harness talking to itself.
     const s = this.sessions.get(id);
     s.activity = m.kind === 'prompt' ? 'running' : 'idle';
+    if (m.transcriptPath) s.transcript = m.transcriptPath;
     this.#emitStatus(id);
     if (m.kind === 'prompt') {
       s.humanTurn = !isEnvelope(m.text);
@@ -214,7 +235,16 @@ export class ClaudeAdapter extends EventEmitter {
     const s = this.sessions.get(id);
     // Hooks and the channel only observe turn edges, so this is never more than
     // running / idle / unknown; a channel approval cannot prove how it was resolved locally.
-    return { state: !s ? 'disconnected' : s.activity ?? 'unknown' };
+    if (!s) return { state: 'disconnected' };
+    if (s.activity !== 'running' || !s.transcript) return { state: s.activity ?? 'unknown' };
+    // An interrupted turn fires no Stop hook: ask the transcript before calling it running.
+    try {
+      const { size, mtimeMs } = fs.statSync(s.transcript);
+      const fd = fs.openSync(s.transcript, 'r');
+      const buf = Buffer.alloc(Math.min(size, TAIL_BYTES));
+      try { fs.readSync(fd, buf, 0, buf.length, size - buf.length); } finally { fs.closeSync(fd); }
+      return { state: transcriptState(buf.toString('utf8'), mtimeMs, this.now()) };
+    } catch { return { state: 'running' }; }
   }
 
   #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }

@@ -457,13 +457,20 @@ button or `/status` rereads the adapter snapshot without starting a model turn.
 Pinning failures do not block the card or conversation. Raw tool/search/edit progress
 is suppressed for both current adapters; final answers and approvals remain visible.
 
-- Codex: running/idle/waiting-approval derives from native turn and pending-request
-  state. Submitting approval does not imply native resolution. `/interrupt` remains
-  the explicit native interrupt command; no unbound stale Stop button is added.
+- Codex: Codex's own thread status is the one source — `idle`, `active` (Working),
+  `active` + `waitingOnApproval` (Needs approval), `systemError` (Unknown) — read at resume
+  and kept current by `thread/status/changed`; the adapter's own turn/approval records are
+  only a fallback before Codex reports one, so a missed turn end can no longer pin a thread
+  at Working. A thread stays loaded after its TUI exits; Codex reports it `idle`. Submitting
+  approval does not imply native resolution. `/interrupt` remains the explicit native
+  interrupt command; no unbound stale Stop button is added.
 - Claude: only Working / Idle / Unknown. Connected starts Unknown; hook prompt/final and
-  channel injection give observed Working/Idle. A pending channel approval stays Working
-  (it is mid-turn, and its native local resolution is not observable). Reply tool is not
-  completion.
+  channel injection give observed Working/Idle. An interrupted turn fires no Stop hook, so a
+  Working session is checked against its transcript (path from UserPromptSubmit): a last
+  `[Request interrupted by user…]` entry reads Idle, no write for 30 minutes reads Unknown.
+  A closed Claude session ends its channel process, which the bridge sees at once. A pending
+  channel approval stays Working (it is mid-turn, and its native local resolution is not
+  observable). Reply tool is not completion.
 - Codex shows Working / Idle / Needs approval. Ended (either host) is transport-observed. A card is an observation, not a daemon heartbeat;
   its check time makes stale information visible if the bridge itself stops.
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'net';
-import { ClaudeAdapter, unwrapChannel, isEnvelope } from './claude-adapter.mjs';
+import { ClaudeAdapter, transcriptState, unwrapChannel, isEnvelope } from './claude-adapter.mjs';
 
 test('claude status is only working, idle or unknown while connected', async () => {
   const r = await rig();
@@ -219,4 +219,16 @@ test('inject and status report a disconnected channel; there is no interrupt', a
   await assert.rejects(a.inject('nope', 'x'), /channel disconnected/);
   assert.equal(a.status('nope'), 'channel disconnected');
   assert.equal(a.interrupt, undefined);
+});
+
+test('transcriptState: an interrupted turn is idle, a long-quiet one unknown, else running', () => {
+  const line = (o) => JSON.stringify(o);
+  const now = 10 * 3600000;
+  const interrupted = [line({ type: 'assistant', message: { content: [{ type: 'text', text: 'working' }] } }),
+    line({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } })].join('\n');
+  assert.equal(transcriptState(interrupted, now, now), 'idle');
+  assert.equal(transcriptState(`partial":"x"}\n${line({ type: 'user', message: { content: '[Request interrupted by user for tool use]' } })}\n`, now, now), 'idle');
+  const working = line({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash' }] } });
+  assert.equal(transcriptState(working, now - 60000, now), 'running');
+  assert.equal(transcriptState(working, now - 31 * 60000, now), 'unknown');
 });
