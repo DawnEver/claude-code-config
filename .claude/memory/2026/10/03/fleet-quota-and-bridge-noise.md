@@ -62,3 +62,12 @@ session start (ensure.mjs replaces a daemon whose source fingerprint changed).
 - `fleet.json` folded into `bridge.fleet.{order, seats}` in claude_env_settings.json — the
   synced, never-in-git config already holding the fleet chat; re-read every tick.
 - Two sharp-review rounds (33 findings) resolved; see sharp-review.md.
+
+# Report shape (final, user-directed)
+
+- One block per host, headed by the FULL account it actually runs as (Claude: oauth email
+  + organizationName; Codex: app-server `account/read` email + plan). A seat is a Claude
+  seat only: its note ("reset available by 22/Oct") and wrong-seat checks live in the
+  Claude block; Codex accounts are not registered. Seats have no `name` field.
+- `bridge.fleet.timeFormat`: date (default, `HH:MM` today else `07/Oct 23:00`),
+  countdown (`4d 7h`/`3h 15m`/`12m`), or both.
