@@ -15,7 +15,7 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs  (one per machine, o
 ## One model for both hosts
 
 Each host adapter turns its host's protocol into the same events — `up {id, cwd, branch?,
-preexisting, backlog[]}`, `prompt {id, text, turnId?}`, `progress {id, text}`,
+backlog[]}`, `prompt {id, text, turnId?}`, `progress {id, text}`,
 `final {id, text, turnId?, status?}`, `approval {id, ref, summary, answerable}`, `down {id}`
 — and offers the same interface: `inject`, `status`, `answerApproval`, and `interrupt` where
 the host has one (Codex only). `daemon.mjs` has no host-specific branch; everything below
@@ -64,19 +64,20 @@ and is never mirrored:
 
 | From | Event | To | Telegram |
 | --- | --- | --- | --- |
-| — | `up` (new session) | open | create Topic, `session up: <title> (<project>)`, unpin |
-| — | `up` (leftover, see below) | none | nothing |
-| — | `up` (cached Topic) | open / closed as cached | nothing (a closed one reopens on activity) |
-| none | activity | open | create Topic |
+| — | `up` (new session) | none | nothing |
+| — | `up` (cached Topic) | open / closed as cached | status card edited in place (a closed Topic reopens on activity) |
+| none | activity | open | create Topic; the status card is its first message (Telegram pins it) |
 | open | no activity for `idleCloseMinutes` | closed | close Topic, record `closedAt` (no message) |
 | closed | activity | open | reopen the **same** Topic, clear `closedAt` |
-| open | `down` | ended | `session ended: <title>`, close Topic, record `closedAt` |
+| open | `down` | ended | status card edited to `Ended`, close Topic, record `closedAt` (no message) |
 | closed / none | `down` | ended | nothing |
 
-- **Activity** = any prompt, progress, final, approval, or Telegram inject.
-- **Leftovers**: the Codex daemon keeps threads loaded after their TUI exits, so a bridge
-  (re)start sees threads that are long idle. Sessions already loaded at the first sync stay
-  registered without a Topic until they show activity.
+- **Events are messages, state is edits**: `up` and `down` post nothing; a session that
+  never does anything costs no Telegram call at all. Lifecycle state is shown only by
+  editing the status card.
+- **Activity** = any prompt, progress, final, approval, attachment, or Telegram inject.
+  The Topic is created lazily on the first one, so idle leftovers (the Codex daemon keeps
+  threads loaded after their TUI exits) never get a Topic.
 - **Deletion**: at startup and hourly, a Topic closed more than `deleteClosedAfterHours`
   ago is deleted (`deleteForumTopic`) and dropped from the cache, **unless a registered
   session holds it** — an idle-closed session may come back. So an idle-closed Codex
@@ -87,7 +88,7 @@ and is never mirrored:
 ### Ordering and echoes
 
 - Every Telegram write of a session runs on one queue, so a final never overtakes its
-  prompt and the close never overtakes `session ended`.
+  prompt and the close never overtakes the last post.
 - While a session is brought up (Topic opening, backlog replay), its live events are held,
   then released after the backlog minus the turns the backlog already carried (keyed by
   turn id: a turn that completes during bring-up is reported both ways).
@@ -161,7 +162,7 @@ Requires Anthropic auth; third-party providers (`ccds`) lack channels.
 2. **Bot**: `@BotFather` -> `/newbot` -> copy the token; name it after the machine.
    `/setprivacy` -> **Disable**, so the bot sees plain messages in groups.
 3. **Groups**: per project, create a group, enable **Topics**, add every machine's bot, and
-   make each bot an **admin with "Manage Topics"** (create/close/reopen/unpin) and
+   make each bot an **admin with "Manage Topics"** (create/close/reopen/pin) and
    **"Delete messages"** (delete old closed Topics; without it the sweep logs the error once
    and retries every hour).
 4. **Chat ids**: send a message in the group, then open
@@ -387,7 +388,8 @@ No directory scanning or automatic artifact publication is performed.
 
 ## Session status
 
-Each mirrored live session has one editable, silently pinned status card. It shows one state
+Each mirrored live session has one editable, pinned status card: it is the Topic's first
+message, which Telegram pins itself; only a card re-sent later is pinned explicitly. It shows one state
 line and the check time, e.g. `Working · since 14:02` / `Checked 14:05`; the Topic title
 already names the session, and the evidence source is not shown. Native transitions update it; the refresh
 button or `/status` rereads the adapter snapshot without starting a model turn.
@@ -401,7 +403,7 @@ is suppressed for both current adapters; final answers and approvals remain visi
   channel injection give observed Working/Idle. A pending channel approval stays Working
   (it is mid-turn, and its native local resolution is not observable). Reply tool is not
   completion.
-- Codex shows Working / Idle / Needs approval. Offline (either host) is transport-observed. A card is an observation, not a daemon heartbeat;
+- Codex shows Working / Idle / Needs approval. Ended (either host) is transport-observed. A card is an observation, not a daemon heartbeat;
   its check time makes stale information visible if the bridge itself stops.
 
 Card message IDs are derived transport pointers in topics.json, never another agent

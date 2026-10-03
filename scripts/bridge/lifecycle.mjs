@@ -2,12 +2,13 @@
 // "Session lifecycle"). Pure: each transition mutates the session record and returns the
 // Telegram actions the daemon must run, in order, on that session's write queue.
 //
-//   none   registered, no Topic (a leftover that was loaded before the bridge started)
+//   none   registered, no Topic yet: a Topic is created lazily, on the first real activity
 //   open   Topic open
 //   closed Topic closed (idle), session still registered; closedAt recorded
 //   ended  session gone; its Topic is closed and ages towards deletion
 //
-// Actions: 'create' (new Topic + `session up`), 'reopen', 'close', 'notice-ended'.
+// Actions: 'create' (new Topic, status card as its first message), 'reopen', 'close'.
+// Events are messages, state is edits: up/down post nothing; the status card shows them.
 
 /** @param {{key: string, cached: {topicId, closedAt?}|null, now: number}} */
 export function newSession({ key, cached, now }) {
@@ -21,12 +22,7 @@ export function newSession({ key, cached, now }) {
   };
 }
 
-/** A session appeared. A leftover stays as it is until it shows activity. */
-export function onUp(s, { preexisting, now }) {
-  return preexisting ? [] : onActivity(s, now);
-}
-
-/** Any prompt, progress, final, approval or Telegram inject. */
+/** Any prompt, progress, final, approval, attachment or Telegram inject. */
 export function onActivity(s, now) {
   if (s.state === 'ended') return [];
   s.lastActivity = now;
@@ -46,24 +42,15 @@ export function onIdleTick(s, now, minutes) {
   return ['close'];
 }
 
-/** The session ended. Only an open Topic gets a notice; a closed one keeps its closedAt. */
+/** The session ended, or turned out not to be a main session: close an open Topic quietly. */
 export function onDown(s, now) {
-  const was = s.state;
-  s.state = 'ended';
-  if (was !== 'open') return [];
-  if (!s.topicId) return ['notice-ended'];
-  s.closedAt = now;
-  return ['notice-ended', 'close'];
-}
-
-/** The session turned out not to be a main session: close its Topic, no notice. */
-export function onDismiss(s, now) {
   const was = s.state;
   s.state = 'ended';
   if (was !== 'open' || !s.topicId) return [];
   s.closedAt = now;
   return ['close'];
 }
+
 
 /** Telegram says the Topic no longer exists. */
 export function onTopicGone(s) {

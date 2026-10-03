@@ -67,7 +67,7 @@ test('start() returns false when the daemon probe fails, without connecting', as
 test('handshake then subscribe every loaded thread via thread/resume', async () => {
   const { srv, ups } = await started();
   assert.deepEqual(srv.calls.map((c) => c.method), ['initialize', 'initialized', 'thread/loaded/list', 'thread/resume']);
-  assert.deepEqual(ups, [{ id: 't1', cwd: '/w', branch: 'feat/x', preexisting: true, backlog: [] }]);
+  assert.deepEqual(ups, [{ id: 't1', cwd: '/w', branch: 'feat/x', backlog: [] }]);
 });
 
 test('ephemeral threads are skipped; unloaded threads go down on refresh', async () => {

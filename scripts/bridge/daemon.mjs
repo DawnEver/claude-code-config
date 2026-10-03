@@ -4,7 +4,7 @@
 // Owns the machine's single bot token and the only getUpdates loop, and multiplexes every
 // live session on the machine. Host specifics live in adapters (codex-adapter.mjs,
 // claude-adapter.mjs), which all emit the same events:
-//   up {id, cwd, branch?, preexisting, backlog[]}, prompt {id, text, turnId?},
+//   up {id, cwd, branch?, backlog[]}, prompt {id, text, turnId?},
 //   progress {id, text}, final {id, text, turnId?, status?},
 //   approval {id, ref, summary, answerable}, approval-resolved {ref}, down {id}
 // and offer the same interface: inject(id, text, user), status(id),
@@ -25,7 +25,7 @@ import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
-import { newSession, onUp, onActivity, onIdleTick, onDown, onDismiss, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
+import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
 const PROGRESS_MIN_INTERVAL_MS = 3000;
@@ -36,7 +36,7 @@ const TOPIC_CLOSED = /TOPIC_CLOSED/i;
 const TOPIC_UNCHANGED = /TOPIC_NOT_MODIFIED/i;
 
 export const sessionKey = (agent, id) => `${agent}:${id}`;
-const STATUS_LABELS = { running: 'Working', idle: 'Idle', 'waiting-approval': 'Needs approval', unknown: 'Unknown', disconnected: 'Offline' };
+const STATUS_LABELS = { running: 'Working', idle: 'Idle', 'waiting-approval': 'Needs approval', unknown: 'Unknown', disconnected: 'Ended' };
 const clock = t => new Date(t).toTimeString().slice(0, 5);
 
 export function topicTitle(machine, project, branch, agent, suffix = '') {
@@ -119,7 +119,7 @@ export class Bridge {
    * minus the turns the backlog already carried (a turn that completes during bring-up is
    * reported both ways).
    */
-  async sessionUp(agent, { id, cwd, branch, preexisting = false, backlog = [] }) {
+  async sessionUp(agent, { id, cwd, branch, backlog = [] }) {
     const key = sessionKey(agent, id);
     if (this.sessions.has(key) || this.held.has(key)) return this.sessions.get(key);
     this.held.set(key, []);
@@ -147,9 +147,9 @@ export class Bridge {
         });
         if (this.sessions.get(key) !== s) return;
       }
-      this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} preexisting=${preexisting} topic=${s.topicId ?? '-'}`);
+      this.log(`up ${key} project=${ctx.project} branch=${ctx.branch} topic=${s.topicId ?? '-'}`);
+      // No Topic on up: it is created lazily by the first real activity.
       if (chatId === null) this.log(`no chat for project ${ctx.project}; ${key} not mirrored`);
-      else await this.#apply(s, onUp(s, { preexisting, now: this.now() }));
       await this.updateStatus(key).catch(e => this.#warnOnce('status-card', e.message));
       for (const b of backlog) await this.#event(key, b.kind, b);
     } finally {
@@ -165,7 +165,7 @@ export class Bridge {
     const s = this.sessions.get(key);
     if (!s) return;
     this.sessions.delete(key);
-    this.#serial(s, () => this.#statusNow(s, true)).catch(err => this.#warnOnce('status-card', err.message));
+    this.#serial(s, () => this.#statusNow(s, { offline: true })).catch(err => this.#warnOnce('status-card', err.message));
     for (const [id, a] of this.approvals) if (a.key === key) this.approvals.delete(id);
     this.log(`down ${key}`);
     if (s.chatId !== null) this.#apply(s, onDown(s, this.now())).catch(() => {});
@@ -183,7 +183,7 @@ export class Bridge {
     for (const [k, cached] of Object.entries(this.topics.entries)) {
       if (!k.endsWith(`|${key}`)) continue;
       const s = { ...newSession({ key, cached, now: this.now() }), chatId: TopicCache.chatIdOf(k), title: cached.title ?? key, chain: Promise.resolve() };
-      this.#apply(s, onDismiss(s, this.now())).catch(() => {});
+      this.#apply(s, onDown(s, this.now())).catch(() => {});
     }
   }
 
@@ -252,10 +252,10 @@ export class Bridge {
 
   updateStatus(key, force = false) {
     const s = this.sessions.get(key);
-    return s ? this.#serial(s, () => this.#statusNow(s, false, force)) : Promise.resolve();
+    return s ? this.#serial(s, () => this.#statusNow(s, { force })) : Promise.resolve();
   }
 
-  async #statusNow(s, offline = false, force = false) {
+  async #statusNow(s, { offline = false, force = false, first = false } = {}) {
     const host = this.hosts.get(s.agent);
     if (!s.topicId || s.chatId == null || !host?.statusSnapshot ||
         (offline ? this.sessions.has(s.key) : this.sessions.get(s.key) !== s)) return;
@@ -284,7 +284,8 @@ export class Bridge {
       s.statusMessageId = message?.message_id;
       if (s.statusMessageId) {
         this.#save(s);
-        await this.telegram.pinChatMessage?.(s.chatId, s.statusMessageId).catch(e => this.#warnOnce('pin-status', e.message));
+        // A Topic's first message is pinned by Telegram itself; only a re-sent card needs it.
+        if (!first) await this.telegram.pinChatMessage?.(s.chatId, s.statusMessageId).catch(e => this.#warnOnce('pin-status', e.message));
       }
     }
     s.statusText = content;
@@ -319,12 +320,10 @@ export class Bridge {
         if (e.code >= 400 && e.code < 500) s.state = 'none'; // confirmed rejection: later activity may retry
         this.log(`createForumTopic ${s.title}: ${e.message} (not delivered; check Telegram before restarting)`);
       } finally { s.creating = false; }
-      await this.#postNow(s, `session up: ${s.title}${s.project ? ` (${s.project})` : ''}`, {}, false);
-      // Telegram auto-pins a Topic's first message; that pin is noise here.
-      if (s.topicId) await this.telegram.unpinAllForumTopicMessages(s.chatId, s.topicId).catch((e) => this.#warnOnce('unpinAllForumTopicMessages', e.message));
+      // The status card is the Topic's first message, so Telegram pins it.
+      await this.#statusNow(s, { first: true }).catch((e) => this.#warnOnce('status-card', e.message));
       return;
     }
-    if (action === 'notice-ended') return this.#postNow(s, `session ended: ${s.title}`);
     if (!s.topicId) return;
     const call = action === 'reopen' ? 'reopenForumTopic' : 'closeForumTopic';
     try {

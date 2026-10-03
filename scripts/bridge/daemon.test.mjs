@@ -14,9 +14,10 @@ test('one status card follows native state and authenticates refresh', async () 
   const r = make();
   let state = 'idle';
   r.hosts.codex.statusSnapshot = () => ({ state });
-  await up(r, 'codex', 'card');
+  await live(r, 'codex', 'card');
   const card = r.telegram.sent.find(m => isCard(m));
   assert.ok(card);
+  assert.deepEqual(r.telegram.pinned, [], 'Telegram pins a Topic\'s first message itself');
   assert.match(card.text, /^Idle · since \d\d:\d\d\nChecked \d\d:\d\d$/);
   state = 'running';
   r.hosts.codex.emit('status', { id: 'card' });
@@ -34,7 +35,7 @@ test('one status card follows native state and authenticates refresh', async () 
   assert.match(r.telegram.edits.at(-1).text, /^Idle · since /);
   r.bridge.sessionDown('codex:card');
   await settle();
-  assert.match(r.telegram.edits.at(-1).text, /^Offline · since /);
+  assert.match(r.telegram.edits.at(-1).text, /^Ended · since /);
   assert.deepEqual(r.telegram.edits.at(-1).replyMarkup.inline_keyboard, []);
   await r.bridge.handleUpdate({ callback_query: query });
   assert.equal(r.telegram.answers.at(-1), 'control inactive');
@@ -48,7 +49,7 @@ test('status card reuses cached message on restart and status failure does not l
       title: 'proj | main | host-a | codex', statusMessageId: 55 } }));
     const r = make({ topicCacheFile: file });
     r.hosts.codex.statusSnapshot = () => ({ state: 'idle' });
-    await up(r, 'codex', 'card', { preexisting: true });
+    await up(r, 'codex', 'card');
     assert.equal(r.telegram.edits.at(-1).id, 55);
     assert.equal(r.telegram.sent.length, 0);
     const other = make();
@@ -67,11 +68,11 @@ test('reconnect drains the old offline-card write before showing live status', a
   const r = make();
   let state = 'idle';
   r.hosts.codex.statusSnapshot = () => ({ state });
-  await up(r, 'codex', 'card');
+  await live(r, 'codex', 'card');
   let release;
   const edit = r.telegram.editMessageText;
   r.telegram.editMessageText = async (chat, id, text, options) => {
-    if (text.startsWith('Offline')) await new Promise(resolve => { release = resolve; });
+    if (text.startsWith('Ended')) await new Promise(resolve => { release = resolve; });
     return edit(chat, id, text, options);
   };
   r.bridge.sessionDown('codex:card');
@@ -101,7 +102,7 @@ test('cached active Topics are renamed without replacing their Topic identity', 
     const file = path.join(dir, 'topics.json');
     fs.writeFileSync(file, JSON.stringify({ '-100|codex:s': { topicId: 77, title: 'host-a/codex/main #4' } }));
     const r = make({ topicCacheFile: file });
-    await up(r, 'codex', 's', { preexisting: true });
+    await up(r, 'codex', 's');
     assert.deepEqual(r.telegram.renamed, [[-100, 77, 'proj | main | host-a | codex']]);
     assert.equal(r.bridge.sessions.get('codex:s').topicId, 77);
     assert.equal(r.telegram.topics.length, 0);
@@ -129,7 +130,7 @@ test('attachments are session scoped and reject files outside the workspace', as
 });
 
 function fakeTelegram() {
-  const t = { sent: [], edits: [], topics: [], renamed: [], answers: [], closed: [], reopened: [], deleted: [], unpinned: [] };
+  const t = { sent: [], edits: [], topics: [], renamed: [], answers: [], closed: [], reopened: [], deleted: [], pinned: [] };
   let nextTopic = 100, nextMsg = 1;
   Object.assign(t, {
     createForumTopic: async (chatId, name) => { t.topics.push([chatId, name]); return { message_thread_id: nextTopic++ }; },
@@ -140,7 +141,7 @@ function fakeTelegram() {
     closeForumTopic: async (c, id) => { t.closed.push([c, id]); return true; },
     reopenForumTopic: async (c, id) => { t.reopened.push([c, id]); return true; },
     deleteForumTopic: async (c, id) => { t.deleted.push([c, id]); return true; },
-    unpinAllForumTopicMessages: async (c, id) => { t.unpinned.push([c, id]); return true; },
+    pinChatMessage: async (c, id) => { t.pinned.push([c, id]); return true; },
   });
   return t;
 }
@@ -180,6 +181,8 @@ const until = async (fn, ms = 2000) => {
 const settle = () => new Promise((r) => setTimeout(r, 20));
 const msg = (from, text, thread = 100, chat = -100) => ({ message: { chat: { id: chat }, from: { id: from, username: 'u' }, text, is_topic_message: true, message_thread_id: thread } });
 const up = (r, agent, id, extra = {}) => r.bridge.sessionUp(agent, { id, cwd: '/proj', ...extra });
+// A Topic is created lazily: bring the session up, then type one prompt (its first post).
+const live = async (r, agent, id, extra = {}) => { await up(r, agent, id, extra); await r.bridge.prompt(`${agent}:${id}`, 'go'); };
 const texts = (t) => t.sent.map((s) => s.text);
 const approvalCallback = (post, from = ALICE, accept = true) => ({ callback_query: {
   id: 'q', from: { id: from }, data: post.replyMarkup.inline_keyboard[0][accept ? 0 : 1].callback_data,
@@ -267,8 +270,9 @@ test('definite Topic creation rejection retries on later activity, uncertain cre
     };
     await up(r, 'codex', 'x');
     await r.bridge.final('codex:x', 'answer');
+    await r.bridge.final('codex:x', 'again');
     assert.equal(calls, uncertain ? 1 : 2);
-    assert.equal(r.telegram.sent.length, uncertain ? 0 : 2);
+    assert.equal(r.telegram.sent.length, uncertain ? 0 : 1);
   }
 });
 
@@ -280,9 +284,9 @@ test('native resolution withdraws approvals held during Topic creation', async (
     r.hosts.codex.emit('approval-resolved', { ref: 'race' });
     return create(...args);
   };
-  await up(r, 'codex', 'x');
+  await up(r, 'codex', 'x', { backlog: [{ kind: 'prompt', text: 'hi' }] });   // creation during bring-up
   assert.equal(r.bridge.approvals.size, 0);
-  assert.equal(r.telegram.sent.length, 1, 'resolved held request never gets buttons');
+  assert.deepEqual(texts(r.telegram), ['> hi'], 'resolved held request never gets buttons');
 });
 
 test('same native refs in two sessions withdraw independently and repeated clicks submit once', async () => {
@@ -308,12 +312,13 @@ test('same native refs in two sessions withdraw independently and repeated click
 
 test('topics: <machine>/<agent>/<branch> in the project group, fallback otherwise, numbered per group', async () => {
   const r = make();
-  await up(r, 'codex', 't1', { branch: 'feat/x' });
+  await live(r, 'codex', 't1', { branch: 'feat/x' });
   await r.bridge.sessionUp('claude', { id: 's1', cwd: '/elsewhere' });
-  await up(r, 'codex', 't2', { branch: 'feat/x' });
+  await r.bridge.prompt('claude:s1', 'go');
+  await live(r, 'codex', 't2', { branch: 'feat/x' });
   assert.deepEqual(r.telegram.topics.slice(0, 2), [[-100, 'proj | feat/x | host-a | codex'], [-999, 'other | main | host-a | claude']]);
   assert.match(r.telegram.topics[2][1], /^proj \| feat\/x \| host-a \| codex · [a-f0-9]{6}$/);
-  assert.deepEqual(r.telegram.unpinned, [[-100, 100], [-999, 101], [-100, 102]], 'auto-pinned first message is unpinned');
+  assert.deepEqual(r.telegram.pinned, []);
 });
 
 for (const agent of HOSTS) {
@@ -327,14 +332,14 @@ for (const agent of HOSTS) {
       await up(r, agent, 'x');
       host.emit('prompt', { id: 'x', text: 'hi' });
       host.emit('final', { id: 'x', text: 'Hello!' });
-      await until(() => r.telegram.sent.length === 3);
-      assert.deepEqual(texts(r.telegram), [`session up: proj | main | host-a | ${agent} (proj)`, '> hi', 'Hello!']);
+      await until(() => r.telegram.sent.length === 2);
+      assert.deepEqual(texts(r.telegram), ['> hi', 'Hello!']);
 
       r.at(29 * M); await r.bridge.closeIdle();
       assert.deepEqual(r.telegram.closed, [], '29m: still open');
       r.at(30 * M); await r.bridge.closeIdle(); await r.bridge.closeIdle();
       assert.deepEqual(r.telegram.closed, [[-100, 100]], 'closed once, quietly');
-      assert.equal(r.telegram.sent.length, 3, 'no message on idle close');
+      assert.equal(r.telegram.sent.length, 2, 'no message on idle close');
       assert.equal(cache()[`-100|${agent}:x`].closedAt, 30 * M);
 
       r.at(30 * M + 25 * H); await r.bridge.sweepClosedTopics();
@@ -347,15 +352,15 @@ for (const agent of HOSTS) {
       assert.equal(cache()[`-100|${agent}:x`].closedAt, undefined, 'closedAt cleared');
       host.emit('prompt', { id: 'x', text: 'wake up' });   // the echo of the inject
       host.emit('final', { id: 'x', text: 'awake' });
-      await until(() => r.telegram.sent.length === 4);
+      await until(() => r.telegram.sent.length === 3);
       await settle();
-      assert.deepEqual(texts(r.telegram).slice(3), ['awake'], 'inject not echoed');
+      assert.deepEqual(texts(r.telegram).slice(2), ['awake'], 'inject not echoed');
       assert.equal(r.telegram.topics.length, 1);
 
       r.at(40 * H);
       host.emit('down', { id: 'x' });
       await until(() => r.telegram.closed.length === 2);
-      assert.equal(texts(r.telegram).at(-1), `session ended: proj | main | host-a | ${agent}`);
+      assert.equal(r.telegram.sent.length, 3, 'no message on end');
       r.at(40 * H + 23 * H); await r.bridge.sweepClosedTopics();
       assert.deepEqual(r.telegram.deleted, []);
       r.at(40 * H + 24 * H); await r.bridge.sweepClosedTopics();
@@ -369,7 +374,7 @@ for (const agent of HOSTS) {
     const topicCacheFile = path.join(dir, 'topics.json');
     try {
       const a = make({ topicCacheFile });
-      await up(a, agent, 'x');
+      await live(a, agent, 'x');
       a.hosts[agent].emit('down', { id: 'x' });
       await until(() => a.telegram.closed.length === 1);
       const b = make({ topicCacheFile });
@@ -387,32 +392,51 @@ for (const agent of HOSTS) {
     let open;
     r.telegram.createForumTopic = () => new Promise((res) => { open = () => res({ message_thread_id: 100 }); });
     const host = r.hosts[agent];
-    host.emit('up', { id: 'x', cwd: '/proj', preexisting: false, backlog: [{ kind: 'prompt', text: 'hi', turnId: 'T1' }] });
+    host.emit('up', { id: 'x', cwd: '/proj', backlog: [{ kind: 'prompt', text: 'hi', turnId: 'T1' }] });
     host.emit('prompt', { id: 'x', turnId: 'T1', text: 'hi' });
     host.emit('final', { id: 'x', turnId: 'T1', text: 'Hello!' });
     await until(() => open);
     open();
-    await until(() => r.telegram.sent.length === 3);
+    await until(() => r.telegram.sent.length === 2);
     await settle();
-    assert.deepEqual(texts(r.telegram), [`session up: proj | main | host-a | ${agent} (proj)`, '> hi', 'Hello!']);
+    assert.deepEqual(texts(r.telegram), ['> hi', 'Hello!']);
   });
 
-  test(`${agent}: a leftover gets no Topic until activity`, async () => {
+  test(`${agent}: an idle session up->down makes no Telegram call; the first activity creates the Topic`, async () => {
     const r = make();
-    await up(r, agent, 'old', { preexisting: true });
+    await up(r, agent, 'old');
     r.at(1000 * M); await r.bridge.closeIdle();
     r.hosts[agent].emit('down', { id: 'old' });
     await settle();
     assert.deepEqual([r.telegram.topics, r.telegram.sent, r.telegram.closed], [[], [], []]);
-    await up(r, agent, 'idle', { preexisting: true });
+    await up(r, agent, 'idle');
     r.hosts[agent].emit('prompt', { id: 'idle', text: 'back again' });
+    await until(() => r.telegram.sent.length === 1);
+    assert.deepEqual(texts(r.telegram), ['> back again']);
+    assert.equal(r.telegram.topics.length, 1);
+  });
+
+  test(`${agent}: the first activity creates the Topic with the status card as its first message, no explicit pin`, async () => {
+    const r = make();
+    r.hosts[agent].statusSnapshot = () => ({ state: 'running' });
+    await up(r, agent, 'x');
+    assert.deepEqual([r.telegram.topics, r.telegram.sent], [[], []], 'up alone stays silent');
+    r.hosts[agent].emit('prompt', { id: 'x', text: 'hi' });
     await until(() => r.telegram.sent.length === 2);
-    assert.deepEqual(texts(r.telegram), [`session up: proj | main | host-a | ${agent} (proj)`, '> back again']);
+    assert.equal(r.telegram.topics.length, 1);
+    assert.ok(isCard(r.telegram.sent[0]), 'card first');
+    assert.equal(r.telegram.sent[0].threadId, 100);
+    assert.equal(r.telegram.sent[1].text, '> hi');
+    assert.deepEqual(r.telegram.pinned, []);
+    r.bridge.sessionDown(`${agent}:x`);
+    await until(() => r.telegram.closed.length === 1);
+    assert.match(r.telegram.edits.at(-1).text, /^Ended · since /);
+    assert.equal(r.telegram.sent.length, 2, 'end is an edit, not a message');
   });
 
   test(`${agent}: approvals are notices by default; opt-in buttons honour only the allowlist`, async () => {
     const off = make();
-    await up(off, agent, 'x');
+    await live(off, agent, 'x');
     off.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
     await until(() => off.telegram.sent.length === 2);
     assert.match(texts(off.telegram)[1], /answer locally or via official remote/);
@@ -420,7 +444,7 @@ for (const agent of HOSTS) {
     assert.deepEqual(off.hosts[agent].answered, []);
 
     const on = make({ config: { approvalsFromTelegram: true } });
-    await up(on, agent, 'x');
+    await live(on, agent, 'x');
     on.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
     await until(() => on.telegram.sent.length === 2);
     const post = on.telegram.sent[1];
@@ -438,7 +462,7 @@ for (const agent of HOSTS) {
 
   test(`${agent}: only what needs the human alerts them; the rest is silent`, async () => {
     const r = make();
-    await up(r, agent, 'x');
+    await live(r, agent, 'x');
     r.hosts[agent].emit('final', { id: 'x', text: 'done' });
     r.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
     r.hosts[agent].emit('final', { id: 'x', text: 'boom', status: 'failed' });
@@ -449,8 +473,8 @@ for (const agent of HOSTS) {
 
 test('strangers are dropped; /status, /interrupt go through the host interface', async () => {
   const r = make();
-  await up(r, 'codex', 't1');                         // topic 100
-  await up(r, 'claude', 's1', { branch: 'dev' });     // topic 101
+  await live(r, 'codex', 't1');                         // topic 100
+  await live(r, 'claude', 's1', { branch: 'dev' });     // topic 101
   const before = r.telegram.sent.length;
   await r.bridge.handleUpdate(msg(MALLORY, 'rm -rf /'));
   assert.deepEqual(r.hosts.codex.injected, []);
@@ -466,7 +490,7 @@ test('strangers are dropped; /status, /interrupt go through the host interface',
 test('an inject that fails is reported in the Topic', async () => {
   const r = make();
   r.hosts.claude.inject = async () => { throw new Error('channel disconnected'); };
-  await up(r, 'claude', 's1');
+  await live(r, 'claude', 's1');
   await r.bridge.handleUpdate(msg(ALICE, 'hello'));
   await until(() => texts(r.telegram).at(-1) === 'inject failed: channel disconnected');
 });
@@ -482,7 +506,7 @@ test('an injected prompt that never echoes back is forgotten after 10 minutes', 
 
 test('progress lines collapse into one edited message; final is a new message', async () => {
   const r = make();
-  await up(r, 'codex', 't1');
+  await live(r, 'codex', 't1');
   r.at(10000); r.hosts.codex.emit('progress', { id: 't1', text: '$ ls' });
   await until(() => r.telegram.sent.length === 2);
   r.at(20000); r.hosts.codex.emit('progress', { id: 't1', text: '$ npm test' });
@@ -565,22 +589,13 @@ test('failed in-flight deletion retains the old Topic retry without replacing th
     r.at(25 * H);
     const sweeping = r.bridge.sweepClosedTopics();
     await until(() => reject);
-    await up(r, 'claude', 's1');
+    await live(r, 'claude', 's1');
     reject(new Error('offline')); await sweeping;
     r.telegram.deleteForumTopic = async (c, id) => { r.telegram.deleted.push([c, id]); };
     await r.bridge.sweepClosedTopics();
     assert.deepEqual(r.telegram.deleted, [[-100, 55]], 'failed cleanup remains retryable');
     assert.equal(r.bridge.topics.get('-100|claude:s1').topicId, 100);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('unpin failures are logged once', async () => {
-  const r = make();
-  r.telegram.unpinAllForumTopicMessages = async () => { throw new Error('not enough rights'); };
-  await up(r, 'codex', 't1');
-  await up(r, 'codex', 't2');
-  await settle();
-  assert.equal(r.logs.filter((l) => /unpin/.test(l)).length, 1);
 });
 
 test('a dismissed (non-main) session never gets a Topic; one it already had is closed quietly', async () => {

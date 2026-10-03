@@ -7,7 +7,7 @@
 //       <- inbound {text, user}, permission {request_id, behavior}
 //   - bridge-hook.js makes one-shot calls: mirror {token, sessionIds, kind, text}
 // and it emits the host-neutral events every adapter emits (see daemon.mjs):
-//   up {id, cwd, preexisting, backlog}, prompt {id, text}, final {id, text},
+//   up {id, cwd, backlog}, prompt {id, text}, final {id, text},
 //   approval {id, ref, summary, answerable}, down {id}.
 // A hook call names the session's current id and the id its process started with (the
 // channel registered under the latter; /clear mints a new current one), and is held briefly
@@ -82,7 +82,7 @@ export class ClaudeAdapter extends EventEmitter {
             previous.socket.destroy();
           }
           this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), claudePid: Number(p.claudePid) || null });
-          this.emit('up', { id: sessionId, cwd: p.cwd, preexisting: false, backlog: [] });
+          this.emit('up', { id: sessionId, cwd: p.cwd, backlog: [] });
           this.#emitStatus(sessionId);
           this.#release();
           return { ok: true };

@@ -167,7 +167,6 @@ export class CodexAdapter extends EventEmitter {
     this.rpc = rpc;
     this.transport = t;
     this.connectedAt = this.now();
-    this.synced = false;
     return true;
   }
 
@@ -184,19 +183,16 @@ export class CodexAdapter extends EventEmitter {
       cursor = r.nextCursor;
     } while (cursor);
     for (const id of [...this.threads.keys()]) if (!ids.has(id)) this.#drop(id);
-    // Threads already loaded at the first sync are mostly idle leftovers of exited TUIs.
-    const preexisting = !this.synced;
-    for (const id of ids) if (!this.threads.has(id)) await this.#subscribe(id, { preexisting }).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
-    this.synced = true;
+    for (const id of ids) if (!this.threads.has(id)) await this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
   }
 
-  async #subscribe(threadId, opts = {}) {
+  async #subscribe(threadId) {
     // thread/started and the poll can race for the same thread; resume it once.
     if (!this.rpc || this.threads.has(threadId) || this.pending.has(threadId) || this.skipped.has(threadId)) return;
     const connection = this.connection;
     this.pending.add(threadId);
     try {
-      await this.#resume(threadId, opts);
+      await this.#resume(threadId);
     } catch (e) {
       if (connection !== this.connection || !this.rpc) return;
       if (!/no rollout found|rollout at .* is empty/i.test(e.message)) throw e;
@@ -208,13 +204,13 @@ export class CodexAdapter extends EventEmitter {
       const read = await this.rpc?.request('thread/read', { threadId }).catch(() => null);
       if (read?.thread?.ephemeral === true) { this.skipped.add(threadId); return; }
       const t = setTimeout(() => {
-        if (connection === this.connection && this.rpc) this.#subscribe(threadId, opts).catch((err) => this.emit('warn', `resume ${threadId}: ${err.message}`));
+        if (connection === this.connection && this.rpc) this.#subscribe(threadId).catch((err) => this.emit('warn', `resume ${threadId}: ${err.message}`));
       }, this.resumeRetryMs);
       t.unref?.();
     } finally { if (connection === this.connection) this.pending.delete(threadId); }
   }
 
-  async #resume(threadId, { preexisting = false } = {}) {
+  async #resume(threadId) {
     const rpc = this.rpc;
     if (!rpc) return;
     const r = await rpc.request('thread/resume', { threadId });
@@ -230,8 +226,7 @@ export class CodexAdapter extends EventEmitter {
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
     };
     this.threads.set(threadId, info);
-    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch,
-      preexisting, backlog: backlogSince(th.turns, this.connectedAt) });
+    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, backlog: backlogSince(th.turns, this.connectedAt) });
   }
 
   /** A non-main thread: never subscribed again; `dismiss` lets the daemon close any Topic it has. */
