@@ -142,7 +142,8 @@ export class CodexAdapter extends EventEmitter {
     this.connection = 0;
     this.threads = new Map();     // threadId -> { cwd, branch, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
-    this.quota = null;            // { limits: RateLimitSnapshot, at } for the fleet card (fleet.mjs)
+    this.quota = null;            // { limits: RateLimitSnapshot, at } for the fleet report (fleet.mjs)
+    this.account = null;          // { email, plan } of the ChatGPT login, for the same report
   }
 
   /** Attach to the daemon. Resolves false (no throw) when it is not running. */
@@ -161,6 +162,7 @@ export class CodexAdapter extends EventEmitter {
       if (this.rpc !== rpc) return;
       this.rpc = null;
       this.quota = null;   // a dead feed must not look fresh
+      this.account = null;
       for (const id of [...this.threads.keys()]) this.#drop(id);
       this.pending.clear();
       this.skipped.clear();
@@ -182,6 +184,8 @@ export class CodexAdapter extends EventEmitter {
     if (!this.rpc) return;
     // Account quota: pushed on change, re-read every few minutes as a backstop.
     if (!this.quota || this.now() - this.quota.at >= QUOTA_REFRESH_MS) {
+      const a = (await this.rpc.request('account/read', {}).catch(() => null))?.account;
+      this.account = a?.type === 'chatgpt' ? { email: a.email ?? null, plan: a.planType ?? null } : a ? { email: null, plan: a.type } : null;
       const r = await this.rpc.request('account/rateLimits/read', {}).catch(() => null);
       if (isCodexBucket(r?.rateLimits)) this.quota = { limits: r.rateLimits, at: this.now() };
     }

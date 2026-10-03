@@ -398,8 +398,8 @@ is running there. Enable it in the shared config:
 "bridge": { "fleet": {
   "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60, "timeFormat": "date",
   "order": ["host-a", "host-b"],
-  "seats": [{ "name": "alice/TeamA", "email": "alice@example.com", "org": "Team A",
-              "machines": ["host-a"], "note": "reset available 22/Oct" }]
+  "seats": [{ "email": "alice@example.com", "org": "Team A",
+              "machines": ["host-a"], "note": "reset available by 22/Oct" }]
 } }
 ```
 
@@ -410,23 +410,28 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 
 | Line | Source |
 | --- | --- |
-| seat | `bridge.fleet.seats` (`{name, email, org?, orgUuid?, machines, note?}`); the shared config is never in git, so naming accounts there is fine |
-| Claude account | `~/.claude.json` `oauthAccount` (email, organization) — emails are never printed |
+| Claude seat | `bridge.fleet.seats` (`{email, org?, orgUuid?, machines, note?}`): the Claude account x Team each machine should run as. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
+| Codex account | app-server `account/read` (email, plan) |
+| Claude account | `~/.claude.json` `oauthAccount` (email, organization), shown in full |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
 | running | registered sessions that are not idle (`?` = connected, not yet observed) |
 
-A report is one monospace block, so bars and numbers line up:
+A report is one monospace block, one section per host, each headed by the full account it
+actually runs as; a seat's note and checks belong to Claude, since a seat is a Claude seat:
 
 ```
-G · seat-name
-note: reset available 22/Oct
+G
 
-Claude 5h ██░░░░░░░░  20%  resets 20:00
-Claude 7d ███████░░░  69%  resets 08/10 23:00
-          (!) runs out 05/10 21:13
-Codex  7d █████░░░░░  51%  resets 09/10 22:00
-          data 3h old
+Claude  alice@example.com · Uni Team A
+  5h ██░░░░░░░░  20%  resets 20:00
+  7d ███████░░░  69%  resets 08/10 23:00
+     (!) runs out 05/10 21:13
+  reset available by 22/Oct
+
+Codex   alice@example.com · plus
+  7d █████░░░░░  51%  resets 09/10 22:00
+     data 3h old
 
 Running
   lab-commons | main | G | codex
@@ -436,8 +441,7 @@ Running
 otherwise), `countdown` (time left: `4d 7h`, `3h 15m`, `12m`) or `both`
 (`08/10 23:00 (4d 7h)`). Pace is the average since the window
 opened, as of the snapshot, so no history is kept. Freshness appears only for a snapshot
-over 15 minutes old, which raises nothing. Detail such as the org name appears only when
-something is wrong. Between rounds only an alert is posted, silently and once: running
+over 15 minutes old, which raises nothing. Between rounds only an alert is posted, silently and once: running
 out before reset (held until that window resets), Claude logged into another account/org
 than the seat (`org` = case-insensitive substring of organizationName, or exact `orgUuid`),
 no subscription login on a registered machine, machine absent from a non-empty `seats`

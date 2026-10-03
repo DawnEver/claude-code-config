@@ -84,13 +84,13 @@ export function claudeAccount(file = CLAUDE_ACCOUNT_FILE) {
 
 /**
  * The registry entry for this machine, or null.
- * registry = bridge.fleet: {seats: [{name, email, org?, orgUuid?, machines: [<machine>], note?}]}
+ * registry = bridge.fleet: {seats: [{email, org?, orgUuid?, machines: [<machine>], note?}]}.
+ * A seat is a Claude seat (account x Team); Codex accounts are separate and not registered.
  */
 export function seatFor(registry, machine) {
   const seats = Array.isArray(registry?.seats) ? registry.seats : [];
   const seat = seats.find((x) => x && typeof x === 'object' && Array.isArray(x.machines) && x.machines.includes(machine));
-  return seat ? { name: String(seat.name ?? '?'), email: seat.email ?? null, org: seat.org ?? null,
-    orgUuid: seat.orgUuid ?? null, note: seat.note ?? null } : null;
+  return seat ? { email: seat.email ?? null, org: seat.org ?? null, orgUuid: seat.orgUuid ?? null, note: seat.note ?? null } : null;
 }
 
 /**
@@ -150,9 +150,9 @@ export function timeFormatter(format) {
 const bar = (used) => { const n = Math.round(used / 10); return '█'.repeat(n) + '░'.repeat(10 - n); };
 const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
 
-/** `Claude 7d ███████░░░  69%  resets 08/10 23:00`, + `(!) runs out ...` under it. */
-function windowLines(host, k, v, now, t) {
-  const label = `${host.padEnd(6)} ${k.padEnd(2)} `;
+/** `  7d ███████░░░  69%  resets 08/10 23:00`, + `(!) runs out ...` under it. */
+function windowLines(k, v, now, t) {
+  const label = `  ${k.padEnd(3)}`;
   // A past reset has no countdown: always a date.
   if (v.resetsAt <= now) return [`${label}reset ${when(v.resetsAt, now)}, awaiting data`];
   const lines = [`${label}${bar(v.used)} ${`${Math.round(v.used)}%`.padStart(4)}  resets ${t(v.resetsAt, now)}`];
@@ -160,32 +160,37 @@ function windowLines(host, k, v, now, t) {
   return lines;
 }
 
-function quotaLines(host, q, now, t) {
-  if (!q) return [`${host.padEnd(6)} no data yet`];
-  const lines = Object.entries(q.windows).flatMap(([k, v]) => windowLines(host, k, v, now, t));
+function quotaLines(q, now, t) {
+  if (!q) return ['  no quota data yet'];
+  const lines = Object.entries(q.windows).flatMap(([k, v]) => windowLines(k, v, now, t));
   // Freshness only when it matters: an old snapshot says how old.
-  if (now - q.at > STALE_MS) lines.push(`${' '.repeat(10)}data ${ago(now - q.at)} old`);
+  if (now - q.at > STALE_MS) lines.push(`     data ${ago(now - q.at)} old`);
   return lines;
 }
 
+const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
+
 /**
- * Render this machine's card and the alerts that currently hold. An alert is keyed so
- * the caller can notify on transitions only. Account emails are never printed.
- * @returns {{text: string, alerts: {key: string, text: string}[]}}
+ * Render this machine's report and the alerts that currently hold. One block per host,
+ * each headed by the account it actually runs as (full email and organization): a seat
+ * (bridge.fleet.seats) is a Claude seat, so its note and checks sit in the Claude block;
+ * Codex runs on its own account. Alert keys name the condition, never an account.
+ * @returns {{text: string, alerts: {key: string, text: string, until: number|null}[]}}
  */
-export function renderCard({ machine, registry, account, claude, codex, sessions = [], now }) {
+export function renderCard({ machine, registry, account, codexAccount, claude, codex, sessions = [], now }) {
   const alerts = [];
   const t = timeFormatter(registry?.timeFormat);
   const seat = seatFor(registry, machine);
-  const lines = [`${machine} · ${seat?.name ?? (registry?.seats?.length ? 'unregistered' : 'no seats configured')}`];
-  // Alert keys are persisted: they name the condition, never an account.
-  const flag = (key, line, alert = line) => { lines.push(`(!) ${line}`); alerts.push({ key, text: `${machine}: ${alert}`, until: null }); };
-  if (registry?.seats?.length && !seat) flag('unregistered', 'not in bridge.fleet.seats');
-  if (seat && !account) flag('seat:none', 'no Claude subscription login', `no Claude subscription login (expected ${seat.name})`);
-  else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `Claude is logged into another account, expected ${seat.name}`);
-  else if (seat && !orgOk(account, seat)) flag('seat:org', `Claude org is ${account.org ?? '?'}, expected ${seat.org ?? seat.orgUuid}`);
-  if (seat?.note) lines.push(`note: ${seat.note}`);
-  lines.push('', ...quotaLines('Claude', claude, now, t), ...quotaLines('Codex', codex, now, t), '');
+  const claudeLines = [`Claude  ${who(account?.email, account?.org)}`, ...quotaLines(claude, now, t)];
+  if (seat?.note) claudeLines.push(`  ${seat.note}`);
+  const flag = (key, text) => { claudeLines.push(`  (!) ${text}`); alerts.push({ key, text: `${machine} Claude: ${text}`, until: null }); };
+  const expected = seat && who(seat.email, seat.org ?? seat.orgUuid);
+  if (registry?.seats?.length && !seat) flag('unregistered', `${machine} is not in bridge.fleet.seats`);
+  else if (seat && !account) flag('seat:none', `no subscription login, expected ${expected}`);
+  else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `wrong account, expected ${expected}`);
+  else if (seat && !orgOk(account, seat)) flag('seat:org', `wrong team, expected ${expected}`);
+  const codexHead = codexAccount ? who(codexAccount.email, codexAccount.plan) : 'account unknown';
+  const lines = [machine, '', ...claudeLines, '', `Codex   ${codexHead}`, ...quotaLines(codex, now, t), ''];
   for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
     if (!q || now - q.at > STALE_MS) continue;
     for (const [k, v] of Object.entries(q.windows)) {
@@ -221,9 +226,9 @@ export function reportSlot(registry, machine) {
  */
 export class FleetCard {
   constructor({ telegram, chatId, topicId = null, everyMinutes = 60, machine, stateFile = null, sessions = () => [],
-    codexQuota: codexSource = () => null, log = () => {}, now = Date.now,
+    codexQuota: codexSource = () => null, codexAccount = () => null, log = () => {}, now = Date.now,
     read = { registry: () => readBridgeConfig().fleet, account: claudeAccount, claudeUsage: readClaudeUsage } }) {
-    Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, log, now, read });
+    Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, codexAccount, log, now, read });
     this.cycleMs = everyMinutes * 60000;
     const saved = stateFile && readJson(stateFile);
     this.state = saved?.chatId === chatId && (saved.topicId ?? null) === topicId && saved.sent
@@ -250,7 +255,7 @@ export class FleetCard {
     const registry = this.read.registry();
     const cx = this.codexSource();
     const { text, alerts } = renderCard({ machine: this.machine, registry,
-      account: this.read.account(), claude: claudeQuota(this.read.claudeUsage()),
+      account: this.read.account(), codexAccount: this.codexAccount(), claude: claudeQuota(this.read.claudeUsage()),
       codex: cx ? codexQuota(cx.limits, cx.at) : null, sessions: this.sessions(), now });
     const before = JSON.stringify(this.state);
     const opts = { threadId: this.topicId ?? undefined };

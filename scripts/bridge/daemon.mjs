@@ -636,7 +636,7 @@ export async function main() {
   if (config.fleet) {
     const card = new FleetCard({ telegram, ...config.fleet, machine, log,
       stateFile: path.join(BRIDGE_RUNTIME_DIR, 'fleet-card.json'),
-      sessions: () => bridge.fleetSessions(), codexQuota: () => codex.quota });
+      sessions: () => bridge.fleetSessions(), codexQuota: () => codex.quota, codexAccount: () => codex.account });
     // No tick at startup: sessions re-register over the first seconds, and a report taken
     // before that would say nothing is running.
     const tick = () => card.tick().catch((e) => log(`fleet card: ${e.message}`));

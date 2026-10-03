@@ -7,7 +7,7 @@ import { FleetCard, reportSlot, when, countdown, teeClaudeUsage, windowView, cla
 
 const H = 3600000;
 const NOW = Date.UTC(2026, 9, 3, 12, 0);
-const SEAT = { name: 'A', email: 'a@example.com', org: 'Team A', machines: ['m1'] };
+const SEAT = { email: 'a@example.com', org: 'Team A', machines: ['m1'], note: 'reset available by 22/Oct' };
 const REG = { seats: [SEAT] };
 const ME = { email: 'a@example.com', org: 'Uni Team A', orgUuid: 'u1' };
 const short5h = (at = NOW) => claudeQuota({ at, five_hour: { used_percentage: 60, resets_at: (NOW + 3 * H) / 1000 } });
@@ -48,40 +48,42 @@ test('claudeAccount reads only the oauth identity; seatFor survives a malformed 
     assert.deepEqual(claudeAccount(f), { email: 'a@example.com', org: 'Team A', orgUuid: 'u1' });
     assert.equal(claudeAccount(path.join(dir, 'missing.json')), null);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  assert.equal(seatFor(REG, 'm1').name, 'A');
+  assert.equal(seatFor(REG, 'm1').email, 'a@example.com');
   assert.equal(seatFor(REG, 'm9'), null);
   for (const bad of [null, {}, { seats: 'x' }, { seats: [null, 3, { machines: 'm1' }] }]) assert.equal(seatFor(bad, 'm1'), null);
 });
 
-test('renderCard: seat, quota and sessions, never an email', () => {
-  const { text, alerts } = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(), codex: null,
+test('renderCard: one block per host, headed by the full account it runs as', () => {
+  const { text, alerts } = renderCard({ machine: 'm1', registry: REG, account: ME, codexAccount: { email: 'c@example.com', plan: 'plus' },
+    claude: short5h(), codex: null,
     sessions: [{ title: 'proj | main | m1 | claude', status: 'Working' }, { title: 'old | main | m1 | codex', status: 'Idle' }], now: NOW });
-  assert.match(text, /^m1 · A\n/);
-  assert.match(text, /Claude 5h ██████░░░░  60%  resets \d\d:\d\d\n {10}\(!\) runs out \d\d:\d\d/);
-  assert.match(text, /Codex  no data yet/);
+  assert.match(text, /^m1\n\nClaude  a@example\.com · Uni Team A\n  5h ██████░░░░  60%  resets \d\d:\d\d\n {5}\(!\) runs out \d\d:\d\d\n  reset available by 22\/Oct\n\nCodex   c@example\.com · plus\n  no quota data yet\n/);
   assert.match(text, /Running\n  proj \| main \| m1 \| claude$/);
-  assert.doesNotMatch(text, /old \| main/, 'idle sessions are only counted');
-  assert.doesNotMatch(text + alerts.map((a) => a.text).join(), /example\.com/);
+  assert.doesNotMatch(text, /old \| main/, 'idle sessions are not listed');
   assert.deepEqual(alerts.map((a) => a.key.split(':')[0]), ['short']);
+  assert.match(renderCard({ machine: 'm1', registry: REG, now: NOW }).text, /Codex   account unknown/);
 });
 
-test('renderCard seat checks: wrong account, wrong org, uuid pin, no login, unregistered only with a registry', () => {
-  const keys = (o) => renderCard({ machine: 'm1', registry: REG, now: NOW, ...o }).alerts.map((a) => a.key);
+test('renderCard seat checks sit in the Claude block and name the expected seat in full', () => {
+  const card = (o) => renderCard({ machine: 'm1', registry: REG, now: NOW, ...o });
+  const keys = (o) => card(o).alerts.map((a) => a.key);
   assert.deepEqual(keys({ account: ME }), []);
   assert.deepEqual(keys({ account: { ...ME, email: 'b@example.com' } }), ['seat:account']);
-  assert.match(renderCard({ machine: 'm1', registry: REG, account: { ...ME, org: 'Team B' }, now: NOW }).text, /Claude org is Team B, expected Team A/);
+  assert.match(card({ account: { ...ME, org: 'Team B' } }).text, /Claude  a@example\.com · Team B\n[\s\S]*\(!\) wrong team, expected a@example\.com · Team A\n\nCodex/);
   assert.deepEqual(keys({ registry: { seats: [{ ...SEAT, orgUuid: 'u2' }] }, account: ME }), ['seat:org']);
   assert.deepEqual(keys({ account: null }), ['seat:none']);
+  assert.match(card({ account: null }).text, /Claude  not logged in/);
   assert.deepEqual(keys({ machine: 'm9', account: ME }), ['unregistered']);
   assert.deepEqual(renderCard({ machine: 'm9', registry: null, account: ME, now: NOW }).alerts, [], 'no seats configured: no alert');
+  assert.match(card({ account: { ...ME, email: 'b@example.com' } }).alerts[0].text, /^m1 Claude: wrong account, expected a@example\.com · Team A$/);
 });
 
 test('renderCard: a stale snapshot shows with its time but never alerts; a passed reset reads as such', () => {
   const stale = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(NOW - 20 * 60000), now: NOW });
-  assert.match(stale.text, /data 20m old/);
+  assert.match(stale.text, /\n {5}data 20m old\n/);
   assert.deepEqual(stale.alerts, []);
   const past = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(), now: NOW + 4 * H });
-  assert.match(past.text, /Claude 5h reset \d\d:\d\d, awaiting data/);
+  assert.match(past.text, /\n  5h reset \d\d:\d\d, awaiting data/);
   assert.deepEqual(past.alerts, []);
 });
 
@@ -190,7 +192,7 @@ test('time formats: date (default), countdown, both — in the card and its aler
   assert.deepEqual([countdown(NOW + 4 * 1440 * 60000 + 7 * H, NOW), countdown(NOW + 3 * H + 15 * 60000, NOW), countdown(NOW + 12 * 60000, NOW)], ['4d 7h', '3h 15m', '12m']);
   const card = (timeFormat) => renderCard({ machine: 'm1', registry: { ...REG, timeFormat }, account: ME, claude: short5h(), now: NOW });
   assert.match(card(undefined).text, /resets \d\d:\d\d\n/);
-  assert.match(card('countdown').text, /resets 3h 0m\n {10}\(!\) runs out 1h 20m/);
+  assert.match(card('countdown').text, /resets 3h 0m\n {5}\(!\) runs out 1h 20m/);
   assert.match(card('both').text, /resets \d\d:\d\d \(3h 0m\)/);
   assert.match(card('countdown').alerts[0].text, /runs out 1h 20m, resets 3h 0m/);
 });
