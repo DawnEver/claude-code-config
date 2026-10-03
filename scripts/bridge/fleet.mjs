@@ -167,8 +167,11 @@ export function renderCard({ machine, registry, account, claude, codex, sessions
       if (v.short && v.resetsAt > now) alerts.push({ key: `short:${host}:${k}:${v.resetsAt}`, text: `${machine} ${host} ${k} at ${Math.round(v.used)}%: runs out ~${when(v.eta, now)}, resets ${when(v.resetsAt, now)}` });
     }
   }
-  lines.push(sessions.length ? 'Sessions:' : 'Sessions: none');
-  for (const x of sessions) lines.push(`  ${x.title} · ${x.status}`);
+  // What is running here: busy sessions by name; idle ones only as a count.
+  const busy = sessions.filter((x) => x.status !== 'Idle');
+  const idle = sessions.length - busy.length;
+  lines.push(`Tasks: ${busy.length ? `${busy.length} active` : 'none active'}${idle ? `, ${idle} idle` : ''}`);
+  for (const x of busy) lines.push(`  ${x.title} · ${x.status}`);
   return { text: lines.join('\n'), alerts };
 }
 

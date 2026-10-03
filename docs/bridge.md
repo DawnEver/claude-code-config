@@ -408,7 +408,7 @@ aggregation, no shared mutable state, no private endpoints:
 | Claude account | `~/.claude.json` `oauthAccount` (email, organization) — emails are never printed |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
-| sessions | sessions that own a live Topic, with their status-card state |
+| tasks | sessions that own a live Topic: busy ones by name and state, idle ones as a count |
 
 Pace is the average since the window opened, as of the snapshot, so no history is kept;
 `out HH:MM (!)` marks a window projected to run out before it resets. A snapshot older than

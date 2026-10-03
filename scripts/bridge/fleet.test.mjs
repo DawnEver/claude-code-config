@@ -55,11 +55,12 @@ test('claudeAccount reads only the oauth identity; seatFor survives a malformed 
 
 test('renderCard: seat, quota and sessions, never an email', () => {
   const { text, alerts } = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(), codex: null,
-    sessions: [{ title: 'proj | main | m1 | claude', status: 'Working' }], now: NOW });
+    sessions: [{ title: 'proj | main | m1 | claude', status: 'Working' }, { title: 'old | main | m1 | codex', status: 'Idle' }], now: NOW });
   assert.match(text, /^m1 · A \(Uni Team A\)/);
   assert.match(text, /Claude 5h 60% · 30%\/h · resets \d\d:\d\d · out \d\d:\d\d \(!\)/);
   assert.match(text, /Codex: no quota data yet/);
-  assert.match(text, /proj \| main \| m1 \| claude · Working/);
+  assert.match(text, /Tasks: 1 active, 1 idle\n  proj \| main \| m1 \| claude · Working$/);
+  assert.doesNotMatch(text, /old \| main/, 'idle sessions are only counted');
   assert.doesNotMatch(text + alerts.map((a) => a.text).join(), /example\.com/);
   assert.deepEqual(alerts.map((a) => a.key.split(':')[0]), ['short']);
 });
