@@ -174,14 +174,21 @@ function quotaLines(q, now, t) {
 
 /**
  * Codex `rateLimitResetCredits` ({availableCount, credits: [{expiresAt(sec)|null}]}) ->
- * `reset credits: 2 (next expires 22/Oct 00:00 (18d 4h))`. Claude exposes no such count.
+ * `reset credits: 2` and one `expires ...` line per credit, soonest first (`no expiry`
+ * when the backend gives none). Claude exposes no such count.
  */
 function resetCreditLines(rc, now, t) {
   if (!(rc?.availableCount >= 0)) return [];
-  const expiries = (Array.isArray(rc.credits) ? rc.credits : []).map((c) => c?.expiresAt * 1000).filter((ms) => ms > now).sort((a, b) => a - b);
-  const next = rc.availableCount > 0 && expiries.length ? ` (next expires ${t(expiries[0], now)})` : '';
-  return [`<code>reset credits: ${rc.availableCount}</code>${esc(next)}`];
+  const credits = (Array.isArray(rc.credits) ? rc.credits : []).map((c) => (c?.expiresAt > 0 ? c.expiresAt * 1000 : Infinity))
+    .filter((ms) => ms > now).sort((a, b) => a - b);
+  return [`<code>reset credits: ${rc.availableCount}</code>`,
+    ...credits.map((ms) => `  ${ms === Infinity ? 'no expiry' : `expires ${esc(t(ms, now))}`}`)];
 }
+
+// Codex reports wire plan ids; show the name the plan is sold under. Unlisted ids are
+// title-cased (`edu_plus` -> `Edu Plus`).
+const PLAN_NAMES = { self_serve_business_prolite: 'Business Premium' };
+export const planName = (id) => PLAN_NAMES[id] ?? String(id).split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 
@@ -206,7 +213,7 @@ export function renderCard({ machine, registry, account, codexAccount, claude, c
   else if (seat && !account) flag('seat:none', `no subscription login, expected ${expected}`);
   else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `wrong account, expected ${expected}`);
   else if (seat && !orgOk(account, seat)) flag('seat:org', `wrong team, expected ${expected}`);
-  const codexLines = codexAccount ? head('Codex', codexAccount.email, codexAccount.plan) : ['<b>Codex</b> · <i>account unknown</i>'];
+  const codexLines = codexAccount ? head('Codex', codexAccount.email, codexAccount.plan && planName(codexAccount.plan)) : ['<b>Codex</b> · <i>account unknown</i>'];
   const lines = [`<b>${esc(machine)}</b>`, '', ...claudeLines, '', ...codexLines, ...quotaLines(codex, now, t), ...resetCreditLines(codexResetCredits, now, t), ''];
   for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
     if (!q || now - q.at > STALE_MS) continue;

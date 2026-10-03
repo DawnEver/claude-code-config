@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FleetCard, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderCard } from './fleet.mjs';
+import { FleetCard, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderCard } from './fleet.mjs';
 
 const H = 3600000;
 const NOW = Date.UTC(2026, 9, 3, 12, 0);
@@ -57,7 +57,7 @@ test('renderCard: one block per host, headed by the full account it runs as', ()
   const { text, alerts } = renderCard({ machine: 'm1', registry: REG, account: ME, codexAccount: { email: 'c@example.com', plan: 'plus' },
     claude: short5h(), codex: null,
     sessions: [{ title: 'proj | main | m1 | claude', status: 'Working' }, { title: 'old | main | m1 | codex', status: 'Idle' }], now: NOW });
-  assert.match(text, /^<b>m1<\/b>\n\n<b>Claude<\/b> · a@example\.com\n<i>Uni Team A<\/i>\n<code>5h ██████░░░░  60%<\/code>  resets \d\d:\d\d \(3h 0m\)\n<b>\(!\) runs out \d\d:\d\d \(1h 20m\)<\/b>\n<code>reset available by 22\/Oct<\/code>\n\n<b>Codex<\/b> · c@example\.com\n<i>plus<\/i>\n<i>no quota data yet<\/i>\n/);
+  assert.match(text, /^<b>m1<\/b>\n\n<b>Claude<\/b> · a@example\.com\n<i>Uni Team A<\/i>\n<code>5h ██████░░░░  60%<\/code>  resets \d\d:\d\d \(3h 0m\)\n<b>\(!\) runs out \d\d:\d\d \(1h 20m\)<\/b>\n<code>reset available by 22\/Oct<\/code>\n\n<b>Codex<\/b> · c@example\.com\n<i>Plus<\/i>\n<i>no quota data yet<\/i>\n/);
   assert.match(text, /<b>Running<\/b>\n• proj \| main \| m1 \| claude$/);
   assert.doesNotMatch(text, /old \| main/, 'idle sessions are not listed');
   assert.deepEqual(alerts.map((a) => a.key.split(':')[0]), ['short']);
@@ -197,12 +197,16 @@ test('renderCard escapes every interpolated value for Telegram HTML', () => {
   assert.match(text, /• p&lt;q&gt; \| main/);
 });
 
-test('renderCard shows Codex reset credits with the soonest expiry', () => {
+test('renderCard shows Codex reset credits, each with its expiry, soonest first', () => {
   const card = (rc) => renderCard({ machine: 'm1', registry: REG, account: ME, codexResetCredits: rc, now: NOW }).text;
-  assert.match(card({ availableCount: 2, credits: [{ expiresAt: (NOW + 50 * H) / 1000 }, { expiresAt: (NOW + 20 * H) / 1000 }, { expiresAt: null }] }),
-    /<code>reset credits: 2<\/code> \(next expires \d\d\/Oct \d\d:\d\d \(20h 0m\)\)/);
+  assert.match(card({ availableCount: 3, credits: [{ expiresAt: (NOW + 50 * H) / 1000 }, { expiresAt: (NOW + 20 * H) / 1000 }, { expiresAt: null }] }),
+    /<code>reset credits: 3<\/code>\n  expires \d\d\/Oct \d\d:\d\d \(20h 0m\)\n  expires \d\d\/Oct \d\d:\d\d \(2d 2h\)\n  no expiry\n/);
   assert.match(card({ availableCount: 0, credits: [] }), /<code>reset credits: 0<\/code>\n/);
   assert.doesNotMatch(card(null), /reset credits/);
+});
+
+test('planName shows the sold name for wire plan ids', () => {
+  assert.deepEqual([planName('self_serve_business_prolite'), planName('plus'), planName('edu_plus')], ['Business Premium', 'Plus', 'Edu Plus']);
 });
 
 test('time formats: both (default), date, countdown — in the card and its alerts', () => {
