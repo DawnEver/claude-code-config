@@ -49,3 +49,16 @@ mutable state. Pace = average since window open as of the snapshot (stateless); 
 Live on <machine>: card shows Claude 5h/7d, Codex 7d (Codex reports only the weekly
 window for that plan), seat note, busy tasks. Other hosts pick it up after pull + a
 session start (ensure.mjs replaces a daemon whose source fingerprint changed).
+
+# Later the same day (user feedback rounds)
+
+- Card -> ordered fleet REPORT: every `bridge.fleet.everyMinutes` (default 60) each machine
+  posts at its slot (`order` index x 1 min) and deletes its previous one, so the chat holds
+  one ordered round. Alerts silent (no @mention), once per window (held until reset).
+- Visual: one monospace `pre` entity block, 10-cell bars, `(!) runs out DD/MM HH:MM` only
+  when projected before reset; dates not weekdays; rate/org/as-of hidden on the happy path.
+- "Running: nothing" was a startup tick before sessions re-registered: no tick at startup,
+  list all registered non-idle sessions (`?` = Unknown).
+- `fleet.json` folded into `bridge.fleet.{order, seats}` in claude_env_settings.json — the
+  synced, never-in-git config already holding the fleet chat; re-read every tick.
+- Two sharp-review rounds (33 findings) resolved; see sharp-review.md.
