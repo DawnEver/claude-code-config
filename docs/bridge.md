@@ -409,7 +409,7 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 
 | Line | Source |
 | --- | --- |
-| Claude seat | `bridge.fleet.seats` (`{email, org?, orgUuid?, machines}`): the Claude account x Team each machine should run as. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
+| Claude seat | `bridge.fleet.seats` (`{email, org?, orgUuid?, machines, claimed?}`; `claimed` lists the ids of banked resets the seat has already used, which the report then stops offering): the Claude account x Team each machine should run as. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
 | Codex account | app-server `account/read` (email, plan) |
 | Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count, and each credit's expiry |
 | extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, a banked reset still to claim with its use-by, one announced but not applied, and the latest applied one linked to its source. Not official data |

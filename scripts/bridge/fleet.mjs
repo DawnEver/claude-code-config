@@ -85,13 +85,15 @@ export function claudeAccount(file = CLAUDE_ACCOUNT_FILE) {
 
 /**
  * The registry entry for this machine, or null.
- * registry = bridge.fleet: {seats: [{email, org?, orgUuid?, machines: [<machine>]}]}.
+ * registry = bridge.fleet: {seats: [{email, org?, orgUuid?, machines: [<machine>], claimed?: [<offer id>]}]}.
+ * `claimed` lists banked resets this seat has already used, so the report stops offering them.
  * A seat is a Claude seat (account x Team); Codex accounts are separate and not registered.
  */
 export function seatFor(registry, machine) {
   const seats = Array.isArray(registry?.seats) ? registry.seats : [];
   const seat = seats.find((x) => x && typeof x === 'object' && Array.isArray(x.machines) && x.machines.includes(machine));
-  return seat ? { email: seat.email ?? null, org: seat.org ?? null, orgUuid: seat.orgUuid ?? null } : null;
+  return seat ? { email: seat.email ?? null, org: seat.org ?? null, orgUuid: seat.orgUuid ?? null,
+    claimed: Array.isArray(seat.claimed) ? seat.claimed.map(String) : [] } : null;
 }
 
 /**
@@ -196,11 +198,12 @@ export const planName = (id) => PLAN_NAMES[id] ?? String(id).split('_').map((w) 
  * One host's extra-reset state (extra-resets.mjs): a banked reset still to claim (with its
  * use-by), an announced one not applied yet, and the latest applied one, linked to its source.
  */
-function extraResetLines(x, now, t) {
+function extraResetLines(x, now, t, claimed = []) {
   if (!x) return [];
   const link = (e, text) => (e.url ? `<a href="${esc(e.url)}">${text}</a>` : text);
   return [
-    ...x.banked.map((e) => `<code>banked reset · ${esc(e.expires ? `use by ${t(e.expires, now)}` : 'no stated expiry')}</code>`),
+    ...x.banked.filter((e) => !claimed.includes(e.id)).map((e) =>
+      `<code>${esc(`banked reset${e.name ? ` (${e.name})` : ''} · ${e.expires ? `use by ${t(e.expires, now)}` : 'no stated expiry'}`)}</code>`),
     ...(x.scheduled ? [`<b>${link(x.scheduled, 'extra reset announced')}</b>${x.scheduled.at ? ` · ${esc(t(x.scheduled.at, now))}` : ''}`] : []),
     ...(x.applied ? [`<i>${link(x.applied, 'last extra reset')} ${esc(t(x.applied.at, now))}${x.applied.scope ? ` · ${esc(x.applied.scope)}` : ''}</i>`] : []),
   ];
@@ -219,7 +222,7 @@ export function renderReport({ machine, registry, account, codexAccount, claude,
   const seat = seatFor(registry, machine);
   const head = (host, email, detail) => [`<b>${host}</b> · ${esc(email ?? 'not logged in')}`, ...(detail ? [`<i>${esc(detail)}</i>`] : [])];
   const claudeLines = [...head('Claude', account?.email, account?.org), ...quotaLines(claude, now, t)];
-  claudeLines.push(...extraResetLines(extra?.Claude, now, t));
+  claudeLines.push(...extraResetLines(extra?.Claude, now, t, seat?.claimed));
   const flag = (text) => claudeLines.push(`<b>(!) ${esc(text)}</b>`);
   const expected = seat && who(seat.email, seat.org ?? seat.orgUuid);
   if (registry?.seats?.length && !seat) flag(`${machine} is not in bridge.fleet.seats`);

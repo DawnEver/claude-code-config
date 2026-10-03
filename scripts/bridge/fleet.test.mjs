@@ -186,13 +186,14 @@ test('planName shows the sold name for wire plan ids', () => {
 
 test('renderReport: extra resets sit in their host block as state', () => {
   const extra = {
-    Claude: { applied: { at: NOW - 29 * 24 * H, scope: 'Max plans', url: 'https://c/a' }, scheduled: null, banked: [{ expires: NOW + 18 * 24 * H }] },
+    Claude: { applied: { at: NOW - 29 * 24 * H, scope: 'Max plans', url: 'https://c/a' }, scheduled: null, banked: [{ id: 'opus', name: 'Opus 5.5', expires: NOW + 18 * 24 * H }] },
     Codex: { applied: { at: NOW - 19 * H, url: 'https://x/b' }, scheduled: { at: NOW + 2 * H, url: null }, banked: [] },
   };
   const text = renderReport({ machine: 'm1', registry: REG, account: ME, extra, now: NOW });
-  assert.match(text, /<code>banked reset · use by \d\d\/Oct \d\d:\d\d \(18d 0h\)<\/code>\n<i><a href="https:\/\/c\/a">last extra reset<\/a> \d\d\/Sep \d\d:\d\d \(29d 0h ago\) · Max plans<\/i>\n\n<b>Codex/);
+  assert.match(text, /<code>banked reset \(Opus 5\.5\) · use by \d\d\/Oct \d\d:\d\d \(18d 0h\)<\/code>\n<i><a href="https:\/\/c\/a">last extra reset<\/a> \d\d\/Sep \d\d:\d\d \(29d 0h ago\) · Max plans<\/i>\n\n<b>Codex/);
   assert.match(text, /<b>extra reset announced<\/b> · \d\d:\d\d \(2h 0m\)\n<i><a href="https:\/\/x\/b">last extra reset<\/a> \d\d\/Oct \d\d:\d\d \(19h 0m ago\)<\/i>/);
   assert.doesNotMatch(renderReport({ machine: 'm1', registry: REG, account: ME, now: NOW }), /extra reset/);
+  assert.doesNotMatch(renderReport({ machine: 'm1', registry: { seats: [{ ...SEAT, claimed: ['opus'] }] }, account: ME, extra, now: NOW }), /banked reset/, 'a claimed reset is not offered');
 });
 
 test('FleetReport fetches extra resets once per report', async () => {

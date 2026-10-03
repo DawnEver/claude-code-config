@@ -25,7 +25,7 @@ test('claudeState: confirmed only; unexpired banked offers soonest first; announ
     announced_reset: { id: 'n', event_status: 'confirmed', announced_on: '2026-10-05' },
     reset_offers: [
       { id: 'late', kind: 'credit', event_status: 'confirmed', announced_on: '2026-09-22', reset_offer: { expires_on: '2026-10-30' } },
-      { id: 'soon', kind: 'credit', event_status: 'confirmed', announced_on: '2026-09-22', reset_offer: { expires_on: '2026-10-22' } },
+      { id: 'soon', kind: 'credit', event_status: 'confirmed', title: 'Opus 5.5: a reset you can save for later', announced_on: '2026-09-22', reset_offer: { expires_on: '2026-10-22' } },
       { id: 'gone', kind: 'credit', event_status: 'confirmed', announced_on: '2026-09-01', reset_offer: { expires_on: '2026-10-01' } },
     ],
   };
@@ -33,6 +33,7 @@ test('claudeState: confirmed only; unexpired banked offers soonest first; announ
   assert.deepEqual([s.applied.scope, s.applied.url], ['Max plans', 'u-a']);
   assert.equal(s.scheduled.at, Date.parse('2026-10-05'));
   assert.deepEqual(s.banked.map((e) => e.expires), [Date.parse('2026-10-22'), Date.parse('2026-10-30')]);
+  assert.deepEqual([s.banked[0].id, s.banked[0].name], ['soon', 'Opus 5.5']);
 });
 
 test('fetchExtraResets: one failing source reads as null and is logged; the other still counts', async () => {

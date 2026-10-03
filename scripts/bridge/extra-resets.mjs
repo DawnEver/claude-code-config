@@ -33,7 +33,10 @@ export function codexState(resets, status) {
  * status.announced_reset = announced, not applied yet. Confirmed events only.
  */
 export function claudeState(resets, status, now) {
-  const one = (e) => ({ at: ms(e.announced_at ?? e.announced_on), scope: e.audience?.statement ?? null,
+  // `id` lets a seat mark a banked reset it has claimed; `name` is the title's lead
+  // ("Opus 5.5: a reset you can save for later" -> "Opus 5.5").
+  const one = (e) => ({ id: e.id, name: String(e.title ?? '').split(':')[0].trim() || null,
+    at: ms(e.announced_at ?? e.announced_on), scope: e.audience?.statement ?? null,
     expires: ms(e.reset_offer?.expires_on), url: e.url ?? null });
   const confirmed = (l) => (Array.isArray(l) ? l : []).filter((e) => e?.event_status === 'confirmed');
   const a = status?.announced_reset;
