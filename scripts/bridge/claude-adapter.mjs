@@ -81,7 +81,10 @@ export class ClaudeAdapter extends EventEmitter {
             this.#withdrawApprovals(sessionId, previous);
             previous.socket.destroy();
           }
-          this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), claudePid: Number(p.claudePid) || null });
+          // A turn may be in flight when the bridge restarts: with no prompt seen by this
+          // daemon, assume a human turn, so its answer is mirrored rather than lost.
+          this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), claudePid: Number(p.claudePid) || null,
+            humanTurn: previous ? previous.humanTurn : true });
           this.emit('up', { id: sessionId, cwd: p.cwd, backlog: [] });
           this.#emitStatus(sessionId);
           this.#release();

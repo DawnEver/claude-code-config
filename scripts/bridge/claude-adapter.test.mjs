@@ -183,6 +183,17 @@ test('isEnvelope: harness/plugin injections only, never a prompt that merely men
   ]) assert.equal(isEnvelope(t), false, t);
 });
 
+test('a turn in flight across a bridge restart still mirrors its answer', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's', cwd: '/repo' });
+    await r.hook({ sessionIds: ['s'], kind: 'final', text: 'answer of a turn begun before the restart' });
+    await r.hook({ sessionIds: ['s'], kind: 'final', text: 'stop-hook continuation' });
+    assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => e.text), ['answer of a turn begun before the restart']);
+  } finally { await r.a.close(); }
+});
+
 test('envelope prompts and the finals of turns they (or a Stop hook) triggered are not mirrored', async () => {
   const r = await rig();
   try {
