@@ -54,37 +54,31 @@ test('claudeAccount reads only the oauth identity; seatFor survives a malformed 
 });
 
 test('renderReport: one block per host, headed by the full account it runs as', () => {
-  const { text, alerts } = renderReport({ machine: 'm1', registry: REG, account: ME, codexAccount: { email: 'c@example.com', plan: 'plus' },
+  const text = renderReport({ machine: 'm1', registry: REG, account: ME, codexAccount: { email: 'c@example.com', plan: 'plus' },
     claude: short5h(), codex: null,
     sessions: [{ title: 'proj | main | m1 | claude', status: 'Working' }, { title: 'old | main | m1 | codex', status: 'Idle' }], now: NOW });
   assert.match(text, /^<b>m1<\/b>\n\n<b>Claude<\/b> · a@example\.com\n<i>Uni Team A<\/i>\n<code>5h ██████░░░░  60%<\/code>  resets \d\d:\d\d \(3h 0m\)\n<b>\(!\) runs out \d\d:\d\d \(1h 20m\)<\/b>\n\n<b>Codex<\/b> · c@example\.com\n<i>Plus<\/i>\n<i>no quota data yet<\/i>\n/);
   assert.match(text, /<b>Running<\/b>\n• proj \| main \| m1 \| claude$/);
   assert.doesNotMatch(text, /old \| main/, 'idle sessions are not listed');
-  assert.deepEqual(alerts.map((a) => a.key.split(':')[0]), ['short']);
-  assert.match(renderReport({ machine: 'm1', registry: REG, now: NOW }).text, /<b>Codex<\/b> · <i>account unknown<\/i>/);
+  assert.match(renderReport({ machine: 'm1', registry: REG, now: NOW }), /<b>Codex<\/b> · <i>account unknown<\/i>/);
 });
 
-test('renderReport seat checks sit in the Claude block and name the expected seat in full', () => {
+test('renderReport seat checks are (!) lines of the Claude block naming the expected seat in full', () => {
   const card = (o) => renderReport({ machine: 'm1', registry: REG, now: NOW, ...o });
-  const keys = (o) => card(o).alerts.map((a) => a.key);
-  assert.deepEqual(keys({ account: ME }), []);
-  assert.deepEqual(keys({ account: { ...ME, email: 'b@example.com' } }), ['seat:account']);
-  assert.match(card({ account: { ...ME, org: 'Team B' } }).text, /<i>Team B<\/i>\n[\s\S]*<b>\(!\) wrong team, expected a@example\.com · Team A<\/b>\n\n<b>Codex/);
-  assert.deepEqual(keys({ registry: { seats: [{ ...SEAT, orgUuid: 'u2' }] }, account: ME }), ['seat:org']);
-  assert.deepEqual(keys({ account: null }), ['seat:none']);
-  assert.match(card({ account: null }).text, /<b>Claude<\/b> · not logged in/);
-  assert.deepEqual(keys({ machine: 'm9', account: ME }), ['unregistered']);
-  assert.deepEqual(renderReport({ machine: 'm9', registry: null, account: ME, now: NOW }).alerts, [], 'no seats configured: no alert');
-  assert.match(card({ account: { ...ME, email: 'b@example.com' } }).alerts[0].text, /^m1 Claude: wrong account, expected a@example\.com · Team A$/);
+  const warnings = (o) => card(o).match(/\(!\) [^<]*/g) ?? [];
+  assert.deepEqual(warnings({ account: ME }), []);
+  assert.deepEqual(warnings({ account: { ...ME, email: 'b@example.com' } }), ['(!) wrong account, expected a@example.com · Team A']);
+  assert.match(card({ account: { ...ME, org: 'Team B' } }), /<i>Team B<\/i>\n[\s\S]*<b>\(!\) wrong team, expected a@example\.com · Team A<\/b>\n\n<b>Codex/);
+  assert.deepEqual(warnings({ registry: { seats: [{ ...SEAT, orgUuid: 'u2' }] }, account: ME }), ['(!) wrong team, expected a@example.com · Team A']);
+  assert.deepEqual(warnings({ account: null }), ['(!) no subscription login, expected a@example.com · Team A']);
+  assert.match(card({ account: null }), /<b>Claude<\/b> · not logged in/);
+  assert.deepEqual(warnings({ machine: 'm9', account: ME }), ['(!) m9 is not in bridge.fleet.seats']);
+  assert.deepEqual(warnings({ machine: 'm9', registry: null, account: ME }), [], 'no seats configured: nothing to check');
 });
 
-test('renderReport: a stale snapshot shows with its time but never alerts; a passed reset reads as such', () => {
-  const stale = renderReport({ machine: 'm1', registry: REG, account: ME, claude: short5h(NOW - 20 * 60000), now: NOW });
-  assert.match(stale.text, /\n<i>data 20m old<\/i>\n/);
-  assert.deepEqual(stale.alerts, []);
-  const past = renderReport({ machine: 'm1', registry: REG, account: ME, claude: short5h(), now: NOW + 4 * H });
-  assert.match(past.text, /\n<code>5h <\/code> reset \d\d:\d\d, awaiting data/);
-  assert.deepEqual(past.alerts, []);
+test('renderReport: a stale snapshot says how old it is; a passed reset reads as such', () => {
+  assert.match(renderReport({ machine: 'm1', registry: REG, account: ME, claude: short5h(NOW - 20 * 60000), now: NOW }), /\n<i>data 20m old<\/i>\n/);
+  assert.match(renderReport({ machine: 'm1', registry: REG, account: ME, claude: short5h(), now: NOW + 4 * H }), /\n<code>5h <\/code> reset \d\d:\d\d, awaiting data/);
 });
 
 test('teeClaudeUsage keeps the latest rate_limits, skipping unchanged renders for a minute', () => {
@@ -145,32 +139,14 @@ test('FleetReport reports once per round at its slot, replacing its previous rep
   assert.deepEqual(tg.deleted, [1], 'the previous report is removed');
 });
 
-test('FleetReport alerts silently, once per window: a dip does not repeat it, a reset forgets it', async () => {
-  const { card, telegram: tg, used, clock } = fleet();
-  const alerts = () => tg.sent.filter((m) => /^m1 Codex/.test(m.text));
-  await card.tick();
-  assert.equal(alerts().length, 1);
-  assert.equal(alerts()[0].alert, undefined, 'no mention');
-  used.v = 10; clock.t += 60000; await card.tick();
-  used.v = 62; clock.t += 60000; await card.tick();
-  assert.equal(alerts().length, 1);
-  clock.t = NOW + 3 * H + 1; await card.tick();
-  assert.equal(Object.keys(card.state.sent).length, 0);
-});
 
-test('FleetReport: overlapping ticks share one run; a failed alert is retried, a sent one is not', async () => {
+test('FleetReport: one message per round, never between rounds; overlapping ticks share one run', async () => {
   const tg = fakeTelegram();
-  const { card } = fleet({ telegram: tg });
+  const { card, clock, used } = fleet({ telegram: tg, clock: { t: NOW + 5 * 60000 } });
   await Promise.all([card.tick(), card.tick()]);
-  assert.equal(tg.sent.length, 2, 'one report, one alert');
-  const other = fakeTelegram();
-  other.fail = (text) => /^m1 Codex/.test(text);
-  const second = fleet({ telegram: other });
-  await assert.rejects(second.card.tick());
-  assert.deepEqual(second.card.state.sent, {});
-  other.fail = null;
-  await second.card.tick();
-  assert.equal(other.sent.filter((m) => /^m1 Codex/.test(m.text)).length, 1);
+  assert.equal(tg.sent.length, 1, 'just the report: a run-out warning is a line in it');
+  used.v = 99; clock.t += 60000; await card.tick();
+  assert.equal(tg.sent.length, 1, 'quota changes wait for the next round');
 });
 
 test('FleetReport state is per chat/Topic, saved only on change, and holds no email', async () => {
@@ -189,7 +165,7 @@ test('FleetReport state is per chat/Topic, saved only on change, and holds no em
 });
 
 test('renderReport escapes every interpolated value for Telegram HTML', () => {
-  const { text } = renderReport({ machine: 'm<1>', registry: { seats: [{ email: 'a@example.com', machines: ['m<1>'] }] },
+  const text = renderReport({ machine: 'm<1>', registry: { seats: [{ email: 'a@example.com', machines: ['m<1>'] }] },
     account: { email: 'a@example.com', org: '<Team & Co>' }, sessions: [{ title: 'p<q> | main', status: 'Working' }], now: NOW });
   assert.match(text, /<b>m&lt;1&gt;<\/b>/);
   assert.match(text, /<i>&lt;Team &amp; Co&gt;<\/i>/);
@@ -197,7 +173,7 @@ test('renderReport escapes every interpolated value for Telegram HTML', () => {
 });
 
 test('renderReport shows Codex reset credits, each with its expiry, soonest first', () => {
-  const card = (rc) => renderReport({ machine: 'm1', registry: REG, account: ME, codexResetCredits: rc, now: NOW }).text;
+  const card = (rc) => renderReport({ machine: 'm1', registry: REG, account: ME, codexResetCredits: rc, now: NOW });
   assert.match(card({ availableCount: 3, credits: [{ expiresAt: (NOW + 50 * H) / 1000 }, { expiresAt: (NOW + 20 * H) / 1000 }, { expiresAt: null }] }),
     /<code>reset credits: 3<\/code>\n  expires \d\d\/Oct \d\d:\d\d \(20h 0m\)\n  expires \d\d\/Oct \d\d:\d\d \(2d 2h\)\n  no expiry\n/);
   assert.match(card({ availableCount: 0, credits: [] }), /<code>reset credits: 0<\/code>\n/);
@@ -213,13 +189,13 @@ test('renderReport: extra resets sit in their host block as state', () => {
     Claude: { applied: { at: NOW - 29 * 24 * H, scope: 'Max plans', url: 'https://c/a' }, scheduled: null, banked: [{ expires: NOW + 18 * 24 * H }] },
     Codex: { applied: { at: NOW - 19 * H, url: 'https://x/b' }, scheduled: { at: NOW + 2 * H, url: null }, banked: [] },
   };
-  const { text } = renderReport({ machine: 'm1', registry: REG, account: ME, extra, now: NOW });
+  const text = renderReport({ machine: 'm1', registry: REG, account: ME, extra, now: NOW });
   assert.match(text, /<code>banked reset · use by \d\d\/Oct \d\d:\d\d \(18d 0h\)<\/code>\n<i><a href="https:\/\/c\/a">last extra reset<\/a> \d\d\/Sep \d\d:\d\d \(29d 0h ago\) · Max plans<\/i>\n\n<b>Codex/);
   assert.match(text, /<b>extra reset announced<\/b> · \d\d:\d\d \(2h 0m\)\n<i><a href="https:\/\/x\/b">last extra reset<\/a> \d\d\/Oct \d\d:\d\d \(19h 0m ago\)<\/i>/);
-  assert.doesNotMatch(renderReport({ machine: 'm1', registry: REG, account: ME, now: NOW }).text, /extra reset/);
+  assert.doesNotMatch(renderReport({ machine: 'm1', registry: REG, account: ME, now: NOW }), /extra reset/);
 });
 
-test('FleetReport fetches extra resets once per report, not on alert ticks', async () => {
+test('FleetReport fetches extra resets once per report', async () => {
   let calls = 0;
   const tg = fakeTelegram();
   const clock = { t: NOW + 5 * 60000 };
@@ -229,12 +205,11 @@ test('FleetReport fetches extra resets once per report, not on alert ticks', asy
   assert.equal(calls, 1);
 });
 
-test('time formats: both (default), date, countdown — in the card and its alerts', () => {
+test('time formats: both (default), date, countdown', () => {
   assert.deepEqual([countdown(NOW + 4 * 1440 * 60000 + 7 * H, NOW), countdown(NOW + 3 * H + 15 * 60000, NOW), countdown(NOW + 12 * 60000, NOW), countdown(NOW - 19 * H, NOW)], ['4d 7h', '3h 15m', '12m', '19h 0m ago']);
   const card = (timeFormat) => renderReport({ machine: 'm1', registry: { ...REG, timeFormat }, account: ME, claude: short5h(), now: NOW });
-  assert.match(card(undefined).text, /resets \d\d:\d\d \(3h 0m\)\n/);
-  assert.match(card('date').text, /resets \d\d:\d\d\n/);
-  assert.match(card('countdown').text, /resets 3h 0m\n<b>\(!\) runs out 1h 20m<\/b>/);
-  assert.match(card('both').text, /resets \d\d:\d\d \(3h 0m\)/);
-  assert.match(card('countdown').alerts[0].text, /runs out 1h 20m, resets 3h 0m/);
+  assert.match(card(undefined), /resets \d\d:\d\d \(3h 0m\)\n/);
+  assert.match(card('date'), /resets \d\d:\d\d\n/);
+  assert.match(card('countdown'), /resets 3h 0m\n<b>\(!\) runs out 1h 20m<\/b>/);
+  assert.match(card('both'), /resets \d\d:\d\d \(3h 0m\)/);
 });

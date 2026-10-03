@@ -266,7 +266,7 @@ Transport exception URLs are not logged because they can contain bot tokens.
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
 | `claude-usage.json` | latest Claude statusLine `rate_limits`, teed by `hud-hook.js` for the fleet report |
-| `fleet-report.json` | this machine's last fleet report id and round, and sent alert keys (cache) |
+| `fleet-report.json` | this machine's last fleet report id and round (cache) |
 | `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit; pruned after 7 days |
 
 These files are **machine-local and contain local paths** (cwds, which include the user
@@ -450,11 +450,10 @@ Running
 `timeFormat` picks how times read: `both` (default: `08/Oct 23:00 (4d 7h)`; `HH:MM` for
 today), `date` (`08/Oct 23:00` only) or `countdown` (time left only: `4d 7h`, `3h 15m`, `12m`). Pace is the average since the window
 opened, as of the snapshot, so no history is kept. Freshness appears only for a snapshot
-over 15 minutes old, which raises nothing. Between rounds only an alert is posted, silently and once: running
-out before reset (held until that window resets), Claude logged into another account/org
-than the seat (`org` = case-insensitive substring of organizationName, or exact `orgUuid`),
-no subscription login on a registered machine, machine absent from a non-empty `seats`
-(each held until it clears). Seats and order are re-read every tick; no restart needed.
+over 15 minutes old. Nothing is posted between rounds: every warning is a bold `(!)` line of
+the report — running out before reset, Claude logged into another account/org than the
+seat (`org` = case-insensitive substring of organizationName, or exact `orgUuid`), no
+subscription login on a registered machine, machine absent from a non-empty `seats`. Seats and order are re-read every tick; no restart needed.
 
 ## Session status
 

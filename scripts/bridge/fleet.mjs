@@ -12,7 +12,7 @@
 //     payload, never in git), re-read every tick.
 // Rates are averaged since the window opened (resetsAt - window length) as of the
 // snapshot, so no history is kept: a window's ETA is when that average pace reaches 100%.
-// A stale snapshot is shown with its time but never alerts; a passed reset reads as such.
+// A stale snapshot says how old it is and is never projected from; a passed reset reads as such.
 
 import fs from 'fs';
 import os from 'os';
@@ -209,41 +209,31 @@ function extraResetLines(x, now, t) {
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 
 /**
- * Render this machine's report (Telegram HTML) and the alerts that currently hold (plain
- * text). One block per host, each headed by the account it actually runs as (full email,
- * organization in italics): a seat (bridge.fleet.seats) is a Claude seat, so its note and
- * checks sit in the Claude block; Codex runs on its own account. Alert keys name the
- * condition, never an account.
- * @returns {{text: string, alerts: {key: string, text: string, until: number|null}[]}}
+ * Render this machine's report (Telegram HTML). One block per host, each headed by the
+ * account it actually runs as (full email, organization in italics): a seat
+ * (bridge.fleet.seats) is a Claude seat, so its checks sit in the Claude block; Codex runs
+ * on its own account. Warnings are `(!)` lines of the report, never separate messages.
  */
 export function renderReport({ machine, registry, account, codexAccount, claude, codex, codexResetCredits = null, extra = null, sessions = [], now }) {
-  const alerts = [];
   const t = timeFormatter(registry?.timeFormat);
   const seat = seatFor(registry, machine);
   const head = (host, email, detail) => [`<b>${host}</b> · ${esc(email ?? 'not logged in')}`, ...(detail ? [`<i>${esc(detail)}</i>`] : [])];
   const claudeLines = [...head('Claude', account?.email, account?.org), ...quotaLines(claude, now, t)];
   claudeLines.push(...extraResetLines(extra?.Claude, now, t));
-  const flag = (key, text) => { claudeLines.push(`<b>(!) ${esc(text)}</b>`); alerts.push({ key, text: `${machine} Claude: ${text}`, until: null }); };
+  const flag = (text) => claudeLines.push(`<b>(!) ${esc(text)}</b>`);
   const expected = seat && who(seat.email, seat.org ?? seat.orgUuid);
-  if (registry?.seats?.length && !seat) flag('unregistered', `${machine} is not in bridge.fleet.seats`);
-  else if (seat && !account) flag('seat:none', `no subscription login, expected ${expected}`);
-  else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `wrong account, expected ${expected}`);
-  else if (seat && !orgOk(account, seat)) flag('seat:org', `wrong team, expected ${expected}`);
+  if (registry?.seats?.length && !seat) flag(`${machine} is not in bridge.fleet.seats`);
+  else if (seat && !account) flag(`no subscription login, expected ${expected}`);
+  else if (seat && seat.email && !sameText(account.email, seat.email)) flag(`wrong account, expected ${expected}`);
+  else if (seat && !orgOk(account, seat)) flag(`wrong team, expected ${expected}`);
   const codexLines = codexAccount ? head('Codex', codexAccount.email, codexAccount.plan && planName(codexAccount.plan)) : ['<b>Codex</b> · <i>account unknown</i>'];
   const lines = [`<b>${esc(machine)}</b>`, '', ...claudeLines, '', ...codexLines, ...quotaLines(codex, now, t), ...resetCreditLines(codexResetCredits, now, t), ...extraResetLines(extra?.Codex, now, t), ''];
-  for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
-    if (!q || now - q.at > STALE_MS) continue;
-    for (const [k, v] of Object.entries(q.windows)) {
-      // Keyed by the hour of reset (servers jitter it by seconds); held until that reset.
-      if (v.short && v.resetsAt > now) alerts.push({ key: `short:${host}:${k}:${Math.round(v.resetsAt / H)}`, until: v.resetsAt, text: `${machine} ${host} ${k} at ${Math.round(v.used)}%: runs out ${t(v.eta, now)}, resets ${t(v.resetsAt, now)}` });
-    }
-  }
   // What is running here: busy sessions by name; idle ones are not news.
   const busy = sessions.filter((x) => x.status !== 'Idle' && x.status !== 'Ended');
   lines.push(busy.length ? '<b>Running</b>' : '<b>Running</b> · <i>nothing</i>');
   // Unknown = connected but not yet observed (e.g. just after a bridge restart): shown as `?`.
   for (const x of busy) lines.push(`• ${esc(x.title)}${x.status === 'Working' ? '' : x.status === 'Unknown' ? ' · ?' : ` · ${esc(x.status)}`}`);
-  return { text: lines.join('\n'), alerts };
+  return lines.join('\n');
 }
 
 /**
@@ -259,10 +249,8 @@ export function reportSlot(registry, machine) {
 /**
  * The daemon side. Every `everyMinutes`, at this machine's slot in the fleet order, post a
  * fresh report and delete this machine's previous one, so the chat always holds the latest
- * round in order. Between rounds only a new alert is posted (silently, once): a run-out
- * alert stays "sent" until its window resets, a seat alert until its condition clears.
- * State ({chatId, topicId, messageId, round, sent}) is a local transport cache; another
- * chat/Topic starts it afresh.
+ * round in order. Nothing is posted between rounds. State ({chatId, topicId, messageId,
+ * round}) is a local transport cache; another chat/Topic starts it afresh.
  */
 export class FleetReport {
   constructor({ telegram, chatId, topicId = null, everyMinutes = 60, machine, stateFile = null, sessions = () => [],
@@ -272,8 +260,8 @@ export class FleetReport {
     Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, codexAccount, extraResets, log, now, read });
     this.cycleMs = everyMinutes * 60000;
     const saved = stateFile && readJson(stateFile);
-    this.state = saved?.chatId === chatId && (saved.topicId ?? null) === topicId && saved.sent
-      ? saved : { chatId, topicId, messageId: null, round: null, sent: {} };
+    this.state = saved?.chatId === chatId && (saved.topicId ?? null) === topicId
+      ? saved : { chatId, topicId, messageId: null, round: null };
     this.running = null;
   }
 
@@ -294,34 +282,17 @@ export class FleetReport {
   async #tick() {
     const now = this.now();
     const registry = this.read.registry();
-    const cx = this.codexSource();
     const round = Math.floor((now - reportSlot(registry, this.machine)) / this.cycleMs);
-    const due = round !== this.state.round;
-    // Extra resets are fetched only for a report: once per round, never per alert tick.
-    const extra = due ? await this.extraResets(now).catch(() => null) : null;
-    const { text, alerts } = renderReport({ machine: this.machine, registry,
-      account: this.read.account(), codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null, claude: claudeQuota(this.read.claudeUsage()),
-      codex: cx ? codexQuota(cx.limits, cx.at) : null, extra, sessions: this.sessions(), now });
-    const before = JSON.stringify(this.state);
-    const opts = { threadId: this.topicId ?? undefined };
-    try {
-      if (due) {
-        const previous = this.state.messageId;
-        this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, html: true }))[0]?.message_id ?? null;
-        this.state.round = round;
-        if (previous) await this.telegram.deleteMessage(this.chatId, previous).catch(() => {});
-      }
-      const holding = new Set(alerts.map((a) => a.key));
-      for (const [key, until] of Object.entries(this.state.sent)) {
-        if (until == null ? !holding.has(key) : until <= now) delete this.state.sent[key];
-      }
-      for (const a of alerts) {
-        if (a.key in this.state.sent) continue;
-        await this.telegram.sendMessage(this.chatId, a.text, opts);
-        this.state.sent[a.key] = a.until;   // recorded per alert: a later failure cannot resend it
-      }
-    } finally {
-      if (JSON.stringify(this.state) !== before) this.#save();
-    }
+    if (round === this.state.round) return;
+    const cx = this.codexSource();
+    const text = renderReport({ machine: this.machine, registry,
+      account: this.read.account(), codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null,
+      claude: claudeQuota(this.read.claudeUsage()), codex: cx ? codexQuota(cx.limits, cx.at) : null,
+      extra: await this.extraResets(now).catch(() => null), sessions: this.sessions(), now });
+    const previous = this.state.messageId;
+    const [sent] = await this.telegram.sendMessage(this.chatId, text, { threadId: this.topicId ?? undefined, html: true });
+    this.state = { ...this.state, messageId: sent?.message_id ?? null, round };
+    this.#save();
+    if (previous) await this.telegram.deleteMessage(this.chatId, previous).catch(() => {});
   }
 }
