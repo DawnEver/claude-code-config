@@ -49,7 +49,7 @@ and is never mirrored:
 - **One forum group per project**, Topics enabled. Project = origin repo name of the
   session's cwd, so all worktrees of a repo share a group. Unknown projects go to
   `bridge.fallbackChatId`; without one the session is registered but not mirrored.
-- **One Topic per session**, titled `<machine> | <project> | <branch> | <agent>`.
+- **One Topic per session**, titled `<project> | <branch> | <machine> | <agent>`.
   Display-only project names drop a trailing `studio` or `lab` (separated by spaces,
   hyphens or underscores); configuration/routing still use the full origin repo name.
   Concurrent same-name live sessions use a stable six-hex session-derived suffix
@@ -195,6 +195,14 @@ Requires Anthropic auth; third-party providers (`ccds`) lack channels.
    `~/.claude/scripts/bridge/daemon.mjs` through the link and logs to
    `~/.claude/bridge/daemon.log` (Windows) or the service manager (others).
 
+   The service is optional: every session start runs `scripts/bridge/ensure.mjs` (Claude
+   SessionStart hook; `codex.js` before launching Codex). It is a no-op without a bot
+   token or when a daemon on the current source is running, starts a detached daemon when
+   none is, and replaces one running older source (channels and the Codex adapter
+   reconnect). Concurrent session starts are safe: the daemon takes the exclusive
+   `~/.claude/bridge/daemon.lock` before polling Telegram, so at most one survives. A lock
+   or runtime file written before the last boot is stale even if its pid was reused.
+
 ## Using it
 
 In a session's Topic (allowlisted senders only):
@@ -332,7 +340,7 @@ Configuration ownership is defined by `sync-architecture.md`, not a second bridg
 configuration manager. Existing compose/provider/setup fixtures cover idempotence and
 local-state preservation; doctor is read-only. `bridge-revision` compares a live daemon's
 startup SHA-256 fingerprint against current non-test bridge/shared source. It warns when
-the revision is unknown or changed and never restarts the process. This is a conservative
+the revision is unknown or changed and never restarts the process; `ensure.mjs` does that at the next session start. This is a conservative
 source fingerprint, not CLI version or Claude channel-process identity; channel updates
 still need separate verification. A pre-reporting daemon is revision-unknown until
 an approved restart. Live provider switching and cross-platform service behavior
@@ -381,8 +389,9 @@ No directory scanning or automatic artifact publication is performed.
 
 ## Session status
 
-Each mirrored live session has one editable, silently pinned status card. It displays
-state, evidence source and last check time. Native transitions update it; the refresh
+Each mirrored live session has one editable, silently pinned status card. It shows one state
+line and the check time, e.g. `Working · since 14:02` / `Checked 14:05`; the Topic title
+already names the session, and the evidence source is not shown. Native transitions update it; the refresh
 button or `/status` rereads the adapter snapshot without starting a model turn.
 Pinning failures do not block the card or conversation. Raw tool/search/edit progress
 is suppressed for both current adapters; final answers and approvals remain visible.
@@ -390,11 +399,11 @@ is suppressed for both current adapters; final answers and approvals remain visi
 - Codex: running/idle/waiting-approval derives from native turn and pending-request
   state. Submitting approval does not imply native resolution. `/interrupt` remains
   the explicit native interrupt command; no unbound stale Stop button is added.
-- Claude: connected starts unknown. Hook prompt/final gives observed running/idle,
-  not a native scheduler verdict. Channel injection is observed activity, not proof
-  a turn started. Pending channel approvals are labelled approval-observed, with a
-  warning that native local resolution is not observable. Reply tool is not completion.
-- Offline is transport-observed. A card is an observation, not a daemon heartbeat;
+- Claude: only Working / Idle / Unknown. Connected starts Unknown; hook prompt/final and
+  channel injection give observed Working/Idle. A pending channel approval stays Working
+  (it is mid-turn, and its native local resolution is not observable). Reply tool is not
+  completion.
+- Codex shows Working / Idle / Needs approval. Offline (either host) is transport-observed. A card is an observation, not a daemon heartbeat;
   its check time makes stale information visible if the bridge itself stops.
 
 Card message IDs are derived transport pointers in topics.json, never another agent

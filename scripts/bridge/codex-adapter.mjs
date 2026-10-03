@@ -387,6 +387,6 @@ export class CodexAdapter extends EventEmitter {
       const waiting = [...this.approvals.values()].some((approval) => approval.threadId === threadId);
       state = waiting ? 'waiting-approval' : th.activeTurnId ? 'running' : 'idle';
     }
-    return { state, source: 'native', observedAt: this.now() };
+    return { state };
   }
 }

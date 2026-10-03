@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import net from 'net';
 import { ClaudeAdapter, unwrapChannel, isEnvelope } from './claude-adapter.mjs';
 
-test('status distinguishes observed hooks and approval correlations from native state', async () => {
+test('claude status is only working, idle or unknown while connected', async () => {
   const r = await rig();
   const statuses = [];
   r.a.on('status', (s) => statuses.push(s));
@@ -14,19 +14,16 @@ test('status distinguishes observed hooks and approval correlations from native 
     assert.equal(r.a.statusSnapshot('s').state, 'unknown');
     await r.hook({ sessionIds: ['s'], kind: 'prompt', text: 'work' });
     assert.equal(r.a.statusSnapshot('s').state, 'running');
-    assert.equal(r.a.statusSnapshot('s').source, 'hook-observed');
     await r.rpc(ch, 'reply', { text: 'progress only' });
     assert.equal(r.a.statusSnapshot('s').state, 'running', 'reply is not turn completion');
     await r.rpc(ch, 'permission_request', { request_id: 'p', tool_name: 'Bash' });
-    assert.equal(r.a.statusSnapshot('s').state, 'approval-observed');
-    assert.equal(r.a.statusSnapshot('s').nativeObserved, false);
+    assert.equal(r.a.statusSnapshot('s').state, 'running', 'a pending approval is still a running turn');
     await r.hook({ sessionIds: ['s'], kind: 'final', text: 'done locally' });
-    assert.equal(r.a.statusSnapshot('s').state, 'approval-observed', 'hook cannot prove native approval resolution');
+    assert.equal(r.a.statusSnapshot('s').state, 'idle');
     assert.equal(r.a.answerApproval('p', true, 's'), true);
     assert.equal(r.a.statusSnapshot('s').state, 'idle');
     await r.a.inject('s', 'new task', 'user');
     assert.equal(r.a.statusSnapshot('s').state, 'running');
-    assert.equal(r.a.statusSnapshot('s').source, 'channel');
     ch.destroy();
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(r.a.statusSnapshot('s').state, 'disconnected');

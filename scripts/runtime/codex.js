@@ -72,6 +72,14 @@ if (sync.pulled > 0 || !isLinkCheckFresh()) {
   }
 }
 
+// Same reason: the launcher is Codex's only place to start the session bridge.
+try {
+  const { ensureDaemon } = await import('../bridge/ensure.mjs');
+  await ensureDaemon();
+} catch {
+  // The bridge must never block a launch.
+}
+
 const argv = process.argv.slice(2);
 const provider = argv[0] && !argv[0].startsWith('-') ? argv.shift() : '';
 const extraArgs = argv;

@@ -71,6 +71,11 @@
                         "type": "command",
                         "command": "node ~/.claude/scripts/setup/doctor.js --hook",
                         "timeout": 10
+                    },
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/bridge/ensure.mjs",
+                        "timeout": 10
                     }
                 ]
             }

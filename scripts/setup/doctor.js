@@ -463,7 +463,7 @@ export function checkBridgeRevision({ runtimeFile = RUNTIME_FILE, repoRoot = sou
   let runtime;
   try { runtime = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { return []; }
   if (!Number.isInteger(runtime.pid) || runtime.pid <= 0 || !isAlive(runtime.pid)) return [];
-  const fix = 'confirm and restart the bridge service to load current source; this check never restarts it (docs/bridge.md)';
+  const fix = 'the next session start replaces it (scripts/bridge/ensure.mjs); this check never restarts it (docs/bridge.md)';
   if (!runtime.sourceRevision) return [finding('WARN', 'bridge-revision', 'live bridge source revision is unknown (started before revision reporting)', fix)];
   try {
     if (runtime.sourceRevision === revision(repoRoot)) return [];

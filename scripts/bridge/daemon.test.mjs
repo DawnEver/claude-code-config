@@ -4,24 +4,25 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { EventEmitter } from 'events';
-import { Bridge, runningDaemonPid, topicTitle } from './daemon.mjs';
+import { Bridge, topicTitle } from './daemon.mjs';
 
 const M = 60000, H = 60 * M;
+const isCard = m => m.replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('status:');
 const HOSTS = ['codex', 'claude'];
 
 test('one status card follows native state and authenticates refresh', async () => {
   const r = make();
   let state = 'idle';
-  r.hosts.codex.statusSnapshot = () => ({ state, source: 'native' });
+  r.hosts.codex.statusSnapshot = () => ({ state });
   await up(r, 'codex', 'card');
-  const card = r.telegram.sent.find(m => m.text.startsWith('Session status'));
+  const card = r.telegram.sent.find(m => isCard(m));
   assert.ok(card);
-  assert.match(card.text, /idle/);
+  assert.match(card.text, /^Idle · since \d\d:\d\d\nChecked \d\d:\d\d$/);
   state = 'running';
   r.hosts.codex.emit('status', { id: 'card' });
   await settle();
-  assert.match(r.telegram.edits.at(-1).text, /running/);
-  assert.equal(r.telegram.sent.filter(m => m.text.startsWith('Session status')).length, 1);
+  assert.match(r.telegram.edits.at(-1).text, /^Working · since /);
+  assert.equal(r.telegram.sent.filter(m => isCard(m)).length, 1);
   const query = { id: 'refresh', from: { id: ALICE }, data: card.replyMarkup.inline_keyboard[0][0].callback_data,
     message: { chat: { id: card.chatId }, message_id: card.message_id, message_thread_id: card.threadId } };
   const count = r.telegram.edits.length;
@@ -30,10 +31,11 @@ test('one status card follows native state and authenticates refresh', async () 
   assert.equal(r.telegram.edits.length, count);
   state = 'idle';
   await r.bridge.handleUpdate({ callback_query: query });
-  assert.match(r.telegram.edits.at(-1).text, /idle/);
+  assert.match(r.telegram.edits.at(-1).text, /^Idle · since /);
   r.bridge.sessionDown('codex:card');
   await settle();
-  assert.match(r.telegram.edits.at(-1).text, /disconnected/);
+  assert.match(r.telegram.edits.at(-1).text, /^Offline · since /);
+  assert.deepEqual(r.telegram.edits.at(-1).replyMarkup.inline_keyboard, []);
   await r.bridge.handleUpdate({ callback_query: query });
   assert.equal(r.telegram.answers.at(-1), 'control inactive');
 });
@@ -43,17 +45,17 @@ test('status card reuses cached message on restart and status failure does not l
   try {
     const file = path.join(dir, 'topics.json');
     fs.writeFileSync(file, JSON.stringify({ '-100|codex:card': { topicId: 77,
-      title: 'host-a | proj | main | codex', statusMessageId: 55 } }));
+      title: 'proj | main | host-a | codex', statusMessageId: 55 } }));
     const r = make({ topicCacheFile: file });
-    r.hosts.codex.statusSnapshot = () => ({ state: 'idle', source: 'native' });
+    r.hosts.codex.statusSnapshot = () => ({ state: 'idle' });
     await up(r, 'codex', 'card', { preexisting: true });
     assert.equal(r.telegram.edits.at(-1).id, 55);
     assert.equal(r.telegram.sent.length, 0);
     const other = make();
-    other.hosts.codex.statusSnapshot = () => ({ state: 'running', source: 'native' });
+    other.hosts.codex.statusSnapshot = () => ({ state: 'running' });
     const send = other.telegram.sendMessage;
     other.telegram.sendMessage = async (chat, text, options) => {
-      if (text.startsWith('Session status')) throw new Error('status send rejected');
+      if (options?.replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('status:')) throw new Error('status send rejected');
       return send(chat, text, options);
     };
     await up(other, 'codex', 's', { backlog: [{ kind: 'final', text: 'complete answer', turnId: 'turn' }] });
@@ -64,12 +66,12 @@ test('status card reuses cached message on restart and status failure does not l
 test('reconnect drains the old offline-card write before showing live status', async () => {
   const r = make();
   let state = 'idle';
-  r.hosts.codex.statusSnapshot = () => ({ state, source: 'native' });
+  r.hosts.codex.statusSnapshot = () => ({ state });
   await up(r, 'codex', 'card');
   let release;
   const edit = r.telegram.editMessageText;
   r.telegram.editMessageText = async (chat, id, text, options) => {
-    if (text.includes('State: disconnected')) await new Promise(resolve => { release = resolve; });
+    if (text.startsWith('Offline')) await new Promise(resolve => { release = resolve; });
     return edit(chat, id, text, options);
   };
   r.bridge.sessionDown('codex:card');
@@ -79,15 +81,17 @@ test('reconnect drains the old offline-card write before showing live status', a
   await settle();
   assert.equal(r.bridge.sessions.has('codex:card'), false);
   release(); await pending;
-  assert.match(r.telegram.edits.at(-1).text, /State: running/);
+  assert.match(r.telegram.edits.at(-1).text, /^Working · since /);
 });
 
 test('Topic fields use readable separators and display-only project abbreviations', () => {
-  assert.equal(topicTitle('host-a', 'plant-studio', 'feat/example', 'codex'), 'host-a | plant | feat/example | codex');
-  assert.equal(topicTitle('host-a', 'sample lab', 'main', 'claude'), 'host-a | sample | main | claude');
+  assert.equal(topicTitle('host-a', 'plant-studio', 'feat/example', 'codex'), 'plant | feat/example | host-a | codex');
+  assert.equal(topicTitle('host-a', 'sample lab', 'main', 'claude'), 'sample | main | host-a | claude');
+  for (const [repo, name] of [['acme-lab-lib', 'acme-lib'], ['acme-lab-webui', 'acme-webui'], ['lab-tools', 'lab-tools'], ['acme-lab', 'acme']])
+    assert.equal(topicTitle('h', repo, 'main', 'claude'), `${name} | main | h | claude`);
   const title = topicTitle('host-a', 'proj', 'x'.repeat(200), 'codex', 'abcdef');
   assert.ok(Array.from(title).length <= 128);
-  assert.ok(title.endsWith(' | codex · abcdef'));
+  assert.ok(title.endsWith(' | host-a | codex · abcdef'));
   assert.ok(Array.from(topicTitle('m'.repeat(200), 'p'.repeat(200), 'b'.repeat(200), 'codex', 'a'.repeat(16))).length <= 128);
 });
 
@@ -98,7 +102,7 @@ test('cached active Topics are renamed without replacing their Topic identity', 
     fs.writeFileSync(file, JSON.stringify({ '-100|codex:s': { topicId: 77, title: 'host-a/codex/main #4' } }));
     const r = make({ topicCacheFile: file });
     await up(r, 'codex', 's', { preexisting: true });
-    assert.deepEqual(r.telegram.renamed, [[-100, 77, 'host-a | proj | main | codex']]);
+    assert.deepEqual(r.telegram.renamed, [[-100, 77, 'proj | main | host-a | codex']]);
     assert.equal(r.bridge.sessions.get('codex:s').topicId, 77);
     assert.equal(r.telegram.topics.length, 0);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -131,7 +135,7 @@ function fakeTelegram() {
     createForumTopic: async (chatId, name) => { t.topics.push([chatId, name]); return { message_thread_id: nextTopic++ }; },
     editForumTopic: async (chatId, threadId, name) => { t.renamed.push([chatId, threadId, name]); return true; },
     sendMessage: async (chatId, text, opts = {}) => { const message_id = nextMsg++; t.sent.push({ chatId, text, ...opts, message_id }); return [{ message_id }]; },
-    editMessageText: async (chatId, id, text) => { t.edits.push({ chatId, id, text }); },
+    editMessageText: async (chatId, id, text, options = {}) => { t.edits.push({ chatId, id, text, ...options }); },
     answerCallbackQuery: async (id, text) => { t.answers.push(text); },
     closeForumTopic: async (c, id) => { t.closed.push([c, id]); return true; },
     reopenForumTopic: async (c, id) => { t.reopened.push([c, id]); return true; },
@@ -307,8 +311,8 @@ test('topics: <machine>/<agent>/<branch> in the project group, fallback otherwis
   await up(r, 'codex', 't1', { branch: 'feat/x' });
   await r.bridge.sessionUp('claude', { id: 's1', cwd: '/elsewhere' });
   await up(r, 'codex', 't2', { branch: 'feat/x' });
-  assert.deepEqual(r.telegram.topics.slice(0, 2), [[-100, 'host-a | proj | feat/x | codex'], [-999, 'host-a | other | main | claude']]);
-  assert.match(r.telegram.topics[2][1], /^host-a \| proj \| feat\/x \| codex · [a-f0-9]{6}$/);
+  assert.deepEqual(r.telegram.topics.slice(0, 2), [[-100, 'proj | feat/x | host-a | codex'], [-999, 'other | main | host-a | claude']]);
+  assert.match(r.telegram.topics[2][1], /^proj \| feat\/x \| host-a \| codex · [a-f0-9]{6}$/);
   assert.deepEqual(r.telegram.unpinned, [[-100, 100], [-999, 101], [-100, 102]], 'auto-pinned first message is unpinned');
 });
 
@@ -324,7 +328,7 @@ for (const agent of HOSTS) {
       host.emit('prompt', { id: 'x', text: 'hi' });
       host.emit('final', { id: 'x', text: 'Hello!' });
       await until(() => r.telegram.sent.length === 3);
-      assert.deepEqual(texts(r.telegram), [`session up: host-a | proj | main | ${agent} (proj)`, '> hi', 'Hello!']);
+      assert.deepEqual(texts(r.telegram), [`session up: proj | main | host-a | ${agent} (proj)`, '> hi', 'Hello!']);
 
       r.at(29 * M); await r.bridge.closeIdle();
       assert.deepEqual(r.telegram.closed, [], '29m: still open');
@@ -351,7 +355,7 @@ for (const agent of HOSTS) {
       r.at(40 * H);
       host.emit('down', { id: 'x' });
       await until(() => r.telegram.closed.length === 2);
-      assert.equal(texts(r.telegram).at(-1), `session ended: host-a | proj | main | ${agent}`);
+      assert.equal(texts(r.telegram).at(-1), `session ended: proj | main | host-a | ${agent}`);
       r.at(40 * H + 23 * H); await r.bridge.sweepClosedTopics();
       assert.deepEqual(r.telegram.deleted, []);
       r.at(40 * H + 24 * H); await r.bridge.sweepClosedTopics();
@@ -390,7 +394,7 @@ for (const agent of HOSTS) {
     open();
     await until(() => r.telegram.sent.length === 3);
     await settle();
-    assert.deepEqual(texts(r.telegram), [`session up: host-a | proj | main | ${agent} (proj)`, '> hi', 'Hello!']);
+    assert.deepEqual(texts(r.telegram), [`session up: proj | main | host-a | ${agent} (proj)`, '> hi', 'Hello!']);
   });
 
   test(`${agent}: a leftover gets no Topic until activity`, async () => {
@@ -403,7 +407,7 @@ for (const agent of HOSTS) {
     await up(r, agent, 'idle', { preexisting: true });
     r.hosts[agent].emit('prompt', { id: 'idle', text: 'back again' });
     await until(() => r.telegram.sent.length === 2);
-    assert.deepEqual(texts(r.telegram), [`session up: host-a | proj | main | ${agent} (proj)`, '> back again']);
+    assert.deepEqual(texts(r.telegram), [`session up: proj | main | host-a | ${agent} (proj)`, '> back again']);
   });
 
   test(`${agent}: approvals are notices by default; opt-in buttons honour only the allowlist`, async () => {
@@ -452,7 +456,7 @@ test('strangers are dropped; /status, /interrupt go through the host interface',
   assert.deepEqual(r.hosts.codex.injected, []);
   assert.equal(r.telegram.sent.length, before);
   await r.bridge.handleUpdate(msg(ALICE, '/status@my_bot', 100));
-  await until(() => texts(r.telegram).at(-1) === 'host-a | proj | main | codex: idle');
+  await until(() => texts(r.telegram).at(-1) === 'proj | main | host-a | codex: idle');
   await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 100));
   await until(() => texts(r.telegram).at(-1) === 'interrupt sent');
   await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 101));
@@ -577,18 +581,6 @@ test('unpin failures are logged once', async () => {
   await up(r, 'codex', 't2');
   await settle();
   assert.equal(r.logs.filter((l) => /unpin/.test(l)).length, 1);
-});
-
-test('runningDaemonPid: live pid detected, dead or own pid ignored', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-'));
-  const f = path.join(dir, 'runtime.json');
-  try {
-    assert.equal(runningDaemonPid(f), null);
-    fs.writeFileSync(f, JSON.stringify({ pid: process.pid }));
-    assert.equal(runningDaemonPid(f), null);
-    fs.writeFileSync(f, JSON.stringify({ pid: process.ppid }));
-    assert.equal(runningDaemonPid(f), process.ppid);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a dismissed (non-main) session never gets a Topic; one it already had is closed quietly', async () => {

@@ -171,7 +171,6 @@ export class ClaudeAdapter extends EventEmitter {
     // one), are the harness talking to itself.
     const s = this.sessions.get(id);
     s.activity = m.kind === 'prompt' ? 'running' : 'idle';
-    s.activitySource = 'hook-observed';
     this.#emitStatus(id);
     if (m.kind === 'prompt') {
       s.humanTurn = !isEnvelope(m.text);
@@ -203,7 +202,6 @@ export class ClaudeAdapter extends EventEmitter {
     s.peer.notify('inbound', { text, user: user ?? '' });
     s.humanTurn = true;   // whether or not UserPromptSubmit reports channel prompts
     s.activity = 'running';
-    s.activitySource = 'channel';
     this.#emitStatus(id);
   }
 
@@ -211,14 +209,9 @@ export class ClaudeAdapter extends EventEmitter {
 
   statusSnapshot(id) {
     const s = this.sessions.get(id);
-    const pendingApprovals = s?.approvals.size ?? 0;
-    return {
-      state: !s ? 'disconnected' : pendingApprovals ? 'approval-observed' : s.activity ?? 'unknown',
-      source: pendingApprovals ? 'channel' : s?.activitySource ?? 'channel',
-      nativeObserved: false,
-      pendingApprovals,
-      ...(pendingApprovals ? { note: 'Channel approval observed; native local resolution is not observable.' } : {}),
-    };
+    // Hooks and the channel only observe turn edges, so this is never more than
+    // running / idle / unknown; a channel approval cannot prove how it was resolved locally.
+    return { state: !s ? 'disconnected' : s.activity ?? 'unknown' };
   }
 
   #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }

@@ -360,7 +360,6 @@ test('status snapshots reflect native running, pending approval, idle and discon
   const { a, srv } = await started(); const events = [];
   a.on('status', (e) => events.push(e));
   assert.equal(a.statusSnapshot('t1').state, 'idle');
-  assert.equal(a.statusSnapshot('t1').source, 'native');
   assert.equal(a.statusSnapshot('missing').state, 'disconnected');
   srv.push('turn/started', { threadId: 't1', turn: { id: 't' } });
   assert.equal(a.statusSnapshot('t1').state, 'running');

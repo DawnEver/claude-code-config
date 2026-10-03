@@ -18,6 +18,7 @@
 import fs from 'fs';
 import path from 'path';
 import { randomBytes, createHash } from 'crypto';
+import { acquireDaemonLock } from './ensure.mjs';
 import { isMain } from '../shared/is-main.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
@@ -36,15 +37,18 @@ const TOPIC_CLOSED = /TOPIC_CLOSED/i;
 const TOPIC_UNCHANGED = /TOPIC_NOT_MODIFIED/i;
 
 export const sessionKey = (agent, id) => `${agent}:${id}`;
+const STATUS_LABELS = { running: 'Working', idle: 'Idle', 'waiting-approval': 'Needs approval', unknown: 'Unknown', disconnected: 'Offline' };
+const clock = t => new Date(t).toTimeString().slice(0, 5);
+
 export function topicTitle(machine, project, branch, agent, suffix = '') {
   const clean = value => String(value ?? '').replace(/[|\r\n]/g, ' ').trim();
   const clip = (value, max) => {
     const chars = Array.from(value);
     return chars.length > max ? chars.slice(0, max - 1).join('') + '…' : value;
   };
-  const name = clean(project).replace(/[-_ ]+(?:studio|lab)$/i, '') || 'unknown';
-  const head = `${clip(clean(machine), 24)} | ${clip(name, 32)} | `;
-  const tail = ` | ${clip(clean(agent), 12)}${suffix ? ` · ${suffix}` : ''}`;
+  const name = clean(project).replace(/[-_ ]+(?:studio|lab)(?=$|[-_ ])/gi, '') || 'unknown';
+  const head = `${clip(name, 32)} | `;
+  const tail = ` | ${clip(clean(machine), 24)} | ${clip(clean(agent), 12)}${suffix ? ` · ${suffix}` : ''}`;
   const available = Math.max(1, 128 - Array.from(head + tail).length);
   const source = Array.from(clean(branch) || 'detached');
   const shortened = source.length > available ? source.slice(0, available - 1).join('') + '…' : source.join('');
@@ -271,10 +275,13 @@ export class Bridge {
     if (!s.topicId || s.chatId == null || !host?.statusSnapshot ||
         (offline ? this.sessions.has(s.key) : this.sessions.get(s.key) !== s)) return;
     const topicId = s.topicId;
-    const snapshot = offline ? { state: 'disconnected', source: 'transport' } : host.statusSnapshot(s.id);
-    const content = `Session status\n${s.title}\nState: ${snapshot.state}\nEvidence: ${snapshot.source}${snapshot.note ? `\n${snapshot.note}` : ''}`;
+    const { state } = offline ? { state: 'disconnected' } : host.statusSnapshot(s.id);
+    // The Topic title already names the session; the card answers only "what is it doing,
+    // since when, and how fresh is this".
+    if (s.statusState !== state) { s.statusState = state; s.statusSince = this.now(); }
+    const content = `${STATUS_LABELS[state] ?? 'Unknown'} · since ${clock(s.statusSince)}`;
     if (!force && s.statusText === content) return;
-    const text = `${content}\nChecked: ${new Date(this.now()).toISOString()}`;
+    const text = `${content}\nChecked ${clock(this.now())}`;
     s.statusRef ??= randomBytes(12).toString('hex');
     const replyMarkup = { inline_keyboard: offline ? [] : [[{ text: 'Refresh status', callback_data: `status:${s.statusRef}` }]] };
     if (s.statusMessageId) {
@@ -594,16 +601,6 @@ async function codexLoop(codex, log, signal, everyMs = 15000) {
   }
 }
 
-/** pid of another live daemon from the runtime file, else null. */
-export function runningDaemonPid(file = RUNTIME_FILE) {
-  try {
-    const { pid } = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!pid || pid === process.pid) return null;
-    process.kill(pid, 0);
-    return pid;
-  } catch { return null; }
-}
-
 export async function main() {
   const sourceRevision = bridgeSourceRevision();
   const logIdx = process.argv.indexOf('--log');
@@ -614,8 +611,9 @@ export async function main() {
     console.error(line);
     if (logFile) try { fs.appendFileSync(logFile, line + '\n'); } catch { /* best effort */ }
   };
-  const other = runningDaemonPid();
-  if (other) { log(`already running (pid ${other}); one getUpdates consumer per bot token`); process.exit(0); }
+  const releaseLock = acquireDaemonLock();
+  if (!releaseLock) { log('already running; one getUpdates consumer per bot token'); process.exit(0); }
+  process.on('exit', releaseLock);
   const config = readBridgeConfig();
   const machine = readMachineName();
   if (!machine) { log('no machine name (~/.claude/machine.json); run setup.js --machine <NAME>'); process.exit(1); }
