@@ -605,7 +605,9 @@ export class Bridge {
     this.#activity(s);
     s.injected = [...s.injected, { text, at: this.now() }].slice(-20);
     try {
-      await host.inject(s.id, text, m.from.username ?? String(m.from.id), attachment ? { images } : undefined);
+      const r = await host.inject(s.id, text, m.from.username ?? String(m.from.id), attachment ? { images } : undefined);
+      // A host that cannot take it now queues it and says when it will arrive.
+      if (r?.queued) await this.#send(s, r.note);
     } catch (e) {
       await this.#send(s, `inject failed: ${e.message}`);
     }

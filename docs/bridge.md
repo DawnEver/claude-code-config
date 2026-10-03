@@ -157,7 +157,7 @@ the user-scope MCP server (`claude mcp add -s user session-bridge -- node
 adds `--dangerously-load-development-channels server:session-bridge`, because custom
 channels are not on the research-preview allowlist. A plain `claude` still starts the MCP
 server, so a Topic appears, but Claude Code drops channel messages without the flag.
-Requires Anthropic auth; third-party providers (`ccds`) lack channels.
+Requires Anthropic auth: on a third-party provider (`ccds`) Claude Code drops channel messages even with the flag (verified live), and Remote Control is unavailable. Such a session (or one started without the flag) still mirrors out, and its Telegram messages are queued: the Stop hook hands them to the session when its current turn ends, as a continuation. An idle session receives nothing until a local prompt starts a turn; the Topic says so when a message is queued.
 
 ## Setup (per machine)
 
@@ -462,9 +462,9 @@ machine with none of these posts nothing that round. Each block:
 ## Claude · 55% left                             heading: the binding window's headroom
 **(!) 7d runs out 05/Oct 19:00 (1d 23h) · resets 09/Oct 04:20 (5d 9h)**
 `alice@example.com` · _Uni Team A_               account as code (not a link), org italic
-| | used | resets |                              the windows as a table
-| 5h | `███░░░░░░░` 26% | 19:44 (24m) |
-| 7d | `█████░░░░░` 45% | 09/Oct 04:20 (5d 9h) |
+| | used / pace | resets |                       pace = % an even spend would be at now
+| 5h | `███░░░░░┃░` 26% / 92% | 19:44 (24m) |      ┃ marks pace on the bar: fill past it = too fast
+| 7d | `████┃░░░░░` 45% / 44% | 09/Oct 04:20 (5d 9h) |
 - **claude-code-config** · main                  what runs here
 `banked reset (Opus 5.5) · use by 21/Oct 19:20 (18d 0h)`
 ```

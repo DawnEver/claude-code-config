@@ -6,7 +6,7 @@
 //       register {token, sessionId, cwd}, reply {text}, permission_request {...}
 //       <- inbound {text, user}, permission {request_id, behavior}
 //   - bridge-hook.js makes one-shot calls: mirror {token, sessionIds, kind, text|state}
-//     (kind prompt | final | activity | end), and question {token, sessionIds, questions, wait},
+//     (kind prompt | final | activity | end; a final may answer {deliver: [{text, user}]}), and question {token, sessionIds, questions, wait},
 //     held open for a Telegram-started turn until the answer arrives
 // and it emits the host-neutral events every adapter emits (see daemon.mjs):
 //   up {id, cwd, backlog}, prompt {id, text}, final {id, text},
@@ -18,6 +18,9 @@
 // channel registered under the latter; /clear mints a new current one), and is held briefly
 // when it beats the channel's registration. CLAUDE_PID is not usable: a nested `claude`
 // inherits its parent's.
+// A session Claude Code gives no channel (no flag, or a third-party provider such as ccds)
+// cannot receive inbound: its Telegram messages are queued and handed to the Stop hook at the
+// end of its next turn, which continues the session with them.
 
 import net from 'net';
 import crypto from 'crypto';
@@ -92,7 +95,8 @@ export class ClaudeAdapter extends EventEmitter {
           // A turn may be in flight when the bridge restarts: with no prompt seen by this
           // daemon, assume a human turn, so its answer is mirrored rather than lost.
           this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), questions: new Map(),
-            claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, humanTurn: previous ? previous.humanTurn : true,
+            claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
+            queued: previous?.queued ?? [], humanTurn: previous ? previous.humanTurn : true,
             remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
           this.emit('up', { id: sessionId, cwd: p.cwd, backlog: [] });
           this.#emitStatus(sessionId);
@@ -104,9 +108,9 @@ export class ClaudeAdapter extends EventEmitter {
           const bad = () => Object.assign(new Error('bad kind'), { code: -32602 });
           if (!['prompt', 'final', 'activity', 'end'].includes(p.kind)) throw bad();
           if (p.kind === 'activity' && !STATES.has(p.state)) throw bad();
-          const routed = this.#mirror({ ...ids(p), retry: p.retry === true, kind: p.kind,
+          const r = this.#mirror({ ...ids(p), retry: p.retry === true, kind: p.kind,
             ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? '') });
-          return { ok: true, routed };
+          return { ok: true, routed: r !== false, ...(Array.isArray(r) ? { deliver: r } : {}) };
         }
         if (method === 'question') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
@@ -254,7 +258,15 @@ export class ClaudeAdapter extends EventEmitter {
     const dup = s.replies.includes(m.text.trim());
     s.replies = [];
     if (human && m.text.trim() && !dup) this.emit('final', { id, text: m.text, ...(m.status ? { status: m.status } : {}) });
-    return true;
+    // A failed turn (StopFailure) cannot be continued by its hook; the queue waits for the next.
+    if (!s.queued.length || m.status === 'failed') return true;
+    const deliver = s.queued;
+    s.queued = [];
+    s.humanTurn = true;
+    s.remoteTurn = true;
+    s.activity = 'running';
+    this.#emitStatus(id);
+    return deliver;
   }
 
   #release() {
@@ -270,7 +282,16 @@ export class ClaudeAdapter extends EventEmitter {
   async inject(id, text, user) {
     const s = this.sessions.get(id);
     if (!s) throw new Error('channel disconnected');
-    if (!s.inbound) throw new Error('this session was not started with ccc, so Claude Code drops Telegram messages; resume it with ccc --resume');
+    if (!s.inbound) {
+      s.queued.push({ text, user: user ?? '' });
+      const why = s.thirdParty
+        ? 'this session runs a third-party provider, which Claude Code gives no channel'
+        : 'this session was not started with ccc, so Claude Code drops channel messages';
+      const when = s.activity === 'running' ? 'it is delivered when the current turn ends'
+        : 'the message waits for its next turn to end (type something locally to wake it)';
+      const fix = s.thirdParty ? 'Use ccc or cods to message it directly.' : 'Resume it with ccc --resume to message it directly.';
+      return { queued: true, note: `queued: ${why}, so ${when}. ${fix}` };
+    }
     s.peer.notify('inbound', { text, user: user ?? '' });
     s.humanTurn = true;   // whether or not UserPromptSubmit reports channel prompts
     s.remoteTurn = true;

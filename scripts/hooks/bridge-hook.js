@@ -8,11 +8,14 @@
 //   UserPromptSubmit -> prompt;  Stop / StopFailure -> final;
 //   PreToolUse / PostToolUse -> activity running;  Notification -> waiting-approval |
 //   waiting-input | idle;  SessionEnd (not /clear) -> end.
+// A session Claude Code gives no channel (ccds, or no flag) has its Telegram messages queued
+// by the daemon; the Stop call gets them back and blocks the stop with them, so the session
+// continues with those messages as its next turn.
 // PreToolUse(AskUserQuestion) is a `question` call instead: in a turn started from Telegram
 // the daemon holds it open until the answer is tapped there (up to QUESTION_TIMEOUT_MS), and
 // the hook prints it as the tool's `answers`, so the terminal dialog never shows.
 //
-// Fail-open and silent: hook stdout can inject context, so nothing else is ever printed;
+// Fail-open and silent: hook stdout can inject context, so only answers and deliveries print;
 // every failure exits 0 (the dialog then shows locally); a hard timer bounds the run. A no-op
 // unless the daemon's runtime file exists.
 
@@ -98,6 +101,13 @@ export function answerOutput(toolInput, answers) {
   return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...toolInput, answers } } };
 }
 
+/** Stop output that continues the session with queued Telegram messages, or null. */
+export function deliverOutput(deliver) {
+  if (!Array.isArray(deliver) || !deliver.length) return null;
+  const msgs = deliver.map((d) => `Message from Telegram${d?.user ? ` (${d.user})` : ''}:\n${String(d?.text ?? '')}`);
+  return { decision: 'block', reason: msgs.join('\n\n') };
+}
+
 /** One authenticated call to the hub. Resolves its result, or null on any failure. */
 export function callHub(method, params, { runtimeFile = RUNTIME_FILE, timeoutMs = TIMEOUT_MS } = {}) {
   let rt;
@@ -141,10 +151,13 @@ async function main() {
   // process (the one owning the channel). Looked up only now — a process-table query is slow,
   // so never for the per-tool activity calls — and never from CLAUDE_PID, which a nested
   // `claude` inherits from its parent.
-  if ((await callHub('mirror', call))?.routed === false && call.kind !== 'activity') {
+  let r = await callHub('mirror', call);
+  if (r?.routed === false && call.kind !== 'activity') {
     const claudePid = nearestClaude(process.ppid);
-    if (claudePid) await callHub('mirror', { ...call, claudePid, retry: true });
+    if (claudePid) r = await callHub('mirror', { ...call, claudePid, retry: true });
   }
+  const out = payload.hook_event_name === 'Stop' && deliverOutput(r?.deliver);
+  if (out) await new Promise((done) => process.stdout.write(JSON.stringify(out), done));
 }
 
 if (isMain(import.meta.url)) main().catch(() => {}).finally(() => process.exit(0));

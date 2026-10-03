@@ -7,6 +7,7 @@ metadata:
 
 
 
+
 ## Review 2026-10-03 (session) — adversarial review (对抗性审查) + diff review
 
 ### Reviewer Status
@@ -400,3 +401,16 @@ quota.at = now() on every read/push.
 - **Suggestion:** Add FleetCard tests with a fake clock.
 
 Only pure render logic is covered.
+
+
+## Review 2026-10-03 (follow-up)
+
+## Review 2026-10-03 (session) — security audit (安全锐评) + diff review
+
+### Reviewer Status
+- Reviewer claude (claude): FAILED
+- Reviewer codex (codex): OK
+- Reviewer deepseek (deepseek): skipped
+- Warning: only 1/2 reviewers succeeded
+
+### Confirmed findings

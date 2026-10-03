@@ -268,10 +268,12 @@ function main() {
   // The hook routes by this after /clear, when the session id it reports is new.
   const claude = ancestors.find((a) => isClaudeProcess(a.cmd));
   session.claudePid = claude?.pid ?? process.ppid;
-  // Claude Code drops channel messages unless launched with this flag (ccc adds it):
-  // without it the session mirrors out but cannot receive from Telegram.
-  session.inbound = !claude || /server:session-bridge/.test(claude.cmd);
-  if (!session.inbound) log('channel flag missing: Telegram messages cannot reach this session (start it with ccc)');
+  // Claude Code drops channel messages unless launched with this flag (ccc adds it), and
+  // always on a third-party provider (ccds: its ANTHROPIC_BASE_URL reaches this process).
+  // Such a session mirrors out; its Telegram messages wait for the Stop hook instead.
+  session.thirdParty = Boolean(process.env.ANTHROPIC_BASE_URL);
+  session.inbound = !session.thirdParty && (!claude || /server:session-bridge/.test(claude.cmd));
+  if (!session.inbound) log(`no channel (${session.thirdParty ? 'third-party provider' : 'flag missing'}): Telegram messages are delivered by the Stop hook`);
   link.start();
 }
 

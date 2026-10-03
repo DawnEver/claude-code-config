@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { finalAssistantText, mirrorFor, questionFor, answerOutput, callHub } from './bridge-hook.js';
+import { finalAssistantText, mirrorFor, questionFor, answerOutput, deliverOutput, callHub } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 
 const j = (o) => JSON.stringify(o);
@@ -85,4 +85,11 @@ test('callHub delivers to a live hub, and resolves quietly when none runs', asyn
     assert.deepEqual(await callHub('question', { sessionIds: ['s'], questions: [{ question: 'q' }], wait: true }, { runtimeFile }), { answers: null });
     assert.equal(await callHub('mirror', { sessionIds: ['s'], kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), null);
   } finally { await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('deliverOutput blocks the stop with the queued Telegram messages', () => {
+  assert.equal(deliverOutput(undefined), null);
+  assert.equal(deliverOutput([]), null);
+  assert.deepEqual(deliverOutput([{ text: 'hi', user: 'u' }, { text: 'two', user: '' }]),
+    { decision: 'block', reason: 'Message from Telegram (u):\nhi\n\nMessage from Telegram:\ntwo' });
 });

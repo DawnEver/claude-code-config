@@ -317,3 +317,32 @@ test('a waiting question is withdrawn when its hook gives up, and released when 
     second.s.destroy();
   } finally { await r.a.close(); }
 });
+
+test('a session without inbound queues Telegram messages and hands them to the next Stop hook', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's', inbound: false, thirdParty: true });
+    const ids = ['s'];
+    assert.deepEqual(await r.a.inject('s', 'idle msg', 'u'), { queued: true,
+      note: 'queued: this session runs a third-party provider, which Claude Code gives no channel, so the message waits for its next turn to end (type something locally to wake it). Use ccc or cods to message it directly.' });
+    await r.hook({ sessionIds: ids, kind: 'prompt', text: 'local work' });
+    assert.match((await r.a.inject('s', 'second', 'v')).note, /^queued: .*delivered when the current turn ends/);
+    const res = await r.hook({ sessionIds: ids, kind: 'final', text: 'local answer' });
+    assert.deepEqual(res.result.deliver, [{ text: 'idle msg', user: 'u' }, { text: 'second', user: 'v' }]);
+    assert.equal(r.a.statusSnapshot('s').state, 'running');
+    assert.equal((await r.hook({ sessionIds: ids, kind: 'final', text: 'phone answer' })).result.deliver, undefined, 'delivered once');
+    assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => e.text), ['local answer', 'phone answer'], 'the continuation is a Telegram turn');
+    ch.destroy();
+  } finally { await r.a.close(); }
+});
+
+test('a session missing only the flag says to resume with ccc', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's', inbound: false });
+    assert.match((await r.a.inject('s', 'x', 'u')).note, /not started with ccc[\s\S]*ccc --resume/);
+    ch.destroy();
+  } finally { await r.a.close(); }
+});
