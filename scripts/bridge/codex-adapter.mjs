@@ -142,7 +142,7 @@ export class CodexAdapter extends EventEmitter {
     this.connection = 0;
     this.threads = new Map();     // threadId -> { cwd, branch, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
-    this.quota = null;            // { limits: RateLimitSnapshot, at } for the fleet report (fleet.mjs)
+    this.quota = null;            // { limits: RateLimitSnapshot, at, resetCredits } for the fleet report (fleet.mjs)
     this.account = null;          // { email, plan } of the ChatGPT login, for the same report
   }
 
@@ -187,7 +187,7 @@ export class CodexAdapter extends EventEmitter {
       const a = (await this.rpc.request('account/read', {}).catch(() => null))?.account;
       this.account = a?.type === 'chatgpt' ? { email: a.email ?? null, plan: a.planType ?? null } : a ? { email: null, plan: a.type } : null;
       const r = await this.rpc.request('account/rateLimits/read', {}).catch(() => null);
-      if (isCodexBucket(r?.rateLimits)) this.quota = { limits: r.rateLimits, at: this.now() };
+      if (isCodexBucket(r?.rateLimits)) this.quota = { limits: r.rateLimits, at: this.now(), resetCredits: r.rateLimitResetCredits ?? null };
     }
     const ids = new Set();
     let cursor = null;
@@ -265,7 +265,7 @@ export class CodexAdapter extends EventEmitter {
     switch (method) {
       case 'account/rateLimits/updated':
         // A push may carry only the windows that changed: keep the others.
-        if (isCodexBucket(p.rateLimits)) this.quota = { limits: { ...this.quota?.limits, ...dropNulls(p.rateLimits) }, at: this.now() };
+        if (isCodexBucket(p.rateLimits)) this.quota = { limits: { ...this.quota?.limits, ...dropNulls(p.rateLimits) }, at: this.now(), resetCredits: this.quota?.resetCredits ?? null };
         break;
       case 'turn/started':
         if (th) {

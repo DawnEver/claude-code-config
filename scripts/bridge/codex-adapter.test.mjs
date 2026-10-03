@@ -33,7 +33,7 @@ function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
         'turn/steer': { turnId: 'turnA' },
         'turn/interrupt': {},
         'account/read': { account: { type: 'chatgpt', email: 'c@example.com', planType: 'plus' } },
-        'account/rateLimits/read': { rateLimits: { limitId: 'codex', primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: 9 } } },
+        'account/rateLimits/read': { rateLimitResetCredits: { availableCount: 1, credits: null }, rateLimits: { limitId: 'codex', primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: 9 } } },
       }[m.method];
       setImmediate(() => onMsg(JSON.stringify({ id: m.id, result })));
     },
@@ -76,6 +76,7 @@ test('account quota: read on refresh, replaced by pushes for the codex bucket on
   const { a, srv } = await started();
   assert.equal(a.quota.limits.primary.usedPercent, 20);
   assert.deepEqual(a.account, { email: 'c@example.com', plan: 'plus' });
+  assert.equal(a.quota.resetCredits.availableCount, 1);
   srv.push('account/rateLimits/updated', { rateLimits: { limitId: 'other', primary: { usedPercent: 99 } } });
   assert.equal(a.quota.limits.primary.usedPercent, 20);
   srv.push('account/rateLimits/updated', { rateLimits: { limitId: 'codex', primary: { usedPercent: 30, windowDurationMins: 300, resetsAt: 9 } } });

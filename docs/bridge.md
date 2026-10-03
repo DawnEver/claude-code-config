@@ -412,6 +412,7 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 | --- | --- |
 | Claude seat | `bridge.fleet.seats` (`{email, org?, orgUuid?, machines, note?}`): the Claude account x Team each machine should run as. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
 | Codex account | app-server `account/read` (email, plan) |
+| Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count and soonest expiry. Claude exposes no such count, so a seat's `note` carries it by hand |
 | Claude account | `~/.claude.json` `oauthAccount` (email, organization), shown in full |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
@@ -430,12 +431,13 @@ Uni Team A                                     (italic)
 5h ██░░░░░░░░  20%  resets 20:00               (bar in monospace)
 7d ███████░░░  69%  resets 08/Oct 23:00
 (!) runs out 05/Oct 21:13                      (bold)
-reset available by 22/Oct                      (italic)
+reset available by 22/Oct                      (monospace: the seat note)
 
 Codex · alice@example.com
 plus
 7d █████░░░░░  51%  resets 09/Oct 22:00
 data 3h old                                    (italic, only when stale)
+reset credits: 1 (next expires 22/Oct 00:00 (18d 4h))
 
 Running
 • lab-commons | main | G | codex

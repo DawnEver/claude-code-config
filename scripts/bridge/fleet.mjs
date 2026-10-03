@@ -172,6 +172,17 @@ function quotaLines(q, now, t) {
   return lines;
 }
 
+/**
+ * Codex `rateLimitResetCredits` ({availableCount, credits: [{expiresAt(sec)|null}]}) ->
+ * `reset credits: 2 (next expires 22/Oct 00:00 (18d 4h))`. Claude exposes no such count.
+ */
+function resetCreditLines(rc, now, t) {
+  if (!(rc?.availableCount >= 0)) return [];
+  const expiries = (Array.isArray(rc.credits) ? rc.credits : []).map((c) => c?.expiresAt * 1000).filter((ms) => ms > now).sort((a, b) => a - b);
+  const next = rc.availableCount > 0 && expiries.length ? ` (next expires ${t(expiries[0], now)})` : '';
+  return [`<code>reset credits: ${rc.availableCount}</code>${esc(next)}`];
+}
+
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 
 /**
@@ -182,13 +193,13 @@ const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not lo
  * condition, never an account.
  * @returns {{text: string, alerts: {key: string, text: string, until: number|null}[]}}
  */
-export function renderCard({ machine, registry, account, codexAccount, claude, codex, sessions = [], now }) {
+export function renderCard({ machine, registry, account, codexAccount, claude, codex, codexResetCredits = null, sessions = [], now }) {
   const alerts = [];
   const t = timeFormatter(registry?.timeFormat);
   const seat = seatFor(registry, machine);
   const head = (host, email, detail) => [`<b>${host}</b> · ${esc(email ?? 'not logged in')}`, ...(detail ? [`<i>${esc(detail)}</i>`] : [])];
   const claudeLines = [...head('Claude', account?.email, account?.org), ...quotaLines(claude, now, t)];
-  if (seat?.note) claudeLines.push(`<i>${esc(seat.note)}</i>`);
+  if (seat?.note) claudeLines.push(`<code>${esc(seat.note)}</code>`);
   const flag = (key, text) => { claudeLines.push(`<b>(!) ${esc(text)}</b>`); alerts.push({ key, text: `${machine} Claude: ${text}`, until: null }); };
   const expected = seat && who(seat.email, seat.org ?? seat.orgUuid);
   if (registry?.seats?.length && !seat) flag('unregistered', `${machine} is not in bridge.fleet.seats`);
@@ -196,7 +207,7 @@ export function renderCard({ machine, registry, account, codexAccount, claude, c
   else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `wrong account, expected ${expected}`);
   else if (seat && !orgOk(account, seat)) flag('seat:org', `wrong team, expected ${expected}`);
   const codexLines = codexAccount ? head('Codex', codexAccount.email, codexAccount.plan) : ['<b>Codex</b> · <i>account unknown</i>'];
-  const lines = [`<b>${esc(machine)}</b>`, '', ...claudeLines, '', ...codexLines, ...quotaLines(codex, now, t), ''];
+  const lines = [`<b>${esc(machine)}</b>`, '', ...claudeLines, '', ...codexLines, ...quotaLines(codex, now, t), ...resetCreditLines(codexResetCredits, now, t), ''];
   for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
     if (!q || now - q.at > STALE_MS) continue;
     for (const [k, v] of Object.entries(q.windows)) {
@@ -261,7 +272,7 @@ export class FleetCard {
     const registry = this.read.registry();
     const cx = this.codexSource();
     const { text, alerts } = renderCard({ machine: this.machine, registry,
-      account: this.read.account(), codexAccount: this.codexAccount(), claude: claudeQuota(this.read.claudeUsage()),
+      account: this.read.account(), codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null, claude: claudeQuota(this.read.claudeUsage()),
       codex: cx ? codexQuota(cx.limits, cx.at) : null, sessions: this.sessions(), now });
     const before = JSON.stringify(this.state);
     const opts = { threadId: this.topicId ?? undefined };
