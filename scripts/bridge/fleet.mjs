@@ -155,39 +155,10 @@ export function timeFormatter(format) {
 const bar = (used) => { const n = Math.round(used / 10); return '█'.repeat(n) + '░'.repeat(10 - n); };
 const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
 
-// The report is Telegram HTML: bold heads, italic detail, and only the bar in monospace so
-// it lines up while the rest reads in the normal font. Every interpolated value is escaped.
-const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-/** `<code>7d ███████░░░  69%</code>  resets 08/Oct 23:00`, + a bold run-out warning. */
-function windowLines(k, v, now, t) {
-  // A past reset has no countdown: always a date.
-  if (v.resetsAt <= now) return [`<code>${esc(k.padEnd(3))}</code> reset ${esc(when(v.resetsAt, now))}, awaiting data`];
-  const lines = [`<code>${esc(k.padEnd(3))}${bar(v.used)} ${`${Math.round(v.used)}%`.padStart(4)}</code>  resets ${esc(t(v.resetsAt, now))}`];
-  if (v.short) lines.push(`<b>(!) runs out ${esc(t(v.eta, now))}</b>`);
-  return lines;
-}
-
-function quotaLines(q, now, t) {
-  if (!q) return ['<i>no quota data yet</i>'];
-  const lines = Object.entries(q.windows).flatMap(([k, v]) => windowLines(k, v, now, t));
-  // Freshness only when it matters: an old snapshot says how old.
-  if (now - q.at > STALE_MS) lines.push(`<i>data ${ago(now - q.at)} old</i>`);
-  return lines;
-}
-
-/**
- * Codex `rateLimitResetCredits` ({availableCount, credits: [{expiresAt(sec)|null}]}) ->
- * `reset credits: 2` and one `expires ...` line per credit, soonest first (`no expiry`
- * when the backend gives none). Claude exposes no such count.
- */
-function resetCreditLines(rc, now, t) {
-  if (!(rc?.availableCount >= 0)) return [];
-  const credits = (Array.isArray(rc.credits) ? rc.credits : []).map((c) => (c?.expiresAt > 0 ? c.expiresAt * 1000 : Infinity))
-    .filter((ms) => ms > now).sort((a, b) => a - b);
-  return [`<code>reset credits: ${rc.availableCount}</code>`,
-    ...credits.map((ms) => `  ${ms === Infinity ? 'no expiry' : `expires ${esc(t(ms, now))}`}`)];
-}
+// The report is Telegram rich Markdown (sendRichMessage): a `##` heading per host, a table of
+// quota windows, bold warnings, code for things to act on. Every interpolated value is
+// escaped, so an email, org or branch can never become markup.
+const md = (v) => String(v).replace(/[\\`*_{}[\]()#+\-.!|<>~]/g, '\\$&');
 
 // Codex reports wire plan ids; show the name the plan is sold under. Unlisted ids are
 // title-cased (`edu_plus` -> `Edu Plus`).
@@ -195,48 +166,101 @@ const PLAN_NAMES = { self_serve_business_prolite: 'Business Premium' };
 export const planName = (id) => PLAN_NAMES[id] ?? String(id).split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 /**
- * One host's extra-reset state (extra-resets.mjs): a banked reset still to claim (with its
- * use-by), an announced one not applied yet, and the latest applied one, linked to its source.
+ * What a reader looks for first: will the quota last until it resets? The binding window
+ * is the one that runs out soonest, else the fullest. It heads the block as `NN% left`,
+ * and a projected run-out sits right under the heading next to that window's reset.
  */
-function extraResetLines(x, now, t, claimed = []) {
-  if (!x) return [];
-  const link = (e, text) => (e.url ? `<a href="${esc(e.url)}">${text}</a>` : text);
+function headline(q, now, t) {
+  const live = Object.entries(q?.windows ?? {}).filter(([, v]) => v.resetsAt > now);
+  if (!live.length) return { title: '', warn: [] };
+  const short = live.filter(([, v]) => v.short).sort((a, b) => a[1].eta - b[1].eta);
+  const [k, v] = short[0] ?? live.sort((a, b) => b[1].used - a[1].used)[0];
+  return { title: ` · ${Math.round(100 - v.used)}% left`,
+    warn: v.short ? [`**(\\!) ${k} runs out ${md(t(v.eta, now))} · resets ${md(t(v.resetsAt, now))}**`] : [] };
+}
+
+/** The quota windows as one table: the detail under the headline. */
+function quotaLines(q, now, t) {
+  if (!q) return ['_no quota data yet_'];
+  const rows = Object.entries(q.windows).map(([k, v]) => (v.resetsAt <= now
+    // A past reset has no countdown: always a date.
+    ? `| ${k} | — | reset ${md(when(v.resetsAt, now))}, awaiting data |`
+    : `| ${k} | \`${bar(v.used)}\` ${Math.round(v.used)}% | ${md(t(v.resetsAt, now))} |`));
+  const lines = [['| | used | resets |', '|---|---|---|', ...rows].join('\n')];
+  // Freshness only when it matters: an old snapshot says how old.
+  if (now - q.at > STALE_MS) lines.push(`_data ${ago(now - q.at)} old_`);
+  return lines;
+}
+
+/** Codex reset credits still to spend, each with its expiry, soonest first. */
+function resetCreditLines(rc, now, t) {
+  if (!(rc?.availableCount > 0)) return [];
+  const expiries = (Array.isArray(rc.credits) ? rc.credits : []).map((c) => (c?.expiresAt > 0 ? c.expiresAt * 1000 : Infinity))
+    .filter((x) => x > now).sort((a, b) => a - b);
+  return [`\`reset credits: ${rc.availableCount}\``, ...(expiries.length ? [expiries.map((x) => `- ${x === Infinity ? 'no expiry' : `expires ${md(t(x, now))}`}`).join('\n')] : [])];
+}
+
+/** Banked resets still to claim and an announced one: what a person can act on. */
+function actionableResets(x, claimed = []) {
+  return { banked: (x?.banked ?? []).filter((e) => !claimed.includes(e.id)), scheduled: x?.scheduled ?? null };
+}
+
+/** Only resets a person can act on; past ones are history, not news. */
+function resetLines(act, now, t) {
+  const link = (e, text) => (e.url ? `[${text}](${e.url})` : text);
   return [
-    ...x.banked.filter((e) => !claimed.includes(e.id)).map((e) =>
-      `<code>${esc(`banked reset${e.name ? ` (${e.name})` : ''} · ${e.expires ? `use by ${t(e.expires, now)}` : 'no stated expiry'}`)}</code>`),
-    ...(x.scheduled ? [`<b>${link(x.scheduled, 'extra reset announced')}</b>${x.scheduled.at ? ` · ${esc(t(x.scheduled.at, now))}` : ''}`] : []),
-    ...(x.applied ? [`<i>${link(x.applied, 'last extra reset')} ${esc(t(x.applied.at, now))}${x.applied.scope ? ` · ${esc(x.applied.scope)}` : ''}</i>`] : []),
+    ...act.banked.map((e) => `\`banked reset${e.name ? ` (${e.name})` : ''} · ${e.expires ? `use by ${t(e.expires, now)}` : 'no stated expiry'}\``),
+    ...(act.scheduled ? [`**${link(act.scheduled, 'extra reset announced')}**${act.scheduled.at ? ` · ${md(t(act.scheduled.at, now))}` : ''}`] : []),
   ];
 }
 
+const RUNNING = new Set(['Working', 'Needs approval']);
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
+// An account is a name, not a link: code spans stop Telegram auto-linking the email.
+const accountName = (email) => (email ? `\`${email.replace(/`/g, '')}\`` : '_not logged in_');
 
 /**
- * Render this machine's report (Telegram HTML). One block per host, each headed by the
- * account it actually runs as (full email, organization in italics): a seat
- * (bridge.fleet.seats) is a Claude seat, so its checks sit in the Claude block; Codex runs
- * on its own account. Warnings are `(!)` lines of the report, never separate messages.
+ * Render this machine's report (rich Markdown), or null when there is nothing to say. The
+ * bot that posts it names the machine, so there is no machine title. A host block appears
+ * only when that host is running something here, has a reset to act on (a banked reset to
+ * claim, an announced one, Codex reset credits) or has a seat problem. Each block is
+ * headed by the account it runs as; a seat (bridge.fleet.seats) is a Claude seat, so its
+ * checks sit in the Claude block. Running means observed working or awaiting approval.
  */
 export function renderReport({ machine, registry, account, codexAccount, claude, codex, codexResetCredits = null, extra = null, sessions = [], now }) {
   const t = timeFormatter(registry?.timeFormat);
   const seat = seatFor(registry, machine);
-  const head = (host, email, detail) => [`<b>${host}</b> · ${esc(email ?? 'not logged in')}`, ...(detail ? [`<i>${esc(detail)}</i>`] : [])];
-  const claudeLines = [...head('Claude', account?.email, account?.org), ...quotaLines(claude, now, t)];
-  claudeLines.push(...extraResetLines(extra?.Claude, now, t, seat?.claimed));
-  const flag = (text) => claudeLines.push(`<b>(!) ${esc(text)}</b>`);
+  const running = (agent) => sessions.filter((x) => x.agent === agent && RUNNING.has(x.status));
+  // One Markdown list of what runs here: project in bold, branch, state unless plain working.
+  const runLines = (list) => (list.length ? [list.map((x) => `- **${md(x.project)}** · ${md(x.branch ?? 'detached')}${x.status === 'Working' ? '' : ` · _${md(x.status)}_`}`).join('\n')] : []);
+
   const expected = seat && who(seat.email, seat.org ?? seat.orgUuid);
-  if (registry?.seats?.length && !seat) flag(`${machine} is not in bridge.fleet.seats`);
-  else if (seat && !account) flag(`no subscription login, expected ${expected}`);
-  else if (seat && seat.email && !sameText(account.email, seat.email)) flag(`wrong account, expected ${expected}`);
-  else if (seat && !orgOk(account, seat)) flag(`wrong team, expected ${expected}`);
-  const codexLines = codexAccount ? head('Codex', codexAccount.email, codexAccount.plan && planName(codexAccount.plan)) : ['<b>Codex</b> · <i>account unknown</i>'];
-  const lines = [`<b>${esc(machine)}</b>`, '', ...claudeLines, '', ...codexLines, ...quotaLines(codex, now, t), ...resetCreditLines(codexResetCredits, now, t), ...extraResetLines(extra?.Codex, now, t), ''];
-  // What is running here: busy sessions by name; idle ones are not news.
-  const busy = sessions.filter((x) => x.status !== 'Idle' && x.status !== 'Ended');
-  lines.push(busy.length ? '<b>Running</b>' : '<b>Running</b> · <i>nothing</i>');
-  // Unknown = connected but not yet observed (e.g. just after a bridge restart): shown as `?`.
-  for (const x of busy) lines.push(`• ${esc(x.title)}${x.status === 'Working' ? '' : x.status === 'Unknown' ? ' · ?' : ` · ${esc(x.status)}`}`);
-  return lines.join('\n');
+  const problem = registry?.seats?.length && !seat ? `${machine} is not in bridge.fleet.seats`
+    : seat && !account ? `no subscription login, expected ${expected}`
+    : seat && seat.email && !sameText(account.email, seat.email) ? `wrong account, expected ${expected}`
+    : seat && !orgOk(account, seat) ? `wrong team, expected ${expected}` : null;
+
+  const blocks = [];
+  // Heading = verdict; then the warning; then who it runs as; then the detail.
+  const block = (host, q, email, detail, lines) => {
+    const h = headline(q, now, t);
+    // Blank lines between parts: a single newline would fold them into one paragraph.
+    blocks.push([`## ${host}${h.title}`, ...h.warn, `${accountName(email)}${detail ? ` · _${md(detail)}_` : ''}`, ...lines].join('\n\n'));
+  };
+
+  const claudeAct = actionableResets(extra?.Claude, seat?.claimed);
+  const claudeRun = running('claude');
+  if (claudeRun.length || claudeAct.banked.length || claudeAct.scheduled || problem) {
+    block('Claude', claude, account?.email, account?.org, [...(problem ? [`**(\\!) ${md(problem)}**`] : []), ...quotaLines(claude, now, t),
+      ...runLines(claudeRun), ...resetLines(claudeAct, now, t)]);
+  }
+  const codexAct = actionableResets(extra?.Codex);
+  const codexRun = running('codex');
+  if (codexRun.length || codexAct.scheduled || codexResetCredits?.availableCount > 0) {
+    block('Codex', codex, codexAccount?.email, codexAccount?.plan && planName(codexAccount.plan), [...quotaLines(codex, now, t),
+      ...runLines(codexRun), ...resetCreditLines(codexResetCredits, now, t), ...resetLines(codexAct, now, t)]);
+  }
+  return blocks.length ? blocks.join('\n\n') : null;
 }
 
 /**
@@ -293,7 +317,8 @@ export class FleetReport {
       claude: claudeQuota(this.read.claudeUsage()), codex: cx ? codexQuota(cx.limits, cx.at) : null,
       extra: await this.extraResets(now).catch(() => null), sessions: this.sessions(), now });
     const previous = this.state.messageId;
-    const [sent] = await this.telegram.sendMessage(this.chatId, text, { threadId: this.topicId ?? undefined, html: true });
+    // Nothing to say (idle, no reset to act on): the round still replaces the old report.
+    const [sent] = text ? await this.telegram.sendMessage(this.chatId, text, { threadId: this.topicId ?? undefined, rich: true }) : [];
     this.state = { ...this.state, messageId: sent?.message_id ?? null, round };
     this.#save();
     if (previous) await this.telegram.deleteMessage(this.chatId, previous).catch(() => {});

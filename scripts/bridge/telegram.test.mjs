@@ -275,14 +275,3 @@ test('deleteForumTopic targets the Topic', async () => {
     assert.deepEqual([api.calls[0].method, api.calls[0].params], ['deleteForumTopic', { chat_id: -100, message_thread_id: 7 }]);
   } finally { api.close(); }
 });
-
-test('html sends and edits with parse_mode HTML', async () => {
-  const calls = [];
-  const tg = new TelegramClient({ token: 'test', fetch: async (url, init) => {
-    calls.push([url.split('/').pop(), JSON.parse(init.body)]);
-    return { ok: true, json: async () => ({ ok: true, result: { message_id: 1 } }) };
-  } });
-  await tg.sendMessage(-100, '<b>a</b>', { html: true });
-  await tg.editMessageText(-100, 1, '<i>c</i>', { html: true });
-  assert.deepEqual(calls.map(([m, p]) => [m, p.parse_mode]), [['sendMessage', 'HTML'], ['editMessageText', 'HTML']]);
-});

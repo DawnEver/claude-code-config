@@ -412,40 +412,32 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 | Claude seat | `bridge.fleet.seats` (`{email, org?, orgUuid?, machines, claimed?}`; `claimed` lists the ids of banked resets the seat has already used, which the report then stops offering): the Claude account x Team each machine should run as. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
 | Codex account | app-server `account/read` (email, plan) |
 | Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count, and each credit's expiry |
-| extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, a banked reset still to claim with its use-by, one announced but not applied, and the latest applied one linked to its source. Not official data |
+| extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, a banked reset still to claim with its use-by and one announced but not applied. Past resets are history and not shown. Not official data |
 | Claude account | `~/.claude.json` `oauthAccount` (email, organization), shown in full |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
-| running | registered sessions that are not idle (`?` = connected, not yet observed) |
+| running | sessions observed Working or Needs approval (idle and not-yet-observed sessions are not running) |
 
-A report is Telegram HTML, one section per host, each headed by the full account it
-actually runs as; seat checks belong to Claude, since a seat is a Claude seat. Extra
-resets are report state, not separate messages: the hourly round is the notification.
-Heads are bold, detail italic, and only the bar is monospace, so bars line up while the rest
-reads in the normal font (every value is HTML-escaped). Rendered, it reads:
+A report answers first what a reader acts on: will the quota last until it resets, and is
+there a reset to use. It is a Telegram rich Markdown message (`sendRichMessage`), every value
+Markdown-escaped. The posting bot names the machine, so there is no machine title. A host
+block appears only when that host runs something on this machine, has a reset to act on (a
+banked reset to claim, an announced one, Codex reset credits) or has a seat problem; a
+machine with none of these posts nothing that round. Each block:
 
 ```
-G                                              (bold)
-
-Claude · alice@example.com                     (bold head)
-Uni Team A                                     (italic)
-5h ██░░░░░░░░  20%  resets 20:00               (bar in monospace)
-7d ███████░░░  69%  resets 08/Oct 23:00
-(!) runs out 05/Oct 21:13                      (bold)
-banked reset · use by 22/Oct 01:00 (18d 7h)    (monospace)
-last extra reset 04/Sep 21:08 (29d ago) · Max plans   (italic, linked)
-
-Codex · alice@example.com
-plus
-7d █████░░░░░  51%  resets 09/Oct 22:00
-data 3h old                                    (italic, only when stale)
-reset credits: 1
-  expires 22/Oct 00:00 (18d 4h)
-last extra reset 02/Oct 22:18 (19h ago)
-
-Running
-• lab-commons | main | G | codex
+## Claude · 55% left                             heading: the binding window's headroom
+**(!) 7d runs out 05/Oct 19:00 (1d 23h) · resets 09/Oct 04:20 (5d 9h)**
+`alice@example.com` · _Uni Team A_               account as code (not a link), org italic
+| | used | resets |                              the windows as a table
+| 5h | `███░░░░░░░` 26% | 19:44 (24m) |
+| 7d | `█████░░░░░` 45% | 09/Oct 04:20 (5d 9h) |
+- **claude-code-config** · main                  what runs here
+`banked reset (Opus 5.5) · use by 21/Oct 19:20 (18d 0h)`
 ```
+
+The binding window is the one projected to run out soonest, else the fullest. Codex blocks
+add `reset credits: N` with each credit's expiry when credits remain.
 
 `timeFormat` picks how times read: `both` (default: `08/Oct 23:00 (4d 7h)`; `HH:MM` for
 today), `date` (`08/Oct 23:00` only) or `countdown` (time left only: `4d 7h`, `3h 15m`, `12m`). Pace is the average since the window
@@ -453,7 +445,7 @@ opened, as of the snapshot, so no history is kept. Freshness appears only for a 
 over 15 minutes old. Nothing is posted between rounds: every warning is a bold `(!)` line of
 the report — running out before reset, Claude logged into another account/org than the
 seat (`org` = case-insensitive substring of organizationName, or exact `orgUuid`), no
-subscription login on a registered machine, machine absent from a non-empty `seats`. Seats and order are re-read every tick; no restart needed.
+subscription login on a registered machine, machine absent from a non-empty `seats`. Seats and order are re-read every round; no restart needed.
 
 ## Session status
 

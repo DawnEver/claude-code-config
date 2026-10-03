@@ -161,7 +161,7 @@ export class TelegramClient {
    * Send plain text, chunked to 4096. Returns the sent messages. Silent by default; `alert`
    * (user ids) makes it notify and mentions each user — a mention gets through a muted chat.
    */
-  async sendMessage(chatId, text, { threadId, replyMarkup, alert, rich = false, html = false } = {}) {
+  async sendMessage(chatId, text, { threadId, replyMarkup, alert, rich = false } = {}) {
     // Preserve structural Markdown as one message; never split a formula or code fence.
     // Alerts and approval controls remain on the independently tested plain-text path.
     if (rich && !alert?.length && !replyMarkup) {
@@ -188,7 +188,7 @@ export class TelegramClient {
         chat_id: chatId,
         text: loud ? `${alert.map(() => '@you').join(' ')} ${parts[i]}` : parts[i],
         ...(loud ? { entities: alert.map((id, k) => ({ type: 'text_mention', offset: k * 5, length: 4, user: { id } })) }
-          : { disable_notification: true, ...(html ? { parse_mode: 'HTML' } : {}) }),
+          : { disable_notification: true }),
         ...(threadId ? { message_thread_id: threadId } : {}),
         ...(replyMarkup && i === parts.length - 1 ? { reply_markup: replyMarkup } : {}),
         link_preview_options: { is_disabled: true },
@@ -309,10 +309,9 @@ export class TelegramClient {
     return Buffer.concat(chunks, size);
   }
 
-  editMessageText(chatId, messageId, text, { replyMarkup, html = false } = {}) {
-    const body = chunkText(text)[0];
+  editMessageText(chatId, messageId, text, { replyMarkup } = {}) {
     return this.call('editMessageText', {
-      chat_id: chatId, message_id: messageId, text: body, ...(html ? { parse_mode: 'HTML' } : {}),
+      chat_id: chatId, message_id: messageId, text: chunkText(text)[0],
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     });
   }
