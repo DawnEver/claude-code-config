@@ -37,3 +37,15 @@ emails, so it lives in the sync dir (optional payload, e.g. `fleet.json`), never
 wrong-org check. 3. Fleet Topic card (workstations/tasks, then Codex quota, then Claude
 quota via hud-hook -> daemon IPC), alerts only on transitions (ETA < reset, org mismatch,
 seat on unregistered machine).
+
+# Outcome (same day)
+
+Shipped: 9f72b15 (observer removed), dda339d (lazy Topics, card-first, end = card edit),
+9a8d0a5 + 51025f0 (fleet card). Design chosen over a cross-machine aggregator: each
+daemon edits its OWN card in `bridge.fleet.chatId[/topicId]` — no leader, no shared
+mutable state. Pace = average since window open as of the snapshot (stateless); stale
+(>15 min) snapshots never alert. Claude org names differ from what people call them
+(organizationName carries a prefix), hence substring `org` or exact `orgUuid`.
+Live on <machine>: card shows Claude 5h/7d, Codex 7d (Codex reports only the weekly
+window for that plan), seat note, busy tasks. Other hosts pick it up after pull + a
+session start (ensure.mjs replaces a daemon whose source fingerprint changed).
