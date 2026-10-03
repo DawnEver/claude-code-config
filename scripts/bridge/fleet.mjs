@@ -124,20 +124,18 @@ const orgOk = (account, seat) => (seat.orgUuid ? account.orgUuid === seat.orgUui
   : !seat.org || String(account.org ?? '').toLowerCase().includes(String(seat.org).trim().toLowerCase()));
 
 const pad = (n) => String(n).padStart(2, '0');
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-/** HH:MM today, `Ddd HH:MM` within a week, else `DD/MM HH:MM`. */
+/** HH:MM today, else `DD/MM HH:MM`: a date reads without counting weekdays. */
 export function when(ms, now) {
   const d = new Date(ms);
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (new Date(now).toDateString() === d.toDateString()) return hm;
-  if (Math.abs(ms - now) < 6 * 24 * H) return `${DAYS[d.getDay()]} ${hm}`;
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${hm}`;
 }
 
 const bar = (used) => { const n = Math.round(used / 10); return '█'.repeat(n) + '░'.repeat(10 - n); };
 const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
 
-/** `Claude 7d ███████░░░  69%  resets Wed 23:00`, + `(!) runs out ...` under it. */
+/** `Claude 7d ███████░░░  69%  resets 08/10 23:00`, + `(!) runs out ...` under it. */
 function windowLines(host, k, v, now) {
   const label = `${host.padEnd(6)} ${k.padEnd(2)} `;
   if (v.resetsAt <= now) return [`${label}reset ${when(v.resetsAt, now)}, awaiting data`];
@@ -181,25 +179,38 @@ export function renderCard({ machine, registry, account, claude, codex, sessions
   // What is running here: busy sessions by name; idle ones are not news.
   const busy = sessions.filter((x) => x.status !== 'Idle' && x.status !== 'Ended');
   lines.push(busy.length ? 'Running' : 'Running: nothing');
-  for (const x of busy) lines.push(`  ${x.title}${x.status === 'Working' ? '' : ` · ${x.status}`}`);
+  // Unknown = connected but not yet observed (e.g. just after a bridge restart): shown as `?`.
+  for (const x of busy) lines.push(`  ${x.title}${x.status === 'Working' ? '' : x.status === 'Unknown' ? ' · ?' : ` · ${x.status}`}`);
   return { text: lines.join('\n'), alerts };
 }
 
 /**
- * The daemon side: render this machine's card into the configured fleet chat/Topic, edit
- * it in place when its text changes, and post each alert once. A run-out alert stays
- * "sent" until its window resets, so a stale gap or a dip does not repeat it; a seat alert
- * is forgotten once its condition clears. State ({chatId, topicId, messageId, text, sent})
- * is a local transport cache, like topics.json; a different chat/Topic starts it afresh.
+ * The report slot of `machine`: fleet.json `order` lists machines in reporting order; one
+ * not listed reports last. Slots are a minute apart, so a round reads top to bottom.
+ */
+export function reportSlot(registry, machine) {
+  const order = Array.isArray(registry?.order) ? registry.order : [];
+  const i = order.indexOf(machine);
+  return (i === -1 ? order.length : i) * 60000;
+}
+
+/**
+ * The daemon side. Every `everyMinutes`, at this machine's slot in the fleet order, post a
+ * fresh report and delete this machine's previous one, so the chat always holds the latest
+ * round in order. Between rounds only a new alert is posted (silently, once): a run-out
+ * alert stays "sent" until its window resets, a seat alert until its condition clears.
+ * State ({chatId, topicId, messageId, round, sent}) is a local transport cache; another
+ * chat/Topic starts it afresh.
  */
 export class FleetCard {
-  constructor({ telegram, chatId, topicId = null, machine, stateFile = null, sessions = () => [],
-    codexQuota: codexSource = () => null, alertIds = [], log = () => {}, now = Date.now,
+  constructor({ telegram, chatId, topicId = null, everyMinutes = 60, machine, stateFile = null, sessions = () => [],
+    codexQuota: codexSource = () => null, log = () => {}, now = Date.now,
     read = { registry: readRegistry, account: claudeAccount, claudeUsage: readClaudeUsage } }) {
-    Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, alertIds, log, now, read });
+    Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, log, now, read });
+    this.cycleMs = everyMinutes * 60000;
     const saved = stateFile && readJson(stateFile);
     this.state = saved?.chatId === chatId && (saved.topicId ?? null) === topicId && saved.sent
-      ? saved : { chatId, topicId, messageId: null, text: null, sent: {} };
+      ? saved : { chatId, topicId, messageId: null, round: null, sent: {} };
     this.running = null;
   }
 
@@ -219,24 +230,20 @@ export class FleetCard {
 
   async #tick() {
     const now = this.now();
+    const registry = this.read.registry();
     const cx = this.codexSource();
-    const { text, alerts } = renderCard({ machine: this.machine, registry: this.read.registry(),
+    const { text, alerts } = renderCard({ machine: this.machine, registry,
       account: this.read.account(), claude: claudeQuota(this.read.claudeUsage()),
       codex: cx ? codexQuota(cx.limits, cx.at) : null, sessions: this.sessions(), now });
     const before = JSON.stringify(this.state);
     const opts = { threadId: this.topicId ?? undefined };
     try {
-      if (text !== this.state.text) {
-        let sent = false;
-        if (this.state.messageId) {
-          try { await this.telegram.editMessageText(this.chatId, this.state.messageId, text, { pre: true }); sent = true; }
-          catch (e) {
-            if (/not modified/i.test(e.message)) sent = true;
-            else if (!/message to edit not found|MESSAGE_ID_INVALID/i.test(e.message)) throw e;
-          }
-        }
-        if (!sent) this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, pre: true }))[0]?.message_id ?? null;
-        this.state.text = text;
+      const round = Math.floor((now - reportSlot(registry, this.machine)) / this.cycleMs);
+      if (round !== this.state.round) {
+        const previous = this.state.messageId;
+        this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, pre: true }))[0]?.message_id ?? null;
+        this.state.round = round;
+        if (previous) await this.telegram.deleteMessage(this.chatId, previous).catch(() => {});
       }
       const holding = new Set(alerts.map((a) => a.key));
       for (const [key, until] of Object.entries(this.state.sent)) {
@@ -244,7 +251,7 @@ export class FleetCard {
       }
       for (const a of alerts) {
         if (a.key in this.state.sent) continue;
-        await this.telegram.sendMessage(this.chatId, a.text, { ...opts, alert: this.alertIds });
+        await this.telegram.sendMessage(this.chatId, a.text, opts);
         this.state.sent[a.key] = a.until;   // recorded per alert: a later failure cannot resend it
       }
     } finally {

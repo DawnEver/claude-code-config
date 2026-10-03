@@ -162,9 +162,9 @@ export class Bridge {
     return this.sessions.get(key);
   }
 
-  /** What the fleet card lists: sessions that have shown activity (they own a Topic). */
+  /** What the fleet report lists: every registered session with its status (idle ones are filtered there). */
   fleetSessions() {
-    return [...this.sessions.values()].filter((s) => s.topicId && s.state !== 'ended' && this.sessions.get(s.key) === s).map((s) => ({
+    return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({
       title: s.title, status: STATUS_LABELS[this.hosts.get(s.agent)?.statusSnapshot?.(s.id).state] ?? 'Unknown' }));
   }
 
@@ -634,11 +634,12 @@ export async function main() {
       Math.min(60000, config.idleCloseMinutes * 60000)).unref();
   }
   if (config.fleet) {
-    const card = new FleetCard({ telegram, ...config.fleet, machine, log, alertIds: config.allowedUserIds,
+    const card = new FleetCard({ telegram, ...config.fleet, machine, log,
       stateFile: path.join(BRIDGE_RUNTIME_DIR, 'fleet-card.json'),
       sessions: () => bridge.fleetSessions(), codexQuota: () => codex.quota });
+    // No tick at startup: sessions re-register over the first seconds, and a report taken
+    // before that would say nothing is running.
     const tick = () => card.tick().catch((e) => log(`fleet card: ${e.message}`));
-    tick();
     setInterval(tick, 60000).unref();
   }
   if (config.deleteClosedAfterHours > 0) {

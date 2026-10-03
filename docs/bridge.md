@@ -266,7 +266,7 @@ Transport exception URLs are not logged because they can contain bot tokens.
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
 | `claude-usage.json` | latest Claude statusLine `rate_limits`, teed by `hud-hook.js` for the fleet card |
-| `fleet-card.json` | this machine's fleet card message id, last text and active alert keys (cache) |
+| `fleet-card.json` | this machine's last fleet report id and round, and sent alert keys (cache) |
 | `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit; pruned after 7 days |
 
 These files are **machine-local and contain local paths** (cwds, which include the user
@@ -388,37 +388,39 @@ to 50 MiB and preserve original bytes. Captions are plain text, at most 1024 cha
 Uncertain upload outcomes are not retried; check the Topic before another attempt.
 No directory scanning or automatic artifact publication is performed.
 
-## Fleet card (`scripts/bridge/fleet.mjs`)
+## Fleet report (`scripts/bridge/fleet.mjs`)
 
-One message per machine in one shared chat/Topic, edited in place, answering: which seat
-is this machine on, how much quota is left, when does it reset, will it run out before
-then, and what is running here. Enable it with `bridge.fleet` in the shared config:
+Every machine reports into one shared chat/Topic, in a fixed order, at a low rate: which
+seat it is on, how much quota is left, when it resets, whether it runs out first, and what
+is running there. Enable it in the shared config:
 
 ```json
-"bridge": { "fleet": { "chatId": -1001111111111, "topicId": 42 } }
+"bridge": { "fleet": { "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60 } }
 ```
 
-`topicId` is optional (absent = the group's General Topic). Every machine's bot must be a
-member of that chat. Each daemon renders only its own observations — no cross-machine
-aggregation, no shared mutable state, no private endpoints:
+`topicId` is optional (absent = General); `everyMinutes` defaults to 60. Every machine's
+bot must be a member of that chat. Every `everyMinutes`, each machine posts a fresh report
+at its slot — one minute apart, in the order of `fleet.json` `order` (unlisted machines
+last) — and deletes its previous one, so the chat holds the latest round, top to bottom.
+Nothing is reported in the first minute after a daemon start, while sessions re-register.
 
 | Line | Source |
 | --- | --- |
-| seat | `~/.claude/fleet.json` (sync payload, gitignored: it names accounts) `{seats: [{name, email, org?, orgUuid?, machines: [<machine>], note?}]}` |
+| seat | `~/.claude/fleet.json` (sync payload, gitignored: it names accounts) `{order: [<machine>], seats: [{name, email, org?, orgUuid?, machines: [<machine>], note?}]}` |
 | Claude account | `~/.claude.json` `oauthAccount` (email, organization) — emails are never printed |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
-| running | sessions that own a live Topic and are not idle (state shown unless Working) |
+| running | registered sessions that are not idle (`?` = connected, not yet observed) |
 
-The card is one monospace block, so bars and numbers line up:
+A report is one monospace block, so bars and numbers line up:
 
 ```
 G · seat-name
 note: reset available 22/Oct
 
 Claude 5h ██░░░░░░░░  20%  resets 20:00
-Claude 7d ███████░░░  69%  resets Wed 23:00
-          (!) runs out Sun 21:13
+Claude 7d ███████░░░  69%  resets 08/10 23:00
+          (!) runs out 05/10 21:13
 Codex  7d █████░░░░░  51%  resets 09/10 22:00
           data 3h old
 
@@ -426,15 +428,14 @@ Running
   lab-commons | main | G | codex
 ```
 
-It shows only what a reader acts on: how full, when it resets, whether it runs out first,
-what is busy. Pace is the average since the window opened, as of the snapshot, so no
-history is kept. Freshness appears only when a snapshot is over 15 minutes old, and such a
-snapshot raises nothing. Idle sessions are not listed. The org name and other detail
-appear only when something is wrong. Alerts (posted once, with a mention, when they first
-hold; again only after clearing): running out before reset, Claude logged into another
-account/org than the seat (`org` = case-insensitive substring of organizationName, or
-exact `orgUuid`), no subscription login on a registered machine, machine absent from an
-existing `fleet.json`.
+Times are `HH:MM` today, `DD/MM HH:MM` otherwise. Pace is the average since the window
+opened, as of the snapshot, so no history is kept. Freshness appears only for a snapshot
+over 15 minutes old, which raises nothing. Detail such as the org name appears only when
+something is wrong. Between rounds only an alert is posted, silently and once: running
+out before reset (held until that window resets), Claude logged into another account/org
+than the seat (`org` = case-insensitive substring of organizationName, or exact `orgUuid`),
+no subscription login on a registered machine, machine absent from an existing
+`fleet.json` (each held until it clears).
 
 ## Session status
 

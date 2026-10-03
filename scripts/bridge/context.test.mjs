@@ -54,7 +54,7 @@ test('readBridgeConfig: the fleet card is off without a chat id', () => {
     fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { fleet: { topicId: 5 } } }));
     assert.equal(readBridgeConfig({ sharedPath, localPath }).fleet, null);
     fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { fleet: { chatId: -1 } } }));
-    assert.deepEqual(readBridgeConfig({ sharedPath, localPath }).fleet, { chatId: -1, topicId: null });
+    assert.deepEqual(readBridgeConfig({ sharedPath, localPath }).fleet, { chatId: -1, topicId: null, everyMinutes: 60 });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

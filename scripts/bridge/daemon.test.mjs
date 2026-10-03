@@ -617,12 +617,13 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
 });
 
 
-test('fleetSessions lists only sessions that own a live Topic, with their status', async () => {
+test('fleetSessions lists every registered session with its status', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'running' });
   await up(r, 'codex', 'quiet');
   await live(r, 'codex', 'busy');
-  assert.deepEqual(r.bridge.fleetSessions(), [{ title: 'proj | main | host-a | codex', status: 'Working' }]);
+  assert.equal(r.bridge.fleetSessions().length, 2, 'a session without a Topic is still running here');
+  assert.ok(r.bridge.fleetSessions().every((x) => x.status === 'Working'));
 });
 
 test('a failed Topic rename keeps the cached title and session, and is logged', async () => {

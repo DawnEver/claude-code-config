@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FleetCard, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderCard } from './fleet.mjs';
+import { FleetCard, reportSlot, when, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderCard } from './fleet.mjs';
 
 const H = 3600000;
 const NOW = Date.UTC(2026, 9, 3, 12, 0);
@@ -100,41 +100,67 @@ test('teeClaudeUsage keeps the latest rate_limits, skipping unchanged renders fo
 });
 
 function fakeTelegram() {
-  const t = { sent: [], edits: [], fail: null };
+  const t = { sent: [], deleted: [], fail: null };
   t.sendMessage = async (chat, text, opts) => { if (t.fail?.(text)) throw new Error('down'); t.sent.push({ chat, text, ...opts }); return [{ message_id: t.sent.length }]; };
-  t.editMessageText = async (chat, id, text, opts) => { t.edits.push({ id, text, ...opts }); };
+  t.deleteMessage = async (chat, id) => { t.deleted.push(id); };
   return t;
 }
 
-function fleet({ telegram = fakeTelegram(), stateFile = null, chatId = -1, topicId = 9, clock = { t: NOW }, used = { v: 60 }, resetsAt = NOW + 3 * H } = {}) {
-  const card = new FleetCard({ telegram, chatId, topicId, machine: 'm1', alertIds: [42], now: () => clock.t, stateFile,
+const ROUND = 60 * 60000;
+function fleet({ telegram = fakeTelegram(), stateFile = null, topicId = 9, clock = { t: NOW }, used = { v: 60 }, machine = 'm1' } = {}) {
+  const card = new FleetCard({ telegram, chatId: -1, topicId, machine, now: () => clock.t, stateFile,
     sessions: () => [{ title: 'p | main | m1 | codex', status: 'Working' }],
-    codexQuota: () => ({ limits: { primary: { usedPercent: used.v, windowDurationMins: 300, resetsAt: resetsAt / 1000 } }, at: clock.t }),
-    read: { registry: () => REG, account: () => ME, claudeUsage: () => null } });
+    codexQuota: () => ({ limits: { primary: { usedPercent: used.v, windowDurationMins: 300, resetsAt: (NOW + 3 * H) / 1000 } }, at: clock.t }),
+    read: { registry: () => ({ ...REG, order: ['m0', 'm1'] }), account: () => ME, claudeUsage: () => null } });
   return { card, telegram, clock, used };
 }
 
-test('FleetCard edits one monospace message in place; a run-out alert is posted once per window', async () => {
+test('when: today as a time, any other day as a date', () => {
+  const now = new Date(2026, 9, 3, 12, 0).getTime();
+  assert.equal(when(new Date(2026, 9, 3, 21, 5).getTime(), now), '21:05');
+  assert.equal(when(new Date(2026, 9, 8, 23, 0).getTime(), now), '08/10 23:00');
+});
+
+test('reportSlot follows fleet.json order, a minute apart; unlisted machines report last', () => {
+  const reg = { order: ['h1', 'h2', 'h3'] };
+  assert.deepEqual(['h1', 'h2', 'h3', 'X'].map((m) => reportSlot(reg, m) / 60000), [0, 1, 2, 3]);
+  assert.equal(reportSlot(null, 'h2'), 0);
+});
+
+test('FleetCard reports once per round at its slot, replacing its previous report', async () => {
+  const { card, telegram: tg, clock } = fleet({ clock: { t: NOW + 5 * 60000 } });
+  const reports = () => tg.sent.filter((m) => m.pre);
+  await card.tick();
+  assert.equal(reports().length, 1);
+  assert.deepEqual([reports()[0].threadId, reports()[0].alert], [9, undefined]);
+  clock.t += 30 * 60000; await card.tick();
+  assert.equal(reports().length, 1, 'no report within the round');
+  const next = Math.ceil((clock.t - 60000) / ROUND) * ROUND + 60000;   // m1's slot: one minute in
+  clock.t = next - 1; await card.tick();
+  assert.equal(reports().length, 1, 'not before its slot');
+  clock.t = next; await card.tick();
+  assert.equal(reports().length, 2);
+  assert.deepEqual(tg.deleted, [1], 'the previous report is removed');
+});
+
+test('FleetCard alerts silently, once per window: a dip does not repeat it, a reset forgets it', async () => {
   const { card, telegram: tg, used, clock } = fleet();
+  const alerts = () => tg.sent.filter((m) => /^m1 Codex/.test(m.text));
   await card.tick();
-  assert.equal(tg.sent.length, 2, 'card + one run-out alert');
-  assert.deepEqual([tg.sent[0].threadId, tg.sent[0].pre, tg.sent[1].alert], [9, true, [42]]);
-  await card.tick();
-  assert.deepEqual([tg.sent.length, tg.edits.length], [2, 0], 'unchanged: no writes');
-  used.v = 61; await card.tick();
-  assert.deepEqual([tg.sent.length, tg.edits.length, tg.edits[0].id, tg.edits[0].pre], [2, 1, 1, true], 'edited in place');
-  used.v = 10; await card.tick();
-  used.v = 62; await card.tick();
-  assert.equal(tg.sent.length, 2, 'a dip within the same window does not repeat the alert');
+  assert.equal(alerts().length, 1);
+  assert.equal(alerts()[0].alert, undefined, 'no mention');
+  used.v = 10; clock.t += 60000; await card.tick();
+  used.v = 62; clock.t += 60000; await card.tick();
+  assert.equal(alerts().length, 1);
   clock.t = NOW + 3 * H + 1; await card.tick();
-  assert.equal(Object.keys(card.state.sent).length, 0, 'forgotten once the window has reset');
+  assert.equal(Object.keys(card.state.sent).length, 0);
 });
 
 test('FleetCard: overlapping ticks share one run; a failed alert is retried, a sent one is not', async () => {
   const tg = fakeTelegram();
   const { card } = fleet({ telegram: tg });
   await Promise.all([card.tick(), card.tick()]);
-  assert.equal(tg.sent.length, 2, 'one card, one alert');
+  assert.equal(tg.sent.length, 2, 'one report, one alert');
   const other = fakeTelegram();
   other.fail = (text) => /^m1 Codex/.test(text);
   const second = fleet({ telegram: other });
@@ -145,7 +171,7 @@ test('FleetCard: overlapping ticks share one run; a failed alert is retried, a s
   assert.equal(other.sent.filter((m) => /^m1 Codex/.test(m.text)).length, 1);
 });
 
-test('FleetCard state is per chat/Topic and saved only on change', async () => {
+test('FleetCard state is per chat/Topic, saved only on change, and holds no email', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-'));
   try {
     const stateFile = path.join(dir, 'fleet-card.json');
@@ -156,7 +182,6 @@ test('FleetCard state is per chat/Topic and saved only on change', async () => {
     await again.card.tick();
     assert.equal(fs.statSync(stateFile).mtimeMs, saved, 'nothing changed, nothing written');
     assert.doesNotMatch(fs.readFileSync(stateFile, 'utf8'), /example\.com/);
-    const moved = fleet({ stateFile, topicId: 10 });
-    assert.equal(moved.card.state.messageId, null, 'another Topic never edits the old message');
+    assert.equal(fleet({ stateFile, topicId: 10 }).card.state.messageId, null, 'another Topic starts afresh');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

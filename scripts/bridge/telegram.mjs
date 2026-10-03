@@ -319,6 +319,10 @@ export class TelegramClient {
     });
   }
 
+  deleteMessage(chatId, messageId) {
+    return this.call('deleteMessage', { chat_id: chatId, message_id: messageId });
+  }
+
   createForumTopic(chatId, name) {
     if (!name || Array.from(String(name)).length > 128) throw new Error('telegram: Topic name must be 1-128 characters');
     return this.call('createForumTopic', { chat_id: chatId, name: String(name) });
