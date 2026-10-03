@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { finalAssistantText, mirrorFor, sendMirror } from './bridge-hook.js';
+import { finalAssistantText, mirrorFor, questionFor, answerOutput, callHub } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 
 const j = (o) => JSON.stringify(o);
@@ -49,15 +49,40 @@ test('mirrorFor: StopFailure (a turn ended by an API error) is a failed final', 
   assert.equal(mirrorFor({ hook_event_name: 'StopFailure', session_id: 's' }, {}).text, 'unknown');
 });
 
-test('sendMirror delivers to a live hub, and resolves quietly when none runs', async () => {
+test('mirrorFor: tool use is activity, notifications map to states, SessionEnd ends unless it is a /clear', () => {
+  const env = {};
+  const at = (p) => mirrorFor({ session_id: 's', ...p }, env);
+  assert.deepEqual(at({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }), { sessionIds: ['s'], kind: 'activity', state: 'running' });
+  assert.deepEqual(at({ hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion' }), { sessionIds: ['s'], kind: 'activity', state: 'running' });
+  assert.equal(at({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion' }), null, 'a question is its own call');
+  assert.equal(at({ hook_event_name: 'Notification', notification_type: 'permission_prompt' }).state, 'waiting-approval');
+  assert.equal(at({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }).state, 'idle');
+  assert.equal(at({ hook_event_name: 'Notification', notification_type: 'elicitation_dialog' }).state, 'waiting-input');
+  assert.equal(at({ hook_event_name: 'Notification', notification_type: 'auth_success' }), null);
+  assert.deepEqual(at({ hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' }), { sessionIds: ['s'], kind: 'end' });
+  assert.equal(at({ hook_event_name: 'SessionEnd', reason: 'clear' }), null, 'the process and its channel live on');
+});
+
+test('questionFor and answerOutput: AskUserQuestion only; answers ride updatedInput', () => {
+  const tool_input = { questions: [{ question: 'Which?', header: 'H', multiSelect: false, options: [{ label: 'A', description: '' }] }] };
+  assert.deepEqual(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's', tool_input }, {}),
+    { sessionIds: ['s'], questions: tool_input.questions, wait: true });
+  assert.equal(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 's', tool_input }, {}), null);
+  assert.equal(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's', tool_input: {} }, {}), null);
+  assert.deepEqual(answerOutput(tool_input, { 'Which?': 'A' }), { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow',
+    updatedInput: { ...tool_input, answers: { 'Which?': 'A' } } } });
+});
+
+test('callHub delivers to a live hub, and resolves quietly when none runs', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-'));
   const hub = new ClaudeAdapter();
   try {
     const port = await hub.listen(0);
     const runtimeFile = path.join(dir, 'runtime.json');
     fs.writeFileSync(runtimeFile, j({ port, token: hub.token }));
-    assert.deepEqual(await sendMirror({ sessionIds: ['s'], kind: 'final', text: 'ok' }, { runtimeFile }), { ok: true, routed: false });
+    assert.deepEqual(await callHub('mirror', { sessionIds: ['s'], kind: 'final', text: 'ok' }, { runtimeFile }), { ok: true, routed: false });
     assert.deepEqual(hub.held.map((h) => h.m), [{ sessionIds: ['s'], claudePid: null, retry: false, kind: 'final', text: 'ok' }], 'held until its session registers');
-    assert.equal(await sendMirror({ sessionIds: ['s'], kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), null);
+    assert.deepEqual(await callHub('question', { sessionIds: ['s'], questions: [{ question: 'q' }], wait: true }, { runtimeFile }), { answers: null });
+    assert.equal(await callHub('mirror', { sessionIds: ['s'], kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), null);
   } finally { await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

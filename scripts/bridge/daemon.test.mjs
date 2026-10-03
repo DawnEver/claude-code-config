@@ -153,6 +153,9 @@ function fakeHost(agent, { interrupt = agent === 'codex' } = {}) {
   h.inject = async (id, text, user) => { h.injected.push([id, text, user]); };
   h.status = () => 'idle';
   h.answerApproval = (ref, yes, id) => { h.answered.push([ref, yes, id]); return true; };
+  h.questionAnswers = []; h.released = [];
+  h.answerQuestion = (ref, answers, id) => { h.questionAnswers.push([ref, answers, id]); return true; };
+  h.releaseQuestion = (ref, id) => { h.released.push([ref, id]); return true; };
   if (interrupt) h.interrupt = async () => true;
   return h;
 }
@@ -638,4 +641,70 @@ test('a failed Topic rename keeps the cached title and session, and is logged', 
     assert.deepEqual([s.topicId, s.title], [77, 'host-a/codex/main #4']);
     assert.ok(r.logs.some((l) => /editForumTopic: not enough rights/.test(l)));
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+const QS = [{ id: 'q1', header: 'Colour', question: 'Which colour?', isOther: false, isSecret: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: '' }] },
+  { id: 'q2', header: 'Name', question: 'Name it', isOther: true, isSecret: false, options: null }];
+const tap = (post, from = ALICE, i = 0) => ({ callback_query: { id: 'q', from: { id: from }, data: post.replyMarkup.inline_keyboard[i][0].callback_data,
+  message: { chat: { id: post.chatId }, message_id: post.message_id, message_thread_id: post.threadId, text: post.text } } });
+
+for (const agent of HOSTS) {
+  test(`${agent}: questions get one button per option and text replies, without the approvals opt-in`, async () => {
+    const r = make();
+    await live(r, agent, 'x');
+    await r.bridge.question(`${agent}:x`, { ref: 'ref1', questions: QS, answerable: true });
+    const [first, second] = r.telegram.sent.slice(-2);
+    assert.match(first.text, /Which colour?/);
+    assert.deepEqual(first.replyMarkup.inline_keyboard.map((row) => row[0].text), ['Red', 'Blue']);
+    assert.ok(first.alert?.includes(ALICE));
+    assert.match(second.text, /Name it\n\(reply with text to answer\)$/);
+    assert.equal(second.replyMarkup, undefined);
+    await r.bridge.handleUpdate(tap(first, MALLORY, 1));
+    await r.bridge.handleUpdate({ callback_query: { ...tap(first, ALICE, 1).callback_query, message: { ...tap(first).callback_query.message, message_id: 999 } } });
+    assert.deepEqual(r.telegram.answers, ['not allowed', 'control inactive']);
+    await r.bridge.handleUpdate(tap(first, ALICE, 1));
+    assert.equal(r.telegram.answers.at(-1), 'answered');
+    assert.match(r.telegram.edits.at(-1).text, /-> Blue/);
+    assert.deepEqual(r.hosts[agent].questionAnswers, [], 'sent only once every question is answered');
+    await r.bridge.handleUpdate(msg(ALICE, 'Fido'));
+    assert.deepEqual(r.hosts[agent].questionAnswers, [['ref1', { q1: ['Blue'], q2: ['Fido'] }, 'x']]);
+    assert.deepEqual(r.hosts[agent].injected, [], 'a text answer is not a prompt');
+    await r.bridge.handleUpdate(tap(first, ALICE, 0));
+    assert.equal(r.telegram.answers.at(-1), 'control inactive', 'answered once');
+    await r.bridge.handleUpdate(msg(ALICE, 'next task'));
+    assert.equal(r.hosts[agent].injected.length, 1);
+  });
+}
+
+test('a question only answerable locally is posted without controls; replies stay prompts', async () => {
+  const r = make();
+  await live(r, 'claude', 'x');
+  await r.bridge.question('claude:x', { ref: 'r', questions: QS, answerable: false });
+  const post = r.telegram.sent.at(-1);
+  assert.match(post.text, /answer locally/);
+  assert.match(post.text, /Which colour\?\n- Red: warm\n- Blue\n\n\[Name\] Name it$/);
+  assert.equal(post.replyMarkup, undefined);
+  await r.bridge.handleUpdate(msg(ALICE, 'hello'));
+  assert.equal(r.hosts.claude.injected.length, 1);
+});
+
+test('a question answered locally first withdraws its controls; an undeliverable one is released', async () => {
+  const r = make();
+  await live(r, 'codex', 'x');
+  await r.bridge.question('codex:x', { ref: 'r', questions: QS.slice(0, 1), answerable: true });
+  const post = r.telegram.sent.at(-1);
+  r.hosts.codex.emit('question-resolved', { ref: 'r' });
+  await r.bridge.handleUpdate(tap(post));
+  assert.equal(r.telegram.answers.at(-1), 'control inactive');
+  const quiet = make({ config: { fallbackChatId: null } });
+  await quiet.bridge.sessionUp('claude', { id: 'y', cwd: '/elsewhere' });
+  await quiet.bridge.question('claude:y', { ref: 'r2', questions: QS, answerable: true });
+  assert.deepEqual(quiet.hosts.claude.released, [['r2', 'y']]);
+});
+
+test('waiting-input reads Needs input', async () => {
+  const r = make();
+  r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-input' });
+  await up(r, 'codex', 'q');
+  assert.equal(r.bridge.fleetSessions()[0].status, 'Needs input');
 });

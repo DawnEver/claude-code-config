@@ -142,6 +142,7 @@ export class CodexAdapter extends EventEmitter {
     this.connection = 0;
     this.threads = new Map();     // threadId -> { cwd, branch, status, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
+    this.questions = new Map();   // key -> { rpcId, threadId, answerable, submitted? } (item/tool/requestUserInput)
     this.quota = null;            // { limits: RateLimitSnapshot, at, resetCredits } for the fleet report (fleet.mjs)
     this.account = null;          // { email, plan } of the ChatGPT login, for the same report
   }
@@ -259,6 +260,11 @@ export class CodexAdapter extends EventEmitter {
       this.approvals.delete(key);
       this.emit('approval-resolved', { ref: key });
     }
+    for (const [key, q] of this.questions) {
+      if (q.threadId !== threadId) continue;
+      this.questions.delete(key);
+      this.emit('question-resolved', { ref: key });
+    }
     if (!this.threads.delete(threadId)) return;
     this.emit('down', { id: threadId });
   }
@@ -324,6 +330,14 @@ export class CodexAdapter extends EventEmitter {
               this.emit('status', { id: a.threadId });
           }
         }
+        // A question answered in the TUI first: withdraw its Telegram controls.
+        for (const [key, q] of this.questions) {
+          if (String(q.rpcId) === String(p.requestId) && (!p.threadId || q.threadId === p.threadId)) {
+            this.questions.delete(key);
+            this.emit('question-resolved', { ref: key });
+            this.emit('status', { id: q.threadId });
+          }
+        }
         break;
       }
       case 'thread/started': {
@@ -341,8 +355,9 @@ export class CodexAdapter extends EventEmitter {
     }
   }
 
-  /** Server->client requests. Approvals are relayed, never auto-answered. */
+  /** Server->client requests. Approvals and questions are relayed, never auto-answered. */
   #onServerRequest(method, p = {}, rpcId) {
+    if (method === 'item/tool/requestUserInput') return this.#onQuestion(p, rpcId);
     if (!APPROVAL_RE.test(method)) return undefined;   // leave for the TUI (first answer wins)
     const threadId = p.threadId ?? p.conversationId;
     if (!this.threads.has(threadId)) return undefined;
@@ -357,6 +372,31 @@ export class CodexAdapter extends EventEmitter {
     });
     this.emit('status', { id: threadId });
     return undefined;   // answered later via answerApproval, or by another client
+  }
+
+  #onQuestion(p, rpcId) {
+    const key = `c${this.connection}:${rpcId}`;
+    if (!this.threads.has(p.threadId) || this.questions.has(key)) return undefined;
+    const questions = (Array.isArray(p.questions) ? p.questions : []).map((q) => ({
+      id: String(q?.id ?? ''), header: q?.header ?? '', question: String(q?.question ?? ''),
+      isOther: q?.isOther === true, isSecret: q?.isSecret === true,
+      options: Array.isArray(q?.options) ? q.options.map((o) => ({ label: String(o?.label ?? ''), description: o?.description ?? '' })) : null,
+    }));
+    // A secret never travels through Telegram: the whole request is answered locally.
+    const answerable = questions.length > 0 && !questions.some((q) => q.isSecret);
+    this.questions.set(key, { rpcId, threadId: p.threadId, answerable });
+    this.emit('question', { id: p.threadId, ref: key, answerable, questions });
+    this.emit('status', { id: p.threadId });
+    return undefined;   // answered later via answerQuestion, or in the TUI (first answer wins)
+  }
+
+  /** Answer a pending question: `answers` maps question id -> chosen strings. */
+  answerQuestion(key, answers) {
+    const q = this.questions.get(key);
+    if (!q || q.submitted || !q.answerable || !this.rpc || !answers) return false;
+    q.submitted = true;
+    this.rpc.respond(q.rpcId, { answers: Object.fromEntries(Object.entries(answers).map(([id, v]) => [id, { answers: [].concat(v).map(String) }])) });
+    return true;
   }
 
   /** Answer a pending approval. Only call this behind the allowlist opt-in. */
@@ -407,10 +447,14 @@ export class CodexAdapter extends EventEmitter {
     const th = this.threads.get(threadId);
     if (!this.rpc || !th) return { state: 'disconnected' };
     const st = th.status;
-    if (st?.type === 'active') return { state: (st.activeFlags ?? []).includes('waitingOnApproval') ? 'waiting-approval' : 'running' };
+    if (st?.type === 'active') {
+      const flags = st.activeFlags ?? [];
+      return { state: flags.includes('waitingOnApproval') ? 'waiting-approval' : flags.includes('waitingOnUserInput') ? 'waiting-input' : 'running' };
+    }
     if (st?.type === 'idle') return { state: 'idle' };
     if (st?.type) return { state: 'unknown' };
     const waiting = [...this.approvals.values()].some((approval) => approval.threadId === threadId);
-    return { state: waiting ? 'waiting-approval' : th.activeTurnId ? 'running' : 'idle' };
+    const asking = [...this.questions.values()].some((q) => q.threadId === threadId);
+    return { state: waiting ? 'waiting-approval' : asking ? 'waiting-input' : th.activeTurnId ? 'running' : 'idle' };
   }
 }

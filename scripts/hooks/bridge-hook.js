@@ -1,15 +1,20 @@
 #!/usr/bin/env node
-// bridge-hook.js — mirror a Claude session's prompts and final answers to its Telegram Topic.
+// bridge-hook.js — mirror a Claude session's turns, state and questions to its Telegram Topic.
 //
-// Wired for UserPromptSubmit and Stop. The model is not trusted to call the channel's
-// `reply` tool, so — like the Codex adapter does for Codex — the transcript side is
-// mirrored mechanically: one authenticated one-shot `mirror` call to the bridge daemon's
-// Claude adapter (claude-adapter.mjs; 127.0.0.1, port + token from runtime.json), naming
-// the session by id so the adapter can find the session's registered channel.
+// The model is not trusted to call the channel's `reply` tool, so — like the Codex adapter
+// does for Codex — the session is mirrored mechanically through one authenticated call to the
+// bridge daemon's Claude adapter (claude-adapter.mjs; 127.0.0.1, port + token from
+// runtime.json), naming the session by id so the adapter finds its registered channel:
+//   UserPromptSubmit -> prompt;  Stop / StopFailure -> final;
+//   PreToolUse / PostToolUse -> activity running;  Notification -> waiting-approval |
+//   waiting-input | idle;  SessionEnd (not /clear) -> end.
+// PreToolUse(AskUserQuestion) is a `question` call instead: in a turn started from Telegram
+// the daemon holds it open until the answer is tapped there (up to QUESTION_TIMEOUT_MS), and
+// the hook prints it as the tool's `answers`, so the terminal dialog never shows.
 //
-// Fail-open and silent: hook stdout can inject context, so nothing is ever printed; every
-// failure exits 0; a hard 2 s timer bounds the whole run. A no-op unless the daemon's
-// runtime file exists.
+// Fail-open and silent: hook stdout can inject context, so nothing else is ever printed;
+// every failure exits 0 (the dialog then shows locally); a hard timer bounds the run. A no-op
+// unless the daemon's runtime file exists.
 
 import fs from 'fs';
 import net from 'net';
@@ -18,6 +23,8 @@ import { RUNTIME_FILE } from '../bridge/context.mjs';
 import { nearestClaude } from '../shared/process-tree.mjs';
 
 const TIMEOUT_MS = 2000;
+const QUESTION_TIMEOUT_MS = 10 * 60000;   // the settings hook timeout must exceed this
+const NOTIFICATION_STATES = { permission_prompt: 'waiting-approval', elicitation_dialog: 'waiting-input', idle_prompt: 'idle' };
 
 const isRealUser = (e) => {
   if (e?.type !== 'user' || e.isMeta) return false;
@@ -53,8 +60,7 @@ export function mirrorFor(payload, env = process.env) {
     const text = String(payload.prompt ?? '');
     // A channel prompt (from Telegram) is sent too: the daemon's echo suppression drops it.
     if (!text.trim()) return null;
-    // The transcript lets the bridge see a turn the user interrupted (no Stop hook fires).
-    return { ...base, kind: 'prompt', text, ...(payload.transcript_path ? { transcriptPath: String(payload.transcript_path) } : {}) };
+    return { ...base, kind: 'prompt', text };
   }
   if (payload?.hook_event_name === 'Stop') {
     let text = typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : '';
@@ -68,11 +74,32 @@ export function mirrorFor(payload, env = process.env) {
     const text = [payload.error_type ?? 'unknown', payload.error_message].filter(Boolean).join(': ');
     return { ...base, kind: 'final', status: 'failed', text };
   }
+  const event = payload?.hook_event_name;
+  if ((event === 'PreToolUse' && payload.tool_name !== 'AskUserQuestion') || event === 'PostToolUse') return { ...base, kind: 'activity', state: 'running' };
+  if (event === 'Notification') {
+    const state = NOTIFICATION_STATES[payload.notification_type];
+    return state ? { ...base, kind: 'activity', state } : null;
+  }
+  // /clear ends the old session id, but the claude process and its channel live on.
+  if (event === 'SessionEnd') return payload.reason === 'clear' ? null : { ...base, kind: 'end' };
   return null;
 }
 
-/** One authenticated `mirror` call to the hub. Resolves its result ({ok, routed}), or null. */
-export function sendMirror(params, { runtimeFile = RUNTIME_FILE, timeoutMs = TIMEOUT_MS } = {}) {
+/** The `question` call for a PreToolUse(AskUserQuestion) payload, or null. */
+export function questionFor(payload, env = process.env) {
+  if (payload?.hook_event_name !== 'PreToolUse' || payload.tool_name !== 'AskUserQuestion') return null;
+  const questions = payload.tool_input?.questions;
+  const sessionIds = [...new Set([payload.session_id, env.CLAUDE_CODE_SESSION_ID].filter(Boolean))];
+  return Array.isArray(questions) && questions.length && sessionIds.length ? { sessionIds, questions, wait: true } : null;
+}
+
+/** PreToolUse output that answers AskUserQuestion without showing its dialog. */
+export function answerOutput(toolInput, answers) {
+  return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { ...toolInput, answers } } };
+}
+
+/** One authenticated call to the hub. Resolves its result, or null on any failure. */
+export function callHub(method, params, { runtimeFile = RUNTIME_FILE, timeoutMs = TIMEOUT_MS } = {}) {
   let rt;
   try { rt = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { return Promise.resolve(null); }
   if (!Number.isInteger(rt?.port) || typeof rt.token !== 'string') return Promise.resolve(null);
@@ -82,7 +109,7 @@ export function sendMirror(params, { runtimeFile = RUNTIME_FILE, timeoutMs = TIM
     const timer = setTimeout(() => done(null), timeoutMs);
     let buf = '';
     sock.setEncoding('utf8');
-    sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'mirror', params: { token: rt.token, ...params } }) + '\n'));
+    sock.on('connect', () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { token: rt.token, ...params } }) + '\n'));
     sock.on('data', (d) => {
       buf += d;
       if (!buf.includes('\n')) return;
@@ -94,18 +121,27 @@ export function sendMirror(params, { runtimeFile = RUNTIME_FILE, timeoutMs = TIM
 }
 
 async function main() {
-  setTimeout(() => process.exit(0), TIMEOUT_MS + 500).unref();
   if (!fs.existsSync(RUNTIME_FILE)) return;
   let raw = '';
   for await (const c of process.stdin) raw += c;
-  const call = mirrorFor(JSON.parse(raw || '{}'));
+  const payload = JSON.parse(raw || '{}');
+  const question = questionFor(payload);
+  setTimeout(() => process.exit(0), (question ? QUESTION_TIMEOUT_MS : TIMEOUT_MS) + 500).unref();
+  if (question) {
+    const r = await callHub('question', question, { timeoutMs: QUESTION_TIMEOUT_MS });
+    // Flushed before the process exits: stdout may be an asynchronous pipe.
+    if (r?.answers && typeof r.answers === 'object') await new Promise((done) => process.stdout.write(JSON.stringify(answerOutput(payload.tool_input, r.answers)), done));
+    return;
+  }
+  const call = mirrorFor(payload);
   if (!call) return;
   // No session matched: after /clear both ids are new. Retry naming this hook's own claude
-  // process (the one owning the channel). Looked up only now — a process-table query is slow —
-  // and never from CLAUDE_PID, which a nested `claude` inherits from its parent.
-  if ((await sendMirror(call))?.routed === false) {
+  // process (the one owning the channel). Looked up only now — a process-table query is slow,
+  // so never for the per-tool activity calls — and never from CLAUDE_PID, which a nested
+  // `claude` inherits from its parent.
+  if ((await callHub('mirror', call))?.routed === false && call.kind !== 'activity') {
     const claudePid = nearestClaude(process.ppid);
-    if (claudePid) await sendMirror({ ...call, claudePid, retry: true });
+    if (claudePid) await callHub('mirror', { ...call, claudePid, retry: true });
   }
 }
 

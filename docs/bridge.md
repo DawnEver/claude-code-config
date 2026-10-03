@@ -127,9 +127,13 @@ token in `runtime.json`):
   re-attaches), then `reply`, `permission_request`.
   Inbound Telegram text arrives in the session as a `<channel source="session-bridge">`
   event. Its socket closing is `down`.
-- **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit`, `Stop` and `StopFailure`) mirrors every
-  prompt and the turn's final assistant text with a one-shot `mirror` call, so output does
-  not depend on the model calling `reply`. Calls name the payload's `session_id` and the
+- **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit`, `Stop`, `StopFailure`,
+  `PreToolUse`, `PostToolUse`, `Notification` and `SessionEnd`) mirrors every prompt and the
+  turn's final assistant text with a one-shot `mirror` call, so output does not depend on
+  the model calling `reply`; the other events are cheap state edges (`activity` / `end`,
+  see Session status), and `PreToolUse(AskUserQuestion)` is a `question` call (see Questions).
+  Each call has a 2 s budget (a waiting question 10 min), exits 0 on any failure, and prints
+  nothing except a question's answer. Calls name the payload's `session_id` and the
   hook's `CLAUDE_CODE_SESSION_ID`, and are held up to 30 s if they beat the channel's
   registration. `/clear` evidently changes **both** ids (after it, the mirror stopped — 2026-10-02), so when no session
   matches, the hook retries naming its own nearest `claude` process (a process-table walk,
@@ -207,7 +211,8 @@ Requires Anthropic auth; third-party providers (`ccds`) lack channels.
 
 In a session's Topic (allowlisted senders only):
 
-- plain text -> injected into the session.
+- plain text -> injected into the session (or, while a free-text question waits, its answer;
+  see Questions).
 - `/status` -> the host's status (`idle`, `turn in progress (…)`, `channel connected`).
 - `/interrupt` -> interrupts the turn where the host supports it.
 
@@ -233,6 +238,34 @@ press becomes `notifications/claude/channel/permission`. Claude sends no "resolv
 so a prompt answered locally keeps its buttons; what Claude Code does with a late verdict is
 unverified. Unknown, repeated or disconnected channel request references are rejected;
 no second hook-based approval authority is installed.
+
+## Questions
+
+A question the session asks the user is relayed for both hosts. It is not an approval:
+it needs no `approvalsFromTelegram` opt-in, but buttons and text answers still count only
+from `allowedUserIds` on the exact delivered message (random reference per question, same
+chat/Topic/message checks as approvals). Each question is one message with one button per
+option; a question that takes free text (`isOther`, or no options) says
+`reply with text to answer`, and while one waits, plain text in the Topic answers it
+instead of becoming a prompt (`/status` and `/interrupt` still work). A multi-question
+request is answered once every question has an answer. A secret (`isSecret`) question is
+never answerable from Telegram: the request is posted as `answer locally` without controls.
+A multi-select Claude question takes one tapped option, or a comma-separated text reply.
+
+- **Codex**: `item/tool/requestUserInput` (`{threadId, questions[{id, header, question,
+  isOther, isSecret, options}]}`) is answered with `{answers: {<id>: {answers: [..]}}}`. The
+  TUI shows the same question at the same time: **first answer wins** (a race). When the
+  TUI answers first, `serverRequest/resolved` withdraws the Telegram controls (a late press
+  reads `control inactive`). Status reads Needs input (`waitingOnUserInput`).
+- **Claude**: `AskUserQuestion` fires `PreToolUse` before its dialog. The hook calls the
+  adapter's `question` method. If the turn was started from Telegram (an inject, or a
+  UserPromptSubmit carrying a `<channel>`-wrapped prompt; a locally typed prompt clears it),
+  the hook waits up to 10 minutes for the Telegram answer and returns it as
+  `permissionDecision: allow` + `updatedInput.answers` (`{<question text>: <label>}`), so the
+  dialog is never shown — **exclusive**: while it waits the terminal shows nothing to answer.
+  On timeout, hook failure or an undeliverable post it prints nothing and the dialog appears
+  locally. In a locally typed turn the question is posted as information
+  (`answer locally`, no buttons) and the hook returns at once.
 
 ### Delivery outcomes
 
@@ -458,20 +491,23 @@ Pinning failures do not block the card or conversation. Raw tool/search/edit pro
 is suppressed for both current adapters; final answers and approvals remain visible.
 
 - Codex: Codex's own thread status is the one source — `idle`, `active` (Working),
-  `active` + `waitingOnApproval` (Needs approval), `systemError` (Unknown) — read at resume
+  `active` + `waitingOnApproval` (Needs approval), `active` + `waitingOnUserInput` (Needs
+  input), `systemError` (Unknown) — read at resume
   and kept current by `thread/status/changed`; the adapter's own turn/approval records are
   only a fallback before Codex reports one, so a missed turn end can no longer pin a thread
   at Working. A thread stays loaded after its TUI exits; Codex reports it `idle`. Submitting
   approval does not imply native resolution. `/interrupt` remains the explicit native
   interrupt command; no unbound stale Stop button is added.
-- Claude: only Working / Idle / Unknown. Connected starts Unknown; hook prompt/final and
-  channel injection give observed Working/Idle. An interrupted turn fires no Stop hook, so a
-  Working session is checked against its transcript (path from UserPromptSubmit): a last
-  `[Request interrupted by user…]` entry reads Idle, no write for 30 minutes reads Unknown.
-  A closed Claude session ends its channel process, which the bridge sees at once. A pending
-  channel approval stays Working (it is mid-turn, and its native local resolution is not
-  observable). Reply tool is not completion.
-- Codex shows Working / Idle / Needs approval. Ended (either host) is transport-observed. A card is an observation, not a daemon heartbeat;
+- Claude: a state machine driven only by hook edges. Connected starts Unknown (or keeps the
+  state of the channel it replaces); `UserPromptSubmit`, a Telegram inject, `PreToolUse` and
+  `PostToolUse` -> Working; `Stop` / `StopFailure` -> Idle; `Notification`
+  `permission_prompt` -> Needs approval, `elicitation_dialog` or an `AskUserQuestion` ->
+  Needs input, `idle_prompt` -> Idle; `SessionEnd` (except `/clear`, whose process and
+  channel live on) or the channel socket closing -> Ended. An interrupted turn fires no Stop
+  hook: it reads Working until the next edge (`idle_prompt` fires after about a minute
+  idle). A channel `permission_request` alone does not change the state. Reply tool is not
+  completion.
+- Codex shows Working / Idle / Needs approval / Needs input. Ended (either host) is transport-observed. A card is an observation, not a daemon heartbeat;
   its check time makes stale information visible if the bridge itself stops.
 
 Card message IDs are derived transport pointers in topics.json, never another agent

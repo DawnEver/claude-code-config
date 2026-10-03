@@ -6,14 +6,19 @@
 // claude-adapter.mjs), which all emit the same events:
 //   up {id, cwd, branch?, backlog[]}, prompt {id, text, turnId?},
 //   progress {id, text}, final {id, text, turnId?, status?},
-//   approval {id, ref, summary, answerable}, approval-resolved {ref}, down {id}
+//   approval {id, ref, summary, answerable}, approval-resolved {ref},
+//   question {id, ref, answerable, questions[{id, header, question, options|null, isOther, isSecret}]},
+//   question-resolved {ref}, down {id}
 // and offer the same interface: inject(id, text, user), status(id),
-// answerApproval(ref, allow, id), and optionally interrupt(id).
+// answerApproval(ref, allow, id), answerQuestion(ref, {questionId: [answer]}, id), and
+// optionally interrupt(id), releaseQuestion(ref, id).
 // This file is host-agnostic: one lifecycle (lifecycle.mjs), one ordered write queue per
 // session, one bring-up hold, one echo suppression.
 //
 // Inbound from allowlisted users only: plain text = inject; `/status`, `/interrupt`.
 // Approval buttons only when this machine opts in, honoured only for allowlisted ids.
+// Question buttons (and text answers) need no opt-in — a question is not an approval — but
+// are equally honoured only for allowlisted ids.
 
 import fs from 'fs';
 import path from 'path';
@@ -37,7 +42,7 @@ const TOPIC_CLOSED = /TOPIC_CLOSED/i;
 const TOPIC_UNCHANGED = /TOPIC_NOT_MODIFIED/i;
 
 export const sessionKey = (agent, id) => `${agent}:${id}`;
-const STATUS_LABELS = { running: 'Working', idle: 'Idle', 'waiting-approval': 'Needs approval', unknown: 'Unknown', disconnected: 'Ended' };
+const STATUS_LABELS = { running: 'Working', idle: 'Idle', 'waiting-approval': 'Needs approval', 'waiting-input': 'Needs input', unknown: 'Unknown', disconnected: 'Ended' };
 const clock = t => new Date(t).toTimeString().slice(0, 5);
 
 export function topicTitle(machine, project, branch, agent, suffix = '') {
@@ -69,6 +74,7 @@ export class Bridge {
     this.sessions = new Map();   // key -> session (lifecycle.mjs record + routing fields)
     this.held = new Map();       // key -> live events that arrived during bring-up
     this.approvals = new Map();  // random id -> native request + delivered message origin
+    this.questions = new Map();  // random id -> one question of a native request + its message origin
     this.topics = new TopicCache(topicCacheFile);
     this.deletingTopics = new Set();  // in-flight transport only; never rebind a doomed Topic
     this.retiring = new Map(); // Drain the old session's writes before reusing its Topic/card.
@@ -84,7 +90,7 @@ export class Bridge {
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
     a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
     a.on('status', e => this.updateStatus(sessionKey(a.agent, e.id)).catch(err => this.#warnOnce('status-card', err.message)));
-    for (const kind of ['prompt', 'progress', 'final', 'approval']) {
+    for (const kind of ['prompt', 'progress', 'final', 'approval', 'question']) {
       a.on(kind, (e) => {
         const key = sessionKey(a.agent, e.id);
         const q = this.held.get(key);
@@ -101,6 +107,14 @@ export class Bridge {
       for (const s of this.sessions.values()) if (s.agent === a.agent && (e.id === undefined || s.id === e.id))
         this.updateStatus(s.key).catch(err => this.#warnOnce('status-card', err.message));
     });
+    a.on('question-resolved', (e) => {
+      // Answered locally first (or its hook gave up): the Telegram controls go inactive.
+      for (const [key, events] of this.held) {
+        if (key.startsWith(`${a.agent}:`)) this.held.set(key, events.filter(({ kind, e: pending }) => kind !== 'question' || pending.ref !== e.ref));
+      }
+      for (const [id, x] of this.questions) if (x.agent === a.agent && x.group.ref === e.ref
+        && (e.id === undefined || x.session.id === e.id)) this.questions.delete(id);
+    });
     a.on('warn', (m) => this.log(m));
   }
 
@@ -108,6 +122,7 @@ export class Bridge {
     if (kind === 'prompt') return this.prompt(key, e.text);
     if (kind === 'progress') return this.progress(key, e.text);
     if (kind === 'final') return this.final(key, e.text, e.status);
+    if (kind === 'question') return this.question(key, e);
     return this.approval(key, e);
   }
 
@@ -174,6 +189,7 @@ export class Bridge {
     this.sessions.delete(key);
     this.#serial(s, () => this.#statusNow(s, { offline: true })).catch(err => this.#warnOnce('status-card', err.message));
     for (const [id, a] of this.approvals) if (a.key === key) this.approvals.delete(id);
+    for (const [id, q] of this.questions) if (q.key === key) this.questions.delete(id);
     this.log(`down ${key}`);
     if (s.chatId !== null) this.#apply(s, onDown(s, this.now())).catch(() => {});
     const pending = s.chain.catch(() => {});
@@ -466,6 +482,60 @@ export class Bridge {
     }
   }
 
+  /**
+   * A question the session asks. Answerable: one message per question, one button per
+   * option, and text replies for free-form ones; the native request is answered once every
+   * question has an answer. Otherwise (a secret, or a Claude turn typed locally) it is
+   * posted as information only.
+   */
+  async question(key, { ref, questions = [], answerable }) {
+    const s = this.sessions.get(key);
+    if (!s) return;
+    const host = this.hosts.get(s.agent);
+    const offer = answerable && this.allowed.size > 0;
+    const render = (q) => [q.header ? `[${q.header}] ${q.question}` : q.question,
+      ...(q.options ?? []).map((o) => `- ${o.label}${o.description ? `: ${o.description}` : ''}`)].join('\n');
+    if (!offer) {
+      await this.#send(s, `question on ${this.machine}, answer locally\n${questions.map(render).join('\n\n')}`, { alert: [...this.allowed] });
+      if (answerable) host?.releaseQuestion?.(ref, s.id);
+      return;
+    }
+    const group = { ref, answers: {}, ids: questions.map((q) => q.id), done: false };
+    for (const [i, q] of questions.entries()) {
+      const id = randomBytes(16).toString('hex');
+      const pending = { key, agent: s.agent, session: s, group, question: q, origin: null };
+      this.questions.set(id, pending);
+      const free = q.isOther || !q.options?.length;
+      const head = `question on ${this.machine}${questions.length > 1 ? ` (${i + 1}/${questions.length})` : ''}`;
+      const hint = free ? `\n(reply with text to answer${q.options?.length ? ' Other' : ''})` : '';
+      const replyMarkup = q.options?.length ? { inline_keyboard: q.options.map((o, n) => [{ text: o.label, callback_data: `qa:${id}:${n}` }]) } : undefined;
+      const message = (await this.#send(s, `${head}\n${render(q)}${hint}`, { replyMarkup, alert: [...this.allowed] })).at(-1);
+      if (this.questions.get(id) !== pending) return;   // withdrawn while it was being delivered
+      if (!message || this.sessions.get(key) !== s) {
+        // Not offered on Telegram after all: the whole request goes back to the terminal.
+        for (const [other, x] of this.questions) if (x.group === group) this.questions.delete(other);
+        host?.releaseQuestion?.(ref, s.id);
+        return;
+      }
+      pending.origin = { chatId: s.chatId, topicId: s.topicId, messageId: message.message_id };
+    }
+  }
+
+  /** Record one answer; submit the native request once every question has one. */
+  async #answer(id, value, from, message) {
+    const x = this.questions.get(id);
+    this.questions.delete(id);
+    x.group.answers[x.question.id] = [value];
+    if (message) this.telegram.editMessageText(message.chat.id, message.message_id,
+      `${message.text ?? ''}\n-> ${value} by ${from.username ?? from.id}`).catch(() => {});
+    if (x.group.done || !x.group.ids.every((q) => x.group.answers[q])) return 'answered';
+    x.group.done = true;
+    let ok = false;
+    try { ok = await this.hosts.get(x.agent)?.answerQuestion(x.group.ref, x.group.answers, x.session.id); } catch { /* reported below */ }
+    if (!ok) await this.#send(x.session, 'answer not delivered; answer locally');
+    return ok ? 'answered' : 'control inactive';
+  }
+
   // ── Telegram inbound ──
 
   #sessionAt(chatId, topicId) {
@@ -524,6 +594,13 @@ export class Bridge {
       const ok = await host.interrupt(s.id).catch(() => false);
       return this.#send(s, ok ? 'interrupt sent' : 'nothing to interrupt');
     }
+    if (!attachment) {
+      // While a question waits, a text reply answers it instead of starting a prompt.
+      const waiting = [...this.questions].filter(([, x]) => x.session === s && x.origin);
+      const [id] = waiting.find(([, x]) => x.question.isOther || !x.question.options?.length) ?? [];
+      if (id) return this.#answer(id, text, m.from);
+      if (waiting.length) return this.#send(s, 'choose one of the options above');
+    }
     this.#activity(s);
     s.injected = [...s.injected, { text, at: this.now() }].slice(-20);
     try {
@@ -544,6 +621,19 @@ export class Bridge {
         try { await this.updateStatus(s.key, true); note = 'status refreshed'; }
         catch { note = 'status unavailable; check locally'; }
       }
+      await this.telegram.answerCallbackQuery(q.id, note).catch(() => {});
+      return;
+    }
+    const qa = /^qa:([a-f0-9]{32}):(\d+)$/.exec(q.data ?? '');
+    if (qa) {
+      const x = this.questions.get(qa[1]);
+      const allowed = this.allowed.has(Number(q.from?.id));
+      const option = x?.question.options?.[Number(qa[2])];
+      const matches = x?.origin && option && q.message?.chat?.id === x.origin.chatId
+        && q.message.message_id === x.origin.messageId
+        && (q.message.message_thread_id ?? null) === x.origin.topicId
+        && this.sessions.get(x.key) === x.session;
+      const note = !allowed ? 'not allowed' : matches ? await this.#answer(qa[1], option.label, q.from, q.message) : 'control inactive';
       await this.telegram.answerCallbackQuery(q.id, note).catch(() => {});
       return;
     }

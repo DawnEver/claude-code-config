@@ -5,40 +5,27 @@
 //   - each session's session-bridge channel (claude_plugins/session-bridge) stays connected:
 //       register {token, sessionId, cwd}, reply {text}, permission_request {...}
 //       <- inbound {text, user}, permission {request_id, behavior}
-//   - bridge-hook.js makes one-shot calls: mirror {token, sessionIds, kind, text}
+//   - bridge-hook.js makes one-shot calls: mirror {token, sessionIds, kind, text|state}
+//     (kind prompt | final | activity | end), and question {token, sessionIds, questions, wait},
+//     held open for a Telegram-started turn until the answer arrives
 // and it emits the host-neutral events every adapter emits (see daemon.mjs):
 //   up {id, cwd, backlog}, prompt {id, text}, final {id, text},
-//   approval {id, ref, summary, answerable}, down {id}.
+//   approval {id, ref, summary, answerable}, question {id, ref, questions, answerable},
+//   question-resolved {id, ref}, down {id}.
+// Session state is a state machine driven only by hook edges: prompt / activity -> running,
+// final -> idle, Notification -> waiting-approval | waiting-input | idle, SessionEnd -> down.
 // A hook call names the session's current id and the id its process started with (the
 // channel registered under the latter; /clear mints a new current one), and is held briefly
 // when it beats the channel's registration. CLAUDE_PID is not usable: a nested `claude`
 // inherits its parent's.
 
-import fs from 'fs';
 import net from 'net';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 
 const AUTH_TIMEOUT_MS = 5000;
-const TAIL_BYTES = 16384;
-// A turn with no transcript write for this long is not shown as running: long tool runs
-// write nothing meanwhile, so it reads unknown rather than idle.
-const QUIET_MS = 30 * 60000;
-
-/**
- * A turn the hooks last saw start, judged from the transcript's tail: the user interrupted
- * it (Claude writes `[Request interrupted by user...]` and fires no Stop hook) -> idle; no
- * write for QUIET_MS -> unknown; else running.
- */
-export function transcriptState(tail, mtimeMs, now) {
-  const last = String(tail).split('\n').map((l) => l.trim()).filter(Boolean).reverse()
-    .map((l) => { try { return JSON.parse(l); } catch { return null; } }).find(Boolean);
-  const content = last?.message?.content;
-  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => b?.text ?? '').join(' ') : '';
-  if (last?.type === 'user' && /\[Request interrupted by user/.test(text)) return 'idle';
-  return now - mtimeMs > QUIET_MS ? 'unknown' : 'running';
-}
+const STATES = new Set(['running', 'idle', 'waiting-approval', 'waiting-input']);
 const HOLD_MS = 30000;
 
 /** A prompt that arrived through a channel, as UserPromptSubmit reports it -> its text. */
@@ -62,7 +49,8 @@ export class ClaudeAdapter extends EventEmitter {
     this.agent = 'claude';
     this.token = token;
     this.now = now;
-    this.sessions = new Map();   // sessionId -> { peer, socket, replies, humanTurn }
+    // sessionId -> { peer, socket, replies, approvals, questions, claudePid, humanTurn, remoteTurn, activity }
+    this.sessions = new Map();
     this.held = [];              // hook calls that arrived before their session registered
   }
 
@@ -89,6 +77,7 @@ export class ClaudeAdapter extends EventEmitter {
     const authTimer = setTimeout(() => { if (!sessionId) socket.destroy(); }, AUTH_TIMEOUT_MS);
     authTimer.unref();
     const unauthorized = () => { setImmediate(() => socket.destroy()); return Object.assign(new Error('unauthorized'), { code: 401 }); };
+    const ids = (p) => ({ sessionIds: (Array.isArray(p.sessionIds) ? p.sessionIds : []).map(String), claudePid: Number(p.claudePid) || null });
     const peer = new JsonRpcPeer((t) => socket.write(t + '\n'), {
       onRequest: (method, p = {}) => {
         if (method === 'register') {
@@ -97,13 +86,14 @@ export class ClaudeAdapter extends EventEmitter {
           sessionId = String(p.sessionId);
           const previous = this.sessions.get(sessionId);
           if (previous) {
-            this.#withdrawApprovals(sessionId, previous);
+            this.#withdraw(sessionId, previous);
             previous.socket.destroy();
           }
           // A turn may be in flight when the bridge restarts: with no prompt seen by this
           // daemon, assume a human turn, so its answer is mirrored rather than lost.
-          this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), claudePid: Number(p.claudePid) || null,
-            humanTurn: previous ? previous.humanTurn : true });
+          this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), questions: new Map(),
+            claudePid: Number(p.claudePid) || null, humanTurn: previous ? previous.humanTurn : true,
+            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
           this.emit('up', { id: sessionId, cwd: p.cwd, backlog: [] });
           this.#emitStatus(sessionId);
           this.#release();
@@ -111,11 +101,17 @@ export class ClaudeAdapter extends EventEmitter {
         }
         if (method === 'mirror') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
-          if (p.kind !== 'prompt' && p.kind !== 'final') throw Object.assign(new Error('bad kind'), { code: -32602 });
-          const routed = this.#mirror({ sessionIds: (Array.isArray(p.sessionIds) ? p.sessionIds : []).map(String),
-            claudePid: Number(p.claudePid) || null, retry: p.retry === true, kind: p.kind, ...(p.status === 'failed' ? { status: 'failed' } : {}), text: String(p.text ?? ''),
-            ...(typeof p.transcriptPath === 'string' ? { transcriptPath: p.transcriptPath } : {}) });
+          const bad = () => Object.assign(new Error('bad kind'), { code: -32602 });
+          if (!['prompt', 'final', 'activity', 'end'].includes(p.kind)) throw bad();
+          if (p.kind === 'activity' && !STATES.has(p.state)) throw bad();
+          const routed = this.#mirror({ ...ids(p), retry: p.retry === true, kind: p.kind,
+            ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? '') });
           return { ok: true, routed };
+        }
+        if (method === 'question') {
+          if (!this.#tokenOk(p.token)) throw unauthorized();
+          clearTimeout(authTimer);   // a waiting question outlives the auth window
+          return this.#question(socket, ids(p), p);
         }
         if (method === 'codex_attachment') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
@@ -155,19 +151,34 @@ export class ClaudeAdapter extends EventEmitter {
     socket.on('error', () => {});
     socket.on('close', () => {
       clearTimeout(authTimer);
-      if (sessionId && this.sessions.get(sessionId)?.socket === socket) {
-        this.#withdrawApprovals(sessionId, this.sessions.get(sessionId));
-        this.sessions.delete(sessionId);
-        this.#emitStatus(sessionId);
-        this.emit('down', { id: sessionId });
+      // A hook that stopped waiting (timeout, killed): its question goes back to the terminal.
+      for (const [id, s] of this.sessions) {
+        for (const [ref, q] of s.questions) {
+          if (q.socket !== socket) continue;
+          s.questions.delete(ref);
+          this.emit('question-resolved', { id, ref });
+        }
       }
+      if (sessionId && this.sessions.get(sessionId)?.socket === socket) this.#end(sessionId);
     });
   }
 
-  #withdrawApprovals(id, session) {
+  /** The session is gone (channel closed or SessionEnd): withdraw its controls, report down. */
+  #end(id) {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    this.#withdraw(id, s);
+    this.sessions.delete(id);
+    this.#emitStatus(id);
+    this.emit('down', { id });
+  }
+
+  #withdraw(id, session) {
     // This invalidates bridge controls; it does not claim Claude accepted a verdict.
     for (const ref of session.approvals) this.emit('approval-resolved', { id, ref, reason: 'correlation-withdrawn' });
     session.approvals.clear();
+    for (const [ref, q] of session.questions) { q.resolve({ answers: null }); this.emit('question-resolved', { id, ref }); }
+    session.questions.clear();
     this.#emitStatus(id);
   }
 
@@ -179,26 +190,62 @@ export class ClaudeAdapter extends EventEmitter {
     return null;
   }
 
+  /**
+   * An AskUserQuestion the PreToolUse hook reports. In a turn started from Telegram the hook
+   * waits for the Telegram answer (the terminal dialog is not shown meanwhile); in a turn
+   * typed locally the question is posted as information and the hook returns at once.
+   */
+  #question(socket, route, p) {
+    const id = this.#route(route);
+    const s = id && this.sessions.get(id);
+    if (!s) return { answers: null };
+    const questions = (Array.isArray(p.questions) ? p.questions : []).map((q, i) => ({
+      id: String(i), header: String(q?.header ?? ''), question: String(q?.question ?? ''),
+      isOther: true, isSecret: false, multiSelect: q?.multiSelect === true,
+      options: Array.isArray(q?.options) ? q.options.map((o) => ({ label: String(o?.label ?? ''), description: String(o?.description ?? '') })) : null,
+    }));
+    if (!questions.length) return { answers: null };
+    const ref = crypto.randomBytes(12).toString('hex');
+    s.activity = 'waiting-input';
+    this.#emitStatus(id);
+    if (!(p.wait === true && s.remoteTurn)) {
+      this.emit('question', { id, ref, questions, answerable: false });
+      return { answers: null };
+    }
+    return new Promise((resolve) => {
+      s.questions.set(ref, { socket, questions, resolve });
+      this.emit('question', { id, ref, questions, answerable: true });
+    });
+  }
+
   #mirror(m) {
     const id = this.#route(m);
     if (!id) {
-      // Held in case its channel has not registered yet; a retry's first copy already is.
+      // Only prompts and finals are held for a channel that has not registered yet (a retry's
+      // first copy already is); a later hook carries fresher state than a held activity.
+      if (m.kind !== 'prompt' && m.kind !== 'final') return false;
       const now = this.now();
       this.held = [...this.held.filter((h) => now - h.at < HOLD_MS), ...(m.retry ? [] : [{ m, at: now }])];
       return false;
     }
     // A retry routed by process: its unroutable first copy must not be released later.
     if (m.retry) this.held = this.held.filter((h) => !(h.m.kind === m.kind && h.m.text === m.text));
+    if (m.kind === 'end') { this.#end(id); return true; }
+    const s = this.sessions.get(id);
+    s.activity = m.kind === 'activity' ? m.state : m.kind === 'prompt' ? 'running' : 'idle';
+    this.#emitStatus(id);
+    if (m.kind === 'activity') return true;
     // Only human-initiated turns are mirrored: a prompt typed locally or sent from Telegram.
     // Envelope prompts, and Stop-hook continuations (a final with no prompt since the last
     // one), are the harness talking to itself.
-    const s = this.sessions.get(id);
-    s.activity = m.kind === 'prompt' ? 'running' : 'idle';
-    if (m.transcriptPath) s.transcript = m.transcriptPath;
-    this.#emitStatus(id);
     if (m.kind === 'prompt') {
       s.humanTurn = !isEnvelope(m.text);
-      if (s.humanTurn) this.emit('prompt', { id, text: unwrapChannel(m.text) });
+      if (s.humanTurn) {
+        // A channel prompt is wrapped: that turn came from Telegram, any other was typed here.
+        const text = unwrapChannel(m.text);
+        s.remoteTurn = text !== m.text;
+        this.emit('prompt', { id, text });
+      }
       return true;
     }
     const human = s.humanTurn;
@@ -225,29 +272,42 @@ export class ClaudeAdapter extends EventEmitter {
     if (!s) throw new Error('channel disconnected');
     s.peer.notify('inbound', { text, user: user ?? '' });
     s.humanTurn = true;   // whether or not UserPromptSubmit reports channel prompts
+    s.remoteTurn = true;
     s.activity = 'running';
     this.#emitStatus(id);
   }
 
   status(id) { return this.sessions.has(id) ? 'channel connected' : 'channel disconnected'; }
 
+  /** The state the hooks last reported; a channel approval cannot prove how it was resolved locally. */
   statusSnapshot(id) {
     const s = this.sessions.get(id);
-    // Hooks and the channel only observe turn edges, so this is never more than
-    // running / idle / unknown; a channel approval cannot prove how it was resolved locally.
-    if (!s) return { state: 'disconnected' };
-    if (s.activity !== 'running' || !s.transcript) return { state: s.activity ?? 'unknown' };
-    // An interrupted turn fires no Stop hook: ask the transcript before calling it running.
-    try {
-      const { size, mtimeMs } = fs.statSync(s.transcript);
-      const fd = fs.openSync(s.transcript, 'r');
-      const buf = Buffer.alloc(Math.min(size, TAIL_BYTES));
-      try { fs.readSync(fd, buf, 0, buf.length, size - buf.length); } finally { fs.closeSync(fd); }
-      return { state: transcriptState(buf.toString('utf8'), mtimeMs, this.now()) };
-    } catch { return { state: 'running' }; }
+    return s ? { state: s.activity ?? 'unknown' } : { state: 'disconnected' };
   }
 
   #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }
+
+  /** Answer a waiting question: `answers` maps question id -> chosen strings. */
+  answerQuestion(ref, answers, id) {
+    const s = this.sessions.get(id);
+    const q = s?.questions.get(ref);
+    if (!q || !answers || q.questions.some((x) => !answers[x.id]?.length)) return false;
+    s.questions.delete(ref);
+    q.resolve({ answers: Object.fromEntries(q.questions.map((x) => [x.question, [].concat(answers[x.id]).map(String).join(', ')])) });
+    s.activity = 'running';
+    this.#emitStatus(id);
+    return true;
+  }
+
+  /** The question could not be offered on Telegram: let the terminal dialog show it. */
+  releaseQuestion(ref, id) {
+    const s = this.sessions.get(id);
+    const q = s?.questions.get(ref);
+    if (!q) return false;
+    s.questions.delete(ref);
+    q.resolve({ answers: null });
+    return true;
+  }
 
   answerApproval(ref, allow, id) {
     const s = this.sessions.get(id);

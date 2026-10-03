@@ -1,199 +1,250 @@
 {
-    "env": {
-        "CLAUDE_CODE_WORKFLOWS": "1",
-        "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
-        "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
-        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
-        "CLAUDE_CODE_FORK_SUBAGENT": "1",
-        "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
-        "DISABLE_ERROR_REPORTING": "1",
-        "DISABLE_FEEDBACK_COMMAND": "1",
-        "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
-        "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1",
-        "TRACEME_SYNC_REMOTE": "Your TRACEME Git Repo"
-    },
-    "includeCoAuthoredBy": false,
-    "permissions": {
-        "allow": [
-            "Bash",
-            "Read",
-            "Edit",
-            "Write",
-            "PowerShell",
-            "WebSearch",
-            "Skill(rem:rem)",
-            "Skill(rem:todo)",
-            "Skill(fabric:continue)",
-            "Skill(fabric:models)",
-            "Skill(fabric:handoff)",
-            "mcp__plugin_fabric_fabric__call",
-            "mcp__plugin_fabric_fabric__list_providers"
-        ],
-        "deny": [
-            "Bash(rm -rf *)",
-            "Bash(sudo *)",
-            "Bash(curl * | bash)"
-        ],
-        "defaultMode": "auto"
-    },
-    "hooks": {
-        "PreToolUse": [
-            {
-                "matcher": "*",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/loop-guard-hook.js",
-                        "timeout": 5
-                    }
-                ]
-            }
-        ],
-        "SessionStart": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull",
-                        "timeout": 90
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
-                        "timeout": 10
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/setup-check-hook.js",
-                        "timeout": 5
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/setup/doctor.js --hook",
-                        "timeout": 10
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/bridge/ensure.mjs",
-                        "timeout": 10
-                    }
-                ]
-            }
-        ],
-        "SessionEnd": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/sync-hook.js --remind",
-                        "timeout": 10
-                    }
-                ]
-            }
-        ],
-        "Notification": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/notify-hook.js"
-                    }
-                ]
-            }
-        ],
-        "UserPromptSubmit": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 5
-                    }
-                ]
-            }
-        ],
-        "Stop": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 5
-                    }
-                ]
-            }
-        ],
-        "StopFailure": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 5
-                    }
-                ]
-            }
+  "env": {
+    "CLAUDE_CODE_WORKFLOWS": "1",
+    "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
+    "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+    "CLAUDE_CODE_FORK_SUBAGENT": "1",
+    "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "DISABLE_FEEDBACK_COMMAND": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1",
+    "TRACEME_SYNC_REMOTE": "Your TRACEME Git Repo"
+  },
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "PowerShell",
+      "WebSearch",
+      "Skill(rem:rem)",
+      "Skill(rem:todo)",
+      "Skill(fabric:continue)",
+      "Skill(fabric:models)",
+      "Skill(fabric:handoff)",
+      "mcp__plugin_fabric_fabric__call",
+      "mcp__plugin_fabric_fabric__list_providers"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(sudo *)",
+      "Bash(curl * | bash)"
+    ],
+    "defaultMode": "auto"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/loop-guard-hook.js",
+            "timeout": 5
+          }
         ]
-    },
-    "worktree": {
-        "baseRef": "fresh"
-    },
-    "syncClaudeAiSkills": false,
-    "enableArtifact": false,
-    "statusLine": {
-        "type": "command",
-        "command": "node ~/.claude/scripts/hooks/hud-hook.js"
-    },
-    "enabledPlugins": {
-        "claude-hud@claude-hud": false,
-        "rem@cc-market": true,
-        "sharp-review@cc-market": true,
-        "evolve@cc-market": true,
-        "traceme@cc-market": true,
-        "fabric@cc-market": true
-    },
-    "extraKnownMarketplaces": {
-        "claude-hud": {
-            "source": {
-                "source": "github",
-                "repo": "jarrodwatts/claude-hud"
-            },
-            "autoUpdate": true
-        },
-        "cc-market": {
-            "source": {
-                "source": "github",
-                "repo": "DawnEver/cc-market"
-            },
-            "autoUpdate": true
-        }
-    },
-    "effortLevel": "low",
-    "askUserQuestionTimeout": "10m",
-    "autoUpdatesChannel": "latest",
-    "tui": "fullscreen",
-    "skipWorkflowUsageWarning": true,
-    "theme": "auto",
-    "editorMode": "normal",
-    "verbose": true,
-    "preferredNotifChannel": "auto",
-    "autoCompactEnabled": true,
-    "showTurnDuration": true,
-    "terminalProgressBarEnabled": true,
-    "remoteControlAtStartup": true,
-    "inputNeededNotifEnabled": true,
-    "agentPushNotifEnabled": true,
-    "skipAutoPermissionPrompt": true,
-    "autoMode": {
-        "environment": [
-            "$defaults"
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 660
+          }
         ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull",
+            "timeout": 90
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/setup-check-hook.js",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/setup/doctor.js --hook",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/bridge/ensure.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/sync-hook.js --remind",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/notify-hook.js"
+          }
+        ]
+      },
+      {
+        "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "worktree": {
+    "baseRef": "fresh"
+  },
+  "syncClaudeAiSkills": false,
+  "enableArtifact": false,
+  "statusLine": {
+    "type": "command",
+    "command": "node ~/.claude/scripts/hooks/hud-hook.js"
+  },
+  "enabledPlugins": {
+    "claude-hud@claude-hud": false,
+    "rem@cc-market": true,
+    "sharp-review@cc-market": true,
+    "evolve@cc-market": true,
+    "traceme@cc-market": true,
+    "fabric@cc-market": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-hud": {
+      "source": {
+        "source": "github",
+        "repo": "jarrodwatts/claude-hud"
+      },
+      "autoUpdate": true
     },
-    "autoCompactWindow": 720000,
-    "skipDangerousModePermissionPrompt": true,
-    "modelSettings": {
-        "claude-opus-5": {
-            "effortLevel": "low"
-        }
+    "cc-market": {
+      "source": {
+        "source": "github",
+        "repo": "DawnEver/cc-market"
+      },
+      "autoUpdate": true
     }
+  },
+  "effortLevel": "low",
+  "askUserQuestionTimeout": "10m",
+  "autoUpdatesChannel": "latest",
+  "tui": "fullscreen",
+  "skipWorkflowUsageWarning": true,
+  "theme": "auto",
+  "editorMode": "normal",
+  "verbose": true,
+  "preferredNotifChannel": "auto",
+  "autoCompactEnabled": true,
+  "showTurnDuration": true,
+  "terminalProgressBarEnabled": true,
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true,
+  "autoMode": {
+    "environment": [
+      "$defaults"
+    ]
+  },
+  "autoCompactWindow": 720000,
+  "skipDangerousModePermissionPrompt": true,
+  "modelSettings": {
+    "claude-opus-5": {
+      "effortLevel": "low"
+    }
+  }
 }

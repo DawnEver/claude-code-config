@@ -214,7 +214,7 @@ function resetLines(act, now, t) {
   ];
 }
 
-const RUNNING = new Set(['Working', 'Needs approval']);
+const RUNNING = new Set(['Working', 'Needs approval', 'Needs input']);
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 // An account is a name, not a link: code spans stop Telegram auto-linking the email.
 const accountName = (email) => (email ? `\`${email.replace(/`/g, '')}\`` : '_not logged in_');
@@ -225,7 +225,7 @@ const accountName = (email) => (email ? `\`${email.replace(/`/g, '')}\`` : '_not
  * only when that host is running something here, has a reset to act on (a banked reset to
  * claim, an announced one, Codex reset credits) or has a seat problem. Each block is
  * headed by the account it runs as; a seat (bridge.fleet.seats) is a Claude seat, so its
- * checks sit in the Claude block. Running means observed working or awaiting approval.
+ * checks sit in the Claude block. Running means observed working or awaiting approval or an answer.
  */
 export function renderReport({ machine, registry, account, codexAccount, claude, codex, codexResetCredits = null, extra = null, sessions = [], now }) {
   const t = timeFormatter(registry?.timeFormat);

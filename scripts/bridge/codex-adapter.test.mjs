@@ -499,3 +499,39 @@ test('non-main threads never come up, are dismissed, and are not resumed again',
   assert.deepEqual(resumes, ['t1', 'sub'], 'sub resumed once to learn it is a subagent; started ones never');
   assert.deepEqual(dismissed.sort(), ['execd', 'spawned', 'sub']);
 });
+
+test('user-input requests are relayed as questions, answered once, withdrawn when the TUI answers first', async () => {
+  const { a, srv } = await started();
+  const seen = [], resolved = [];
+  a.on('question', (x) => seen.push(x));
+  a.on('question-resolved', (x) => resolved.push(x.ref));
+  const questions = [{ id: 'q1', header: 'Pick', question: 'Which?', isOther: false, isSecret: false, options: [{ label: 'A', description: 'a' }] },
+    { id: 'q2', header: 'Name', question: 'Name it', isOther: true, isSecret: false, options: null }];
+  srv.request(55, 'item/tool/requestUserInput', { threadId: 't1', turnId: 'x', itemId: 'i', isBlocking: true, questions });
+  srv.request(56, 'item/tool/requestUserInput', { threadId: 'nope', questions });
+  await tick();
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0], { id: 't1', ref: 'c1:55', answerable: true, questions: [
+    { id: 'q1', header: 'Pick', question: 'Which?', isOther: false, isSecret: false, options: [{ label: 'A', description: 'a' }] },
+    { id: 'q2', header: 'Name', question: 'Name it', isOther: true, isSecret: false, options: null }] });
+  assert.deepEqual(srv.responses, [], 'never answered automatically');
+  assert.equal(a.answerQuestion('c1:55', { q1: ['A'], q2: ['x'] }), true);
+  assert.equal(a.answerQuestion('c1:55', { q1: ['A'] }), false, 'submitted once');
+  assert.deepEqual(srv.responses, [{ jsonrpc: '2.0', id: 55, result: { answers: { q1: { answers: ['A'] }, q2: { answers: ['x'] } } } }]);
+  srv.request(57, 'item/tool/requestUserInput', { threadId: 't1', questions: [{ id: 's', question: 'Token?', isSecret: true, options: null }] });
+  await tick();
+  assert.equal(seen[1].answerable, false, 'a secret is only ever answered locally');
+  assert.equal(a.answerQuestion('c1:57', { s: ['x'] }), false);
+  srv.push('serverRequest/resolved', { threadId: 't1', requestId: 57 });
+  assert.deepEqual(resolved, ['c1:57']);
+});
+
+test('waitingOnUserInput reads as waiting-input; a pending question does before Codex reports status', async () => {
+  const { a, srv } = await started();
+  srv.request(60, 'item/tool/requestUserInput', { threadId: 't1', questions: [{ id: 'q', question: '?', options: null, isOther: true }] });
+  assert.equal(a.statusSnapshot('t1').state, 'waiting-input');
+  srv.push('serverRequest/resolved', { threadId: 't1', requestId: 60 });
+  assert.equal(a.statusSnapshot('t1').state, 'idle');
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
+  assert.equal(a.statusSnapshot('t1').state, 'waiting-input');
+});
