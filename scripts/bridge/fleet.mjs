@@ -8,7 +8,8 @@
 //     ~/.claude/bridge/claude-usage.json (only fresh while a Claude session renders).
 //   - Claude account: ~/.claude.json `oauthAccount` (email + organization).
 //   - Codex quota: the shared app-server's `account/rateLimits` (codex-adapter.mjs).
-//   - Expected seat: ~/.claude/fleet.json (sync payload, never in git: it names accounts).
+//   - Expected seat and report order: `bridge.fleet` in claude_env_settings.json (sync
+//     payload, never in git), re-read every tick.
 // Rates are averaged since the window opened (resetsAt - window length) as of the
 // snapshot, so no history is kept: a window's ETA is when that average pace reaches 100%.
 // A stale snapshot is shown with its time but never alerts; a passed reset reads as such.
@@ -16,12 +17,12 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { readBridgeConfig } from './context.mjs';
 
 // CLAUDE_CONFIG_DIR moves both the config dir and its .claude.json, as hud-hook.js honours.
 const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
 export const CLAUDE_USAGE_FILE = path.join(CONFIG_DIR || path.join(os.homedir(), '.claude'), 'bridge', 'claude-usage.json');
 export const CLAUDE_ACCOUNT_FILE = CONFIG_DIR ? path.join(CONFIG_DIR, '.claude.json') : path.join(os.homedir(), '.claude.json');
-export const FLEET_REGISTRY_FILE = path.join(os.homedir(), '.claude', 'fleet.json');
 
 const H = 3600000;
 const CLAUDE_WINDOWS = { five_hour: 5 * H, seven_day: 168 * H };
@@ -83,7 +84,7 @@ export function claudeAccount(file = CLAUDE_ACCOUNT_FILE) {
 
 /**
  * The registry entry for this machine, or null.
- * fleet.json = {seats: [{name, email, org?, orgUuid?, machines: [<machine>], note?}]}
+ * registry = bridge.fleet: {seats: [{name, email, org?, orgUuid?, machines: [<machine>], note?}]}
  */
 export function seatFor(registry, machine) {
   const seats = Array.isArray(registry?.seats) ? registry.seats : [];
@@ -113,7 +114,6 @@ export function teeClaudeUsage(statusLine, { file = CLAUDE_USAGE_FILE, now = Dat
   } catch { return false; }
 }
 
-export function readRegistry(file = FLEET_REGISTRY_FILE) { return readJson(file); }
 export function readClaudeUsage(file = CLAUDE_USAGE_FILE) { return readJson(file); }
 
 const sameText = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
@@ -160,10 +160,10 @@ function quotaLines(host, q, now) {
 export function renderCard({ machine, registry, account, claude, codex, sessions = [], now }) {
   const alerts = [];
   const seat = seatFor(registry, machine);
-  const lines = [`${machine} · ${seat?.name ?? (registry ? 'unregistered' : 'no fleet.json')}`];
+  const lines = [`${machine} · ${seat?.name ?? (registry?.seats?.length ? 'unregistered' : 'no seats configured')}`];
   // Alert keys are persisted: they name the condition, never an account.
   const flag = (key, line, alert = line) => { lines.push(`(!) ${line}`); alerts.push({ key, text: `${machine}: ${alert}`, until: null }); };
-  if (registry && !seat) flag('unregistered', 'not in fleet.json');
+  if (registry?.seats?.length && !seat) flag('unregistered', 'not in bridge.fleet.seats');
   if (seat && !account) flag('seat:none', 'no Claude subscription login', `no Claude subscription login (expected ${seat.name})`);
   else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `Claude is logged into another account, expected ${seat.name}`);
   else if (seat && !orgOk(account, seat)) flag('seat:org', `Claude org is ${account.org ?? '?'}, expected ${seat.org ?? seat.orgUuid}`);
@@ -185,7 +185,7 @@ export function renderCard({ machine, registry, account, claude, codex, sessions
 }
 
 /**
- * The report slot of `machine`: fleet.json `order` lists machines in reporting order; one
+ * The report slot of `machine`: bridge.fleet `order` lists machines in reporting order; one
  * not listed reports last. Slots are a minute apart, so a round reads top to bottom.
  */
 export function reportSlot(registry, machine) {
@@ -205,7 +205,7 @@ export function reportSlot(registry, machine) {
 export class FleetCard {
   constructor({ telegram, chatId, topicId = null, everyMinutes = 60, machine, stateFile = null, sessions = () => [],
     codexQuota: codexSource = () => null, log = () => {}, now = Date.now,
-    read = { registry: readRegistry, account: claudeAccount, claudeUsage: readClaudeUsage } }) {
+    read = { registry: () => readBridgeConfig().fleet, account: claudeAccount, claudeUsage: readClaudeUsage } }) {
     Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, log, now, read });
     this.cycleMs = everyMinutes * 60000;
     const saved = stateFile && readJson(stateFile);

@@ -72,7 +72,7 @@ test('exactly the payload files are marked base:sync', () => {
   const sync = [...CLAUDE_LINKS, ...CODEX_LINKS].filter(l => l.base === 'sync');
   assert.deepEqual(sync.filter(l => !l.optional).map(l => l.src).sort(), ['claude_env_settings.json', 'claude_settings.json']);
   // Private payload is synced but optional: a plain clone has none.
-  assert.deepEqual(sync.filter(l => l.optional).map(l => l.src), ['private-markers', 'fleet.json']);
+  assert.deepEqual(sync.filter(l => l.optional).map(l => l.src), ['private-markers']);
   // codex_config.toml is intentionally NOT a link — it is composed per host.
   assert.equal([...CODEX_LINKS].some(l => l.src === 'codex_config.toml'), false);
 });

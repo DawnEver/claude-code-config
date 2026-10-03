@@ -395,18 +395,22 @@ seat it is on, how much quota is left, when it resets, whether it runs out first
 is running there. Enable it in the shared config:
 
 ```json
-"bridge": { "fleet": { "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60 } }
+"bridge": { "fleet": {
+  "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60,
+  "order": ["host-a", "host-b"],
+  "seats": [{ "name": "alice/TeamA", "email": "alice@example.com", "org": "Team A",
+              "machines": ["host-a"], "note": "reset available 22/Oct" }]
+} }
 ```
 
 `topicId` is optional (absent = General); `everyMinutes` defaults to 60. Every machine's
 bot must be a member of that chat. Every `everyMinutes`, each machine posts a fresh report
-at its slot — one minute apart, in the order of `fleet.json` `order` (unlisted machines
-last) — and deletes its previous one, so the chat holds the latest round, top to bottom.
+at its slot — one minute apart, in the order of `order` (unlisted machines last) — and deletes its previous one, so the chat holds the latest round, top to bottom.
 Nothing is reported in the first minute after a daemon start, while sessions re-register.
 
 | Line | Source |
 | --- | --- |
-| seat | `~/.claude/fleet.json` (sync payload, gitignored: it names accounts) `{order: [<machine>], seats: [{name, email, org?, orgUuid?, machines: [<machine>], note?}]}` |
+| seat | `bridge.fleet.seats` (`{name, email, org?, orgUuid?, machines, note?}`); the shared config is never in git, so naming accounts there is fine |
 | Claude account | `~/.claude.json` `oauthAccount` (email, organization) — emails are never printed |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
@@ -434,8 +438,8 @@ over 15 minutes old, which raises nothing. Detail such as the org name appears o
 something is wrong. Between rounds only an alert is posted, silently and once: running
 out before reset (held until that window resets), Claude logged into another account/org
 than the seat (`org` = case-insensitive substring of organizationName, or exact `orgUuid`),
-no subscription login on a registered machine, machine absent from an existing
-`fleet.json` (each held until it clears).
+no subscription login on a registered machine, machine absent from a non-empty `seats`
+(each held until it clears). Seats and order are re-read every tick; no restart needed.
 
 ## Session status
 

@@ -73,7 +73,7 @@ test('renderCard seat checks: wrong account, wrong org, uuid pin, no login, unre
   assert.deepEqual(keys({ registry: { seats: [{ ...SEAT, orgUuid: 'u2' }] }, account: ME }), ['seat:org']);
   assert.deepEqual(keys({ account: null }), ['seat:none']);
   assert.deepEqual(keys({ machine: 'm9', account: ME }), ['unregistered']);
-  assert.deepEqual(renderCard({ machine: 'm9', registry: null, account: ME, now: NOW }).alerts, [], 'no fleet.json: no alert');
+  assert.deepEqual(renderCard({ machine: 'm9', registry: null, account: ME, now: NOW }).alerts, [], 'no seats configured: no alert');
 });
 
 test('renderCard: a stale snapshot shows with its time but never alerts; a passed reset reads as such', () => {
@@ -121,7 +121,7 @@ test('when: today as a time, any other day as a date', () => {
   assert.equal(when(new Date(2026, 9, 8, 23, 0).getTime(), now), '08/10 23:00');
 });
 
-test('reportSlot follows fleet.json order, a minute apart; unlisted machines report last', () => {
+test('reportSlot follows bridge.fleet order, a minute apart; unlisted machines report last', () => {
   const reg = { order: ['h1', 'h2', 'h3'] };
   assert.deepEqual(['h1', 'h2', 'h3', 'X'].map((m) => reportSlot(reg, m) / 60000), [0, 1, 2, 3]);
   assert.equal(reportSlot(null, 'h2'), 0);
