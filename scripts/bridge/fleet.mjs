@@ -141,11 +141,11 @@ export function countdown(ms, now) {
 }
 
 export const TIME_FORMATS = ['date', 'countdown', 'both'];
-/** bridge.fleet.timeFormat -> (ms, now) => text. date (default): `08/Oct 23:00`; countdown: `4d 7h`; both. */
+/** bridge.fleet.timeFormat -> (ms, now) => text. both (default): `08/Oct 23:00 (4d 7h)`; date; countdown. */
 export function timeFormatter(format) {
+  if (format === 'date') return when;
   if (format === 'countdown') return countdown;
-  if (format === 'both') return (ms, now) => `${when(ms, now)} (${countdown(ms, now)})`;
-  return when;
+  return (ms, now) => `${when(ms, now)} (${countdown(ms, now)})`;
 }
 
 const bar = (used) => { const n = Math.round(used / 10); return '█'.repeat(n) + '░'.repeat(10 - n); };

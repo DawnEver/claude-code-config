@@ -59,7 +59,7 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
     deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
     fleet: b.fleet?.chatId ? { chatId: b.fleet.chatId, topicId: b.fleet.topicId ?? null,
       everyMinutes: b.fleet.everyMinutes > 0 ? b.fleet.everyMinutes : 60,
-      timeFormat: ['countdown', 'both'].includes(b.fleet.timeFormat) ? b.fleet.timeFormat : 'date',
+      timeFormat: ['date', 'countdown'].includes(b.fleet.timeFormat) ? b.fleet.timeFormat : 'both',
       order: Array.isArray(b.fleet.order) ? b.fleet.order : [], seats: Array.isArray(b.fleet.seats) ? b.fleet.seats : [] } : null,
     projects,
   };

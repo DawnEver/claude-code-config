@@ -57,7 +57,7 @@ test('renderCard: one block per host, headed by the full account it runs as', ()
   const { text, alerts } = renderCard({ machine: 'm1', registry: REG, account: ME, codexAccount: { email: 'c@example.com', plan: 'plus' },
     claude: short5h(), codex: null,
     sessions: [{ title: 'proj | main | m1 | claude', status: 'Working' }, { title: 'old | main | m1 | codex', status: 'Idle' }], now: NOW });
-  assert.match(text, /^<b>m1<\/b>\n\n<b>Claude<\/b> · a@example\.com\n<i>Uni Team A<\/i>\n<code>5h ██████░░░░  60%<\/code>  resets \d\d:\d\d\n<b>\(!\) runs out \d\d:\d\d<\/b>\n<i>reset available by 22\/Oct<\/i>\n\n<b>Codex<\/b> · c@example\.com\n<i>plus<\/i>\n<i>no quota data yet<\/i>\n/);
+  assert.match(text, /^<b>m1<\/b>\n\n<b>Claude<\/b> · a@example\.com\n<i>Uni Team A<\/i>\n<code>5h ██████░░░░  60%<\/code>  resets \d\d:\d\d \(3h 0m\)\n<b>\(!\) runs out \d\d:\d\d \(1h 20m\)<\/b>\n<i>reset available by 22\/Oct<\/i>\n\n<b>Codex<\/b> · c@example\.com\n<i>plus<\/i>\n<i>no quota data yet<\/i>\n/);
   assert.match(text, /<b>Running<\/b>\n• proj \| main \| m1 \| claude$/);
   assert.doesNotMatch(text, /old \| main/, 'idle sessions are not listed');
   assert.deepEqual(alerts.map((a) => a.key.split(':')[0]), ['short']);
@@ -197,10 +197,11 @@ test('renderCard escapes every interpolated value for Telegram HTML', () => {
   assert.match(text, /• p&lt;q&gt; \| main/);
 });
 
-test('time formats: date (default), countdown, both — in the card and its alerts', () => {
+test('time formats: both (default), date, countdown — in the card and its alerts', () => {
   assert.deepEqual([countdown(NOW + 4 * 1440 * 60000 + 7 * H, NOW), countdown(NOW + 3 * H + 15 * 60000, NOW), countdown(NOW + 12 * 60000, NOW)], ['4d 7h', '3h 15m', '12m']);
   const card = (timeFormat) => renderCard({ machine: 'm1', registry: { ...REG, timeFormat }, account: ME, claude: short5h(), now: NOW });
-  assert.match(card(undefined).text, /resets \d\d:\d\d\n/);
+  assert.match(card(undefined).text, /resets \d\d:\d\d \(3h 0m\)\n/);
+  assert.match(card('date').text, /resets \d\d:\d\d\n/);
   assert.match(card('countdown').text, /resets 3h 0m\n<b>\(!\) runs out 1h 20m<\/b>/);
   assert.match(card('both').text, /resets \d\d:\d\d \(3h 0m\)/);
   assert.match(card('countdown').alerts[0].text, /runs out 1h 20m, resets 3h 0m/);
