@@ -125,7 +125,9 @@ async function main() {
   let raw = '';
   for await (const c of process.stdin) raw += c;
   const payload = JSON.parse(raw || '{}');
-  const question = questionFor(payload);
+  // Only the dedicated AskUserQuestion entry (long timeout) waits: Claude Code merges hook
+  // entries with an identical command, so the catch-all one must not be that entry's twin.
+  const question = process.argv.includes('--question') ? questionFor(payload) : null;
   setTimeout(() => process.exit(0), (question ? QUESTION_TIMEOUT_MS : TIMEOUT_MS) + 500).unref();
   if (question) {
     const r = await callHub('question', question, { timeoutMs: QUESTION_TIMEOUT_MS });

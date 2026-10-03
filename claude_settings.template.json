@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js --question",
             "timeout": 660
           }
         ]
