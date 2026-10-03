@@ -396,7 +396,7 @@ is running there. Enable it in the shared config:
 
 ```json
 "bridge": { "fleet": {
-  "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60,
+  "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60, "timeFormat": "date",
   "order": ["host-a", "host-b"],
   "seats": [{ "name": "alice/TeamA", "email": "alice@example.com", "org": "Team A",
               "machines": ["host-a"], "note": "reset available 22/Oct" }]
@@ -432,7 +432,9 @@ Running
   lab-commons | main | G | codex
 ```
 
-Times are `HH:MM` today, `DD/MM HH:MM` otherwise. Pace is the average since the window
+`timeFormat` picks how times read: `date` (default; `HH:MM` today, `DD/MM HH:MM`
+otherwise), `countdown` (time left: `4d 7h`, `3h 15m`, `12m`) or `both`
+(`08/10 23:00 (4d 7h)`). Pace is the average since the window
 opened, as of the snapshot, so no history is kept. Freshness appears only for a snapshot
 over 15 minutes old, which raises nothing. Detail such as the org name appears only when
 something is wrong. Between rounds only an alert is posted, silently and once: running

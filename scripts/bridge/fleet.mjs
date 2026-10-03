@@ -132,21 +132,37 @@ export function when(ms, now) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${hm}`;
 }
 
+/** Time left until `ms`: the two largest units, `4d 7h`, `3h 15m`, `12m`. */
+export function countdown(ms, now) {
+  const m = Math.max(0, Math.round((ms - now) / 60000));
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), min = m % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${min}m` : `${min}m`;
+}
+
+export const TIME_FORMATS = ['date', 'countdown', 'both'];
+/** bridge.fleet.timeFormat -> (ms, now) => text. date (default): `08/10 23:00`; countdown: `4d 7h`; both. */
+export function timeFormatter(format) {
+  if (format === 'countdown') return countdown;
+  if (format === 'both') return (ms, now) => `${when(ms, now)} (${countdown(ms, now)})`;
+  return when;
+}
+
 const bar = (used) => { const n = Math.round(used / 10); return '█'.repeat(n) + '░'.repeat(10 - n); };
 const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
 
 /** `Claude 7d ███████░░░  69%  resets 08/10 23:00`, + `(!) runs out ...` under it. */
-function windowLines(host, k, v, now) {
+function windowLines(host, k, v, now, t) {
   const label = `${host.padEnd(6)} ${k.padEnd(2)} `;
+  // A past reset has no countdown: always a date.
   if (v.resetsAt <= now) return [`${label}reset ${when(v.resetsAt, now)}, awaiting data`];
-  const lines = [`${label}${bar(v.used)} ${`${Math.round(v.used)}%`.padStart(4)}  resets ${when(v.resetsAt, now)}`];
-  if (v.short) lines.push(`${' '.repeat(label.length)}(!) runs out ${when(v.eta, now)}`);
+  const lines = [`${label}${bar(v.used)} ${`${Math.round(v.used)}%`.padStart(4)}  resets ${t(v.resetsAt, now)}`];
+  if (v.short) lines.push(`${' '.repeat(label.length)}(!) runs out ${t(v.eta, now)}`);
   return lines;
 }
 
-function quotaLines(host, q, now) {
+function quotaLines(host, q, now, t) {
   if (!q) return [`${host.padEnd(6)} no data yet`];
-  const lines = Object.entries(q.windows).flatMap(([k, v]) => windowLines(host, k, v, now));
+  const lines = Object.entries(q.windows).flatMap(([k, v]) => windowLines(host, k, v, now, t));
   // Freshness only when it matters: an old snapshot says how old.
   if (now - q.at > STALE_MS) lines.push(`${' '.repeat(10)}data ${ago(now - q.at)} old`);
   return lines;
@@ -159,6 +175,7 @@ function quotaLines(host, q, now) {
  */
 export function renderCard({ machine, registry, account, claude, codex, sessions = [], now }) {
   const alerts = [];
+  const t = timeFormatter(registry?.timeFormat);
   const seat = seatFor(registry, machine);
   const lines = [`${machine} · ${seat?.name ?? (registry?.seats?.length ? 'unregistered' : 'no seats configured')}`];
   // Alert keys are persisted: they name the condition, never an account.
@@ -168,12 +185,12 @@ export function renderCard({ machine, registry, account, claude, codex, sessions
   else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `Claude is logged into another account, expected ${seat.name}`);
   else if (seat && !orgOk(account, seat)) flag('seat:org', `Claude org is ${account.org ?? '?'}, expected ${seat.org ?? seat.orgUuid}`);
   if (seat?.note) lines.push(`note: ${seat.note}`);
-  lines.push('', ...quotaLines('Claude', claude, now), ...quotaLines('Codex', codex, now), '');
+  lines.push('', ...quotaLines('Claude', claude, now, t), ...quotaLines('Codex', codex, now, t), '');
   for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
     if (!q || now - q.at > STALE_MS) continue;
     for (const [k, v] of Object.entries(q.windows)) {
       // Keyed by the hour of reset (servers jitter it by seconds); held until that reset.
-      if (v.short && v.resetsAt > now) alerts.push({ key: `short:${host}:${k}:${Math.round(v.resetsAt / H)}`, until: v.resetsAt, text: `${machine} ${host} ${k} at ${Math.round(v.used)}%: runs out ~${when(v.eta, now)}, resets ${when(v.resetsAt, now)}` });
+      if (v.short && v.resetsAt > now) alerts.push({ key: `short:${host}:${k}:${Math.round(v.resetsAt / H)}`, until: v.resetsAt, text: `${machine} ${host} ${k} at ${Math.round(v.used)}%: runs out ${t(v.eta, now)}, resets ${t(v.resetsAt, now)}` });
     }
   }
   // What is running here: busy sessions by name; idle ones are not news.

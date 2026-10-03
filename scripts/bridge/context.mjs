@@ -40,7 +40,7 @@ const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
  * Normalised bridge config.
  * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId,
  *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours,
- *          bridge.fleet.{chatId, topicId?, everyMinutes?, order?, seats?} (the fleet report; off
+ *          bridge.fleet.{chatId, topicId?, everyMinutes?, timeFormat?, order?, seats?} (the fleet report; off
  *          without chatId; seats name accounts, which is fine: this file is never in git)
  * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram
  * Either layer may set any key; local wins.
@@ -59,6 +59,7 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
     deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
     fleet: b.fleet?.chatId ? { chatId: b.fleet.chatId, topicId: b.fleet.topicId ?? null,
       everyMinutes: b.fleet.everyMinutes > 0 ? b.fleet.everyMinutes : 60,
+      timeFormat: ['countdown', 'both'].includes(b.fleet.timeFormat) ? b.fleet.timeFormat : 'date',
       order: Array.isArray(b.fleet.order) ? b.fleet.order : [], seats: Array.isArray(b.fleet.seats) ? b.fleet.seats : [] } : null,
     projects,
   };

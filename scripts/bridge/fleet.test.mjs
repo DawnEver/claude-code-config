@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FleetCard, reportSlot, when, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderCard } from './fleet.mjs';
+import { FleetCard, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderCard } from './fleet.mjs';
 
 const H = 3600000;
 const NOW = Date.UTC(2026, 9, 3, 12, 0);
@@ -184,4 +184,13 @@ test('FleetCard state is per chat/Topic, saved only on change, and holds no emai
     assert.doesNotMatch(fs.readFileSync(stateFile, 'utf8'), /example\.com/);
     assert.equal(fleet({ stateFile, topicId: 10 }).card.state.messageId, null, 'another Topic starts afresh');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('time formats: date (default), countdown, both — in the card and its alerts', () => {
+  assert.deepEqual([countdown(NOW + 4 * 1440 * 60000 + 7 * H, NOW), countdown(NOW + 3 * H + 15 * 60000, NOW), countdown(NOW + 12 * 60000, NOW)], ['4d 7h', '3h 15m', '12m']);
+  const card = (timeFormat) => renderCard({ machine: 'm1', registry: { ...REG, timeFormat }, account: ME, claude: short5h(), now: NOW });
+  assert.match(card(undefined).text, /resets \d\d:\d\d\n/);
+  assert.match(card('countdown').text, /resets 3h 0m\n {10}\(!\) runs out 1h 20m/);
+  assert.match(card('both').text, /resets \d\d:\d\d \(3h 0m\)/);
+  assert.match(card('countdown').alerts[0].text, /runs out 1h 20m, resets 3h 0m/);
 });
