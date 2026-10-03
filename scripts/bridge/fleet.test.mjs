@@ -120,7 +120,7 @@ function fleet({ telegram = fakeTelegram(), stateFile = null, topicId = 9, clock
 test('when: today as a time, any other day as a date', () => {
   const now = new Date(2026, 9, 3, 12, 0).getTime();
   assert.equal(when(new Date(2026, 9, 3, 21, 5).getTime(), now), '21:05');
-  assert.equal(when(new Date(2026, 9, 8, 23, 0).getTime(), now), '08/10 23:00');
+  assert.equal(when(new Date(2026, 9, 8, 23, 0).getTime(), now), '08/Oct 23:00');
 });
 
 test('reportSlot follows bridge.fleet order, a minute apart; unlisted machines report last', () => {

@@ -425,21 +425,21 @@ G
 
 Claude  alice@example.com · Uni Team A
   5h ██░░░░░░░░  20%  resets 20:00
-  7d ███████░░░  69%  resets 08/10 23:00
-     (!) runs out 05/10 21:13
+  7d ███████░░░  69%  resets 08/Oct 23:00
+     (!) runs out 05/Oct 21:13
   reset available by 22/Oct
 
 Codex   alice@example.com · plus
-  7d █████░░░░░  51%  resets 09/10 22:00
+  7d █████░░░░░  51%  resets 09/Oct 22:00
      data 3h old
 
 Running
   lab-commons | main | G | codex
 ```
 
-`timeFormat` picks how times read: `date` (default; `HH:MM` today, `DD/MM HH:MM`
+`timeFormat` picks how times read: `date` (default; `HH:MM` today, `DD/Mon HH:MM`
 otherwise), `countdown` (time left: `4d 7h`, `3h 15m`, `12m`) or `both`
-(`08/10 23:00 (4d 7h)`). Pace is the average since the window
+(`08/Oct 23:00 (4d 7h)`). Pace is the average since the window
 opened, as of the snapshot, so no history is kept. Freshness appears only for a snapshot
 over 15 minutes old, which raises nothing. Between rounds only an alert is posted, silently and once: running
 out before reset (held until that window resets), Claude logged into another account/org

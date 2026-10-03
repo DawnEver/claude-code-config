@@ -124,12 +124,13 @@ const orgOk = (account, seat) => (seat.orgUuid ? account.orgUuid === seat.orgUui
   : !seat.org || String(account.org ?? '').toLowerCase().includes(String(seat.org).trim().toLowerCase()));
 
 const pad = (n) => String(n).padStart(2, '0');
-/** HH:MM today, else `DD/MM HH:MM`: a date reads without counting weekdays. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** HH:MM today, else `07/Oct 23:00`: a date reads without counting weekdays. */
 export function when(ms, now) {
   const d = new Date(ms);
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (new Date(now).toDateString() === d.toDateString()) return hm;
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${hm}`;
+  return `${pad(d.getDate())}/${MONTHS[d.getMonth()]} ${hm}`;
 }
 
 /** Time left until `ms`: the two largest units, `4d 7h`, `3h 15m`, `12m`. */
@@ -140,7 +141,7 @@ export function countdown(ms, now) {
 }
 
 export const TIME_FORMATS = ['date', 'countdown', 'both'];
-/** bridge.fleet.timeFormat -> (ms, now) => text. date (default): `08/10 23:00`; countdown: `4d 7h`; both. */
+/** bridge.fleet.timeFormat -> (ms, now) => text. date (default): `08/Oct 23:00`; countdown: `4d 7h`; both. */
 export function timeFormatter(format) {
   if (format === 'countdown') return countdown;
   if (format === 'both') return (ms, now) => `${when(ms, now)} (${countdown(ms, now)})`;
@@ -150,7 +151,7 @@ export function timeFormatter(format) {
 const bar = (used) => { const n = Math.round(used / 10); return '█'.repeat(n) + '░'.repeat(10 - n); };
 const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
 
-/** `  7d ███████░░░  69%  resets 08/10 23:00`, + `(!) runs out ...` under it. */
+/** `  7d ███████░░░  69%  resets 08/Oct 23:00`, + `(!) runs out ...` under it. */
 function windowLines(k, v, now, t) {
   const label = `  ${k.padEnd(3)}`;
   // A past reset has no countdown: always a date.
