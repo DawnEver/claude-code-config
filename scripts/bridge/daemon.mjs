@@ -25,6 +25,7 @@ import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
+import { FleetCard } from './fleet.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
@@ -159,6 +160,12 @@ export class Bridge {
       for (const { kind, e } of q) if (!(e.turnId && seen.has(`${kind}:${e.turnId}`))) await this.#event(key, kind, e).catch(() => {});
     }
     return this.sessions.get(key);
+  }
+
+  /** What the fleet card lists: sessions that have shown activity (they own a Topic). */
+  fleetSessions() {
+    return [...this.sessions.values()].filter((s) => s.topicId && s.state !== 'ended').map((s) => ({
+      title: s.title, status: STATUS_LABELS[this.hosts.get(s.agent)?.statusSnapshot?.(s.id).state] ?? 'Unknown' }));
   }
 
   sessionDown(key) {
@@ -625,6 +632,14 @@ export async function main() {
   if (config.idleCloseMinutes > 0) {
     setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)),
       Math.min(60000, config.idleCloseMinutes * 60000)).unref();
+  }
+  if (config.fleet) {
+    const card = new FleetCard({ telegram, ...config.fleet, machine, log, alertIds: config.allowedUserIds,
+      stateFile: path.join(BRIDGE_RUNTIME_DIR, 'fleet-card.json'),
+      sessions: () => bridge.fleetSessions(), codexQuota: () => codex.quota });
+    const tick = () => card.tick().catch((e) => log(`fleet card: ${e.message}`));
+    tick();
+    setInterval(tick, 60000).unref();
   }
   if (config.deleteClosedAfterHours > 0) {
     const sweep = () => bridge.sweepClosedTopics().catch((e) => log(`sweep: ${e.message}`));

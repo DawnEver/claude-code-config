@@ -265,6 +265,8 @@ Transport exception URLs are not logged because they can contain bot tokens.
 | `offset.json` | last `update_id` (cache) |
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
+| `claude-usage.json` | latest Claude statusLine `rate_limits`, teed by `hud-hook.js` for the fleet card |
+| `fleet-card.json` | this machine's fleet card message id, last text and active alert keys (cache) |
 | `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit; pruned after 7 days |
 
 These files are **machine-local and contain local paths** (cwds, which include the user
@@ -385,6 +387,36 @@ Photos are limited to 10 MiB and may be compressed by Telegram; documents are li
 to 50 MiB and preserve original bytes. Captions are plain text, at most 1024 characters.
 Uncertain upload outcomes are not retried; check the Topic before another attempt.
 No directory scanning or automatic artifact publication is performed.
+
+## Fleet card (`scripts/bridge/fleet.mjs`)
+
+One message per machine in one shared chat/Topic, edited in place, answering: which seat
+is this machine on, how much quota is left, when does it reset, will it run out before
+then, and what is running here. Enable it with `bridge.fleet` in the shared config:
+
+```json
+"bridge": { "fleet": { "chatId": -1001111111111, "topicId": 42 } }
+```
+
+`topicId` is optional (absent = the group's General Topic). Every machine's bot must be a
+member of that chat. Each daemon renders only its own observations — no cross-machine
+aggregation, no shared mutable state, no private endpoints:
+
+| Line | Source |
+| --- | --- |
+| seat | `~/.claude/fleet.json` (sync payload, gitignored: it names accounts) `{seats: [{name, email, org?, orgUuid?, machines: [<machine>], note?}]}` |
+| Claude account | `~/.claude.json` `oauthAccount` (email, organization) — emails are never printed |
+| Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
+| Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
+| sessions | sessions that own a live Topic, with their status-card state |
+
+Pace is the average since the window opened, as of the snapshot, so no history is kept;
+`out HH:MM (!)` marks a window projected to run out before it resets. A snapshot older than
+15 minutes shows `stale` and raises nothing. Alerts (posted once, with a mention, when they
+first hold; again only after clearing): running out before reset, Claude logged into another
+account/org than the seat (`org` = case-insensitive substring of organizationName, or exact
+`orgUuid`), no subscription login on a registered machine, machine absent from an existing
+`fleet.json`.
 
 ## Session status
 

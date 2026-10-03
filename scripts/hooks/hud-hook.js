@@ -2,6 +2,7 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import { PassThrough } from 'stream';
 
 function getLatestPluginPath() {
     const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
@@ -52,6 +53,19 @@ const pluginEntry = getLatestPluginPath();
 if (!pluginEntry) {
     console.error('claude-hud index.js entry file not found');
     process.exit(1);
+}
+
+// Tee the statusLine payload: its rate_limits feed the bridge's fleet card (fleet.mjs).
+// claude-hud then reads the same bytes from a replayed stdin.
+if (!process.stdin.isTTY) {
+    const chunks = [];
+    for await (const c of process.stdin) chunks.push(c);
+    const raw = Buffer.concat(chunks).toString('utf8');
+    // Never let the tee break the status line: a missing/broken fleet.mjs is ignored.
+    try { (await import('../bridge/fleet.mjs')).teeClaudeUsage(JSON.parse(raw)); } catch { /* claude-hud decides */ }
+    const replay = new PassThrough();
+    replay.end(raw);
+    Object.defineProperty(process, 'stdin', { value: replay, configurable: true });
 }
 
 const pluginModule = await import(`file://${pluginEntry.replace(/\\/g, '/')}`);

@@ -17,6 +17,7 @@ import { spawn, execFile } from 'child_process';
 import { WsStreamClient } from './ws-stream.mjs';
 import { JsonRpcPeer } from './jsonrpc.mjs';
 
+const QUOTA_REFRESH_MS = 5 * 60000;
 const IS_WIN = process.platform === 'win32';
 
 /** Approval requests whose response is `{ decision: 'accept' | 'decline' }`. */
@@ -139,6 +140,7 @@ export class CodexAdapter extends EventEmitter {
     this.connection = 0;
     this.threads = new Map();     // threadId -> { cwd, branch, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
+    this.quota = null;            // { limits: RateLimitSnapshot, at } for the fleet card (fleet.mjs)
   }
 
   /** Attach to the daemon. Resolves false (no throw) when it is not running. */
@@ -175,6 +177,11 @@ export class CodexAdapter extends EventEmitter {
   /** Reconcile subscriptions with the daemon's loaded threads. */
   async refresh() {
     if (!this.rpc) return;
+    // Account quota: pushed on change, re-read every few minutes as a backstop.
+    if (!this.quota || this.now() - this.quota.at >= QUOTA_REFRESH_MS) {
+      const r = await this.rpc.request('account/rateLimits/read', {}).catch(() => null);
+      if (r?.rateLimits) this.quota = { limits: r.rateLimits, at: this.now() };
+    }
     const ids = new Set();
     let cursor = null;
     do {
@@ -249,6 +256,9 @@ export class CodexAdapter extends EventEmitter {
   #onNotification(method, p = {}) {
     const th = this.threads.get(p.threadId);
     switch (method) {
+      case 'account/rateLimits/updated':
+        if (p.rateLimits && (p.rateLimits.limitId ?? 'codex') === 'codex') this.quota = { limits: p.rateLimits, at: this.now() };
+        break;
       case 'turn/started':
         if (th) {
           th.activeTurnId = p.turn?.id ?? null; th.agentMessages.clear();

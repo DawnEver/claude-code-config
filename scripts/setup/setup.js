@@ -62,6 +62,10 @@ export const CLAUDE_LINKS = [
   // fleet host guards against the same names, and never git — a committed list of private
   // names would be the leak itself. Optional: a plain clone has none and never seeds one.
   { src: 'private-markers', dest: 'private-markers', type: 'file', base: 'sync', optional: true },
+  // The fleet registry (seats = account x Team org, and which machines sit on each) for the
+  // bridge's fleet card (scripts/bridge/fleet.mjs). Sync payload, never git: it names
+  // accounts. Optional: without it the card just shows every machine as unregistered.
+  { src: 'fleet.json', dest: 'fleet.json', type: 'file', base: 'sync', optional: true },
 ];
 
 // NOTE: `~/.codex/config.toml` is deliberately NOT in this table. Codex writes to that

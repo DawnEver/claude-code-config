@@ -616,3 +616,25 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+
+test('fleetSessions lists only sessions that own a live Topic, with their status', async () => {
+  const r = make();
+  r.hosts.codex.statusSnapshot = () => ({ state: 'running' });
+  await up(r, 'codex', 'quiet');
+  await live(r, 'codex', 'busy');
+  assert.deepEqual(r.bridge.fleetSessions(), [{ title: 'proj | main | host-a | codex', status: 'Working' }]);
+});
+
+test('a failed Topic rename keeps the cached title and session, and is logged', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-title-'));
+  try {
+    const file = path.join(dir, 'topics.json');
+    fs.writeFileSync(file, JSON.stringify({ '-100|codex:s': { topicId: 77, title: 'host-a/codex/main #4' } }));
+    const r = make({ topicCacheFile: file });
+    r.telegram.editForumTopic = async () => { throw new Error('not enough rights'); };
+    await up(r, 'codex', 's');
+    const s = r.bridge.sessions.get('codex:s');
+    assert.deepEqual([s.topicId, s.title], [77, 'host-a/codex/main #4']);
+    assert.ok(r.logs.some((l) => /editForumTopic: not enough rights/.test(l)));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

@@ -32,6 +32,7 @@ function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
         'turn/start': { turn: { id: 'turnA' } },
         'turn/steer': { turnId: 'turnA' },
         'turn/interrupt': {},
+        'account/rateLimits/read': { rateLimits: { limitId: 'codex', primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: 9 } } },
       }[m.method];
       setImmediate(() => onMsg(JSON.stringify({ id: m.id, result })));
     },
@@ -66,8 +67,19 @@ test('start() returns false when the daemon probe fails, without connecting', as
 
 test('handshake then subscribe every loaded thread via thread/resume', async () => {
   const { srv, ups } = await started();
-  assert.deepEqual(srv.calls.map((c) => c.method), ['initialize', 'initialized', 'thread/loaded/list', 'thread/resume']);
+  assert.deepEqual(srv.calls.map((c) => c.method), ['initialize', 'initialized', 'account/rateLimits/read', 'thread/loaded/list', 'thread/resume']);
   assert.deepEqual(ups, [{ id: 't1', cwd: '/w', branch: 'feat/x', backlog: [] }]);
+});
+
+test('account quota: read on refresh, replaced by pushes for the codex bucket only', async () => {
+  const { a, srv } = await started();
+  assert.equal(a.quota.limits.primary.usedPercent, 20);
+  srv.push('account/rateLimits/updated', { rateLimits: { limitId: 'other', primary: { usedPercent: 99 } } });
+  assert.equal(a.quota.limits.primary.usedPercent, 20);
+  srv.push('account/rateLimits/updated', { rateLimits: { limitId: 'codex', primary: { usedPercent: 30, windowDurationMins: 300, resetsAt: 9 } } });
+  assert.equal(a.quota.limits.primary.usedPercent, 30);
+  await a.refresh();
+  assert.equal(srv.calls.filter((c) => c.method === 'account/rateLimits/read').length, 1, 'not re-read within 5 minutes');
 });
 
 test('ephemeral threads are skipped; unloaded threads go down on refresh', async () => {

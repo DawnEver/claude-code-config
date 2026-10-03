@@ -37,12 +37,24 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
   fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '1:abc', allowedUserIds: ['42', 'x'], approvalsFromTelegram: true } }));
   try {
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }), {
-      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, projects: { a: { chatId: -100 } },
+      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, fleet: null, projects: { a: { chatId: -100 } },
     });
     fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '123456:your-bot-token' } }));
     const c = readBridgeConfig({ sharedPath, localPath });
     assert.equal(c.botToken, null, 'template placeholder is not a token');
     assert.equal(c.approvalsFromTelegram, false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('readBridgeConfig: the fleet card is off without a chat id', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-'));
+  try {
+    const sharedPath = path.join(dir, 's.json'), localPath = path.join(dir, 'l.json');
+    fs.writeFileSync(localPath, '{}');
+    fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { fleet: { topicId: 5 } } }));
+    assert.equal(readBridgeConfig({ sharedPath, localPath }).fleet, null);
+    fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { fleet: { chatId: -1 } } }));
+    assert.deepEqual(readBridgeConfig({ sharedPath, localPath }).fleet, { chatId: -1, topicId: null });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
