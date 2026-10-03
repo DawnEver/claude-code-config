@@ -265,8 +265,8 @@ Transport exception URLs are not logged because they can contain bot tokens.
 | `offset.json` | last `update_id` (cache) |
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
-| `claude-usage.json` | latest Claude statusLine `rate_limits`, teed by `hud-hook.js` for the fleet card |
-| `fleet-card.json` | this machine's last fleet report id and round, and sent alert keys (cache) |
+| `claude-usage.json` | latest Claude statusLine `rate_limits`, teed by `hud-hook.js` for the fleet report |
+| `fleet-report.json` | this machine's last fleet report id and round, and sent alert keys (cache) |
 | `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit; pruned after 7 days |
 
 These files are **machine-local and contain local paths** (cwds, which include the user
@@ -398,8 +398,7 @@ is running there. Enable it in the shared config:
 "bridge": { "fleet": {
   "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60, "timeFormat": "both",
   "order": ["host-a", "host-b"],
-  "seats": [{ "email": "alice@example.com", "org": "Team A",
-              "machines": ["host-a"], "note": "reset available by 22/Oct" }]
+  "seats": [{ "email": "alice@example.com", "org": "Team A", "machines": ["host-a"] }]
 } }
 ```
 
@@ -410,16 +409,18 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 
 | Line | Source |
 | --- | --- |
-| Claude seat | `bridge.fleet.seats` (`{email, org?, orgUuid?, machines, note?}`): the Claude account x Team each machine should run as. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
+| Claude seat | `bridge.fleet.seats` (`{email, org?, orgUuid?, machines}`): the Claude account x Team each machine should run as. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
 | Codex account | app-server `account/read` (email, plan) |
-| Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count and soonest expiry. Claude exposes no such count, so a seat's `note` carries it by hand |
+| Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count, and each credit's expiry |
+| extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, a banked reset still to claim with its use-by, one announced but not applied, and the latest applied one linked to its source. Not official data |
 | Claude account | `~/.claude.json` `oauthAccount` (email, organization), shown in full |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
 | running | registered sessions that are not idle (`?` = connected, not yet observed) |
 
 A report is Telegram HTML, one section per host, each headed by the full account it
-actually runs as; a seat's note and checks belong to Claude, since a seat is a Claude seat.
+actually runs as; seat checks belong to Claude, since a seat is a Claude seat. Extra
+resets are report state, not separate messages: the hourly round is the notification.
 Heads are bold, detail italic, and only the bar is monospace, so bars line up while the rest
 reads in the normal font (every value is HTML-escaped). Rendered, it reads:
 
@@ -431,13 +432,16 @@ Uni Team A                                     (italic)
 5h ██░░░░░░░░  20%  resets 20:00               (bar in monospace)
 7d ███████░░░  69%  resets 08/Oct 23:00
 (!) runs out 05/Oct 21:13                      (bold)
-reset available by 22/Oct                      (monospace: the seat note)
+banked reset · use by 22/Oct 01:00 (18d 7h)    (monospace)
+last extra reset 04/Sep 21:08 (29d ago) · Max plans   (italic, linked)
 
 Codex · alice@example.com
 plus
 7d █████░░░░░  51%  resets 09/Oct 22:00
 data 3h old                                    (italic, only when stale)
-reset credits: 1 (next expires 22/Oct 00:00 (18d 4h))
+reset credits: 1
+  expires 22/Oct 00:00 (18d 4h)
+last extra reset 02/Oct 22:18 (19h ago)
 
 Running
 • lab-commons | main | G | codex

@@ -1,6 +1,6 @@
-// scripts/bridge/fleet.mjs — the fleet card: one Telegram message per machine, edited in
-// place, answering "which seat is this machine on, how much quota is left, when does it
-// reset, will it run out first, and what is running here" (docs/bridge.md "Fleet card").
+// scripts/bridge/fleet.mjs — the fleet report: one Telegram message per machine per round,
+// answering "which seat is this machine on, how much quota is left, when does it
+// reset, will it run out first, and what is running here" (docs/bridge.md "Fleet report").
 //
 // Every input is an observation this machine already has; nothing is aggregated across
 // machines and nothing calls a private endpoint:
@@ -18,6 +18,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { readBridgeConfig } from './context.mjs';
+import { fetchExtraResets } from './extra-resets.mjs';
 
 // CLAUDE_CONFIG_DIR moves both the config dir and its .claude.json, as hud-hook.js honours.
 const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
@@ -84,13 +85,13 @@ export function claudeAccount(file = CLAUDE_ACCOUNT_FILE) {
 
 /**
  * The registry entry for this machine, or null.
- * registry = bridge.fleet: {seats: [{email, org?, orgUuid?, machines: [<machine>], note?}]}.
+ * registry = bridge.fleet: {seats: [{email, org?, orgUuid?, machines: [<machine>]}]}.
  * A seat is a Claude seat (account x Team); Codex accounts are separate and not registered.
  */
 export function seatFor(registry, machine) {
   const seats = Array.isArray(registry?.seats) ? registry.seats : [];
   const seat = seats.find((x) => x && typeof x === 'object' && Array.isArray(x.machines) && x.machines.includes(machine));
-  return seat ? { email: seat.email ?? null, org: seat.org ?? null, orgUuid: seat.orgUuid ?? null, note: seat.note ?? null } : null;
+  return seat ? { email: seat.email ?? null, org: seat.org ?? null, orgUuid: seat.orgUuid ?? null } : null;
 }
 
 /**
@@ -133,11 +134,12 @@ export function when(ms, now) {
   return `${pad(d.getDate())}/${MONTHS[d.getMonth()]} ${hm}`;
 }
 
-/** Time left until `ms`: the two largest units, `4d 7h`, `3h 15m`, `12m`. */
+/** Time to `ms` in the two largest units: `4d 7h`, `3h 15m`, `12m`; a past time reads `19h ago`. */
 export function countdown(ms, now) {
-  const m = Math.max(0, Math.round((ms - now) / 60000));
+  const m = Math.round(Math.abs(ms - now) / 60000);
   const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), min = m % 60;
-  return d ? `${d}d ${h}h` : h ? `${h}h ${min}m` : `${min}m`;
+  const span = d ? `${d}d ${h}h` : h ? `${h}h ${min}m` : `${min}m`;
+  return ms < now ? `${span} ago` : span;
 }
 
 export const TIME_FORMATS = ['date', 'countdown', 'both'];
@@ -190,6 +192,20 @@ function resetCreditLines(rc, now, t) {
 const PLAN_NAMES = { self_serve_business_prolite: 'Business Premium' };
 export const planName = (id) => PLAN_NAMES[id] ?? String(id).split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
+/**
+ * One host's extra-reset state (extra-resets.mjs): a banked reset still to claim (with its
+ * use-by), an announced one not applied yet, and the latest applied one, linked to its source.
+ */
+function extraResetLines(x, now, t) {
+  if (!x) return [];
+  const link = (e, text) => (e.url ? `<a href="${esc(e.url)}">${text}</a>` : text);
+  return [
+    ...x.banked.map((e) => `<code>banked reset · ${esc(e.expires ? `use by ${t(e.expires, now)}` : 'no stated expiry')}</code>`),
+    ...(x.scheduled ? [`<b>${link(x.scheduled, 'extra reset announced')}</b>${x.scheduled.at ? ` · ${esc(t(x.scheduled.at, now))}` : ''}`] : []),
+    ...(x.applied ? [`<i>${link(x.applied, 'last extra reset')} ${esc(t(x.applied.at, now))}${x.applied.scope ? ` · ${esc(x.applied.scope)}` : ''}</i>`] : []),
+  ];
+}
+
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 
 /**
@@ -200,13 +216,13 @@ const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not lo
  * condition, never an account.
  * @returns {{text: string, alerts: {key: string, text: string, until: number|null}[]}}
  */
-export function renderCard({ machine, registry, account, codexAccount, claude, codex, codexResetCredits = null, sessions = [], now }) {
+export function renderReport({ machine, registry, account, codexAccount, claude, codex, codexResetCredits = null, extra = null, sessions = [], now }) {
   const alerts = [];
   const t = timeFormatter(registry?.timeFormat);
   const seat = seatFor(registry, machine);
   const head = (host, email, detail) => [`<b>${host}</b> · ${esc(email ?? 'not logged in')}`, ...(detail ? [`<i>${esc(detail)}</i>`] : [])];
   const claudeLines = [...head('Claude', account?.email, account?.org), ...quotaLines(claude, now, t)];
-  if (seat?.note) claudeLines.push(`<code>${esc(seat.note)}</code>`);
+  claudeLines.push(...extraResetLines(extra?.Claude, now, t));
   const flag = (key, text) => { claudeLines.push(`<b>(!) ${esc(text)}</b>`); alerts.push({ key, text: `${machine} Claude: ${text}`, until: null }); };
   const expected = seat && who(seat.email, seat.org ?? seat.orgUuid);
   if (registry?.seats?.length && !seat) flag('unregistered', `${machine} is not in bridge.fleet.seats`);
@@ -214,7 +230,7 @@ export function renderCard({ machine, registry, account, codexAccount, claude, c
   else if (seat && seat.email && !sameText(account.email, seat.email)) flag('seat:account', `wrong account, expected ${expected}`);
   else if (seat && !orgOk(account, seat)) flag('seat:org', `wrong team, expected ${expected}`);
   const codexLines = codexAccount ? head('Codex', codexAccount.email, codexAccount.plan && planName(codexAccount.plan)) : ['<b>Codex</b> · <i>account unknown</i>'];
-  const lines = [`<b>${esc(machine)}</b>`, '', ...claudeLines, '', ...codexLines, ...quotaLines(codex, now, t), ...resetCreditLines(codexResetCredits, now, t), ''];
+  const lines = [`<b>${esc(machine)}</b>`, '', ...claudeLines, '', ...codexLines, ...quotaLines(codex, now, t), ...resetCreditLines(codexResetCredits, now, t), ...extraResetLines(extra?.Codex, now, t), ''];
   for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
     if (!q || now - q.at > STALE_MS) continue;
     for (const [k, v] of Object.entries(q.windows)) {
@@ -248,11 +264,12 @@ export function reportSlot(registry, machine) {
  * State ({chatId, topicId, messageId, round, sent}) is a local transport cache; another
  * chat/Topic starts it afresh.
  */
-export class FleetCard {
+export class FleetReport {
   constructor({ telegram, chatId, topicId = null, everyMinutes = 60, machine, stateFile = null, sessions = () => [],
     codexQuota: codexSource = () => null, codexAccount = () => null, log = () => {}, now = Date.now,
+    extraResets = (at) => fetchExtraResets({ now: at, log }),
     read = { registry: () => readBridgeConfig().fleet, account: claudeAccount, claudeUsage: readClaudeUsage } }) {
-    Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, codexAccount, log, now, read });
+    Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, codexAccount, extraResets, log, now, read });
     this.cycleMs = everyMinutes * 60000;
     const saved = stateFile && readJson(stateFile);
     this.state = saved?.chatId === chatId && (saved.topicId ?? null) === topicId && saved.sent
@@ -278,14 +295,17 @@ export class FleetCard {
     const now = this.now();
     const registry = this.read.registry();
     const cx = this.codexSource();
-    const { text, alerts } = renderCard({ machine: this.machine, registry,
+    const round = Math.floor((now - reportSlot(registry, this.machine)) / this.cycleMs);
+    const due = round !== this.state.round;
+    // Extra resets are fetched only for a report: once per round, never per alert tick.
+    const extra = due ? await this.extraResets(now).catch(() => null) : null;
+    const { text, alerts } = renderReport({ machine: this.machine, registry,
       account: this.read.account(), codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null, claude: claudeQuota(this.read.claudeUsage()),
-      codex: cx ? codexQuota(cx.limits, cx.at) : null, sessions: this.sessions(), now });
+      codex: cx ? codexQuota(cx.limits, cx.at) : null, extra, sessions: this.sessions(), now });
     const before = JSON.stringify(this.state);
     const opts = { threadId: this.topicId ?? undefined };
     try {
-      const round = Math.floor((now - reportSlot(registry, this.machine)) / this.cycleMs);
-      if (round !== this.state.round) {
+      if (due) {
         const previous = this.state.messageId;
         this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, html: true }))[0]?.message_id ?? null;
         this.state.round = round;

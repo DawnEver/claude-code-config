@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FleetCard, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderCard } from './fleet.mjs';
+import { FleetReport, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderReport } from './fleet.mjs';
 
 const H = 3600000;
 const NOW = Date.UTC(2026, 9, 3, 12, 0);
-const SEAT = { email: 'a@example.com', org: 'Team A', machines: ['m1'], note: 'reset available by 22/Oct' };
+const SEAT = { email: 'a@example.com', org: 'Team A', machines: ['m1'] };
 const REG = { seats: [SEAT] };
 const ME = { email: 'a@example.com', org: 'Uni Team A', orgUuid: 'u1' };
 const short5h = (at = NOW) => claudeQuota({ at, five_hour: { used_percentage: 60, resets_at: (NOW + 3 * H) / 1000 } });
@@ -53,19 +53,19 @@ test('claudeAccount reads only the oauth identity; seatFor survives a malformed 
   for (const bad of [null, {}, { seats: 'x' }, { seats: [null, 3, { machines: 'm1' }] }]) assert.equal(seatFor(bad, 'm1'), null);
 });
 
-test('renderCard: one block per host, headed by the full account it runs as', () => {
-  const { text, alerts } = renderCard({ machine: 'm1', registry: REG, account: ME, codexAccount: { email: 'c@example.com', plan: 'plus' },
+test('renderReport: one block per host, headed by the full account it runs as', () => {
+  const { text, alerts } = renderReport({ machine: 'm1', registry: REG, account: ME, codexAccount: { email: 'c@example.com', plan: 'plus' },
     claude: short5h(), codex: null,
     sessions: [{ title: 'proj | main | m1 | claude', status: 'Working' }, { title: 'old | main | m1 | codex', status: 'Idle' }], now: NOW });
-  assert.match(text, /^<b>m1<\/b>\n\n<b>Claude<\/b> · a@example\.com\n<i>Uni Team A<\/i>\n<code>5h ██████░░░░  60%<\/code>  resets \d\d:\d\d \(3h 0m\)\n<b>\(!\) runs out \d\d:\d\d \(1h 20m\)<\/b>\n<code>reset available by 22\/Oct<\/code>\n\n<b>Codex<\/b> · c@example\.com\n<i>Plus<\/i>\n<i>no quota data yet<\/i>\n/);
+  assert.match(text, /^<b>m1<\/b>\n\n<b>Claude<\/b> · a@example\.com\n<i>Uni Team A<\/i>\n<code>5h ██████░░░░  60%<\/code>  resets \d\d:\d\d \(3h 0m\)\n<b>\(!\) runs out \d\d:\d\d \(1h 20m\)<\/b>\n\n<b>Codex<\/b> · c@example\.com\n<i>Plus<\/i>\n<i>no quota data yet<\/i>\n/);
   assert.match(text, /<b>Running<\/b>\n• proj \| main \| m1 \| claude$/);
   assert.doesNotMatch(text, /old \| main/, 'idle sessions are not listed');
   assert.deepEqual(alerts.map((a) => a.key.split(':')[0]), ['short']);
-  assert.match(renderCard({ machine: 'm1', registry: REG, now: NOW }).text, /<b>Codex<\/b> · <i>account unknown<\/i>/);
+  assert.match(renderReport({ machine: 'm1', registry: REG, now: NOW }).text, /<b>Codex<\/b> · <i>account unknown<\/i>/);
 });
 
-test('renderCard seat checks sit in the Claude block and name the expected seat in full', () => {
-  const card = (o) => renderCard({ machine: 'm1', registry: REG, now: NOW, ...o });
+test('renderReport seat checks sit in the Claude block and name the expected seat in full', () => {
+  const card = (o) => renderReport({ machine: 'm1', registry: REG, now: NOW, ...o });
   const keys = (o) => card(o).alerts.map((a) => a.key);
   assert.deepEqual(keys({ account: ME }), []);
   assert.deepEqual(keys({ account: { ...ME, email: 'b@example.com' } }), ['seat:account']);
@@ -74,15 +74,15 @@ test('renderCard seat checks sit in the Claude block and name the expected seat 
   assert.deepEqual(keys({ account: null }), ['seat:none']);
   assert.match(card({ account: null }).text, /<b>Claude<\/b> · not logged in/);
   assert.deepEqual(keys({ machine: 'm9', account: ME }), ['unregistered']);
-  assert.deepEqual(renderCard({ machine: 'm9', registry: null, account: ME, now: NOW }).alerts, [], 'no seats configured: no alert');
+  assert.deepEqual(renderReport({ machine: 'm9', registry: null, account: ME, now: NOW }).alerts, [], 'no seats configured: no alert');
   assert.match(card({ account: { ...ME, email: 'b@example.com' } }).alerts[0].text, /^m1 Claude: wrong account, expected a@example\.com · Team A$/);
 });
 
-test('renderCard: a stale snapshot shows with its time but never alerts; a passed reset reads as such', () => {
-  const stale = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(NOW - 20 * 60000), now: NOW });
+test('renderReport: a stale snapshot shows with its time but never alerts; a passed reset reads as such', () => {
+  const stale = renderReport({ machine: 'm1', registry: REG, account: ME, claude: short5h(NOW - 20 * 60000), now: NOW });
   assert.match(stale.text, /\n<i>data 20m old<\/i>\n/);
   assert.deepEqual(stale.alerts, []);
-  const past = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(), now: NOW + 4 * H });
+  const past = renderReport({ machine: 'm1', registry: REG, account: ME, claude: short5h(), now: NOW + 4 * H });
   assert.match(past.text, /\n<code>5h <\/code> reset \d\d:\d\d, awaiting data/);
   assert.deepEqual(past.alerts, []);
 });
@@ -110,7 +110,7 @@ function fakeTelegram() {
 
 const ROUND = 60 * 60000;
 function fleet({ telegram = fakeTelegram(), stateFile = null, topicId = 9, clock = { t: NOW }, used = { v: 60 }, machine = 'm1' } = {}) {
-  const card = new FleetCard({ telegram, chatId: -1, topicId, machine, now: () => clock.t, stateFile,
+  const card = new FleetReport({ telegram, chatId: -1, topicId, machine, now: () => clock.t, stateFile, extraResets: async () => null,
     sessions: () => [{ title: 'p | main | m1 | codex', status: 'Working' }],
     codexQuota: () => ({ limits: { primary: { usedPercent: used.v, windowDurationMins: 300, resetsAt: (NOW + 3 * H) / 1000 } }, at: clock.t }),
     read: { registry: () => ({ ...REG, order: ['m0', 'm1'] }), account: () => ME, claudeUsage: () => null } });
@@ -129,7 +129,7 @@ test('reportSlot follows bridge.fleet order, a minute apart; unlisted machines r
   assert.equal(reportSlot(null, 'h2'), 0);
 });
 
-test('FleetCard reports once per round at its slot, replacing its previous report', async () => {
+test('FleetReport reports once per round at its slot, replacing its previous report', async () => {
   const { card, telegram: tg, clock } = fleet({ clock: { t: NOW + 5 * 60000 } });
   const reports = () => tg.sent.filter((m) => m.html);
   await card.tick();
@@ -145,7 +145,7 @@ test('FleetCard reports once per round at its slot, replacing its previous repor
   assert.deepEqual(tg.deleted, [1], 'the previous report is removed');
 });
 
-test('FleetCard alerts silently, once per window: a dip does not repeat it, a reset forgets it', async () => {
+test('FleetReport alerts silently, once per window: a dip does not repeat it, a reset forgets it', async () => {
   const { card, telegram: tg, used, clock } = fleet();
   const alerts = () => tg.sent.filter((m) => /^m1 Codex/.test(m.text));
   await card.tick();
@@ -158,7 +158,7 @@ test('FleetCard alerts silently, once per window: a dip does not repeat it, a re
   assert.equal(Object.keys(card.state.sent).length, 0);
 });
 
-test('FleetCard: overlapping ticks share one run; a failed alert is retried, a sent one is not', async () => {
+test('FleetReport: overlapping ticks share one run; a failed alert is retried, a sent one is not', async () => {
   const tg = fakeTelegram();
   const { card } = fleet({ telegram: tg });
   await Promise.all([card.tick(), card.tick()]);
@@ -173,10 +173,10 @@ test('FleetCard: overlapping ticks share one run; a failed alert is retried, a s
   assert.equal(other.sent.filter((m) => /^m1 Codex/.test(m.text)).length, 1);
 });
 
-test('FleetCard state is per chat/Topic, saved only on change, and holds no email', async () => {
+test('FleetReport state is per chat/Topic, saved only on change, and holds no email', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-'));
   try {
-    const stateFile = path.join(dir, 'fleet-card.json');
+    const stateFile = path.join(dir, 'fleet-report.json');
     await fleet({ stateFile }).card.tick();
     const saved = fs.statSync(stateFile).mtimeMs;
     const again = fleet({ stateFile });
@@ -188,17 +188,16 @@ test('FleetCard state is per chat/Topic, saved only on change, and holds no emai
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('renderCard escapes every interpolated value for Telegram HTML', () => {
-  const { text } = renderCard({ machine: 'm<1>', registry: { seats: [{ email: 'a@example.com', machines: ['m<1>'], note: 'x & <y>' }] },
+test('renderReport escapes every interpolated value for Telegram HTML', () => {
+  const { text } = renderReport({ machine: 'm<1>', registry: { seats: [{ email: 'a@example.com', machines: ['m<1>'] }] },
     account: { email: 'a@example.com', org: '<Team & Co>' }, sessions: [{ title: 'p<q> | main', status: 'Working' }], now: NOW });
   assert.match(text, /<b>m&lt;1&gt;<\/b>/);
   assert.match(text, /<i>&lt;Team &amp; Co&gt;<\/i>/);
-  assert.match(text, /<code>x &amp; &lt;y&gt;<\/code>/);
   assert.match(text, /• p&lt;q&gt; \| main/);
 });
 
-test('renderCard shows Codex reset credits, each with its expiry, soonest first', () => {
-  const card = (rc) => renderCard({ machine: 'm1', registry: REG, account: ME, codexResetCredits: rc, now: NOW }).text;
+test('renderReport shows Codex reset credits, each with its expiry, soonest first', () => {
+  const card = (rc) => renderReport({ machine: 'm1', registry: REG, account: ME, codexResetCredits: rc, now: NOW }).text;
   assert.match(card({ availableCount: 3, credits: [{ expiresAt: (NOW + 50 * H) / 1000 }, { expiresAt: (NOW + 20 * H) / 1000 }, { expiresAt: null }] }),
     /<code>reset credits: 3<\/code>\n  expires \d\d\/Oct \d\d:\d\d \(20h 0m\)\n  expires \d\d\/Oct \d\d:\d\d \(2d 2h\)\n  no expiry\n/);
   assert.match(card({ availableCount: 0, credits: [] }), /<code>reset credits: 0<\/code>\n/);
@@ -209,9 +208,30 @@ test('planName shows the sold name for wire plan ids', () => {
   assert.deepEqual([planName('self_serve_business_prolite'), planName('plus'), planName('edu_plus')], ['Business Premium', 'Plus', 'Edu Plus']);
 });
 
+test('renderReport: extra resets sit in their host block as state', () => {
+  const extra = {
+    Claude: { applied: { at: NOW - 29 * 24 * H, scope: 'Max plans', url: 'https://c/a' }, scheduled: null, banked: [{ expires: NOW + 18 * 24 * H }] },
+    Codex: { applied: { at: NOW - 19 * H, url: 'https://x/b' }, scheduled: { at: NOW + 2 * H, url: null }, banked: [] },
+  };
+  const { text } = renderReport({ machine: 'm1', registry: REG, account: ME, extra, now: NOW });
+  assert.match(text, /<code>banked reset · use by \d\d\/Oct \d\d:\d\d \(18d 0h\)<\/code>\n<i><a href="https:\/\/c\/a">last extra reset<\/a> \d\d\/Sep \d\d:\d\d \(29d 0h ago\) · Max plans<\/i>\n\n<b>Codex/);
+  assert.match(text, /<b>extra reset announced<\/b> · \d\d:\d\d \(2h 0m\)\n<i><a href="https:\/\/x\/b">last extra reset<\/a> \d\d\/Oct \d\d:\d\d \(19h 0m ago\)<\/i>/);
+  assert.doesNotMatch(renderReport({ machine: 'm1', registry: REG, account: ME, now: NOW }).text, /extra reset/);
+});
+
+test('FleetReport fetches extra resets once per report, not on alert ticks', async () => {
+  let calls = 0;
+  const tg = fakeTelegram();
+  const clock = { t: NOW + 5 * 60000 };
+  const card = new FleetReport({ telegram: tg, chatId: -1, machine: 'm1', now: () => clock.t, extraResets: async () => { calls++; return null; },
+    read: { registry: () => REG, account: () => ME, claudeUsage: () => null } });
+  await card.tick(); clock.t += 60000; await card.tick();
+  assert.equal(calls, 1);
+});
+
 test('time formats: both (default), date, countdown — in the card and its alerts', () => {
-  assert.deepEqual([countdown(NOW + 4 * 1440 * 60000 + 7 * H, NOW), countdown(NOW + 3 * H + 15 * 60000, NOW), countdown(NOW + 12 * 60000, NOW)], ['4d 7h', '3h 15m', '12m']);
-  const card = (timeFormat) => renderCard({ machine: 'm1', registry: { ...REG, timeFormat }, account: ME, claude: short5h(), now: NOW });
+  assert.deepEqual([countdown(NOW + 4 * 1440 * 60000 + 7 * H, NOW), countdown(NOW + 3 * H + 15 * 60000, NOW), countdown(NOW + 12 * 60000, NOW), countdown(NOW - 19 * H, NOW)], ['4d 7h', '3h 15m', '12m', '19h 0m ago']);
+  const card = (timeFormat) => renderReport({ machine: 'm1', registry: { ...REG, timeFormat }, account: ME, claude: short5h(), now: NOW });
   assert.match(card(undefined).text, /resets \d\d:\d\d \(3h 0m\)\n/);
   assert.match(card('date').text, /resets \d\d:\d\d\n/);
   assert.match(card('countdown').text, /resets 3h 0m\n<b>\(!\) runs out 1h 20m<\/b>/);

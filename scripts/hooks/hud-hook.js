@@ -55,7 +55,7 @@ if (!pluginEntry) {
     process.exit(1);
 }
 
-// Tee the statusLine payload: its rate_limits feed the bridge's fleet card (fleet.mjs).
+// Tee the statusLine payload: its rate_limits feed the bridge's fleet report (fleet.mjs).
 // claude-hud then reads the same bytes from a replayed stdin.
 // Never let the tee break the status line: any failure here leaves claude-hud to decide.
 if (!process.stdin.isTTY) {

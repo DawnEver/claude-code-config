@@ -25,7 +25,7 @@ import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
-import { FleetCard } from './fleet.mjs';
+import { FleetReport } from './fleet.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
@@ -634,12 +634,12 @@ export async function main() {
       Math.min(60000, config.idleCloseMinutes * 60000)).unref();
   }
   if (config.fleet) {
-    const card = new FleetCard({ telegram, ...config.fleet, machine, log,
-      stateFile: path.join(BRIDGE_RUNTIME_DIR, 'fleet-card.json'),
+    const report = new FleetReport({ telegram, ...config.fleet, machine, log,
+      stateFile: path.join(BRIDGE_RUNTIME_DIR, 'fleet-report.json'),
       sessions: () => bridge.fleetSessions(), codexQuota: () => codex.quota, codexAccount: () => codex.account });
     // No tick at startup: sessions re-register over the first seconds, and a report taken
     // before that would say nothing is running.
-    const tick = () => card.tick().catch((e) => log(`fleet card: ${e.message}`));
+    const tick = () => report.tick().catch((e) => log(`fleet report: ${e.message}`));
     setInterval(tick, 60000).unref();
   }
   if (config.deleteClosedAfterHours > 0) {

@@ -46,7 +46,7 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('readBridgeConfig: the fleet card is off without a chat id', () => {
+test('readBridgeConfig: the fleet report is off without a chat id', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-'));
   try {
     const sharedPath = path.join(dir, 's.json'), localPath = path.join(dir, 'l.json');
