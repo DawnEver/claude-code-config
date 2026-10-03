@@ -245,6 +245,11 @@ async function main() {
     if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') {
       syncResult = await runPull();
       notice = formatPull(syncResult);
+      // SessionStart hooks run in parallel, so ensure.mjs may already have (re)started the
+      // bridge from the pre-pull tree; ensure again so the pulled code serves this session.
+      if (syncResult?.pulled > 0) {
+        try { await (await import('../bridge/ensure.mjs')).ensureDaemon(); } catch { /* bridge is optional */ }
+      }
     }
   } else if (mode === '--remind') {
     notice = runRemind();
