@@ -681,7 +681,8 @@ test('a question only answerable locally is posted without controls; replies sta
   await live(r, 'claude', 'x');
   await r.bridge.question('claude:x', { ref: 'r', questions: QS, answerable: false });
   const post = r.telegram.sent.at(-1);
-  assert.match(post.text, /answer locally/);
+  assert.match(post.text, /answer it in the terminal/);
+  assert.doesNotMatch(post.text, /@/, "info-only notice mentions nobody");
   assert.match(post.text, /Which colour\?\n- Red: warm\n- Blue\n\n\[Name\] Name it$/);
   assert.equal(post.replyMarkup, undefined);
   await r.bridge.handleUpdate(msg(ALICE, 'hello'));

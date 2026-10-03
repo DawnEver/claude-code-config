@@ -266,7 +266,12 @@ function main() {
     return;
   }
   // The hook routes by this after /clear, when the session id it reports is new.
-  session.claudePid = ancestors.find((a) => isClaudeProcess(a.cmd))?.pid ?? process.ppid;
+  const claude = ancestors.find((a) => isClaudeProcess(a.cmd));
+  session.claudePid = claude?.pid ?? process.ppid;
+  // Claude Code drops channel messages unless launched with this flag (ccc adds it):
+  // without it the session mirrors out but cannot receive from Telegram.
+  session.inbound = !claude || /server:session-bridge/.test(claude.cmd);
+  if (!session.inbound) log('channel flag missing: Telegram messages cannot reach this session (start it with ccc)');
   link.start();
 }
 

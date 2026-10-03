@@ -92,7 +92,7 @@ export class ClaudeAdapter extends EventEmitter {
           // A turn may be in flight when the bridge restarts: with no prompt seen by this
           // daemon, assume a human turn, so its answer is mirrored rather than lost.
           this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), questions: new Map(),
-            claudePid: Number(p.claudePid) || null, humanTurn: previous ? previous.humanTurn : true,
+            claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, humanTurn: previous ? previous.humanTurn : true,
             remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
           this.emit('up', { id: sessionId, cwd: p.cwd, backlog: [] });
           this.#emitStatus(sessionId);
@@ -270,6 +270,7 @@ export class ClaudeAdapter extends EventEmitter {
   async inject(id, text, user) {
     const s = this.sessions.get(id);
     if (!s) throw new Error('channel disconnected');
+    if (!s.inbound) throw new Error('this session was not started with ccc, so Claude Code drops Telegram messages; resume it with ccc --resume');
     s.peer.notify('inbound', { text, user: user ?? '' });
     s.humanTurn = true;   // whether or not UserPromptSubmit reports channel prompts
     s.remoteTurn = true;

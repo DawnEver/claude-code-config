@@ -493,10 +493,11 @@ export class Bridge {
     if (!s) return;
     const host = this.hosts.get(s.agent);
     const offer = answerable && this.allowed.size > 0;
-    const render = (q) => [q.header ? `[${q.header}] ${q.question}` : q.question,
+    const render = (q) => [q.header && !q.question.startsWith(`[${q.header}]`) ? `[${q.header}] ${q.question}` : q.question,
       ...(q.options ?? []).map((o) => `- ${o.label}${o.description ? `: ${o.description}` : ''}`)].join('\n');
     if (!offer) {
-      await this.#send(s, `question on ${this.machine}, answer locally\n${questions.map(render).join('\n\n')}`, { alert: [...this.allowed] });
+      // Information only: the terminal owns this question, so no mention.
+      await this.#send(s, `question on ${this.machine}: answer it in the terminal (a reply here is sent as a new message)\n${questions.map(render).join('\n\n')}`);
       if (answerable) host?.releaseQuestion?.(ref, s.id);
       return;
     }
