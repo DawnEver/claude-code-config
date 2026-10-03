@@ -132,17 +132,24 @@ export function when(ms, now) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${hm}`;
 }
 
-function windowLine(label, v, now) {
-  if (v.resetsAt <= now) return `${label} reset ${when(v.resetsAt, now)}, no newer data`;
-  const rate = v.perHour == null ? '' : ` · ${v.perHour.toFixed(v.perHour < 10 ? 1 : 0)}%/h`;
-  const eta = v.short ? ` · out ${when(v.eta, now)} (!)` : '';
-  return `${label} ${Math.round(v.used)}%${rate} · resets ${when(v.resetsAt, now)}${eta}`;
+const bar = (used) => { const n = Math.round(used / 10); return '█'.repeat(n) + '░'.repeat(10 - n); };
+const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
+
+/** `Claude 7d ███████░░░  69%  resets Wed 23:00`, + `(!) runs out ...` under it. */
+function windowLines(host, k, v, now) {
+  const label = `${host.padEnd(6)} ${k.padEnd(2)} `;
+  if (v.resetsAt <= now) return [`${label}reset ${when(v.resetsAt, now)}, awaiting data`];
+  const lines = [`${label}${bar(v.used)} ${`${Math.round(v.used)}%`.padStart(4)}  resets ${when(v.resetsAt, now)}`];
+  if (v.short) lines.push(`${' '.repeat(label.length)}(!) runs out ${when(v.eta, now)}`);
+  return lines;
 }
 
 function quotaLines(host, q, now) {
-  if (!q) return [`${host}: no quota data yet`];
-  const lines = Object.entries(q.windows).map(([k, v]) => windowLine(`${host} ${k}`, v, now));
-  return [...lines, `  (as of ${when(q.at, now)}${now - q.at > STALE_MS ? ', stale' : ''})`];
+  if (!q) return [`${host.padEnd(6)} no data yet`];
+  const lines = Object.entries(q.windows).flatMap(([k, v]) => windowLines(host, k, v, now));
+  // Freshness only when it matters: an old snapshot says how old.
+  if (now - q.at > STALE_MS) lines.push(`${' '.repeat(10)}data ${ago(now - q.at)} old`);
+  return lines;
 }
 
 /**
@@ -153,25 +160,24 @@ function quotaLines(host, q, now) {
 export function renderCard({ machine, registry, account, claude, codex, sessions = [], now }) {
   const alerts = [];
   const seat = seatFor(registry, machine);
-  const lines = [`${machine} · ${seat?.name ?? (registry ? 'unregistered' : 'no fleet.json')}${account?.org ? ` (${account.org})` : ''}`];
+  const lines = [`${machine} · ${seat?.name ?? (registry ? 'unregistered' : 'no fleet.json')}`];
   const flag = (key, line, alert = line) => { lines.push(`(!) ${line}`); alerts.push({ key, text: `${machine}: ${alert}` }); };
   if (registry && !seat) flag('unregistered', 'not in fleet.json');
   if (seat && !account) flag('seat:none', 'no Claude subscription login', `no Claude subscription login (expected ${seat.name})`);
   else if (seat && seat.email && !sameText(account.email, seat.email)) flag(`seat:${account.email}`, `Claude is logged into another account, expected ${seat.name}`);
   else if (seat && !orgOk(account, seat)) flag(`seat:${account.orgUuid ?? account.org}`, `Claude org is ${account.org ?? '?'}, expected ${seat.org ?? seat.orgUuid}`);
   if (seat?.note) lines.push(`note: ${seat.note}`);
-  lines.push(...quotaLines('Claude', claude, now), ...quotaLines('Codex', codex, now));
+  lines.push('', ...quotaLines('Claude', claude, now), ...quotaLines('Codex', codex, now), '');
   for (const [host, q] of [['Claude', claude], ['Codex', codex]]) {
     if (!q || now - q.at > STALE_MS) continue;
     for (const [k, v] of Object.entries(q.windows)) {
       if (v.short && v.resetsAt > now) alerts.push({ key: `short:${host}:${k}:${v.resetsAt}`, text: `${machine} ${host} ${k} at ${Math.round(v.used)}%: runs out ~${when(v.eta, now)}, resets ${when(v.resetsAt, now)}` });
     }
   }
-  // What is running here: busy sessions by name; idle ones only as a count.
+  // What is running here: busy sessions by name; idle ones are not news.
   const busy = sessions.filter((x) => x.status !== 'Idle');
-  const idle = sessions.length - busy.length;
-  lines.push(`Tasks: ${busy.length ? `${busy.length} active` : 'none active'}${idle ? `, ${idle} idle` : ''}`);
-  for (const x of busy) lines.push(`  ${x.title} · ${x.status}`);
+  lines.push(busy.length ? 'Running' : 'Running: nothing');
+  for (const x of busy) lines.push(`  ${x.title}${x.status === 'Working' ? '' : ` · ${x.status}`}`);
   return { text: lines.join('\n'), alerts };
 }
 
@@ -203,13 +209,13 @@ export class FleetCard {
     if (text !== this.state.text) {
       let sent = false;
       if (this.state.messageId) {
-        try { await this.telegram.editMessageText(this.chatId, this.state.messageId, text); sent = true; }
+        try { await this.telegram.editMessageText(this.chatId, this.state.messageId, text, { pre: true }); sent = true; }
         catch (e) {
           if (/not modified/i.test(e.message)) sent = true;
           else if (!/message to edit not found|MESSAGE_ID_INVALID/i.test(e.message)) throw e;
         }
       }
-      if (!sent) this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, opts))[0]?.message_id ?? null;
+      if (!sent) this.state.messageId = (await this.telegram.sendMessage(this.chatId, text, { ...opts, pre: true }))[0]?.message_id ?? null;
       this.state.text = text;
     }
     const known = new Set(this.state.alerts);

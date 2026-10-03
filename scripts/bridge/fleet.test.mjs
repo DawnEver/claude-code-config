@@ -56,10 +56,10 @@ test('claudeAccount reads only the oauth identity; seatFor survives a malformed 
 test('renderCard: seat, quota and sessions, never an email', () => {
   const { text, alerts } = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(), codex: null,
     sessions: [{ title: 'proj | main | m1 | claude', status: 'Working' }, { title: 'old | main | m1 | codex', status: 'Idle' }], now: NOW });
-  assert.match(text, /^m1 · A \(Uni Team A\)/);
-  assert.match(text, /Claude 5h 60% · 30%\/h · resets \d\d:\d\d · out \d\d:\d\d \(!\)/);
-  assert.match(text, /Codex: no quota data yet/);
-  assert.match(text, /Tasks: 1 active, 1 idle\n  proj \| main \| m1 \| claude · Working$/);
+  assert.match(text, /^m1 · A\n/);
+  assert.match(text, /Claude 5h ██████░░░░  60%  resets \d\d:\d\d\n {10}\(!\) runs out \d\d:\d\d/);
+  assert.match(text, /Codex  no data yet/);
+  assert.match(text, /Running\n  proj \| main \| m1 \| claude$/);
   assert.doesNotMatch(text, /old \| main/, 'idle sessions are only counted');
   assert.doesNotMatch(text + alerts.map((a) => a.text).join(), /example\.com/);
   assert.deepEqual(alerts.map((a) => a.key.split(':')[0]), ['short']);
@@ -78,10 +78,10 @@ test('renderCard seat checks: wrong account, wrong org, uuid pin, no login, unre
 
 test('renderCard: a stale snapshot shows with its time but never alerts; a passed reset reads as such', () => {
   const stale = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(NOW - 20 * 60000), now: NOW });
-  assert.match(stale.text, /as of \d\d:\d\d, stale/);
+  assert.match(stale.text, /data 20m old/);
   assert.deepEqual(stale.alerts, []);
   const past = renderCard({ machine: 'm1', registry: REG, account: ME, claude: short5h(), now: NOW + 4 * H });
-  assert.match(past.text, /Claude 5h reset \d\d:\d\d, no newer data/);
+  assert.match(past.text, /Claude 5h reset \d\d:\d\d, awaiting data/);
   assert.deepEqual(past.alerts, []);
 });
 

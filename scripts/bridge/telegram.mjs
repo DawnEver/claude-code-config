@@ -70,6 +70,9 @@ export function normalizeMath(value) {
   return out;
 }
 
+/** Whole text as one monospace block: an entity, so nothing needs escaping. */
+const preEntity = (text) => [{ type: 'pre', offset: 0, length: text.length }];
+
 export class TelegramError extends Error {
   constructor(method, body) {
     super(`telegram ${method}: ${body?.description ?? 'request failed'}`);
@@ -160,7 +163,7 @@ export class TelegramClient {
    * Send plain text, chunked to 4096. Returns the sent messages. Silent by default; `alert`
    * (user ids) makes it notify and mentions each user — a mention gets through a muted chat.
    */
-  async sendMessage(chatId, text, { threadId, replyMarkup, alert, rich = false } = {}) {
+  async sendMessage(chatId, text, { threadId, replyMarkup, alert, rich = false, pre = false } = {}) {
     // Preserve structural Markdown as one message; never split a formula or code fence.
     // Alerts and approval controls remain on the independently tested plain-text path.
     if (rich && !alert?.length && !replyMarkup) {
@@ -187,7 +190,7 @@ export class TelegramClient {
         chat_id: chatId,
         text: loud ? `${alert.map(() => '@you').join(' ')} ${parts[i]}` : parts[i],
         ...(loud ? { entities: alert.map((id, k) => ({ type: 'text_mention', offset: k * 5, length: 4, user: { id } })) }
-          : { disable_notification: true }),
+          : { disable_notification: true, ...(pre ? { entities: preEntity(parts[i]) } : {}) }),
         ...(threadId ? { message_thread_id: threadId } : {}),
         ...(replyMarkup && i === parts.length - 1 ? { reply_markup: replyMarkup } : {}),
         link_preview_options: { is_disabled: true },
@@ -308,9 +311,10 @@ export class TelegramClient {
     return Buffer.concat(chunks, size);
   }
 
-  editMessageText(chatId, messageId, text, { replyMarkup } = {}) {
+  editMessageText(chatId, messageId, text, { replyMarkup, pre = false } = {}) {
+    const body = chunkText(text)[0];
     return this.call('editMessageText', {
-      chat_id: chatId, message_id: messageId, text: chunkText(text)[0],
+      chat_id: chatId, message_id: messageId, text: body, ...(pre ? { entities: preEntity(body) } : {}),
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     });
   }

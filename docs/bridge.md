@@ -408,15 +408,33 @@ aggregation, no shared mutable state, no private endpoints:
 | Claude account | `~/.claude.json` `oauthAccount` (email, organization) — emails are never printed |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
-| tasks | sessions that own a live Topic: busy ones by name and state, idle ones as a count |
+| running | sessions that own a live Topic and are not idle (state shown unless Working) |
 
-Pace is the average since the window opened, as of the snapshot, so no history is kept;
-`out HH:MM (!)` marks a window projected to run out before it resets. A snapshot older than
-15 minutes shows `stale` and raises nothing. Alerts (posted once, with a mention, when they
-first hold; again only after clearing): running out before reset, Claude logged into another
-account/org than the seat (`org` = case-insensitive substring of organizationName, or exact
-`orgUuid`), no subscription login on a registered machine, machine absent from an existing
-`fleet.json`.
+The card is one monospace block, so bars and numbers line up:
+
+```
+G · seat-name
+note: reset available 22/Oct
+
+Claude 5h ██░░░░░░░░  20%  resets 20:00
+Claude 7d ███████░░░  69%  resets Wed 23:00
+          (!) runs out Sun 21:13
+Codex  7d █████░░░░░  51%  resets 09/10 22:00
+          data 3h old
+
+Running
+  lab-commons | main | G | codex
+```
+
+It shows only what a reader acts on: how full, when it resets, whether it runs out first,
+what is busy. Pace is the average since the window opened, as of the snapshot, so no
+history is kept. Freshness appears only when a snapshot is over 15 minutes old, and such a
+snapshot raises nothing. Idle sessions are not listed. The org name and other detail
+appear only when something is wrong. Alerts (posted once, with a mention, when they first
+hold; again only after clearing): running out before reset, Claude logged into another
+account/org than the seat (`org` = case-insensitive substring of organizationName, or
+exact `orgUuid`), no subscription login on a registered machine, machine absent from an
+existing `fleet.json`.
 
 ## Session status
 
