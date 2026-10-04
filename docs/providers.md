@@ -117,6 +117,10 @@ is not template drift; other unexpected keys and missing required keys remain ch
   `~/.claude/claude_env_settings.local.json` overlay (see "Secrets are
   machine-local" above).
 
+> A role may deliberately repeat `base` (`deepseek` sets `opus` to the same slug).
+> The generated Codex catalogue is deduplicated by slug, so this provider yields
+> **6 entries, not 7** — that is intended, not a generator bug.
+
 ### Claude Code side (DeepSeek)
 
 DeepSeek (`ccds`) connects through Claude Code's native Anthropic-compatible
