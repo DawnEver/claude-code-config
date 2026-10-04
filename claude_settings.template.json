@@ -9,8 +9,7 @@
     "DISABLE_ERROR_REPORTING": "1",
     "DISABLE_FEEDBACK_COMMAND": "1",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
-    "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1",
-    "TRACEME_SYNC_REMOTE": "Your TRACEME Git Repo"
+    "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1"
   },
   "includeCoAuthoredBy": false,
   "permissions": {
@@ -200,7 +199,6 @@
     "rem@cc-market": true,
     "sharp-review@cc-market": true,
     "evolve@cc-market": true,
-    "traceme@cc-market": true,
     "fabric@cc-market": true
   },
   "extraKnownMarketplaces": {

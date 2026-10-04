@@ -1,5 +1,5 @@
 // Cross-platform CLI wrapper installation —  writes .cmd (Windows) and shell scripts (POSIX)
-// alongside the claude binary so ccc/ccds/traceme/todo are on PATH.
+// alongside the claude binary so ccc/ccds/codc/cods/todo are on PATH.
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -9,7 +9,7 @@ const isWindows = process.platform === 'win32';
 const MARKER = '# claude-code-alias';
 // The .cmd wrappers carry the same marker as a batch comment. Recognising only the `#`
 // form meant setup treated every .cmd it had written itself as a third-party file and
-// refused to update it — `traceme.cmd` kept pointing at a repo path deleted months
+// refused to update it — a `.cmd` wrapper kept pointing at a repo path deleted months
 // earlier, so the CMD/PowerShell wrapper was dead while the Git Bash one worked.
 const CMD_MARKER = 'rem claude-code-alias';
 // Exported so migrate's orphan sweep asks the same question — it had its own copy of the
@@ -111,7 +111,7 @@ export function installCliWrappers(claudeDir) {
   const codexJsPath = path.join(claudeDir, 'scripts', 'runtime', 'codex.js').replace(/\\/g, '/');
   // Route through ~/.claude/scripts for the same reason as cc.js/codex.js above: that is a
   // symlink setup maintains, so the wrapper survives the repo moving. Baking sourceDir in
-  // meant every relocation silently broke `traceme` and `todo` until setup was re-run --
+  // meant every relocation silently broke `todo` until setup was re-run --
   // and unlike the provider launchers, nothing else would have hinted at why.
   const resolveScript = (rel) => path.join(claudeDir, 'scripts', rel).replace(/\\/g, '/');
 
@@ -165,18 +165,6 @@ export function installCliWrappers(claudeDir) {
   } else {
     console.log('      codc/cods - skipped (codex binary not found)');
   }
-
-  // TraceMe CLI wrapper — dynamic launcher survives plugin version updates
-  const tracemeLauncher = resolveScript('runtime/traceme-launcher.mjs');
-  if (isWindows) {
-    const cmdContent = `@echo off\nrem claude-code-alias\nnode "${tracemeLauncher}" %*\n`;
-    writeIfChanged(path.join(binDir, 'traceme.cmd'), cmdContent, 'traceme.cmd');
-  }
-  const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${tracemeLauncher}" "$@"\n`;
-  const shPath = path.join(binDir, 'traceme');
-  writeIfChanged(shPath, shContent, 'traceme', 0o755);
-
-  console.log('      traceme - Claude Code observability (token/cost reports)');
 
   // Todo CLI wrapper — task management
   const todoLauncher = resolveScript('runtime/todo-launcher.mjs');

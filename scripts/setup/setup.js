@@ -35,7 +35,7 @@ export function getSyncDir() {
 
 export { composeCodexConfigFile } from './codex-config-file.mjs';
 
-export const KNOWN_WRAPPER_NAMES = ['ccc', 'ccds', 'codc', 'cods', 'todo', 'traceme'];
+export const KNOWN_WRAPPER_NAMES = ['ccc', 'ccds', 'codc', 'cods', 'todo'];
 
 // `base: 'sync'` marks an entry whose source lives in the sync payload directory rather
 // than the repo (see getSyncDir). Unmarked entries resolve against sourceDir as before.
