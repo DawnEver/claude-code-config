@@ -345,8 +345,8 @@ for (const agent of HOSTS) {
       assert.equal(r.telegram.sent.length, 2, 'no message on idle close');
       assert.equal(cache()[`-100|${agent}:x`].closedAt, 30 * M);
 
-      r.at(30 * M + 25 * H); await r.bridge.sweepClosedTopics();
-      assert.deepEqual(r.telegram.deleted, [], 'never deleted while registered');
+      r.at(30 * M + 23 * H); await r.bridge.sweepClosedTopics();
+      assert.deepEqual(r.telegram.deleted, [], 'not yet due');
 
       await r.bridge.handleUpdate(msg(ALICE, 'wake up'));
       await until(() => r.telegram.reopened.length === 1);
@@ -708,4 +708,41 @@ test('waiting-input reads Needs input', async () => {
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-input' });
   await up(r, 'codex', 'q');
   assert.equal(r.bridge.fleetSessions()[0].status, 'Needs input');
+});
+
+test('sweep: an open Topic no registered session holds is closed as an orphan, then ages out', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const topicCacheFile = path.join(dir, 'topics.json');
+  try {
+    fs.writeFileSync(topicCacheFile, JSON.stringify({
+      '-100|claude:dead': { topicId: 8, title: 'dead' },
+      '-100|claude:s1': { topicId: 9, title: 'live' },
+    }));
+    const r = make({ topicCacheFile });
+    await up(r, 'claude', 's1');
+    r.at(H);
+    await r.bridge.sweepClosedTopics();
+    assert.deepEqual(r.telegram.closed, [], 'startup sweep leaves orphans alone: sessions still re-registering');
+    await r.bridge.sweepClosedTopics({ orphans: true });
+    await until(() => r.telegram.closed.length === 1);
+    assert.deepEqual(r.telegram.closed, [[-100, 8]]);
+    assert.equal(r.bridge.topics.get('-100|claude:dead').closedAt, H);
+    assert.equal(r.bridge.topics.get('-100|claude:s1').closedAt, undefined, 'a held Topic is not an orphan');
+    r.at(25 * H); await r.bridge.sweepClosedTopics({ orphans: true });
+    assert.deepEqual(r.telegram.deleted, [[-100, 8]]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('sweep: an idle-closed Topic of a still-registered session is deleted too; new activity makes a fresh one', async () => {
+  const r = make();
+  await up(r, 'codex', 't1');
+  await r.bridge.final('codex:t1', 'hello');
+  r.at(31 * M); await r.bridge.closeIdle();
+  await until(() => r.telegram.closed.length === 1);
+  r.at(31 * M + 24 * H);
+  assert.equal(await r.bridge.sweepClosedTopics(), 1);
+  assert.deepEqual(r.telegram.deleted, [[-100, 100]]);
+  await r.bridge.final('codex:t1', 'back');
+  assert.equal(r.telegram.sent.at(-1).threadId, 101);
+  assert.deepEqual(r.telegram.reopened, []);
 });

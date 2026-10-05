@@ -79,9 +79,12 @@ and is never mirrored:
   The Topic is created lazily on the first one, so idle leftovers (the Codex daemon keeps
   threads loaded after their TUI exits) never get a Topic.
 - **Deletion**: at startup and hourly, a Topic closed more than `deleteClosedAfterHours`
-  ago is deleted (`deleteForumTopic`) and dropped from the cache, **unless a registered
-  session holds it** — an idle-closed session may come back. So an idle-closed Codex
-  thread keeps its Topic until the thread is unloaded; then the clock runs from that close.
+  ago is deleted (`deleteForumTopic`) and dropped from the cache — also when an idle-closed
+  session is still registered (a Codex thread the app-server keeps loaded); its next
+  activity creates a fresh Topic. Only a session that reopened its Topic keeps it.
+  The hourly run (not the startup one, while sessions still re-register) also closes
+  **orphans** — cached open Topics no registered session holds, whose session died while
+  the daemon was down — so they age out on the same clock.
 - **Telegram drift**: a post refused because the Topic was closed by hand reopens it; a
   Topic deleted by hand is recreated; either way the post is resent once.
 

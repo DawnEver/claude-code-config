@@ -222,14 +222,27 @@ export class Bridge {
   }
 
   /**
-   * Delete Topics closed more than `deleteClosedAfterHours` ago. A Topic held by a
-   * registered session is never deleted: an idle-closed session may come back.
+   * Delete Topics closed more than `deleteClosedAfterHours` ago. A still-registered
+   * idle-closed session loses its Topic too and gets a fresh one on its next activity.
+   * With `orphans`, an open Topic no registered session holds (its session died while the
+   * daemon was down) is first closed so it ages out; skipped at startup, while sessions
+   * are still re-registering.
    */
-  async sweepClosedTopics() {
+  async sweepClosedTopics({ orphans = false } = {}) {
     let n = 0;
     const holder = (k) => [...this.sessions.values()].find((s) => s.chatId !== null && TopicCache.key(s.chatId, s.key) === k);
+    if (orphans) {
+      for (const [k, cached] of Object.entries(this.topics.entries)) {
+        if (cached.closedAt != null || holder(k) || this.deletingTopics.has(k)) continue;
+        const key = k.slice(k.indexOf('|') + 1);
+        const s = { ...newSession({ key, cached, now: this.now() }), chatId: TopicCache.chatIdOf(k), title: cached.title ?? key, chain: Promise.resolve() };
+        this.log(`orphan topic ${s.title} [topic ${cached.topicId}]: closing`);
+        await this.#apply(s, onDown(s, this.now())).catch(() => {});
+      }
+    }
     for (const [k, e] of this.topics.due(this.now(), this.config.deleteClosedAfterHours)) {
-      if (holder(k) || this.deletingTopics.has(k)) continue;
+      const held = holder(k);
+      if ((held && held.state !== 'closed') || this.deletingTopics.has(k)) continue;
       this.deletingTopics.add(k);
       try {
         await this.telegram.deleteForumTopic(TopicCache.chatIdOf(k), e.topicId);
@@ -243,6 +256,9 @@ export class Bridge {
         }
       } finally { this.deletingTopics.delete(k); }
       this.warned.delete('deleteForumTopic');
+      if (held && this.sessions.get(held.key) === held && held.state === 'closed' && held.topicId === e.topicId) {
+        Object.assign(held, { topicId: null, statusMessageId: null, state: 'none', closedAt: null });
+      }
       if (this.topics.get(k) === e) this.topics.set(k, null);
       n++;
       this.log(`deleted closed topic ${e.title ?? k} [topic ${e.topicId}]`);
@@ -736,9 +752,9 @@ export async function main() {
     setInterval(tick, 60000).unref();
   }
   if (config.deleteClosedAfterHours > 0) {
-    const sweep = () => bridge.sweepClosedTopics().catch((e) => log(`sweep: ${e.message}`));
-    sweep();
-    setInterval(sweep, 3600000).unref();
+    const sweep = (orphans) => bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`));
+    sweep(false);
+    setInterval(() => sweep(true), 3600000).unref();
   }
   await bridge.pollLoop(ac.signal);
 }
