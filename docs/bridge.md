@@ -452,7 +452,7 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 | Claude account | `~/.claude.json` `oauthAccount` (email, organization), shown in full |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
-| running | sessions observed Working or Needs approval (idle and not-yet-observed sessions are not running) |
+| running | every registered session, with its state unless Working (Idle and Unknown included) |
 
 A report answers first what a reader acts on: will the quota last until it resets, and is
 there a reset to use. It is a Telegram rich Markdown message (`sendRichMessage`), every value

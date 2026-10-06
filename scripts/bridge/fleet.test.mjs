@@ -163,7 +163,7 @@ test('renderReport: no machine title; the heading is the verdict, then the warni
 });
 
 test('renderReport shows a host only when it runs something, has a reset to act on, or a seat problem', () => {
-  assert.equal(render({ sessions: [RUN('claude', 'Idle'), RUN('codex', 'Unknown')] }), null, 'idle and unobserved are not running');
+  assert.match(render({ sessions: [RUN('claude', 'Idle'), RUN('codex', 'Unknown')] }), /^## Claude[\s\S]*_Idle_[\s\S]*## Codex[\s\S]*_Unknown_/, 'any registered session counts');
   assert.match(render({ sessions: [RUN('codex', 'Needs approval')] }), /^## Codex[\s\S]*proj\\-x\*\* · main · _Needs approval_/);
   assert.match(render({ sessions: [RUN('claude', 'Needs input')] }), /^## Claude[\s\S]*proj\\-x\*\* · main · _Needs input_/);
   assert.match(render({ extra: { Claude: { banked: [{ id: 'o', name: 'Opus 5.5', expires: NOW + 18 * 24 * H }], scheduled: null } } }),

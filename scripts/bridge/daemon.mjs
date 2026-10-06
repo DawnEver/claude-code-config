@@ -177,7 +177,7 @@ export class Bridge {
     return this.sessions.get(key);
   }
 
-  /** What the fleet report lists: every registered session with its status (idle ones are filtered there). */
+  /** What the fleet report lists: every registered session with its status. */
   fleetSessions() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({ agent: s.agent, project: s.project,
       branch: s.branch, status: STATUS_LABELS[this.hosts.get(s.agent)?.statusSnapshot?.(s.id).state] ?? 'Unknown' }));

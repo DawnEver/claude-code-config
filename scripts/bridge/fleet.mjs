@@ -223,7 +223,6 @@ function resetLines(act, now, t) {
   ];
 }
 
-const RUNNING = new Set(['Working', 'Needs approval', 'Needs input']);
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 // An account is a name, not a link: code spans stop Telegram auto-linking the email.
 const accountName = (email) => (email ? `\`${email.replace(/`/g, '')}\`` : '_not logged in_');
@@ -234,12 +233,12 @@ const accountName = (email) => (email ? `\`${email.replace(/`/g, '')}\`` : '_not
  * only when that host is running something here, has a reset to act on (a banked reset to
  * claim, an announced one, Codex reset credits), has a seat problem, or has quota data and bridge.fleet.always is on for it. Each block is
  * headed by the account it runs as; a seat (bridge.fleet.seats) is a Claude seat, so its
- * checks sit in the Claude block. Running means observed working or awaiting approval or an answer.
+ * checks sit in the Claude block. Running means any registered session, whatever its state.
  */
 export function renderReport({ machine, registry, account, codexAccount, claude, codex, codexResetCredits = null, extra = null, sessions = [], now }) {
   const t = timeFormatter(registry?.timeFormat);
   const seat = seatFor(registry, machine);
-  const running = (agent) => sessions.filter((x) => x.agent === agent && RUNNING.has(x.status));
+  const running = (agent) => sessions.filter((x) => x.agent === agent);
   // One Markdown list of what runs here: project in bold, branch, state unless plain working.
   const runLines = (list) => (list.length ? [list.map((x) => `- **${md(x.project)}** · ${md(x.branch ?? 'detached')}${x.status === 'Working' ? '' : ` · _${md(x.status)}_`}`).join('\n')] : []);
 
