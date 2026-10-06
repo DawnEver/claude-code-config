@@ -432,7 +432,7 @@ is running there. Enable it in the shared config:
 
 ```json
 "bridge": { "fleet": {
-  "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60, "timeFormat": "both",
+  "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60, "timeFormat": "both", "always": { "claude": true, "codex": false },
   "order": ["host-a", "host-b"],
   "seats": [{ "email": "alice@example.com", "org": "Team A", "machines": ["host-a"] }]
 } }
@@ -459,7 +459,9 @@ there a reset to use. It is a Telegram rich Markdown message (`sendRichMessage`)
 Markdown-escaped. The posting bot names the machine, so there is no machine title. A host
 block appears only when that host runs something on this machine, has a reset to act on (a
 banked reset to claim, an announced one, Codex reset credits) or has a seat problem; a
-machine with none of these posts nothing that round. Each block:
+machine with none of these posts nothing that round. `always` overrides that per host:
+a host it is on for shows whenever it has quota data, idle or not, so each round is a steady
+heartbeat. Default `{ "claude": true, "codex": false }`. Each block:
 
 ```
 ## Claude · 55% left                             heading: the binding window's headroom

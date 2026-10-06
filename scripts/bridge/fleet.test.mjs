@@ -211,3 +211,11 @@ test('FleetReport posts nothing when there is nothing to say, and still retires 
   await card.tick();
   assert.deepEqual([tg.sent.length, tg.deleted, card.state.messageId], [0, [7], null]);
 });
+
+test('renderReport bridge.fleet.always: an idle host with quota data still reports — Claude by default, Codex on request', () => {
+  assert.match(render({ claude: short5h() }), /^## Claude · 40% left[\s\S]*\| 5h \|/, 'Claude on by default');
+  assert.equal(render({}), null, 'no quota data: nothing to say');
+  assert.equal(render({ codex: short5h() }), null, 'Codex off by default');
+  assert.match(render({ registry: { ...REG, always: { codex: true } }, codex: short5h() }), /^## Codex/);
+  assert.equal(render({ registry: { ...REG, always: { claude: false } }, claude: short5h() }), null);
+});

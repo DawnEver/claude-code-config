@@ -232,7 +232,7 @@ const accountName = (email) => (email ? `\`${email.replace(/`/g, '')}\`` : '_not
  * Render this machine's report (rich Markdown), or null when there is nothing to say. The
  * bot that posts it names the machine, so there is no machine title. A host block appears
  * only when that host is running something here, has a reset to act on (a banked reset to
- * claim, an announced one, Codex reset credits) or has a seat problem. Each block is
+ * claim, an announced one, Codex reset credits), has a seat problem, or has quota data and bridge.fleet.always is on for it. Each block is
  * headed by the account it runs as; a seat (bridge.fleet.seats) is a Claude seat, so its
  * checks sit in the Claude block. Running means observed working or awaiting approval or an answer.
  */
@@ -249,6 +249,9 @@ export function renderReport({ machine, registry, account, codexAccount, claude,
     : seat && seat.email && !sameText(account.email, seat.email) ? `wrong account, expected ${expected}`
     : seat && !orgOk(account, seat) ? `wrong team, expected ${expected}` : null;
 
+  // bridge.fleet.always.{claude,codex}: a host with quota data reports every round, idle or
+  // not. Default: Claude on, Codex off.
+  const always = { claude: true, codex: false, ...registry?.always };
   const blocks = [];
   // Heading = verdict; then the warning; then who it runs as; then the detail.
   const block = (host, q, email, detail, lines) => {
@@ -259,13 +262,13 @@ export function renderReport({ machine, registry, account, codexAccount, claude,
 
   const claudeAct = actionableResets(extra?.Claude, seat?.claimed);
   const claudeRun = running('claude');
-  if (claudeRun.length || claudeAct.banked.length || claudeAct.scheduled || problem) {
+  if ((always.claude && claude) || claudeRun.length || claudeAct.banked.length || claudeAct.scheduled || problem) {
     block('Claude', claude, account?.email, account?.org, [...(problem ? [`**(\\!) ${md(problem)}**`] : []), ...quotaLines(claude, now, t),
       ...runLines(claudeRun), ...resetLines(claudeAct, now, t)]);
   }
   const codexAct = actionableResets(extra?.Codex);
   const codexRun = running('codex');
-  if (codexRun.length || codexAct.scheduled || codexResetCredits?.availableCount > 0) {
+  if ((always.codex && codex) || codexRun.length || codexAct.scheduled || codexResetCredits?.availableCount > 0) {
     block('Codex', codex, codexAccount?.email, codexAccount?.plan && planName(codexAccount.plan), [...quotaLines(codex, now, t),
       ...runLines(codexRun), ...resetCreditLines(codexResetCredits, now, t), ...resetLines(codexAct, now, t)]);
   }
