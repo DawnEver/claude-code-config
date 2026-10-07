@@ -14,6 +14,7 @@ import { isMain } from '../shared/is-main.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 import { planService, runAction, SERVICE_NAME } from '../bridge/install-service.mjs';
 import { isValidMachineName, readMachineName, writeMachineName, MACHINE_FIX_CMD } from '../shared/machine.mjs';
+import { accountFile, readSeats, seatDir, seatsFor } from '../shared/seats.mjs';
 import {
   resolveSyncDir,
   syncDirSource,
@@ -38,21 +39,23 @@ export { composeCodexConfigFile } from './codex-config-file.mjs';
 export const KNOWN_WRAPPER_NAMES = ['ccc', 'ccds', 'codc', 'cods', 'todo'];
 
 // `base: 'sync'` marks an entry whose source lives in the sync payload directory rather
-// than the repo (see getSyncDir). Unmarked entries resolve against sourceDir as before.
+// than the repo (see getSyncDir); `base: 'claude'` one in ~/.claude. Unmarked entries
+// resolve against sourceDir. `seat: true` marks what Claude Code itself reads from its
+// config dir, so every seat dir links it too (SEAT_LINKS).
 export const CLAUDE_LINKS = [
-  { src: 'GLOBAL-AGENTS.md', dest: 'CLAUDE.md', type: 'file' },
-  { src: 'claude_settings.json', dest: 'settings.json', type: 'file', base: 'sync' },
+  { src: 'GLOBAL-AGENTS.md', dest: 'CLAUDE.md', type: 'file', seat: true },
+  { src: 'claude_settings.json', dest: 'settings.json', type: 'file', base: 'sync', seat: true },
   // claude-hud >= 0.8.0 refuses to load a symlinked config.json (its readConfigFile
   // lstat-checks and ignores non-regular files), so this one must be a HARD link.
   // The source is gitignored and per-machine; ensureClaudeHudConfig() materialises it
   // from config.template.json before this pass, and check-links does the same at
   // SessionStart. Tracking it made `git checkout` the writer that broke the link.
   { src: path.join('claude_plugins', 'claude-hud', 'config.json'), dest: path.join('plugins', 'claude-hud', 'config.json'), type: 'file', hardlink: true },
-  { src: 'skills', dest: 'skills', type: 'dir' },
-  { src: 'output-styles', dest: 'output-styles', type: 'dir' },
+  { src: 'skills', dest: 'skills', type: 'dir', seat: true },
+  { src: 'output-styles', dest: 'output-styles', type: 'dir', seat: true },
   { src: 'scripts', dest: 'scripts', type: 'dir' },
   { src: 'claude_env_settings.json', dest: 'claude_env_settings.json', type: 'file', base: 'sync' },
-  { src: 'keybindings.json', dest: 'keybindings.json', type: 'file' },
+  { src: 'keybindings.json', dest: 'keybindings.json', type: 'file', seat: true },
   // Platform prompts: the shared configs reference `~/.claude/system-prompt/...` and
   // `~/.codex/system-prompt/...` (see fabric.systemPromptFile / codex model_instructions_file),
   // so every machine resolves them through THIS link regardless of its OneDrive username.
@@ -63,6 +66,16 @@ export const CLAUDE_LINKS = [
   // names would be the leak itself. Optional: a plain clone has none and never seeds one.
   { src: 'private-markers', dest: 'private-markers', type: 'file', base: 'sync', optional: true },
 ];
+
+// A seat dir (~/.claude-<alias>, scripts/shared/seats.mjs) owns only its login and state:
+// shared config links in as for ~/.claude, and plugin installs are the base dir's own.
+export const SEAT_LINKS = [...CLAUDE_LINKS.filter((l) => l.seat), { src: 'plugins', dest: 'plugins', type: 'dir', base: 'claude' }];
+
+/** This machine's seat dirs, from the top-level `seats` of the shared settings. */
+export function localSeats(machine = readMachineName()) {
+  return seatsFor(readSeats(path.join(claudeDir, 'claude_env_settings.json')), machine)
+    .filter((s) => s.alias).map((s) => ({ alias: s.alias, dir: seatDir(s.alias) }));
+}
 
 // NOTE: `~/.codex/config.toml` is deliberately NOT in this table. Codex writes to that
 // file itself ([projects.*] trust blocks, [hooks.state.*], [notice]), so it cannot be a
@@ -304,8 +317,8 @@ export function linkEntry(srcPath, destPath, link, replace) {
   return { status: 'link', kind, notes };
 }
 
-export function linkSourceRoot(link, { repoRoot = sourceDir, syncDir = repoRoot } = {}) {
-  return link.base === 'sync' ? syncDir : repoRoot;
+export function linkSourceRoot(link, { repoRoot = sourceDir, syncDir = repoRoot, claudeRoot = claudeDir } = {}) {
+  return link.base === 'sync' ? syncDir : link.base === 'claude' ? claudeRoot : repoRoot;
 }
 
 function processLinks(links, baseDir, counters, syncDir) {
@@ -640,6 +653,15 @@ export function setup(options = {}) {
   console.log('--- Claude ---');
   processLinks(CLAUDE_LINKS, claudeDir, counters, syncDir);
 
+  for (const { alias, dir } of localSeats()) {
+    console.log(`\n--- Claude seat ${alias} (${dir}) ---`);
+    fs.mkdirSync(dir, { recursive: true });
+    processLinks(SEAT_LINKS, dir, counters, syncDir);
+    let loggedIn = false;
+    try { loggedIn = Boolean(JSON.parse(fs.readFileSync(accountFile(dir), 'utf8')).oauthAccount); } catch { /* not yet */ }
+    if (!loggedIn) console.log(`NOTE  not logged in: run \`ccc --seat ${alias}\`, then /login and pick that team`);
+  }
+
   console.log('\n--- Codex ---');
   // Convert any legacy `~/.codex/skills` junction into a real directory before
   // creating per-skill links (otherwise they self-reference into the repo).
@@ -698,15 +720,21 @@ export function setup(options = {}) {
     if (runAction('install', planService())) console.log(`OK    ${SERVICE_NAME} service installed`);
     else { console.log(`ERR   ${SERVICE_NAME} service install failed - see docs/bridge.md`); counters.errors++; }
     // ccc loads `server:session-bridge` as a channel; the user-scope MCP server it names
-    // lives in this machine's ~/.claude.json, so the absolute repo path never syncs.
+    // lives in each config dir's own .claude.json (the base dir's and every seat's), so the
+    // absolute repo path never syncs.
     const server = path.join(sourceDir, 'claude_plugins', 'session-bridge', 'server.mjs');
-    const claude = (args) => {
-      const s = prepareSpawn('claude', args);
-      return spawnSync(s.command, s.args, { ...s.options, encoding: 'utf8', windowsHide: true });
-    };
-    if (claude(['mcp', 'get', 'session-bridge']).status === 0) console.log('OK    session-bridge MCP server already registered');
-    else if (claude(['mcp', 'add', '-s', 'user', 'session-bridge', '--', 'node', server]).status === 0) console.log('OK    session-bridge MCP server registered (user scope)');
-    else { console.log('ERR   could not register the session-bridge MCP server - see docs/bridge.md'); counters.errors++; }
+    for (const { alias, dir } of [{ alias: null, dir: claudeDir }, ...localSeats()]) {
+      const env = { ...process.env };
+      if (alias) env.CLAUDE_CONFIG_DIR = dir; else delete env.CLAUDE_CONFIG_DIR;
+      const claude = (args) => {
+        const s = prepareSpawn('claude', args, { env });
+        return spawnSync(s.command, s.args, { ...s.options, env, encoding: 'utf8', windowsHide: true });
+      };
+      const where = alias ? `seat ${alias}` : 'base';
+      if (claude(['mcp', 'get', 'session-bridge']).status === 0) console.log(`OK    session-bridge MCP server already registered (${where})`);
+      else if (claude(['mcp', 'add', '-s', 'user', 'session-bridge', '--', 'node', server]).status === 0) console.log(`OK    session-bridge MCP server registered (${where}, user scope)`);
+      else { console.log(`ERR   could not register the session-bridge MCP server (${where}) - see docs/bridge.md`); counters.errors++; }
+    }
   }
 
   console.log(`\nDone: ${counters.created} linked, ${counters.skipped} skipped, ${counters.errors} errors`);

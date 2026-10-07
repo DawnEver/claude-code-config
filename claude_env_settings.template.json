@@ -30,5 +30,15 @@
         "chatId": -1001234567890
       }
     }
-  }
+  },
+  "seats": [
+    {
+      "alias": "team-a",
+      "email": "alice@example.com",
+      "org": "Team A",
+      "machines": [
+        "host-a"
+      ]
+    }
+  ]
 }

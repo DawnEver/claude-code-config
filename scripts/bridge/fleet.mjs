@@ -4,12 +4,13 @@
 //
 // Every input is an observation this machine already has; nothing is aggregated across
 // machines and nothing calls a private endpoint:
-//   - Claude quota: the statusLine payload's `rate_limits`, teed by hud-hook.js into
-//     ~/.claude/bridge/claude-usage.json (only fresh while a Claude session renders).
-//   - Claude account: ~/.claude.json `oauthAccount` (email + organization).
+//   - Claude quota and account, per local config dir (the base dir and each seat dir, see
+//     scripts/shared/seats.mjs): the statusLine payload's `rate_limits`, teed by hud-hook.js
+//     into <dir>/bridge/claude-usage.json (only fresh while a session there renders), and the
+//     dir's `.claude.json` `oauthAccount` (email + organization).
 //   - Codex quota: the shared app-server's `account/rateLimits` (codex-adapter.mjs).
-//   - Expected seat and report order: `bridge.fleet` in claude_env_settings.json (sync
-//     payload, never in git), re-read every tick.
+//   - Expected seats: top-level `seats`; report order: `bridge.fleet`; both in
+//     claude_env_settings.json (sync payload, never in git), re-read every tick.
 // Rates are averaged since the window opened (resetsAt - window length) as of the
 // snapshot, so no history is kept: a window's ETA is when that average pace reaches 100%.
 // A stale snapshot says how old it is and is never projected from; a passed reset reads as such.
@@ -19,11 +20,7 @@ import os from 'os';
 import path from 'path';
 import { readBridgeConfig } from './context.mjs';
 import { fetchExtraResets } from './extra-resets.mjs';
-
-// CLAUDE_CONFIG_DIR moves both the config dir and its .claude.json, as hud-hook.js honours.
-const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
-export const CLAUDE_USAGE_FILE = path.join(CONFIG_DIR || path.join(os.homedir(), '.claude'), 'bridge', 'claude-usage.json');
-export const CLAUDE_ACCOUNT_FILE = CONFIG_DIR ? path.join(CONFIG_DIR, '.claude.json') : path.join(os.homedir(), '.claude.json');
+import { accountFile, baseDir, readSeats, seatDir, seatsFor, usageFile } from '../shared/seats.mjs';
 
 const H = 3600000;
 const CLAUDE_WINDOWS = { five_hour: 5 * H, seven_day: 168 * H };
@@ -79,29 +76,16 @@ export function codexQuota(limits, at) {
 }
 
 /** ~/.claude.json oauthAccount -> {email, org, orgUuid}, or null when not on a subscription login. */
-export function claudeAccount(file = CLAUDE_ACCOUNT_FILE) {
+export function claudeAccount(file) {
   const a = readJson(file)?.oauthAccount;
   return a?.emailAddress ? { email: a.emailAddress, org: a.organizationName ?? null, orgUuid: a.organizationUuid ?? null } : null;
-}
-
-/**
- * The registry entry for this machine, or null.
- * registry = bridge.fleet: {seats: [{email, org?, orgUuid?, machines: [<machine>], claimed?: [<offer id>]}]}.
- * `claimed` lists banked resets this seat has already used, so the report stops offering them.
- * A seat is a Claude seat (account x Team); Codex accounts are separate and not registered.
- */
-export function seatFor(registry, machine) {
-  const seats = Array.isArray(registry?.seats) ? registry.seats : [];
-  const seat = seats.find((x) => x && typeof x === 'object' && Array.isArray(x.machines) && x.machines.includes(machine));
-  return seat ? { email: seat.email ?? null, org: seat.org ?? null, orgUuid: seat.orgUuid ?? null,
-    claimed: Array.isArray(seat.claimed) ? seat.claimed.map(String) : [] } : null;
 }
 
 /**
  * hud-hook.js side: keep the latest statusLine `rate_limits` for the daemon. Rewritten only
  * when the values change or the copy is a minute old, so renders stay cheap. Fail-silent.
  */
-export function teeClaudeUsage(statusLine, { file = CLAUDE_USAGE_FILE, now = Date.now() } = {}) {
+export function teeClaudeUsage(statusLine, { file, now = Date.now() } = {}) {
   try {
     const rl = statusLine?.rate_limits;
     if (!rl?.five_hour && !rl?.seven_day) return false;
@@ -118,7 +102,15 @@ export function teeClaudeUsage(statusLine, { file = CLAUDE_USAGE_FILE, now = Dat
   } catch { return false; }
 }
 
-export function readClaudeUsage(file = CLAUDE_USAGE_FILE) { return readJson(file); }
+/**
+ * Every local Claude config dir as {alias, account, quota}: the base dir first (alias null),
+ * then each of this machine's seats that has its dir.
+ */
+export function readClaudeDirs(seats, machine, home = os.homedir()) {
+  const dirs = [{ alias: null, dir: baseDir(home) }, ...seatsFor(seats, machine).filter((x) => x.alias)
+    .map((x) => ({ alias: x.alias, dir: seatDir(x.alias, home) })).filter((x) => fs.existsSync(x.dir))];
+  return dirs.map(({ alias, dir }) => ({ alias, account: claudeAccount(accountFile(dir, home)), quota: claudeQuota(readJson(usageFile(dir))) }));
+}
 
 const sameText = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
 // A seat pins its org by `orgUuid` when given (exact), else by `org`: the name as a person
@@ -232,26 +224,59 @@ const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not lo
 // An account is a name, not a link: code spans stop Telegram auto-linking the email.
 const accountName = (email) => (email ? `\`${email.replace(/`/g, '')}\`` : '_not logged in_');
 
+const matches = (account, seat) => Boolean(account) && (!seat.email || sameText(account.email, seat.email)) && orgOk(account, seat);
+
+/** What is wrong with `account` sitting in `seat`'s place, or null. */
+function seatProblem(account, seat) {
+  const expected = who(seat.email, seat.org ?? seat.orgUuid);
+  return !account ? `no subscription login, expected ${expected}`
+    : seat.email && !sameText(account.email, seat.email) ? `wrong account, expected ${expected}`
+    : !orgOk(account, seat) ? `wrong team, expected ${expected}` : null;
+}
+
+/**
+ * Local config dirs grouped by the seat they hold, in registry order. A seat dir holds its
+ * alias's seat. The base dir holds the seat its login matches; on a one-seat machine it is
+ * that seat whatever its login (so a wrong login is reported); otherwise it is unassigned.
+ * Two dirs on one seat (the base logged into a seat that also has its own dir) merge: the
+ * freshest quota wins.
+ */
+function claudeGroups(dirs, seats, machine) {
+  const mine = seatsFor(seats, machine);
+  const groups = new Map();
+  for (const d of dirs) {
+    const seat = d.alias ? mine.find((x) => x.alias === d.alias) ?? null
+      : mine.find((x) => matches(d.account, x)) ?? (mine.length === 1 ? mine[0] : null);
+    const problem = d.alias && !seat ? `seat ${d.alias} is not registered for ${machine}`
+      : !d.alias && !mine.length && Array.isArray(seats) && seats.length ? `${machine} is not in seats`
+      : seat ? seatProblem(d.account, seat) : null;
+    const key = seat ? mine.indexOf(seat) : `dir:${d.alias ?? ''}`;
+    const g = groups.get(key) ?? { seat, label: seat?.alias ?? d.alias, account: d.account, quota: null, problems: [], aliases: [] };
+    if (d.alias) g.account = d.account;
+    if (d.quota && !(g.quota?.at >= d.quota.at)) g.quota = d.quota;
+    if (problem && !g.problems.includes(problem)) g.problems.push(problem);
+    g.aliases.push(d.alias);
+    groups.set(key, g);
+  }
+  // Unassigned dirs first, then seats in registry order.
+  return [...groups.entries()].sort(([a], [b]) => (typeof a === 'number' ? a : -1) - (typeof b === 'number' ? b : -1)).map(([, g]) => g);
+}
+
 /**
  * Render this machine's report (rich Markdown), or null when there is nothing to say. The
- * bot that posts it names the machine, so there is no machine title. A host block appears
- * only when that host is running something here, has a reset to act on (a banked reset to
- * claim, an announced one, Codex reset credits), has a seat problem, or has quota data and bridge.fleet.always is on for it. Each block is
- * headed by the account it runs as; a seat (bridge.fleet.seats) is a Claude seat, so its
- * checks sit in the Claude block. Running means any registered session, whatever its state.
+ * bot that posts it names the machine, so there is no machine title. A block appears only
+ * when it is running something here, has a reset to act on (a banked reset to claim, an
+ * announced one, Codex reset credits), has a seat problem, or has quota data and
+ * bridge.fleet.always is on for its host. Claude has one block per seat (`claude` = the
+ * local config dirs, see readClaudeDirs), headed by the seat alias and the account it runs
+ * as; seat checks sit there. Running means any registered session, whatever its state; a
+ * Claude session counts in its config dir's seat (`seat` = alias, null for the base dir).
  */
-export function renderReport({ machine, registry, account, codexAccount, claude, codex, codexResetCredits = null, extra = null, sessions = [], now }) {
+export function renderReport({ machine, registry, codexAccount, claude = [], codex, codexResetCredits = null, extra = null, sessions = [], now }) {
   const t = timeFormatter(registry?.timeFormat);
-  const seat = seatFor(registry, machine);
   const running = (agent) => sessions.filter((x) => x.agent === agent);
   // One Markdown list of what runs here: project in bold, branch, state unless plain working.
   const runLines = (list) => (list.length ? [list.map((x) => `- **${md(x.project)}** · ${md(x.branch ?? 'detached')}${x.status === 'Working' ? '' : ` · _${md(x.status)}_`}`).join('\n')] : []);
-
-  const expected = seat && who(seat.email, seat.org ?? seat.orgUuid);
-  const problem = registry?.seats?.length && !seat ? `${machine} is not in bridge.fleet.seats`
-    : seat && !account ? `no subscription login, expected ${expected}`
-    : seat && seat.email && !sameText(account.email, seat.email) ? `wrong account, expected ${expected}`
-    : seat && !orgOk(account, seat) ? `wrong team, expected ${expected}` : null;
 
   // bridge.fleet.always.{claude,codex}: a host with quota data reports every round, idle or
   // not. Default: Claude on, Codex off.
@@ -264,11 +289,14 @@ export function renderReport({ machine, registry, account, codexAccount, claude,
     blocks.push([`## ${host}${h.title}`, ...h.warn, `${accountName(email)}${detail ? ` · _${md(detail)}_` : ''}`, ...lines].join('\n\n'));
   };
 
-  const claudeAct = actionableResets(extra?.Claude, seat?.claimed);
   const claudeRun = running('claude');
-  if ((always.claude && claude) || claudeRun.length || claudeAct.banked.length || claudeAct.scheduled || problem) {
-    block('Claude', claude, account?.email, account?.org, [...(problem ? [`**(\\!) ${md(problem)}**`] : []), ...quotaLines(claude, now, t),
-      ...runLines(claudeRun), ...resetLines(claudeAct, now, t)]);
+  for (const g of claudeGroups(claude, registry?.seats, machine)) {
+    const act = actionableResets(extra?.Claude, g.seat?.claimed);
+    const run = claudeRun.filter((x) => g.aliases.includes(x.seat ?? null));
+    if ((always.claude && g.quota) || run.length || act.banked.length || act.scheduled || g.problems.length) {
+      block(g.label ? `Claude · ${md(g.label)}` : 'Claude', g.quota, g.account?.email, g.account?.org,
+        [...g.problems.map((p) => `**(\\!) ${md(p)}**`), ...quotaLines(g.quota, now, t), ...runLines(run), ...resetLines(act, now, t)]);
+    }
   }
   const codexAct = actionableResets(extra?.Codex);
   const codexRun = running('codex');
@@ -299,7 +327,7 @@ export class FleetReport {
   constructor({ telegram, chatId, topicId = null, everyMinutes = 60, machine, stateFile = null, sessions = () => [],
     codexQuota: codexSource = () => null, codexAccount = () => null, log = () => {}, now = Date.now,
     extraResets = (at) => fetchExtraResets({ now: at, log }),
-    read = { registry: () => readBridgeConfig().fleet, account: claudeAccount, claudeUsage: readClaudeUsage } }) {
+    read = { registry: () => ({ ...readBridgeConfig().fleet, seats: readSeats() }), claude: readClaudeDirs } }) {
     Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, codexAccount, extraResets, log, now, read });
     this.cycleMs = everyMinutes * 60000;
     const saved = stateFile && readJson(stateFile);
@@ -329,8 +357,8 @@ export class FleetReport {
     if (round === this.state.round) return;
     const cx = this.codexSource();
     const text = renderReport({ machine: this.machine, registry,
-      account: this.read.account(), codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null,
-      claude: claudeQuota(this.read.claudeUsage()), codex: cx ? codexQuota(cx.limits, cx.at) : null,
+      codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null,
+      claude: this.read.claude(registry?.seats, this.machine), codex: cx ? codexQuota(cx.limits, cx.at) : null,
       extra: await this.extraResets(now).catch(() => null), sessions: this.sessions(), now });
     const previous = this.state.messageId;
     // Nothing to say (idle, no reset to act on): the round still replaces the old report.

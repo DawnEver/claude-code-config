@@ -26,6 +26,7 @@ import net from 'net';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
+import { isValidAlias } from '../shared/seats.mjs';
 
 const AUTH_TIMEOUT_MS = 5000;
 const STATES = new Set(['running', 'idle', 'waiting-approval', 'waiting-input']);
@@ -98,7 +99,7 @@ export class ClaudeAdapter extends EventEmitter {
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
             queued: previous?.queued ?? [], humanTurn: previous ? previous.humanTurn : true,
             remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
-          this.emit('up', { id: sessionId, cwd: p.cwd, backlog: [] });
+          this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, backlog: [] });
           this.#emitStatus(sessionId);
           this.#release();
           return { ok: true };

@@ -43,12 +43,16 @@ const envSettingsPath = resolveEnvSettingsPath();
 
 const argv = process.argv.slice(2);
 const provider = argv[0] && !argv[0].startsWith('-') ? argv.shift() : '';
+// `--seat <alias>`: run as that Claude seat (scripts/shared/seats.mjs); claude has no such flag.
+const seatAt = argv.indexOf('--seat');
+const seat = seatAt === -1 ? null : argv.splice(seatAt, 2)[1] ?? '';
 const extraArgs = argv;
 
 const { env, args, error } = buildClaudeInvocation({
   provider: provider || null,
   extraArgs,
   envSettingsPath,
+  seat,
 });
 
 if (error) {
@@ -56,7 +60,7 @@ if (error) {
   process.exit(1);
 }
 
-console.log(provider ? `[cc] Using provider: ${provider}` : '[cc] Using Claude (official subscription)');
+console.log(provider ? `[cc] Using provider: ${provider}` : `[cc] Using Claude (official subscription${seat ? `, seat ${seat}` : ''})`);
 
 // Not `shell: true`: that concatenates args unescaped, so any argument containing a space
 // or a cmd metacharacter is mangled. `prepareSpawn` resolves the npm shim and quotes for us.

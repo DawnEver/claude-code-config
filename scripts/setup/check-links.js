@@ -8,12 +8,15 @@
 // Auto-repairs the lossless cases (missing dest -> re-link; claude-hud config
 // symlink -> hard link). A drifted plain file is reported, never touched —
 // it may hold edits the repo never saw. See setup-check-hook.js header.
+import fs from 'fs';
 import path from 'path';
 import {
   sourceDir,
   claudeDir,
   codexDir,
   CLAUDE_LINKS,
+  SEAT_LINKS,
+  localSeats,
   getCodexLinks,
   ensureRealDir,
   ensureClaudeHudConfig,
@@ -81,7 +84,7 @@ export function checkLinks() {
     warnings.push(`codex artifact regeneration: ${err.message}`);
   }
 
-  const check = (links, baseDir) => {
+  const check = (links, baseDir, label = '') => {
     const syncDir = getSyncDir();
     for (const link of links) {
       // `base: 'sync'` entries live in the payload dir, not the repo — resolving them
@@ -91,19 +94,21 @@ export function checkLinks() {
       try {
         const r = linkEntry(srcPath, destPath, link, false);
         if (r.status === 'link') {
-          repaired.push(`${link.dest} (${r.kind})`);
+          repaired.push(`${label}${link.dest} (${r.kind})`);
         } else if (r.status === 'skip' && !String(r.message).startsWith('source not found')) {
           // linkEntry's own hint ("re-run with --replace...") is dropped here;
           // callers append SETUP_FIX_CMD, which works from any cwd.
-          warnings.push(`${link.dest}: ${String(r.message).replace(/ - re-run with --replace.*$/, '')}`);
+          warnings.push(`${label}${link.dest}: ${String(r.message).replace(/ - re-run with --replace.*$/, '')}`);
         }
       } catch (err) {
-        warnings.push(`${link.dest}: ${err.message}`);
+        warnings.push(`${label}${link.dest}: ${err.message}`);
       }
     }
   };
 
   check(CLAUDE_LINKS, claudeDir);
+  // A seat dir setup has not created yet is setup's job, not a link to heal.
+  for (const { alias, dir } of localSeats()) if (fs.existsSync(dir)) check(SEAT_LINKS, dir, `seat ${alias}: `);
   ensureRealDir(path.join(codexDir, 'skills'));
   check(getCodexLinks(), codexDir);
 

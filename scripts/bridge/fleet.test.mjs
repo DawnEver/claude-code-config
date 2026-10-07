@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FleetReport, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, seatFor, renderReport } from './fleet.mjs';
+import { FleetReport, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, readClaudeDirs, renderReport } from './fleet.mjs';
 
 const H = 3600000;
 const NOW = Date.UTC(2026, 9, 3, 12, 0);
@@ -40,7 +40,7 @@ test('quota windows are labelled by their real length; distinct short windows do
   assert.equal(codexQuota(null, NOW), null);
 });
 
-test('claudeAccount reads only the oauth identity; seatFor survives a malformed registry', () => {
+test('claudeAccount reads only the oauth identity', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-'));
   try {
     const f = path.join(dir, '.claude.json');
@@ -48,9 +48,21 @@ test('claudeAccount reads only the oauth identity; seatFor survives a malformed 
     assert.deepEqual(claudeAccount(f), { email: 'a@example.com', org: 'Team A', orgUuid: 'u1' });
     assert.equal(claudeAccount(path.join(dir, 'missing.json')), null);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  assert.equal(seatFor(REG, 'm1').email, 'a@example.com');
-  assert.equal(seatFor(REG, 'm9'), null);
-  for (const bad of [null, {}, { seats: 'x' }, { seats: [null, 3, { machines: 'm1' }] }]) assert.equal(seatFor(bad, 'm1'), null);
+});
+
+test('readClaudeDirs reads the base dir and each local seat dir: account and quota from its own files', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-home-'));
+  const acct = (email, org) => JSON.stringify({ oauthAccount: { emailAddress: email, organizationName: org, organizationUuid: org } });
+  try {
+    fs.mkdirSync(path.join(home, '.claude'));
+    fs.writeFileSync(path.join(home, '.claude.json'), acct('a@example.com', 'Team A'));
+    fs.mkdirSync(path.join(home, '.claude-team-b', 'bridge'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude-team-b', '.claude.json'), acct('a@example.com', 'Team B'));
+    fs.writeFileSync(path.join(home, '.claude-team-b', 'bridge', 'claude-usage.json'), JSON.stringify({ at: NOW, five_hour: { used_percentage: 10, resets_at: (NOW + H) / 1000 } }));
+    const seats = [{ alias: 'team-b', machines: ['m1'] }, { alias: 'team-a', machines: ['m1'] }, { alias: 'other', machines: ['m2'] }];
+    const dirs = readClaudeDirs(seats, 'm1', home);
+    assert.deepEqual(dirs.map((d) => [d.alias, d.account?.org, Boolean(d.quota)]), [[null, 'Team A', false], ['team-b', 'Team B', true]], 'a seat without its dir is skipped');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('teeClaudeUsage keeps the latest rate_limits, skipping unchanged renders for a minute', () => {
@@ -79,7 +91,7 @@ function fleet({ telegram = fakeTelegram(), stateFile = null, topicId = 9, clock
   const card = new FleetReport({ telegram, chatId: -1, topicId, machine, now: () => clock.t, stateFile, extraResets: async () => null,
     sessions: () => [{ agent: 'codex', project: 'p', branch: 'main', status: 'Working' }],
     codexQuota: () => ({ limits: { primary: { usedPercent: used.v, windowDurationMins: 300, resetsAt: (NOW + 3 * H) / 1000 } }, at: clock.t }),
-    read: { registry: () => ({ ...REG, order: ['m0', 'm1'] }), account: () => ME, claudeUsage: () => null } });
+    read: { registry: () => ({ ...REG, order: ['m0', 'm1'] }), claude: () => [{ alias: null, account: ME, quota: null }] } });
   return { card, telegram, clock, used };
 }
 
@@ -145,14 +157,14 @@ test('FleetReport fetches extra resets once per report', async () => {
   const tg = fakeTelegram();
   const clock = { t: NOW + 5 * 60000 };
   const card = new FleetReport({ telegram: tg, chatId: -1, machine: 'm1', now: () => clock.t, extraResets: async () => { calls++; return null; },
-    read: { registry: () => REG, account: () => ME, claudeUsage: () => null } });
+    read: { registry: () => REG, claude: () => [{ alias: null, account: ME, quota: null }] } });
   await card.tick(); clock.t += 60000; await card.tick();
   assert.equal(calls, 1);
 });
 
 
 const RUN = (agent, status = 'Working') => ({ agent, project: 'proj-x', branch: 'main', status });
-const render = (o) => renderReport({ machine: 'm1', registry: REG, account: ME, now: NOW, ...o });
+const render = ({ account = ME, claude = null, dirs, ...o }) => renderReport({ machine: 'm1', registry: REG, now: NOW, claude: dirs ?? [{ alias: null, account, quota: claude }], ...o });
 
 test('renderReport: no machine title; the heading is the verdict, then the warning, then the account', () => {
   const text = render({ claude: short5h(), sessions: [RUN('claude')] });
@@ -204,7 +216,7 @@ test('renderReport seat problems show the Claude block and name the expected sea
   assert.deepEqual(warn({ registry: { seats: [{ ...SEAT, orgUuid: 'u2' }] } }), ['**(\\!) wrong team, expected a@example\\.com · Team A**']);
   assert.deepEqual(warn({ account: null }), ['**(\\!) no subscription login, expected a@example\\.com · Team A**']);
   assert.match(render({ account: null }), /\n\n_not logged in_\n\n/);
-  assert.deepEqual(warn({ machine: 'm9' }), ['**(\\!) m9 is not in bridge\\.fleet\\.seats**']);
+  assert.deepEqual(warn({ machine: 'm9' }), ['**(\\!) m9 is not in seats**']);
   assert.equal(render({ machine: 'm9', registry: null }), null, 'no seats configured: nothing to check');
 });
 
@@ -227,7 +239,7 @@ test('time formats: both (default), date, countdown', () => {
 test('FleetReport posts nothing when there is nothing to say, and still retires the old report', async () => {
   const tg = fakeTelegram();
   const card = new FleetReport({ telegram: tg, chatId: -1, machine: 'm1', now: () => NOW + 5 * 60000, extraResets: async () => null,
-    read: { registry: () => REG, account: () => ME, claudeUsage: () => null } });
+    read: { registry: () => REG, claude: () => [{ alias: null, account: ME, quota: null }] } });
   card.state.messageId = 7;
   await card.tick();
   assert.deepEqual([tg.sent.length, tg.deleted, card.state.messageId], [0, [7], null]);
@@ -239,4 +251,33 @@ test('renderReport bridge.fleet.always: an idle host with quota data still repor
   assert.equal(render({ codex: short5h() }), null, 'Codex off by default');
   assert.match(render({ registry: { ...REG, always: { codex: true } }, codex: short5h() }), /^## Codex/);
   assert.equal(render({ registry: { ...REG, always: { claude: false } }, claude: short5h() }), null);
+});
+
+test('renderReport: one Claude block per seat, each with its own account, quota and sessions', () => {
+  const seats = [{ alias: 'team-a', email: 'a@example.com', org: 'Team A', machines: ['m1'] },
+    { alias: 'team-b', email: 'a@example.com', org: 'Team B', machines: ['m1'] }];
+  const A = { ...ME, org: 'Team A' }, B = { ...ME, org: 'Team B', orgUuid: 'u2' };
+  const text = render({ registry: { seats }, dirs: [{ alias: null, account: null, quota: null },
+    { alias: 'team-a', account: A, quota: short5h() }, { alias: 'team-b', account: B, quota: null }],
+    sessions: [{ ...RUN('claude'), project: 'pa', seat: 'team-a' }, { ...RUN('claude'), project: 'pb', seat: 'team-b' }] });
+  const blocks = text.split(/(?=^## )/m);
+  assert.equal(blocks.length, 2, 'the unassigned, idle, logged-out base dir says nothing on a multi-seat machine');
+  assert.match(blocks[0], /^## Claude · team\\-a · 40% left[\s\S]*_Team A_[\s\S]*\| 5h \|[\s\S]*\*\*pa\*\*/);
+  assert.doesNotMatch(blocks[0], /pb/);
+  assert.match(blocks[1], /^## Claude · team\\-b\n[\s\S]*_Team B_[\s\S]*\*\*pb\*\*/);
+});
+
+test('renderReport: the base dir joins the seat its login matches; the freshest quota wins', () => {
+  const seats = [{ alias: 'team-a', email: 'a@example.com', org: 'Team A', machines: ['m1'] }];
+  const text = render({ registry: { seats }, dirs: [{ alias: null, account: ME, quota: short5h() },
+    { alias: 'team-a', account: ME, quota: short5h(NOW - 30 * 60000) }],
+    sessions: [{ ...RUN('claude'), project: 'base' }, { ...RUN('claude'), project: 'seat', seat: 'team-a' }] });
+  assert.equal(text.match(/^## /gm).length, 1);
+  assert.doesNotMatch(text, /data .* old/, 'the base dir has the fresher snapshot');
+  assert.match(text, /\*\*base\*\*[\s\S]*\*\*seat\*\*/);
+});
+
+test('renderReport: a seat dir that is not registered for this machine is a problem', () => {
+  const text = render({ registry: REG, dirs: [{ alias: null, account: ME, quota: null }, { alias: 'team-b', account: ME, quota: null }] });
+  assert.match(text, /## Claude · team\\-b[\s\S]*seat team\\-b is not registered for m1/);
 });

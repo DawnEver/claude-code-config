@@ -235,3 +235,23 @@ test('bridge: an explicit channel flag from the user is not duplicated', () => {
   const { args } = buildClaudeInvocation({ provider: null, extraArgs: [...CHANNEL_ARGS], envSettingsPath: shared, localPath: local });
   assert.deepEqual(args, CHANNEL_ARGS);
 });
+
+test('--seat points CLAUDE_CONFIG_DIR at the seat dir; without it the base dir is used', async () => {
+  const { mkdirSync } = await import('node:fs');
+  const { shared, local } = fixture();
+  writeFileSync(shared, '{}');
+  const home = mkdtempSync(join(tmpdir(), 'cc-seat-home-'));
+  mkdirSync(join(home, '.claude-team-b'));
+  const run = (o) => buildClaudeInvocation({ provider: null, envSettingsPath: shared, localPath: local, machine: null, home, ...o });
+  const prev = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = join(home, '.claude-other');
+  try {
+    assert.equal(run({ seat: 'team-b' }).env.CLAUDE_CONFIG_DIR, join(home, '.claude-team-b'));
+    assert.equal(run({}).env.CLAUDE_CONFIG_DIR, undefined, 'an inherited seat never leaks into plain ccc');
+    assert.match(run({ seat: 'team-a' }).error, /no seat dir .*run setup/);
+    assert.match(run({ seat: '../x' }).error, /invalid seat alias/);
+    assert.match(run({ seat: 'team-b', provider: 'deepseek' }).error, /subscription login/);
+  } finally {
+    if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
+  }
+});

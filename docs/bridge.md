@@ -427,15 +427,15 @@ No directory scanning or automatic artifact publication is performed.
 ## Fleet report (`scripts/bridge/fleet.mjs`)
 
 Every machine reports into one shared chat/Topic, in a fixed order, at a low rate: which
-seat it is on, how much quota is left, when it resets, whether it runs out first, and what
-is running there. Enable it in the shared config:
+seats it is on, how much quota is left, when it resets, whether it runs out first, and what
+is running there. Enable it in the shared config (`seats` is top-level: see Claude seats):
 
 ```json
 "bridge": { "fleet": {
   "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60, "timeFormat": "both", "always": { "claude": true, "codex": false },
-  "order": ["host-a", "host-b"],
-  "seats": [{ "email": "alice@example.com", "org": "Team A", "machines": ["host-a"] }]
-} }
+  "order": ["host-a", "host-b"]
+} },
+"seats": [{ "alias": "team-a", "email": "alice@example.com", "org": "Team A", "machines": ["host-a"] }]
 ```
 
 `topicId` is optional (absent = General); `everyMinutes` defaults to 60. Every machine's
@@ -445,14 +445,14 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 
 | Line | Source |
 | --- | --- |
-| Claude seat | `bridge.fleet.seats` (`{email, org?, orgUuid?, machines, claimed?}`; `claimed` lists the ids of banked resets the seat has already used, which the report then stops offering): the Claude account x Team each machine should run as. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
+| Claude seat | top-level `seats` (`{alias, email, org?, orgUuid?, machines, claimed?}`; `claimed` lists the ids of banked resets the seat has already used, which the report then stops offering): the Claude account x Team each machine should run as, one block per seat. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
 | Codex account | app-server `account/read` (email, plan) |
 | Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count, and each credit's expiry |
 | extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, a banked reset still to claim with its use-by and one announced but not applied. Past resets are history and not shown. Not official data |
-| Claude account | `~/.claude.json` `oauthAccount` (email, organization), shown in full |
-| Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js`; fresh only while a Claude session renders |
+| Claude account | each config dir's `.claude.json` `oauthAccount` (email, organization), shown in full |
+| Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js` into `<config dir>/bridge/claude-usage.json`; fresh only while a session in that dir renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
-| running | every registered session, with its state unless Working (Idle and Unknown included) |
+| running | every registered session, with its state unless Working (Idle and Unknown included); a Claude session under its seat |
 
 A report answers first what a reader acts on: will the quota last until it resets, and is
 there a reset to use. It is a Telegram rich Markdown message (`sendRichMessage`), every value
@@ -464,12 +464,12 @@ a host it is on for shows whenever it has quota data, idle or not, so each round
 heartbeat. Default `{ "claude": true, "codex": false }`. Each block:
 
 ```
-## Claude · 55% left                             heading: the binding window's headroom
+## Claude · team-a · 55% left                    heading: seat alias, the binding window's headroom
 **(!) 7d runs out 05/Oct 19:00 (1d 23h) · resets 09/Oct 04:20 (5d 9h)**
 `alice@example.com` · _Uni Team A_               account as code (not a link), org italic
 | | used / pace | resets |                       pace = % an even spend would be at now
-| 5h | `███░░░░░┃░` 26% / 92% | 19:44 (24m) |      ┃ marks pace on the bar: fill past it = too fast
-| 7d | `████┃░░░░░` 45% / 44% | 09/Oct 04:20 (5d 9h) |
+| 5h | `███░░░░░░┃░` 26% / 92% | 19:44 (24m) |     ┃ inserted at pace: fill past it = too fast
+| 7d | `████┃█░░░░░` 45% / 44% | 09/Oct 04:20 (5d 9h) |
 - **claude-code-config** · main                  what runs here
 `banked reset (Opus 5.5) · use by 21/Oct 19:20 (18d 0h)`
 ```
@@ -478,12 +478,36 @@ The binding window is the one projected to run out soonest, else the fullest. Co
 add `reset credits: N` with each credit's expiry when credits remain.
 
 `timeFormat` picks how times read: `both` (default: `08/Oct 23:00 (4d 7h)`; `HH:MM` for
-today), `date` (`08/Oct 23:00` only) or `countdown` (time left only: `4d 7h`, `3h 15m`, `12m`). Pace is the average since the window
-opened, as of the snapshot, so no history is kept. Freshness appears only for a snapshot
-over 15 minutes old. Nothing is posted between rounds: every warning is a bold `(!)` line of
-the report — running out before reset, Claude logged into another account/org than the
-seat (`org` = case-insensitive substring of organizationName, or exact `orgUuid`), no
-subscription login on a registered machine, machine absent from a non-empty `seats`. Seats and order are re-read every round; no restart needed.
+today), `date` (`08/Oct 23:00` only) or `countdown` (time left only: `4d 7h`, `3h 15m`, `12m`). The run-out projection is
+the average rate since the window opened, as of the snapshot, so no history is kept; the
+pace marker is read at render time (it depends only on the clock). Freshness appears only
+for a snapshot over 15 minutes old, which also raises no run-out warning. Nothing is posted
+between rounds: every warning is a bold `(!)` line of the report — running out before reset,
+a seat logged into another account/org than registered (`org` = case-insensitive substring
+of organizationName, or exact `orgUuid`), no subscription login in a seat, a seat dir not
+registered for this machine, machine absent from a non-empty `seats`. Seats and order are
+re-read every round; no restart needed.
+
+## Claude seats (`scripts/shared/seats.mjs`)
+
+A seat is one Claude login: an account in one Team. One machine can hold several, e.g. the
+same account in two Teams. Each seat is declared once, in the top-level `seats` of
+`claude_env_settings.json`, with an `alias` unique on each machine it lists:
+
+| Layer | Where | Holds |
+| --- | --- | --- |
+| base dir | `~/.claude` | code, machine files, plugin installs; plain `ccc` and the IDE extension (which ignores `CLAUDE_CONFIG_DIR`) |
+| seat dir | `~/.claude-<alias>` (`CLAUDE_CONFIG_DIR`) | that seat's login, `.claude.json` (account, user-scope MCP), transcripts, `bridge/claude-usage.json`; links `CLAUDE.md`, `settings.json`, `skills`, `output-styles`, `keybindings.json` like the base dir, and `plugins` to the base dir's |
+
+- `setup` creates every seat dir of this machine with its links (`SEAT_LINKS`), registers the
+  `session-bridge` channel in each dir's `.claude.json`, and says which seats still need a login.
+  `check-links` heals seat dirs at SessionStart like the base dir.
+- `ccc --seat <alias>` runs Claude in that seat; plain `ccc` always uses the base dir, even
+  from a shell that inherited another seat. Log a seat in once: `ccc --seat <alias>`, then
+  `/login` and pick its Team.
+- The channel reports the seat (from `CLAUDE_CONFIG_DIR`): the Topic title shows
+  `claude:<alias>`, and the fleet report lists the session under its seat. The base dir counts
+  as the seat its login matches.
 
 ## Session status
 

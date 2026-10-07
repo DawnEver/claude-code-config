@@ -167,7 +167,7 @@ test('send_attachment forwards only explicit file arguments and reports delivery
 test('register, inbound -> channel notification, reply tool -> hub, permission round trip', async () => {
   const r = await rig();
   try {
-    assert.deepEqual(r.ups, [{ id: 's1', cwd: '/repo', backlog: [] }]);
+    assert.deepEqual(r.ups, [{ id: 's1', cwd: '/repo', seat: null, backlog: [] }]);
 
     await r.hub.inject('s1', 'run the tests', 'alice');
     await until(() => r.out.length);

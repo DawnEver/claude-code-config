@@ -629,6 +629,15 @@ test('fleetSessions lists every registered session with its status', async () =>
   assert.ok(r.bridge.fleetSessions().every((x) => x.status === 'Working'));
 });
 
+test('a Claude session seat names its Topic and its fleet entry', async () => {
+  const r = make();
+  const s = await up(r, 'claude', 'seated', { seat: 'team-b' });
+  assert.match(s.title, / \| claude:team-b$/);
+  assert.equal(r.bridge.fleetSessions()[0].seat, 'team-b');
+  await up(r, 'claude', 'base');
+  assert.equal(r.bridge.fleetSessions()[1].seat, null);
+});
+
 test('a failed Topic rename keeps the cached title and session, and is logged', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-title-'));
   try {

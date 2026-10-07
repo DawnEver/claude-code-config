@@ -13,6 +13,7 @@ import {
   isHardLinked,
   CLAUDE_LINKS,
   CODEX_LINKS,
+  SEAT_LINKS,
 } from './setup.js';
 import { SYNC_PAYLOAD_FILES, readSyncDirPointer } from '../shared/sync-dir.mjs';
 
@@ -289,4 +290,10 @@ test('ensureClaudeHudConfig: never clobbers the machine-tuned config', async () 
   assert.equal(ensureClaudeHudConfig(repo), false);
   assert.equal(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'),
     '{"lineLayout":"expanded","maxWidth":120}');
+});
+
+test('a seat dir links what Claude Code reads from its config dir, and the base dir plugins', () => {
+  assert.deepEqual(SEAT_LINKS.map((l) => l.dest).sort(), ['CLAUDE.md', 'keybindings.json', 'output-styles', 'plugins', 'settings.json', 'skills']);
+  const plugins = SEAT_LINKS.find((l) => l.dest === 'plugins');
+  assert.equal(linkSourceRoot(plugins, { repoRoot: '/repo', syncDir: '/payload', claudeRoot: '/home/u/.claude' }), '/home/u/.claude');
 });

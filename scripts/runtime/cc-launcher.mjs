@@ -11,6 +11,8 @@
 // spawning the `claude` binary.
 
 import { existsSync } from 'fs';
+import os from 'os';
+import { isValidAlias, seatDir } from '../shared/seats.mjs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
@@ -46,10 +48,23 @@ export function buildClaudeInvocation({
   localPath = LOCAL_ENV_SETTINGS_PATH,
   machine = readMachineName(),
   gitUserName = machine ? readGitUserName() : null,
+  seat = null,
+  home = os.homedir(),
 }) {
   const env = { ...process.env };
   for (const k of PROVIDER_KEYS) delete env[k];
   Object.assign(env, provenanceEnv({ machine, agent: 'claude', userName: gitUserName, env }));
+  // The launcher alone picks the config dir: a seat's (scripts/shared/seats.mjs), else the
+  // base dir, even when started from a shell that inherited another seat's CLAUDE_CONFIG_DIR.
+  delete env.CLAUDE_CONFIG_DIR;
+  if (seat !== null) {
+    const fail = (error) => ({ env, args: [...extraArgs], provider: provider || null, available: [], error });
+    if (provider && provider !== 'claude') return fail(`--seat is a subscription login; it does not apply to provider ${provider}`);
+    if (!isValidAlias(seat)) return fail(`invalid seat alias: ${JSON.stringify(seat)} (allowed: [a-z0-9-])`);
+    const dir = seatDir(seat, home);
+    if (!existsSync(dir)) return fail(`no seat dir ${dir}: add seat ${seat} for this machine to \`seats\` in claude_env_settings.json, then run setup`);
+    env.CLAUDE_CONFIG_DIR = dir;
+  }
 
   if (!provider || provider === 'claude') {
     // A machine with its own bot token runs the session bridge (docs/bridge.md), so every

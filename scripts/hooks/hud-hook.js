@@ -63,7 +63,10 @@ if (!process.stdin.isTTY) {
         const chunks = [];
         for await (const c of process.stdin) chunks.push(c);
         const raw = Buffer.concat(chunks).toString('utf8');
-        try { (await import('../bridge/fleet.mjs')).teeClaudeUsage(JSON.parse(raw)); } catch { /* not JSON / no fleet.mjs */ }
+        try {
+            const [{ teeClaudeUsage }, { configDir, usageFile }] = await Promise.all([import('../bridge/fleet.mjs'), import('../shared/seats.mjs')]);
+            teeClaudeUsage(JSON.parse(raw), { file: usageFile(configDir()) });
+        } catch { /* not JSON / no fleet.mjs */ }
         const replay = new PassThrough();
         replay.end(raw);
         Object.defineProperty(process, 'stdin', { value: replay, configurable: true });

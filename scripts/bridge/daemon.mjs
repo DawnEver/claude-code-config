@@ -53,7 +53,7 @@ export function topicTitle(machine, project, branch, agent, suffix = '') {
   };
   const name = clean(project).replace(/[-_ ]+(?:studio|lab)(?=$|[-_ ])/gi, '') || 'unknown';
   const head = `${clip(name, 32)} | `;
-  const tail = ` | ${clip(clean(machine), 24)} | ${clip(clean(agent), 12)}${suffix ? ` · ${suffix}` : ''}`;
+  const tail = ` | ${clip(clean(machine), 24)} | ${clip(clean(agent), 20)}${suffix ? ` · ${suffix}` : ''}`;
   const available = Math.max(1, 128 - Array.from(head + tail).length);
   const source = Array.from(clean(branch) || 'detached');
   const shortened = source.length > available ? source.slice(0, available - 1).join('') + '…' : source.join('');
@@ -135,7 +135,7 @@ export class Bridge {
    * minus the turns the backlog already carried (a turn that completes during bring-up is
    * reported both ways).
    */
-  async sessionUp(agent, { id, cwd, branch, backlog = [] }) {
+  async sessionUp(agent, { id, cwd, branch, seat = null, backlog = [] }) {
     const key = sessionKey(agent, id);
     if (this.sessions.has(key) || this.held.has(key)) return this.sessions.get(key);
     this.held.set(key, []);
@@ -145,9 +145,10 @@ export class Bridge {
       const chatId = this.chatFor(ctx.project);
       const cacheKey = chatId === null ? null : TopicCache.key(chatId, key);
       const cached = cacheKey === null || this.deletingTopics.has(cacheKey) ? null : this.topics.get(cacheKey);
-      const base = topicTitle(this.machine, ctx.project, ctx.branch, agent);
+      // A Claude seat (scripts/shared/seats.mjs) names the login the session runs as.
+      const base = topicTitle(this.machine, ctx.project, ctx.branch, seat ? `${agent}:${seat}` : agent);
       const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, base,
-        title: base, project: ctx.project, branch: ctx.branch, cwd, chain: Promise.resolve(), progress: null, injected: [] };
+        title: base, project: ctx.project, branch: ctx.branch, cwd, seat, chain: Promise.resolve(), progress: null, injected: [] };
       this.sessions.set(key, s);
       s.title = this.#selectTitle(s, cached?.title);
       if (cached && cached.title !== s.title) {
@@ -180,7 +181,7 @@ export class Bridge {
   /** What the fleet report lists: every registered session with its status. */
   fleetSessions() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({ agent: s.agent, project: s.project,
-      branch: s.branch, status: STATUS_LABELS[this.hosts.get(s.agent)?.statusSnapshot?.(s.id).state] ?? 'Unknown' }));
+      branch: s.branch, seat: s.seat ?? null, status: STATUS_LABELS[this.hosts.get(s.agent)?.statusSnapshot?.(s.id).state] ?? 'Unknown' }));
   }
 
   sessionDown(key) {
