@@ -35,16 +35,19 @@ test('ensure is a no-op when current, starts when absent, replaces stale source'
     const runtimeFile = path.join(dir, 'runtime.json');
     const calls = [];
     let live = new Set();
-    const opts = { runtimeFile, configured: () => true, revision: () => 'new', alive: (p) => live.has(p), stale: () => false,
+    const opts = { runtimeFile, configured: () => true, revision: () => 'new', configRevision: () => 'cfg', alive: (p) => live.has(p), stale: () => false,
       kill: (p) => { calls.push(['kill', p]); live.delete(p); }, start: () => calls.push(['start']), sleep: async () => {} };
 
     assert.equal(await ensureDaemon(opts), 'started');
-    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 7, sourceRevision: 'new' }));
+    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 7, sourceRevision: 'new', configRevision: 'cfg' }));
     live = new Set([7]);
     assert.equal(await ensureDaemon(opts), 'running');
     fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 7, sourceRevision: 'old' }));
     assert.equal(await ensureDaemon(opts), 'restarted');
     assert.deepEqual(calls, [['start'], ['kill', 7], ['start']]);
+    live = new Set([7]);
+    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 7, sourceRevision: 'new', configRevision: 'old-cfg' }));
+    assert.equal(await ensureDaemon(opts), 'restarted', 'a config change replaces the daemon too');
     fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 9, sourceRevision: 'new' }));
     assert.equal(await ensureDaemon(opts), 'started', 'dead pid in runtime file');
     live = new Set([9]);

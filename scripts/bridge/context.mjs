@@ -18,6 +18,11 @@ export const SHARED_ENV_SETTINGS_PATH = path.join(CLAUDE_DIR, 'claude_env_settin
 export const BRIDGE_RUNTIME_DIR = path.join(CLAUDE_DIR, 'bridge');
 export const RUNTIME_FILE = path.join(BRIDGE_RUNTIME_DIR, 'runtime.json');
 
+/** Fingerprint of the normalised bridge config: a daemon read at startup is stale once it changes. */
+export function bridgeConfigRevision(config = readBridgeConfig()) {
+  return createHash('sha256').update(JSON.stringify(config)).digest('hex');
+}
+
 /** Source-only daemon fingerprint; not config, host binary or channel process identity. */
 export function bridgeSourceRevision(repoRoot = fileURLToPath(new URL('../../', import.meta.url))) {
   const hash = createHash('sha256');

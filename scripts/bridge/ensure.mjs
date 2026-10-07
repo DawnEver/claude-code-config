@@ -7,7 +7,7 @@
 // - the daemon itself takes an exclusive lock file (acquireDaemonLock) before touching
 //   Telegram, so concurrent ensures — two sessions starting at once — can spawn at most one
 //   survivor; the loser exits 0 without polling.
-// - a live daemon running the current source is left alone; one running older source is
+// - a live daemon running the current source and config is left alone; one running older ones is
 //   stopped and replaced (channels and the Codex adapter reconnect on their own).
 // - a host without a bot token is a silent no-op.
 // Fail-open and silent: hook stdout can inject context, so nothing is printed.
@@ -18,7 +18,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'node:url';
 import { isMain } from '../shared/is-main.mjs';
-import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE, bridgeSourceRevision, readBridgeConfig } from './context.mjs';
+import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE, bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
 
 export const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
 const DAEMON = fileURLToPath(new URL('./daemon.mjs', import.meta.url));
@@ -57,14 +57,15 @@ function spawnDaemon() {
 
 /** @returns {'unconfigured'|'running'|'started'|'restarted'} */
 export async function ensureDaemon({ runtimeFile = RUNTIME_FILE, configured = () => !!readBridgeConfig().botToken,
-  revision = bridgeSourceRevision, alive = isAlive, stale = predatesBoot, kill = (pid) => process.kill(pid), start = spawnDaemon,
+  revision = bridgeSourceRevision, configRevision = bridgeConfigRevision, alive = isAlive, stale = predatesBoot, kill = (pid) => process.kill(pid), start = spawnDaemon,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   if (!configured()) return 'unconfigured';
   let rt = null;
   try { rt = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { /* not running */ }
   const pid = rt?.pid;
   if (pid && alive(pid) && !stale(runtimeFile)) {
-    if (rt.sourceRevision === revision()) return 'running';
+    // The daemon reads its config once: a config change replaces it like a source change.
+    if (rt.sourceRevision === revision() && rt.configRevision === configRevision()) return 'running';
     try { kill(pid); } catch { /* already gone */ }
     for (let i = 0; i < 50 && alive(pid); i++) await sleep(100);
     start();
