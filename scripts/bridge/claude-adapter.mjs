@@ -98,7 +98,7 @@ export class ClaudeAdapter extends EventEmitter {
           // daemon, assume a human turn, so its answer is mirrored rather than lost.
           this.sessions.set(sessionId, { peer, socket, sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
-            queued: previous?.queued ?? [], localQuestion: false,
+            queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
             remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
           this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, backlog: [] });
           this.#emitStatus(sessionId);
@@ -110,7 +110,7 @@ export class ClaudeAdapter extends EventEmitter {
           const bad = () => Object.assign(new Error('bad kind'), { code: -32602 });
           if (!['prompt', 'final', 'answer', 'activity', 'end'].includes(p.kind)) throw bad();
           if (p.kind === 'activity' && !STATES.has(p.state)) throw bad();
-          const r = this.#mirror({ ...ids(p), retry: p.retry === true, kind: p.kind,
+          const r = this.#mirror({ ...ids(p), retry: p.retry === true, ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
             ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? ''),
             ...(Array.isArray(p.texts) ? { texts: p.texts.map(String) } : {}) });
           return { ok: true, routed: r !== false, ...(Array.isArray(r) ? { deliver: r } : {}) };
@@ -271,7 +271,8 @@ export class ClaudeAdapter extends EventEmitter {
     for (const b of blocks) s.sent.add(b);
     if (fresh.length || m.status === 'failed') this.emit('final', { id, text: fresh.join('\n\n'), ...(m.status ? { status: m.status } : {}) });
     // A failed turn (StopFailure) cannot be continued by its hook; the queue waits for the next.
-    if (!s.queued.length || m.status === 'failed') return true;
+    // A spool replay is not this session's live Stop hook: only that one can deliver the queue.
+    if (!s.queued.length || m.status === 'failed' || m.replay) return true;
     const deliver = s.queued;
     s.queued = [];
     s.sent = new Set();

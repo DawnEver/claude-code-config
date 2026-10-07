@@ -364,11 +364,13 @@ test('a session without inbound queues Telegram messages and hands them to the n
       note: 'queued: this session runs a third-party provider, which Claude Code gives no channel, so the message waits for its next turn to end (type something locally to wake it). Use ccc or cods to message it directly.' });
     await r.hook({ sessionIds: ids, kind: 'prompt', text: 'local work' });
     assert.match((await r.a.inject('s', 'second', 'v')).note, /^queued: .*delivered when the current turn ends/);
+    const replayed = await r.hook({ sessionIds: ids, kind: 'final', text: 'spooled earlier answer', replay: true });
+    assert.equal(replayed.result.deliver, undefined, 'a spool replay cannot continue the session');
     const res = await r.hook({ sessionIds: ids, kind: 'final', text: 'local answer' });
     assert.deepEqual(res.result.deliver, [{ text: 'idle msg', user: 'u' }, { text: 'second', user: 'v' }]);
     assert.equal(r.a.statusSnapshot('s').state, 'running');
     assert.equal((await r.hook({ sessionIds: ids, kind: 'final', text: 'phone answer' })).result.deliver, undefined, 'delivered once');
-    assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => e.text), ['local answer', 'phone answer'], 'the continuation is a Telegram turn');
+    assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => e.text), ['spooled earlier answer', 'local answer', 'phone answer'], 'the continuation is a Telegram turn');
     ch.destroy();
   } finally { await r.a.close(); }
 });

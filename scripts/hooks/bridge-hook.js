@@ -34,6 +34,7 @@ const TIMEOUT_MS = 2000;
 const QUESTION_TIMEOUT_MS = 10 * 60000;   // the settings hook timeout must exceed this
 const SPOOL_FILE = path.join(path.dirname(RUNTIME_FILE), 'spool.jsonl');
 const SPOOL_TTL_MS = 60 * 60000;
+const SPOOL_MAX = 100;   // newest kept; a daemon down for long should not flood the Topic
 const NOTIFICATION_STATES = { permission_prompt: 'waiting-approval', elicitation_dialog: 'waiting-input', idle_prompt: 'idle' };
 
 const isRealUser = (e) => {
@@ -59,8 +60,6 @@ export function turnTexts(jsonl) {
   }
   return texts;
 }
-
-export const finalAssistantText = (jsonl) => turnTexts(jsonl).join('\n\n');
 
 /** `Q -> A` lines of an answered AskUserQuestion, from its tool response or input. */
 export function answerText(payload) {
@@ -156,17 +155,28 @@ export function spool(call, { file = SPOOL_FILE, now = Date.now() } = {}) {
   try { fs.appendFileSync(file, JSON.stringify({ at: now, call }) + '\n'); } catch { /* best effort */ }
 }
 
-/** Resend spooled calls oldest first; claimed by rename so concurrent hooks never double-send. */
-export async function flushSpool({ file = SPOOL_FILE, now = Date.now(), send = (c) => callHub('mirror', c) } = {}) {
+/**
+ * Resend spooled calls oldest first, within `budgetMs` so the hook's hard exit timer never
+ * cuts a replay short; claimed by rename so concurrent hooks never double-send. The first
+ * call the daemon does not take ends the replay: it and the rest go back to the spool.
+ * Replays are marked so the adapter never hands them this session's queued Telegram
+ * messages — only the live Stop hook can deliver those.
+ */
+export async function flushSpool({ file = SPOOL_FILE, now = Date.now, budgetMs = TIMEOUT_MS,
+  send = (c, timeoutMs) => callHub('mirror', c, { timeoutMs }) } = {}) {
   const claimed = `${file}.${process.pid}`;
   try { fs.renameSync(file, claimed); } catch { return; }
   let lines = [];
   try { lines = fs.readFileSync(claimed, 'utf8').split('\n'); } catch { /* gone */ } finally { fs.rmSync(claimed, { force: true }); }
-  for (const l of lines) {
-    let e;
-    try { e = JSON.parse(l); } catch { continue; }
-    if (!e?.call || now - e.at > SPOOL_TTL_MS) continue;
-    if ((await send(e.call)) === null) spool(e.call, { file, now: e.at });
+  const start = now();
+  const entries = lines.flatMap((l) => { try { const e = JSON.parse(l); return e?.call ? [e] : []; } catch { return []; } })
+    .filter((e) => start - e.at <= SPOOL_TTL_MS).slice(-SPOOL_MAX);
+  for (let i = 0; i < entries.length; i++) {
+    const left = budgetMs - (now() - start);
+    if (left <= 0 || (await send({ ...entries[i].call, replay: true }, left)) === null) {
+      for (const e of entries.slice(i)) spool(e.call, { file, now: e.at });
+      return;
+    }
   }
 }
 
@@ -181,7 +191,8 @@ async function main() {
   // Only the dedicated AskUserQuestion entry (long timeout) waits: Claude Code merges hook
   // entries with an identical command, so the catch-all one must not be that entry's twin.
   const question = process.argv.includes('--question') ? questionFor(payload) : null;
-  setTimeout(() => process.exit(0), (question ? QUESTION_TIMEOUT_MS : TIMEOUT_MS) + 500).unref();
+  // A non-question run may spend one budget on a spool replay and one on its own call.
+  setTimeout(() => process.exit(0), (question ? QUESTION_TIMEOUT_MS : 2 * TIMEOUT_MS) + 500).unref();
   if (question) {
     const r = await callHub('question', question, { timeoutMs: QUESTION_TIMEOUT_MS });
     // Flushed before the process exits: stdout may be an asynchronous pipe.

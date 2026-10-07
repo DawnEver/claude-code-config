@@ -158,7 +158,10 @@ token in `runtime.json`):
   AskUserQuestion answered in the terminal is posted as `answered locally: Q -> A`.
 - A prompt, final or answer the daemon did not take (down, restarting, over the 2 s hook
   budget) is spooled to `~/.claude/bridge/spool.jsonl` and resent, oldest first, by the next
-  hook run; entries older than an hour are dropped.
+  hook run within one 2 s budget; the first refusal or the budget's end puts the rest back.
+  Entries older than an hour, and beyond the newest 100, are dropped. A replay never hands
+  out queued Telegram messages — only the session's live Stop hook delivers those. Answers
+  are mirrored like prompts: anything typed into the session reaches its Topic.
 - No `/interrupt` (use Esc locally).
 
 Nothing to do by hand once this machine has a `bridge.botToken`: `npm run setup` registers

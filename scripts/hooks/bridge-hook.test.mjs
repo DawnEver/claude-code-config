@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { finalAssistantText, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
+import { turnTexts, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 
 const j = (o) => JSON.stringify(o);
 const user = (content) => j({ type: 'user', message: { role: 'user', content } });
 const asst = (content) => j({ type: 'assistant', message: { role: 'assistant', content } });
 
-test('finalAssistantText: text blocks after the last real user message only', () => {
+test('turnTexts: text blocks after the last real user message only', () => {
   const lines = [
     user('old question'),
     asst([{ type: 'text', text: 'old answer' }]),
@@ -20,9 +20,9 @@ test('finalAssistantText: text blocks after the last real user message only', ()
     asst([{ type: 'text', text: 'Done.' }]),
     j({ type: 'system', subtype: 'x' }),
   ].join('\n');
-  assert.equal(finalAssistantText(lines), 'Let me look.\n\nDone.');
-  assert.equal(finalAssistantText(user('q')), '');
-  assert.equal(finalAssistantText('garbage\n' + user([{ type: 'text', text: 'q' }]) + '\n' + asst([{ type: 'text', text: 'a' }])), 'a');
+  assert.deepEqual(turnTexts(lines), ['Let me look.', 'Done.']);
+  assert.deepEqual(turnTexts(user('q')), []);
+  assert.deepEqual(turnTexts('garbage\n' + user([{ type: 'text', text: 'q' }]) + '\n' + asst([{ type: 'text', text: 'a' }])), ['a']);
 });
 
 test('mirrorFor: prompt from payload, channel injections skipped, final prefers last_assistant_message', () => {
@@ -102,19 +102,26 @@ test('deliverOutput blocks the stop with the queued Telegram messages', () => {
     { decision: 'block', reason: 'Message from Telegram (u):\nhi\n\nMessage from Telegram:\ntwo' });
 });
 
-test('spooled calls are resent oldest first; failures stay spooled, expired ones are dropped', async () => {
+test('spooled calls replay oldest first, marked; the first refusal or the budget re-spools the rest', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
   const file = path.join(dir, 'spool.jsonl');
+  const T = 4000000;
   try {
     spool({ kind: 'final', texts: ['stale'] }, { file, now: 0 });
-    spool({ kind: 'prompt', text: 'one' }, { file, now: 4000000 });
-    spool({ kind: 'final', texts: ['two'] }, { file, now: 4000001 });
+    spool({ kind: 'prompt', text: 'one' }, { file, now: T });
+    spool({ kind: 'final', texts: ['two'] }, { file, now: T + 1 });
+    spool({ kind: 'final', texts: ['three'] }, { file, now: T + 2 });
     const sent = [];
-    await flushSpool({ file, now: 4000002, send: async (c) => { sent.push(c); return c.kind === 'prompt' ? { ok: true } : null; } });
-    assert.deepEqual(sent, [{ kind: 'prompt', text: 'one' }, { kind: 'final', texts: ['two'] }]);
+    await flushSpool({ file, now: () => T + 10, send: async (c) => { sent.push(c); return c.kind === 'prompt' ? { ok: true } : null; } });
+    assert.deepEqual(sent, [{ kind: 'prompt', text: 'one', replay: true }, { kind: 'final', texts: ['two'], replay: true }], 'stops at the refusal');
+    // Out of budget after the first send: the rest goes back untried.
     sent.length = 0;
-    await flushSpool({ file, now: 4000003, send: async (c) => { sent.push(c); return { ok: true }; } });
-    assert.deepEqual(sent, [{ kind: 'final', texts: ['two'] }]);
+    let clock = T + 20;
+    await flushSpool({ file, budgetMs: 100, now: () => clock, send: async (c) => { sent.push(c); clock += 200; return { ok: true }; } });
+    assert.deepEqual(sent.map((c) => c.texts), [['two']]);
+    sent.length = 0;
+    await flushSpool({ file, now: () => clock, send: async (c, timeoutMs) => { assert.ok(timeoutMs > 0); sent.push(c); return { ok: true }; } });
+    assert.deepEqual(sent.map((c) => c.texts), [['three']]);
     assert.equal(fs.existsSync(file), false);
     await flushSpool({ file, send: async () => assert.fail('nothing spooled') });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
