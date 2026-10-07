@@ -43,12 +43,13 @@ const envSettingsPath = resolveEnvSettingsPath();
 
 const argv = process.argv.slice(2);
 const provider = argv[0] && !argv[0].startsWith('-') ? argv.shift() : '';
-// `--seat <alias>`: run as that Claude seat (scripts/shared/seats.mjs); claude has no such flag.
-const seatAt = argv.indexOf('--seat');
+// `--seat <alias>` / `-s <alias>`: run as that Claude seat (scripts/shared/seats.mjs); claude
+// has neither flag.
+const seatAt = argv.findIndex((a) => a === '--seat' || a === '-s');
 const seat = seatAt === -1 ? null : argv.splice(seatAt, 2)[1] ?? '';
 const extraArgs = argv;
 
-const { env, args, error } = buildClaudeInvocation({
+const { env, args, error, seat: resolvedSeat, seatMatch } = buildClaudeInvocation({
   provider: provider || null,
   extraArgs,
   envSettingsPath,
@@ -60,7 +61,9 @@ if (error) {
   process.exit(1);
 }
 
-console.log(provider ? `[cc] Using provider: ${provider}` : `[cc] Using Claude (official subscription${seat ? `, seat ${seat}` : ''})`);
+// Anything short of the exact alias says what it resolved to, before the session starts.
+if (seatMatch && (seatMatch !== 'exact' || resolvedSeat !== seat)) console.log(`[cc] seat "${seat}" matched ${resolvedSeat} (${seatMatch})`);
+console.log(provider ? `[cc] Using provider: ${provider}` : `[cc] Using Claude (official subscription${resolvedSeat ? `, seat ${resolvedSeat}` : ''})`);
 
 // Not `shell: true`: that concatenates args unescaped, so any argument containing a space
 // or a cmd metacharacter is mangled. `prepareSpawn` resolves the npm shim and quotes for us.

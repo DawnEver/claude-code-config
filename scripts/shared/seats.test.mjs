@@ -1,7 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
-import { isValidAlias, baseDir, seatDir, configDir, aliasOf, accountFile, usageFile, seatsFor } from './seats.mjs';
+import { isValidAlias, baseDir, seatDir, configDir, aliasOf, accountFile, usageFile, seatsFor, resolveSeat } from './seats.mjs';
+
+test('resolveSeat: exact, else a unique prefix, else a unique near typo; otherwise list every seat', () => {
+  const aliases = ['alpha', 'beta', 'bravo'];
+  assert.deepEqual(resolveSeat('beta', aliases), { alias: 'beta', match: 'exact' });
+  assert.deepEqual(resolveSeat('Al', aliases), { alias: 'alpha', match: 'prefix' }, 'prefix, case-insensitive');
+  assert.deepEqual(resolveSeat('alpah', aliases), { alias: 'alpha', match: 'typo' }, 'transposed letters');
+  assert.deepEqual(resolveSeat('bet', aliases), { alias: 'beta', match: 'prefix' });
+  assert.match(resolveSeat('b', aliases).error, /unknown seat "b"; seats on this machine: alpha, beta, bravo/, 'ambiguous prefix');
+  assert.match(resolveSeat('zzzzz', aliases).error, /alpha, beta, bravo/);
+  assert.match(resolveSeat('', aliases).error, /unknown seat ""/);
+  assert.match(resolveSeat('x', []).error, /none \(add this machine/);
+});
 
 const HOME = path.resolve('/home/u');
 
@@ -36,4 +48,24 @@ test('seatsFor returns this machine\'s seats normalised and survives junk', () =
     { alias: 'team-a', email: 'a@x', org: null, orgUuid: null, claimed: [] },
     { alias: null, email: 'b@x', org: null, orgUuid: null, claimed: ['1'] }]);
   for (const bad of [null, 'x', {}]) assert.deepEqual(seatsFor(bad, 'm1'), []);
+});
+
+test('a seat runs in the base dir when the base login holds it, else in its own dir', async () => {
+  const fs = await import('fs');
+  const os = await import('os');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'seats-home-'));
+  const { readAccount, baseSeat, seatHome, seatOf } = await import('./seats.mjs');
+  try {
+    fs.mkdirSync(baseDir(home));
+    const seats = [{ alias: 'team-a', email: 'a@x', org: 'Team A', machines: ['m1'] }, { alias: 'team-b', email: 'a@x', org: 'Team B', machines: ['m1'] }];
+    assert.equal(baseSeat(seats, 'm1', home), null, 'not logged in: holds no seat');
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'A@x', organizationName: 'Uni Team B', organizationUuid: 'u2' } }));
+    assert.deepEqual(readAccount(baseDir(home), home), { email: 'A@x', org: 'Uni Team B', orgUuid: 'u2' });
+    assert.equal(baseSeat(seats, 'm1', home), 'team-b');
+    assert.equal(seatHome('team-b', seats, 'm1', home), baseDir(home));
+    assert.equal(seatHome('team-a', seats, 'm1', home), seatDir('team-a', home));
+    assert.equal(seatOf(baseDir(home), seats, 'm1', home), 'team-b');
+    assert.equal(seatOf(seatDir('team-a', home), seats, 'm1', home), 'team-a');
+    assert.equal(baseSeat(seats, 'm2', home), null, 'another machine\'s seats never match');
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });

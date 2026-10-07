@@ -242,16 +242,43 @@ test('--seat points CLAUDE_CONFIG_DIR at the seat dir; without it the base dir i
   writeFileSync(shared, '{}');
   const home = mkdtempSync(join(tmpdir(), 'cc-seat-home-'));
   mkdirSync(join(home, '.claude-team-b'));
-  const run = (o) => buildClaudeInvocation({ provider: null, envSettingsPath: shared, localPath: local, machine: null, home, ...o });
+  const seats = [{ alias: 'team-a', machines: ['m1'] }, { alias: 'team-b', machines: ['m1'] }];
+  const run = (o) => buildClaudeInvocation({ provider: null, envSettingsPath: shared, localPath: local, machine: 'm1', gitUserName: null, home, seats, ...o });
   const prev = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = join(home, '.claude-other');
   try {
     assert.equal(run({ seat: 'team-b' }).env.CLAUDE_CONFIG_DIR, join(home, '.claude-team-b'));
     assert.equal(run({}).env.CLAUDE_CONFIG_DIR, undefined, 'an inherited seat never leaks into plain ccc');
     assert.match(run({ seat: 'team-a' }).error, /no seat dir .*run setup/);
-    assert.match(run({ seat: '../x' }).error, /invalid seat alias/);
+    assert.match(run({ seat: '../x' }).error, /unknown seat "\.\.\/x"; seats on this machine: team-a, team-b/);
     assert.match(run({ seat: 'team-b', provider: 'deepseek' }).error, /subscription login/);
   } finally {
     if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
   }
+});
+
+test('--seat for the seat the base login holds runs in the base dir, like plain ccc', async () => {
+  const { mkdirSync } = await import('node:fs');
+  const { shared, local } = fixture();
+  writeFileSync(shared, '{}');
+  const home = mkdtempSync(join(tmpdir(), 'cc-seat-base-'));
+  mkdirSync(join(home, '.claude'));
+  writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@x', organizationName: 'Team B' } }));
+  const seats = [{ alias: 'team-b', email: 'a@x', org: 'Team B', machines: ['m1'] }];
+  const { env, error } = buildClaudeInvocation({ provider: null, envSettingsPath: shared, localPath: local, machine: 'm1', gitUserName: null, home, seats, seat: 'team-b' });
+  assert.equal(error, null);
+  assert.equal(env.CLAUDE_CONFIG_DIR, undefined);
+});
+
+test('a partial seat name reports what it matched and how', async () => {
+  const { mkdirSync } = await import('node:fs');
+  const { shared, local } = fixture();
+  writeFileSync(shared, '{}');
+  const home = mkdtempSync(join(tmpdir(), 'cc-seat-match-'));
+  mkdirSync(join(home, '.claude-team-a'));
+  const seats = [{ alias: 'team-a', machines: ['m1'] }];
+  const run = (seat) => buildClaudeInvocation({ provider: null, envSettingsPath: shared, localPath: local, machine: 'm1', gitUserName: null, home, seats, seat });
+  assert.deepEqual([run('t').seat, run('t').seatMatch], ['team-a', 'prefix']);
+  assert.deepEqual([run('taem-a').seat, run('taem-a').seatMatch], ['team-a', 'typo']);
+  assert.deepEqual([run('team-a').seat, run('team-a').seatMatch], ['team-a', 'exact']);
 });

@@ -23,7 +23,8 @@ import crypto from 'crypto';
 import { lineSplitter } from '../../scripts/bridge/jsonrpc.mjs';
 import { RUNTIME_FILE } from '../../scripts/bridge/context.mjs';
 import { isMain } from '../../scripts/shared/is-main.mjs';
-import { aliasOf, configDir } from '../../scripts/shared/seats.mjs';
+import { configDir, readSeats, seatOf } from '../../scripts/shared/seats.mjs';
+import { readMachineName } from '../../scripts/shared/machine.mjs';
 import { tokens, base, isClaudeProcess, processTable, ancestorsOf } from '../../scripts/shared/process-tree.mjs';
 
 export { isClaudeProcess, processTable, ancestorsOf };
@@ -231,8 +232,8 @@ function main() {
   const session = {
     sessionId: identity.sessionId,
     cwd,
-    // The seat this session runs in (its CLAUDE_CONFIG_DIR, scripts/shared/seats.mjs); null = base dir.
-    seat: aliasOf(configDir()),
+    // The seat this session runs as (scripts/shared/seats.mjs); null = an unassigned base dir.
+    seat: seatOf(configDir(), readSeats(), readMachineName()),
   };
   // Claude Code swallows an MCP server's stderr, so the reason this process ends goes to a
   // machine-local file as well; a channel that vanishes silently is otherwise undiagnosable.

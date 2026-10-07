@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FleetReport, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, claudeAccount, readClaudeDirs, renderReport } from './fleet.mjs';
+import { FleetReport, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, claudeQuota, codexQuota, readClaudeDirs, renderReport } from './fleet.mjs';
 
 const H = 3600000;
 const NOW = Date.UTC(2026, 9, 3, 12, 0);
@@ -38,16 +38,6 @@ test('quota windows are labelled by their real length; distinct short windows do
   assert.deepEqual(Object.keys(x.windows), ['5h', '1h']);
   assert.equal(claudeQuota(null), null);
   assert.equal(codexQuota(null, NOW), null);
-});
-
-test('claudeAccount reads only the oauth identity', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-'));
-  try {
-    const f = path.join(dir, '.claude.json');
-    fs.writeFileSync(f, JSON.stringify({ oauthAccount: { emailAddress: 'a@example.com', organizationName: 'Team A', organizationUuid: 'u1' } }));
-    assert.deepEqual(claudeAccount(f), { email: 'a@example.com', org: 'Team A', orgUuid: 'u1' });
-    assert.equal(claudeAccount(path.join(dir, 'missing.json')), null);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('readClaudeDirs reads the base dir and each local seat dir: account and quota from its own files', () => {

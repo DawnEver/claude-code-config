@@ -14,7 +14,7 @@ import { isMain } from '../shared/is-main.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 import { planService, runAction, SERVICE_NAME } from '../bridge/install-service.mjs';
 import { isValidMachineName, readMachineName, writeMachineName, MACHINE_FIX_CMD } from '../shared/machine.mjs';
-import { accountFile, readSeats, seatDir, seatsFor } from '../shared/seats.mjs';
+import { accountFile, baseSeat, readSeats, seatDir, seatsFor } from '../shared/seats.mjs';
 import {
   resolveSyncDir,
   syncDirSource,
@@ -71,10 +71,15 @@ export const CLAUDE_LINKS = [
 // shared config links in as for ~/.claude, and plugin installs are the base dir's own.
 export const SEAT_LINKS = [...CLAUDE_LINKS.filter((l) => l.seat), { src: 'plugins', dest: 'plugins', type: 'dir', base: 'claude' }];
 
-/** This machine's seat dirs, from the top-level `seats` of the shared settings. */
+/**
+ * This machine's seat dirs, from the top-level `seats` of the shared settings. The seat the
+ * base dir's login already holds needs none: it runs in ~/.claude.
+ */
 export function localSeats(machine = readMachineName()) {
-  return seatsFor(readSeats(path.join(claudeDir, 'claude_env_settings.json')), machine)
-    .filter((s) => s.alias).map((s) => ({ alias: s.alias, dir: seatDir(s.alias) }));
+  const seats = readSeats(path.join(claudeDir, 'claude_env_settings.json'));
+  const inBase = baseSeat(seats, machine);
+  return seatsFor(seats, machine).filter((s) => s.alias && s.alias !== inBase)
+    .map((s) => ({ alias: s.alias, dir: seatDir(s.alias) }));
 }
 
 // NOTE: `~/.codex/config.toml` is deliberately NOT in this table. Codex writes to that

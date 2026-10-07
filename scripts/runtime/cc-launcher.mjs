@@ -12,7 +12,7 @@
 
 import { existsSync } from 'fs';
 import os from 'os';
-import { isValidAlias, seatDir } from '../shared/seats.mjs';
+import { baseDir, readSeats, resolveSeat, seatHome, seatsFor } from '../shared/seats.mjs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
@@ -50,6 +50,7 @@ export function buildClaudeInvocation({
   gitUserName = machine ? readGitUserName() : null,
   seat = null,
   home = os.homedir(),
+  seats = seat === null ? [] : readSeats(),
 }) {
   const env = { ...process.env };
   for (const k of PROVIDER_KEYS) delete env[k];
@@ -57,13 +58,18 @@ export function buildClaudeInvocation({
   // The launcher alone picks the config dir: a seat's (scripts/shared/seats.mjs), else the
   // base dir, even when started from a shell that inherited another seat's CLAUDE_CONFIG_DIR.
   delete env.CLAUDE_CONFIG_DIR;
+  let seatMatch = null;
   if (seat !== null) {
     const fail = (error) => ({ env, args: [...extraArgs], provider: provider || null, available: [], error });
     if (provider && provider !== 'claude') return fail(`--seat is a subscription login; it does not apply to provider ${provider}`);
-    if (!isValidAlias(seat)) return fail(`invalid seat alias: ${JSON.stringify(seat)} (allowed: [a-z0-9-])`);
-    const dir = seatDir(seat, home);
+    const picked = resolveSeat(seat, seatsFor(seats, machine).map((s) => s.alias).filter(Boolean));
+    if (picked.error) return fail(picked.error);
+    seat = picked.alias;
+    seatMatch = picked.match;
+    // The seat the base dir's login holds runs there: one login, never a copied credential.
+    const dir = seatHome(seat, seats, machine, home);
     if (!existsSync(dir)) return fail(`no seat dir ${dir}: add seat ${seat} for this machine to \`seats\` in claude_env_settings.json, then run setup`);
-    env.CLAUDE_CONFIG_DIR = dir;
+    if (dir !== baseDir(home)) env.CLAUDE_CONFIG_DIR = dir;
   }
 
   if (!provider || provider === 'claude') {
@@ -71,7 +77,7 @@ export function buildClaudeInvocation({
     // official session loads its channel. Third-party providers lack channels entirely.
     const channel = readBridgeConfig({ sharedPath: envSettingsPath, localPath }).botToken
       && !extraArgs.includes(BRIDGE_CHANNEL_ARGS[0]) ? BRIDGE_CHANNEL_ARGS : [];
-    return { env, args: [...channel, ...extraArgs], provider: null, available: [], error: null };
+    return { env, args: [...channel, ...extraArgs], provider: null, available: [], error: null, seat, seatMatch };
   }
 
   if (!existsSync(envSettingsPath)) {

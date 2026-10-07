@@ -20,7 +20,7 @@ import os from 'os';
 import path from 'path';
 import { readBridgeConfig } from './context.mjs';
 import { fetchExtraResets } from './extra-resets.mjs';
-import { accountFile, baseDir, readSeats, seatDir, seatsFor, usageFile } from '../shared/seats.mjs';
+import { baseDir, holds, orgOk, readAccount, readSeats, sameText, seatDir, seatsFor, usageFile } from '../shared/seats.mjs';
 
 const H = 3600000;
 const CLAUDE_WINDOWS = { five_hour: 5 * H, seven_day: 168 * H };
@@ -75,12 +75,6 @@ export function codexQuota(limits, at) {
   return Object.keys(windows).length ? { at, windows } : null;
 }
 
-/** ~/.claude.json oauthAccount -> {email, org, orgUuid}, or null when not on a subscription login. */
-export function claudeAccount(file) {
-  const a = readJson(file)?.oauthAccount;
-  return a?.emailAddress ? { email: a.emailAddress, org: a.organizationName ?? null, orgUuid: a.organizationUuid ?? null } : null;
-}
-
 /**
  * hud-hook.js side: keep the latest statusLine `rate_limits` for the daemon. Rewritten only
  * when the values change or the copy is a minute old, so renders stay cheap. Fail-silent.
@@ -109,15 +103,9 @@ export function teeClaudeUsage(statusLine, { file, now = Date.now() } = {}) {
 export function readClaudeDirs(seats, machine, home = os.homedir()) {
   const dirs = [{ alias: null, dir: baseDir(home) }, ...seatsFor(seats, machine).filter((x) => x.alias)
     .map((x) => ({ alias: x.alias, dir: seatDir(x.alias, home) })).filter((x) => fs.existsSync(x.dir))];
-  return dirs.map(({ alias, dir }) => ({ alias, account: claudeAccount(accountFile(dir, home)), quota: claudeQuota(readJson(usageFile(dir))) }));
+  return dirs.map(({ alias, dir }) => ({ alias, account: readAccount(dir, home), quota: claudeQuota(readJson(usageFile(dir))) }));
 }
 
-const sameText = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
-// A seat pins its org by `orgUuid` when given (exact), else by `org`: the name as a person
-// writes it ("Acme Lab"), a case-insensitive substring of Claude's organizationName
-// ("Uni Acme Lab"). Neither given: any org passes.
-const orgOk = (account, seat) => (seat.orgUuid ? account.orgUuid === seat.orgUuid
-  : !seat.org || String(account.org ?? '').toLowerCase().includes(String(seat.org).trim().toLowerCase()));
 
 const pad = (n) => String(n).padStart(2, '0');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -224,8 +212,6 @@ const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not lo
 // An account is a name, not a link: code spans stop Telegram auto-linking the email.
 const accountName = (email) => (email ? `\`${email.replace(/`/g, '')}\`` : '_not logged in_');
 
-const matches = (account, seat) => Boolean(account) && (!seat.email || sameText(account.email, seat.email)) && orgOk(account, seat);
-
 /** What is wrong with `account` sitting in `seat`'s place, or null. */
 function seatProblem(account, seat) {
   const expected = who(seat.email, seat.org ?? seat.orgUuid);
@@ -246,7 +232,7 @@ function claudeGroups(dirs, seats, machine) {
   const groups = new Map();
   for (const d of dirs) {
     const seat = d.alias ? mine.find((x) => x.alias === d.alias) ?? null
-      : mine.find((x) => matches(d.account, x)) ?? (mine.length === 1 ? mine[0] : null);
+      : mine.find((x) => holds(d.account, x)) ?? (mine.length === 1 ? mine[0] : null);
     const problem = d.alias && !seat ? `seat ${d.alias} is not registered for ${machine}`
       : !d.alias && !mine.length && Array.isArray(seats) && seats.length ? `${machine} is not in seats`
       : seat ? seatProblem(d.account, seat) : null;

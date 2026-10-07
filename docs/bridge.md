@@ -497,13 +497,14 @@ same account in two Teams. Each seat is declared once, in the top-level `seats` 
 | Layer | Where | Holds |
 | --- | --- | --- |
 | base dir | `~/.claude` | code, machine files, plugin installs; plain `ccc` and the IDE extension (which ignores `CLAUDE_CONFIG_DIR`) |
-| seat dir | `~/.claude-<alias>` (`CLAUDE_CONFIG_DIR`) | that seat's login, `.claude.json` (account, user-scope MCP), transcripts, `bridge/claude-usage.json`; links `CLAUDE.md`, `settings.json`, `skills`, `output-styles`, `keybindings.json` like the base dir, and `plugins` to the base dir's |
+| seat dir | `~/.claude-<alias>` (`CLAUDE_CONFIG_DIR`), except for the seat the base dir's login already holds, which runs in `~/.claude` (one login, never a copied credential) | that seat's login, `.claude.json` (account, user-scope MCP), transcripts, `bridge/claude-usage.json`; links `CLAUDE.md`, `settings.json`, `skills`, `output-styles`, `keybindings.json` like the base dir, and `plugins` to the base dir's |
 
 - `setup` creates every seat dir of this machine with its links (`SEAT_LINKS`), registers the
   `session-bridge` channel in each dir's `.claude.json`, and says which seats still need a login.
   `check-links` heals seat dirs at SessionStart like the base dir.
-- `ccc --seat <alias>` runs Claude in that seat; plain `ccc` always uses the base dir, even
-  from a shell that inherited another seat. Log a seat in once: `ccc --seat <alias>`, then
+- `ccc --seat <alias>` (or `-s <alias>`) runs Claude in that seat; plain `ccc` always uses the base dir, even
+  from a shell that inherited another seat. For the seat the base dir holds, the two are the same. A mistyped alias resolves to the one
+  seat it is a prefix of or within two edits of (and says so); otherwise the launcher lists the seats. Log a seat in once: `ccc --seat <alias>`, then
   `/login` and pick its Team.
 - The channel reports the seat (from `CLAUDE_CONFIG_DIR`): the Topic title shows
   `claude:<alias>`, and the fleet report lists the session under its seat. The base dir counts

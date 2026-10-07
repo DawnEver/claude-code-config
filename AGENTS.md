@@ -99,7 +99,7 @@ Telegram + remote control on the same live session, per-machine bridge in
 - `.claude/memory/`: Historical reference — content git-tracked; access metadata in gitignored `_meta.json` per date directory. `MEMORY.md` index is device-local generated (gitignored). Findings stored as `sharp-review.md` per session — sole source of truth for tasks.
 
 ### CLI Tools
-- `ccc` / `ccds` — Claude Code launchers (official / DeepSeek). `ccc --seat <alias>` runs as one Claude seat
+- `ccc` / `ccds` — Claude Code launchers (official / DeepSeek). `ccc --seat <alias>` (`-s`) runs as one Claude seat
   (an account in one Team) from `~/.claude-<alias>`; seats are the top-level `seats` of the shared
   `claude_env_settings.json`, mapped to dirs only by `scripts/shared/seats.mjs` — see `docs/bridge.md` "Claude seats".
 - `codc` / `cods` — Codex launchers (official / DeepSeek). `claude_env_settings.json` is the single provider source of truth for both hosts — see `docs/providers.md`.
