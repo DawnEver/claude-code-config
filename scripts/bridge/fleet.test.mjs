@@ -164,10 +164,19 @@ test('renderReport: no machine title; the heading is the verdict, then the warni
   assert.match(text, /\n- \*\*proj\\-x\*\* · main$/);
 });
 
-test('a stale snapshot shows its verdict but raises no run-out warning', () => {
+test('a stale snapshot is a lower bound on use: no age line, no projection', () => {
   const text = render({ claude: short5h(NOW - 30 * 60000), sessions: [RUN('claude')] });
-  assert.match(text, /^## Claude · 40% left\n/);
-  assert.doesNotMatch(text, /runs out/);
+  assert.match(text, /^## Claude · ≤40% left\n/);
+  assert.match(text, /\| 5h \| `[^`]+` ≥60% \/ \d+% \|/);
+  assert.doesNotMatch(text, /runs out|old/);
+});
+
+test('an exhausted window says so until it resets, however old the snapshot', () => {
+  const q = claudeQuota({ at: NOW - 32 * H, seven_day: { used_percentage: 100, resets_at: (NOW + 42 * H) / 1000 } });
+  const text = render({ claude: q, sessions: [RUN('claude')] });
+  assert.match(text, /^## Claude · 0% left\n\n\*\*\(\\!\) 7d exhausted · resets \d\d\/Oct \d\d:\d\d \\\(1d 18h\\\)\*\*\n/);
+  assert.match(text, /\| 7d \| `[^`]+` 100% \//);
+  assert.doesNotMatch(text, /runs out|old/);
 });
 
 test('pace is read at render time: a 30h-old snapshot still marks the current even spend', () => {
@@ -210,9 +219,8 @@ test('renderReport seat problems show the Claude block and name the expected sea
   assert.equal(render({ machine: 'm9', registry: null }), null, 'no seats configured: nothing to check');
 });
 
-test('renderReport: stale data says how old; a passed reset reads as such; values are Markdown-escaped', () => {
-  assert.match(render({ claude: short5h(NOW - 20 * 60000), sessions: [RUN('claude')] }), /\n\n_data 20m old_/);
-  assert.match(render({ claude: short5h(), sessions: [RUN('claude')], now: NOW + 4 * H }), /\| 5h \| — \| reset \d\d:\d\d, awaiting data \|/);
+test('renderReport: a passed reset reads as renewed; values are Markdown-escaped', () => {
+  assert.match(render({ claude: short5h(), sessions: [RUN('claude')], now: NOW + 4 * H }), /\| 5h \| renewed \| — \|/);
   const text = render({ account: { email: 'a@example.com', org: 'Team_[A]*' }, sessions: [{ ...RUN('claude'), project: 'p|q#1' }] });
   assert.match(text, /_Team\\_\\\[A\\\]\\\*_/);
   assert.match(text, /\*\*p\\\|q\\#1\*\*/);

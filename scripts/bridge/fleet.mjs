@@ -13,7 +13,8 @@
 //     claude_env_settings.json (sync payload, never in git), re-read every tick.
 // Rates are averaged since the window opened (resetsAt - window length) as of the
 // snapshot, so no history is kept: a window's ETA is when that average pace reaches 100%.
-// A stale snapshot says how old it is and is never projected from; a passed reset reads as such.
+// A stale snapshot is shown as a floor (use only grows until a reset), never projected from;
+// a passed reset reads as renewed. No data age is ever shown: only what is still true now.
 
 import fs from 'fs';
 import os from 'os';
@@ -26,7 +27,7 @@ const H = 3600000;
 const CLAUDE_WINDOWS = { five_hour: 5 * H, seven_day: 168 * H };
 // Too early in a window the average pace is noise; do not project or alert from it.
 const MIN_ELAPSED_FRACTION = 0.1;
-// A snapshot older than this still shows (with its time) but raises no alert.
+// A snapshot older than this is a floor on use (`≥`) and is never projected from.
 const STALE_MS = 15 * 60000;
 
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
@@ -142,7 +143,6 @@ const bar = (used, pace) => {
   if (pace != null) cells.splice(Math.round(pace / 10), 0, '┃');
   return cells.join('');
 };
-const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
 
 // The report is Telegram rich Markdown (sendRichMessage): a `##` heading per host, a table of
 // quota windows, bold warnings, code for things to act on. Every interpolated value is
@@ -164,9 +164,17 @@ function headline(q, now, t) {
   if (!live.length) return { title: '', warn: [] };
   const short = live.filter(([, v]) => v.short).sort((a, b) => a[1].eta - b[1].eta);
   const [k, v] = short[0] ?? live.sort((a, b) => b[1].used - a[1].used)[0];
-  return { title: ` · ${Math.round(100 - v.used)}% left`,
-    warn: v.short && now - q.at <= STALE_MS ? [`**(\\!) ${k} runs out ${md(t(v.eta, now))} · resets ${md(t(v.resetsAt, now))}**`] : [] };
+  const resets = `resets ${md(t(v.resetsAt, now))}`;
+  // Exhausted stays true until the reset; a projection is only as good as a fresh snapshot.
+  const warn = v.used >= 100 ? `${k} exhausted · ${resets}`
+    : v.short && !stale(q, now) ? `${k} runs out ${md(t(v.eta, now))} · ${resets}` : null;
+  return { title: ` · ${bound(q, v, now, '≤')}${Math.round(100 - v.used)}% left`, warn: warn ? [`**(\\!) ${warn}**`] : [] };
 }
+
+// Use only grows until a reset, so a stale snapshot's `used` is a floor, not an age to report:
+// it reads `≥60%` (and `≤40% left`); 100% needs no mark, it stays true until the reset.
+const stale = (q, now) => now - q.at > STALE_MS;
+const bound = (q, v, now, mark) => (stale(q, now) && v.used < 100 ? mark : '');
 
 /** The % of a window an even spend would have used by `now`: clock-only, so never stale. */
 const paceAt = (v, now) => Math.min(100, Math.max(0, (1 - (v.resetsAt - now) / v.windowMs) * 100));
@@ -175,15 +183,12 @@ const paceAt = (v, now) => Math.min(100, Math.max(0, (1 - (v.resetsAt - now) / v
 function quotaLines(q, now, t) {
   if (!q) return ['_no quota data yet_'];
   const rows = Object.entries(q.windows).map(([k, v]) => {
-    // A past reset has no countdown: always a date.
-    if (v.resetsAt <= now) return `| ${k} | — | reset ${md(when(v.resetsAt, now))}, awaiting data |`;
+    // A passed reset is a full window again; when it was is history.
+    if (v.resetsAt <= now) return `| ${k} | renewed | — |`;
     const pace = paceAt(v, now);
-    return `| ${k} | \`${bar(v.used, pace)}\` ${Math.round(v.used)}% / ${Math.round(pace)}% | ${md(t(v.resetsAt, now))} |`;
+    return `| ${k} | \`${bar(v.used, pace)}\` ${bound(q, v, now, '≥')}${Math.round(v.used)}% / ${Math.round(pace)}% | ${md(t(v.resetsAt, now))} |`;
   });
-  const lines = [['| | used / pace | resets |', '|---|---|---|', ...rows].join('\n')];
-  // Freshness only when it matters: an old snapshot says how old.
-  if (now - q.at > STALE_MS) lines.push(`_data ${ago(now - q.at)} old_`);
-  return lines;
+  return [['| | used / pace | resets |', '|---|---|---|', ...rows].join('\n')];
 }
 
 /** Codex reset credits still to spend, each with its expiry, soonest first. */

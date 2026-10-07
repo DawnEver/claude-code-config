@@ -11,6 +11,13 @@ that implied 74%.) Stale `used` is a lower bound, so comparing it to the current
 The 10-cell bar inserts `┃` between cells (11 chars) instead of overlaying one, so the marker
 never hides fill (100% used read as 90%). Stale snapshots (> STALE_MS) raise no run-out warning.
 
+Revised again 2026-10-07 (uncommitted at time of writing): the report never states a data age
+("data 2d old" was noise to the user). Stale (> 15 min) `used` < 100 renders as a floor
+(`≥60%`, heading `≤40% left`); 100% renders `(!) <k> exhausted · resets X` regardless of age;
+a passed reset reads `renewed`. Review open points: dead-feed detection (if wanted, a separate
+warning on real breakage, not an age line), stale `exhausted` vs unannounced extra resets,
+headline window choice still uses projections on stale data, helper ordering.
+
 # ccds and channels (verified live, 2026-10-03)
 
 Claude Code drops `notifications/claude/channel` on a third-party provider (ccds, API-key

@@ -480,9 +480,11 @@ add `reset credits: N` with each credit's expiry when credits remain.
 `timeFormat` picks how times read: `both` (default: `08/Oct 23:00 (4d 7h)`; `HH:MM` for
 today), `date` (`08/Oct 23:00` only) or `countdown` (time left only: `4d 7h`, `3h 15m`, `12m`). The run-out projection is
 the average rate since the window opened, as of the snapshot, so no history is kept; the
-pace marker is read at render time (it depends only on the clock). Freshness appears only
-for a snapshot over 15 minutes old, which also raises no run-out warning. Nothing is posted
-between rounds: every warning is a bold `(!)` line of the report — running out before reset,
+pace marker is read at render time (it depends only on the clock). The report never states
+a data age, only what is still true now: use only grows until a reset, so a snapshot over 15
+minutes old shows its use as a floor (`≥60%`, heading `≤40% left`) and is never projected
+from; 100% stays `exhausted` until the reset; a passed reset reads `renewed`. Nothing is posted
+between rounds: every warning is a bold `(!)` line of the report — a window exhausted or running out before reset,
 a seat logged into another account/org than registered (`org` = case-insensitive substring
 of organizationName, or exact `orgUuid`), no subscription login in a seat, a seat dir not
 registered for this machine, machine absent from a non-empty `seats`. Seats and order are
