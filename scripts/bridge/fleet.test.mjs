@@ -140,6 +140,8 @@ test('FleetReport state is per chat/Topic, saved only on change, and holds no em
 
 test('planName shows the sold name for wire plan ids', () => {
   assert.deepEqual([planName('self_serve_business_prolite'), planName('plus'), planName('edu_plus')], ['Business Premium', 'Plus', 'Edu Plus']);
+  assert.deepEqual([planName('team_labs_premium'), planName('team_labs_standard')], ['Team Premium', 'Team Standard']);
+  assert.match(render({ account: { ...ME, tier: 'team_labs_premium' }, sessions: [RUN('claude')] }), /`a@example\.com` · _Uni Team A · Team Premium_/);
 });
 
 test('FleetReport fetches extra resets once per report', async () => {
@@ -215,6 +217,10 @@ test('renderReport seat problems show the Claude block and name the expected sea
   assert.deepEqual(warn({ registry: { seats: [{ ...SEAT, orgUuid: 'u2' }] } }), ['**(\\!) wrong team, expected a@example\\.com · Team A**']);
   assert.deepEqual(warn({ account: null }), ['**(\\!) no subscription login, expected a@example\\.com · Team A**']);
   assert.match(render({ account: null }), /\n\n_not logged in_\n\n/);
+  const seated = { registry: { seats: [{ ...SEAT, alias: 'a' }] } };
+  assert.deepEqual(warn({ ...seated, dirs: [{ alias: null, account: ME, quota: short5h() }, { alias: 'a', account: null, quota: null }] }), [],
+    'an empty seat dir is fine when the base dir holds its seat');
+  assert.deepEqual(warn({ ...seated, dirs: [{ alias: 'a', account: null, quota: short5h() }] }), ['**(\\!) no subscription login, expected a@example\\.com · Team A**']);
   assert.deepEqual(warn({ machine: 'm9' }), ['**(\\!) m9 is not in seats**']);
   assert.equal(render({ machine: 'm9', registry: null }), null, 'no seats configured: nothing to check');
 });

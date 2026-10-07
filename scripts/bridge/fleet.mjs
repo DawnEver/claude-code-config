@@ -149,9 +149,9 @@ const bar = (used, pace) => {
 // escaped, so an email, org or branch can never become markup.
 const md = (v) => String(v).replace(/[\\`*_{}[\]()#+\-.!|<>~]/g, '\\$&');
 
-// Codex reports wire plan ids; show the name the plan is sold under. Unlisted ids are
-// title-cased (`edu_plus` -> `Edu Plus`).
-const PLAN_NAMES = { self_serve_business_prolite: 'Business Premium' };
+// Codex plan ids and Claude seat tiers are wire ids; show the name each is sold under.
+// Unlisted ids are title-cased (`edu_plus` -> `Edu Plus`).
+const PLAN_NAMES = { self_serve_business_prolite: 'Business Premium', team_labs_premium: 'Team Premium', team_labs_standard: 'Team Standard' };
 export const planName = (id) => PLAN_NAMES[id] ?? String(id).split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 /**
@@ -235,12 +235,14 @@ function seatProblem(account, seat) {
 function claudeGroups(dirs, seats, machine) {
   const mine = seatsFor(seats, machine);
   const groups = new Map();
+  // A seat dir that never logged in is not a problem when another dir already holds its seat.
+  const held = (seat) => dirs.some((o) => holds(o.account, seat));
   for (const d of dirs) {
     const seat = d.alias ? mine.find((x) => x.alias === d.alias) ?? null
       : mine.find((x) => holds(d.account, x)) ?? (mine.length === 1 ? mine[0] : null);
     const problem = d.alias && !seat ? `seat ${d.alias} is not registered for ${machine}`
       : !d.alias && !mine.length && Array.isArray(seats) && seats.length ? `${machine} is not in seats`
-      : seat ? seatProblem(d.account, seat) : null;
+      : seat && !(d.alias && !d.account && held(seat)) ? seatProblem(d.account, seat) : null;
     const key = seat ? mine.indexOf(seat) : `dir:${d.alias ?? ''}`;
     const g = groups.get(key) ?? { seat, label: seat?.alias ?? d.alias, account: d.account, quota: null, problems: [], aliases: [] };
     if (d.alias) g.account = d.account;
@@ -285,7 +287,8 @@ export function renderReport({ machine, registry, codexAccount, claude = [], cod
     const act = actionableResets(extra?.Claude, g.seat?.claimed);
     const run = claudeRun.filter((x) => g.aliases.includes(x.seat ?? null));
     if ((always.claude && g.quota) || run.length || act.banked.length || act.scheduled || g.problems.length) {
-      block(g.label ? `Claude · ${md(g.label)}` : 'Claude', g.quota, g.account?.email, g.account?.org,
+      block(g.label ? `Claude · ${md(g.label)}` : 'Claude', g.quota, g.account?.email,
+        [g.account?.org, g.account?.tier && planName(g.account.tier)].filter(Boolean).join(' · '),
         [...g.problems.map((p) => `**(\\!) ${md(p)}**`), ...quotaLines(g.quota, now, t), ...runLines(run), ...resetLines(act, now, t)]);
     }
   }

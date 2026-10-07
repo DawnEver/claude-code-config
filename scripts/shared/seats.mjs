@@ -38,10 +38,10 @@ export const accountFile = (dir, home = os.homedir()) =>
 
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
-/** A dir's `.claude.json` oauthAccount -> {email, org, orgUuid}, or null when not on a subscription login. */
+/** A dir's `.claude.json` oauthAccount -> {email, org, orgUuid, tier}, or null when not on a subscription login. */
 export function readAccount(dir, home = os.homedir()) {
   const a = readJson(accountFile(dir, home))?.oauthAccount;
-  return a?.emailAddress ? { email: a.emailAddress, org: a.organizationName ?? null, orgUuid: a.organizationUuid ?? null } : null;
+  return a?.emailAddress ? { email: a.emailAddress, org: a.organizationName ?? null, orgUuid: a.organizationUuid ?? null, tier: a.seatTier ?? null } : null;
 }
 
 export const sameText = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();

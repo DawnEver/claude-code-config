@@ -60,7 +60,7 @@ test('a seat runs in the base dir when the base login holds it, else in its own 
     const seats = [{ alias: 'team-a', email: 'a@x', org: 'Team A', machines: ['m1'] }, { alias: 'team-b', email: 'a@x', org: 'Team B', machines: ['m1'] }];
     assert.equal(baseSeat(seats, 'm1', home), null, 'not logged in: holds no seat');
     fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'A@x', organizationName: 'Uni Team B', organizationUuid: 'u2' } }));
-    assert.deepEqual(readAccount(baseDir(home), home), { email: 'A@x', org: 'Uni Team B', orgUuid: 'u2' });
+    assert.deepEqual(readAccount(baseDir(home), home), { email: 'A@x', org: 'Uni Team B', orgUuid: 'u2', tier: null });
     assert.equal(baseSeat(seats, 'm1', home), 'team-b');
     assert.equal(seatHome('team-b', seats, 'm1', home), baseDir(home));
     assert.equal(seatHome('team-a', seats, 'm1', home), seatDir('team-a', home));
