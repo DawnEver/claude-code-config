@@ -39,19 +39,18 @@ const span = (ms) => (ms < 24 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms 
 
 /**
  * One quota window as observed at `at` (epoch ms, like `resetsAt`).
- * @returns {{used, pace, resetsAt, perHour, eta, short}|null} short = projected to run out before
- *   reset; pace = the % an even spend would have used by `at`, to read `used` against
+ * @returns {{used, resetsAt, windowMs, perHour, eta, short}|null} short = projected to run out before
+ *   reset
  */
 export function windowView({ used, resetsAt, windowMs, at }) {
   used = pct(used);
   if (used === null || !(resetsAt > at) || !(windowMs > 0)) return null;
   const elapsed = windowMs - (resetsAt - at);
-  const pace = Math.min(100, Math.max(0, (elapsed / windowMs) * 100));
-  if (used >= 100) return { used, pace, resetsAt, perHour: null, eta: at, short: true };
-  if (elapsed < windowMs * MIN_ELAPSED_FRACTION || used <= 0) return { used, pace, resetsAt, perHour: null, eta: null, short: false };
+  if (used >= 100) return { used, resetsAt, windowMs, perHour: null, eta: at, short: true };
+  if (elapsed < windowMs * MIN_ELAPSED_FRACTION || used <= 0) return { used, resetsAt, windowMs, perHour: null, eta: null, short: false };
   const perMs = used / elapsed;
   const eta = at + (100 - used) / perMs;
-  return { used, pace, resetsAt, perHour: perMs * H, eta, short: eta < resetsAt };
+  return { used, resetsAt, windowMs, perHour: perMs * H, eta, short: eta < resetsAt };
 }
 
 /** The hud-hook tee: {at, five_hour:{used_percentage, resets_at(sec)}, seven_day:{...}}. */
@@ -154,12 +153,13 @@ export function timeFormatter(format) {
   return (ms, now) => `${when(ms, now)} (${countdown(ms, now)})`;
 }
 
-// Ten cells of `used`, with `┃` overlaid where an even spend would be by now: fill past the
-// marker is spending faster than the window lasts, fill short of it is headroom.
+// Ten cells of `used`, with `┃` inserted at the cell boundary an even spend would have
+// reached: fill past the marker is spending faster than the window lasts, fill short of it is
+// headroom. Inserted, not overlaid, so the marker never hides a cell of fill.
 const bar = (used, pace) => {
   const n = Math.round(used / 10);
   const cells = [...('█'.repeat(n) + '░'.repeat(10 - n))];
-  if (pace != null) cells[Math.min(9, Math.floor(pace / 10))] = '┃';
+  if (pace != null) cells.splice(Math.round(pace / 10), 0, '┃');
   return cells.join('');
 };
 const ago = (ms) => (ms < H ? `${Math.round(ms / 60000)}m` : ms < 48 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
@@ -185,16 +185,21 @@ function headline(q, now, t) {
   const short = live.filter(([, v]) => v.short).sort((a, b) => a[1].eta - b[1].eta);
   const [k, v] = short[0] ?? live.sort((a, b) => b[1].used - a[1].used)[0];
   return { title: ` · ${Math.round(100 - v.used)}% left`,
-    warn: v.short ? [`**(\\!) ${k} runs out ${md(t(v.eta, now))} · resets ${md(t(v.resetsAt, now))}**`] : [] };
+    warn: v.short && now - q.at <= STALE_MS ? [`**(\\!) ${k} runs out ${md(t(v.eta, now))} · resets ${md(t(v.resetsAt, now))}**`] : [] };
 }
+
+/** The % of a window an even spend would have used by `now`: clock-only, so never stale. */
+const paceAt = (v, now) => Math.min(100, Math.max(0, (1 - (v.resetsAt - now) / v.windowMs) * 100));
 
 /** The quota windows as one table: the detail under the headline. */
 function quotaLines(q, now, t) {
   if (!q) return ['_no quota data yet_'];
-  const rows = Object.entries(q.windows).map(([k, v]) => (v.resetsAt <= now
+  const rows = Object.entries(q.windows).map(([k, v]) => {
     // A past reset has no countdown: always a date.
-    ? `| ${k} | — | reset ${md(when(v.resetsAt, now))}, awaiting data |`
-    : `| ${k} | \`${bar(v.used, v.pace)}\` ${Math.round(v.used)}% / ${Math.round(v.pace)}% | ${md(t(v.resetsAt, now))} |`));
+    if (v.resetsAt <= now) return `| ${k} | — | reset ${md(when(v.resetsAt, now))}, awaiting data |`;
+    const pace = paceAt(v, now);
+    return `| ${k} | \`${bar(v.used, pace)}\` ${Math.round(v.used)}% / ${Math.round(pace)}% | ${md(t(v.resetsAt, now))} |`;
+  });
   const lines = [['| | used / pace | resets |', '|---|---|---|', ...rows].join('\n')];
   // Freshness only when it matters: an old snapshot says how old.
   if (now - q.at > STALE_MS) lines.push(`_data ${ago(now - q.at)} old_`);

@@ -4,10 +4,12 @@ description: Fleet quota pace marker; ccds cannot receive channel messages (veri
 ---
 # Fleet pace marker
 
-`windowView` (scripts/bridge/fleet.mjs) now returns `pace` = elapsed/window as %, computed
-at snapshot time (`at`), so it stays comparable to `used` even on stale data. The quota
-table column is `used / pace`; the 10-cell bar overlays `┃` at the pace cell (fill past
-it = spending faster than an even rate). Same 10% band hides the order; numbers disambiguate.
+Revised 2026-10-07: pace = elapsed/window as %, computed at render time (`paceAt(v, now)` in
+fleet.mjs) — it depends only on the clock, so it never goes stale, and it matches the
+resets countdown in the same row. (Snapshot-time pace showed 55% beside a "1d 20h" reset
+that implied 74%.) Stale `used` is a lower bound, so comparing it to the current pace is sound.
+The 10-cell bar inserts `┃` between cells (11 chars) instead of overlaying one, so the marker
+never hides fill (100% used read as 90%). Stale snapshots (> STALE_MS) raise no run-out warning.
 
 # ccds and channels (verified live, 2026-10-03)
 

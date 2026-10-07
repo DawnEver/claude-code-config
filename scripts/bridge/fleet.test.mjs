@@ -15,7 +15,7 @@ const short5h = (at = NOW) => claudeQuota({ at, five_hour: { used_percentage: 60
 test('windowView projects exhaustion from the average pace since the window opened', () => {
   // 5h window, 4h elapsed, 80% used -> 20%/h -> out exactly at reset: not short.
   const even = windowView({ used: 80, resetsAt: NOW + H, windowMs: 5 * H, at: NOW });
-  assert.deepEqual([Math.round(even.perHour), even.short, even.pace], [20, false, 80]);
+  assert.deepEqual([Math.round(even.perHour), even.short], [20, false]);
   // 2h elapsed, 60% used -> 30%/h -> out in 80 min, reset in 3h: short.
   const fast = windowView({ used: 60, resetsAt: NOW + 3 * H, windowMs: 5 * H, at: NOW });
   assert.deepEqual([fast.short, fast.eta], [true, NOW + (40 / 60) * 2 * H]);
@@ -158,8 +158,29 @@ test('renderReport: no machine title; the heading is the verdict, then the warni
   const text = render({ claude: short5h(), sessions: [RUN('claude')] });
   assert.match(text, /^## Claude · 40% left\n\n\*\*\(\\!\) 5h runs out \d\d:\d\d \\\(1h 20m\\\) · resets \d\d:\d\d \\\(3h 0m\\\)\*\*\n\n`a@example\.com` · _Uni Team A_\n\n/);
   assert.doesNotMatch(text, /m1/, 'the posting bot already names the machine');
-  assert.match(text, /\| 5h \| `████┃█░░░░` 60% \/ 40% \| \d\d:\d\d \\\(3h 0m\\\) \|/);
+  assert.match(text, /\| 5h \| `████┃██░░░░` 60% \/ 40% \| \d\d:\d\d \\\(3h 0m\\\) \|/);
   assert.match(text, /\n- \*\*proj\\-x\*\* · main$/);
+});
+
+test('a stale snapshot shows its verdict but raises no run-out warning', () => {
+  const text = render({ claude: short5h(NOW - 30 * 60000), sessions: [RUN('claude')] });
+  assert.match(text, /^## Claude · 40% left\n/);
+  assert.doesNotMatch(text, /runs out/);
+});
+
+test('pace is read at render time: a 30h-old snapshot still marks the current even spend', () => {
+  // Reset 44h away now (124h of 168h elapsed = 74%); the snapshot was taken 30h earlier.
+  const q = claudeQuota({ at: NOW - 30 * H, seven_day: { used_percentage: 100, resets_at: (NOW + 44 * H) / 1000 } });
+  assert.match(render({ claude: q, sessions: [RUN('claude')] }), /\| 7d \| `███████┃███` 100% \/ 74% \|/);
+});
+
+test('quota bar: the pace marker is inserted, never hiding a cell of fill', () => {
+  // Exhausted at 55% pace: a full bar, not one that reads as half used.
+  const full = claudeQuota({ at: NOW, seven_day: { used_percentage: 100, resets_at: (NOW + 75.6 * H) / 1000 } });
+  assert.match(render({ claude: full, sessions: [RUN('claude')] }), /\| 7d \| `██████┃████` 100% \/ 55% \|/);
+  // 26% used vs 24% pace: the fill visibly runs past the marker (over pace).
+  const over = claudeQuota({ at: NOW, seven_day: { used_percentage: 26, resets_at: (NOW + 128 * H) / 1000 } });
+  assert.match(render({ claude: over, sessions: [RUN('claude')] }), /\| 7d \| `██┃█░░░░░░░` 26% \/ 24% \|/);
 });
 
 test('renderReport shows a host only when it runs something, has a reset to act on, or a seat problem', () => {
