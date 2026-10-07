@@ -16,6 +16,7 @@ import { EventEmitter } from 'events';
 import { spawn, execFile } from 'child_process';
 import { WsStreamClient } from './ws-stream.mjs';
 import { JsonRpcPeer } from './jsonrpc.mjs';
+import { BRIDGE_DEFAULTS } from './context.mjs';
 
 const QUOTA_REFRESH_MS = 5 * 60000;
 const isCodexBucket = (l) => Boolean(l) && (l.limitId ?? 'codex') === 'codex';
@@ -116,19 +117,26 @@ export function backlogSince(turns = [], sinceMs) {
   return out;
 }
 
+/** A SessionSource's kind: the string itself, an object source's key, `unknown` when absent. */
+export function sourceKind(src) {
+  if (typeof src === 'string') return src;
+  if (src && typeof src === 'object') return Object.keys(src)[0] ?? 'unknown';
+  return 'unknown';
+}
+
 /**
- * Only main sessions are bridged: not a subagent (`parentThreadId`, `source.subAgent` —
- * review, compact, memory_consolidation, thread_spawn), not `codex exec` (automated, e.g.
- * fabric or sharp-review reviewers). A user fork (`forkedFromId`, no parent) is main.
+ * Only main sessions are bridged: a top-level thread (no `parentThreadId`) whose source kind
+ * is allowed by `bridge.codexSources` (default `cli`). A user fork (`forkedFromId`, no
+ * parent) counts by its own source.
  */
-export function isMainSession(thread) {
-  const src = thread?.source;
-  return !thread?.parentThreadId && !(src && typeof src === 'object' && 'subAgent' in src) && src !== 'exec';
+export function isMainSession(thread, sources = BRIDGE_DEFAULTS.codexSources) {
+  return !thread?.parentThreadId && sources.includes(sourceKind(thread?.source));
 }
 
 export class CodexAdapter extends EventEmitter {
-  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000 } = {}) {
+  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000, sources = BRIDGE_DEFAULTS.codexSources } = {}) {
     super();
+    this.sources = sources;
     this.agent = 'codex';
     this.now = now;
     this.resumeRetryMs = resumeRetryMs;
@@ -232,7 +240,7 @@ export class CodexAdapter extends EventEmitter {
     if (this.rpc !== rpc) return;
     const th = r.thread ?? {};
     if (th.ephemeral) return;
-    if (!isMainSession(th)) { this.#dismiss(threadId); return; }
+    if (!isMainSession(th, this.sources)) { this.#dismiss(threadId); return; }
     const running = (th.turns ?? []).findLast?.((t) => t.status === 'inProgress');
     const info = {
       cwd: th.cwd ?? r.cwd,
@@ -344,7 +352,7 @@ export class CodexAdapter extends EventEmitter {
         // Subscribe at once instead of waiting for the next poll; the backlog covers any
         // turn that still slipped in first.
         const id = p.thread?.id;
-        if (id && !isMainSession(p.thread)) { this.#dismiss(id); break; }
+        if (id && !isMainSession(p.thread, this.sources)) { this.#dismiss(id); break; }
         if (id && !this.threads.has(id) && !p.thread.ephemeral) {
           this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
         }

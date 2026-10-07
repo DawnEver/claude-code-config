@@ -27,7 +27,7 @@ function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
       const result = {
         initialize: { userAgent: 'fake' },
         'thread/loaded/list': { data: loaded, nextCursor: null },
-        'thread/resume': { thread: threads[m.params?.threadId] ?? { id: m.params?.threadId, cwd: '/w', ephemeral: false, gitInfo: { branch: 'feat/x' }, turns: [] } },
+        'thread/resume': { thread: threads[m.params?.threadId] ? { source: 'cli', ...threads[m.params?.threadId] } : { id: m.params?.threadId, source: 'cli', cwd: '/w', ephemeral: false, gitInfo: { branch: 'feat/x' }, turns: [] } },
         'thread/read': { thread: { id: m.params?.threadId, ephemeral: spec?.ephemeral ?? false } },
         'turn/start': { turn: { id: 'turnA' } },
         'turn/steer': { turnId: 'turnA' },
@@ -227,7 +227,7 @@ test('thread/started subscribes at once, once, and carries the backlog', async (
     { startedAt: Math.floor(Date.now() / 1000) + 5, status: 'completed', items: [
       { type: 'userMessage', content: [{ type: 'text', text: 'hi' }] }, { type: 'agentMessage', text: 'Hello!' }] }] };
   const { a, srv, ups } = await started({ loaded: [], threads: { t2: fresh } });
-  srv.push('thread/started', { thread: { id: 't2', ephemeral: false } });
+  srv.push('thread/started', { thread: { id: 't2', ephemeral: false, source: 'cli' } });
   srv.setLoaded(['t2']);
   await a.refresh();
   await tick(); await tick();
@@ -252,7 +252,7 @@ test('a fresh thread whose rollout is not written yet is retried until it subscr
   const ups = [];
   a.on('up', (s) => ups.push(s.id));
   await a.start(); await a.refresh();
-  srv.push('thread/started', { thread: { id: 't3', ephemeral: false } });
+  srv.push('thread/started', { thread: { id: 't3', ephemeral: false, source: 'cli' } });
   await new Promise((r) => setTimeout(r, 40));
   assert.deepEqual(ups, ['t3']);
   assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 2);
@@ -266,7 +266,7 @@ test('an empty rollout (the same race, other wording) is retried without a warni
   a.on('up', (s) => ups.push(s.id));
   a.on('warn', (w) => warns.push(w));
   await a.start(); await a.refresh();
-  srv.push('thread/started', { thread: { id: 't4', ephemeral: false } });
+  srv.push('thread/started', { thread: { id: 't4', ephemeral: false, source: 'cli' } });
   await new Promise((r) => setTimeout(r, 40));
   assert.deepEqual([ups, warns], [['t4'], []]);
 });
@@ -468,16 +468,22 @@ test('integration: real codex app-server answers initialize and thread/loaded/li
   } finally { a.stop(); }
 });
 
-test('isMainSession: only top-level, non-automated threads; a user fork is main', () => {
+test('isMainSession: top-level threads whose source kind is allowed (default cli only)', () => {
   assert.equal(isMainSession({ source: 'cli' }), true);
-  assert.equal(isMainSession({ source: 'appServer', forkedFromId: 'x' }), true);
-  assert.equal(isMainSession({ source: { custom: 'ide' } }), true);
-  assert.equal(isMainSession({}), true);
+  assert.equal(isMainSession({ source: 'cli', forkedFromId: 'x' }), true, 'a user fork counts by its source');
+  for (const source of ['vscode', 'appServer', 'exec', 'unknown', { custom: 'ide' }, undefined]) {
+    assert.equal(isMainSession({ source }), false, JSON.stringify(source));
+  }
   assert.equal(isMainSession({ source: 'cli', parentThreadId: 'p' }), false);
   for (const sub of ['review', 'compact', 'memory_consolidation', { thread_spawn: { depth: 1, parent_thread_id: 'p' } }]) {
     assert.equal(isMainSession({ source: { subAgent: sub } }), false, JSON.stringify(sub));
   }
-  assert.equal(isMainSession({ source: 'exec' }), false, 'codex exec is automated');
+  const sources = ['vscode', 'custom', 'unknown'];
+  assert.equal(isMainSession({ source: 'vscode' }, sources), true);
+  assert.equal(isMainSession({ source: { custom: 'ide' } }, sources), true);
+  assert.equal(isMainSession({}, sources), true, 'an absent source is unknown');
+  assert.equal(isMainSession({ source: 'cli' }, sources), false);
+  assert.equal(isMainSession({ source: 'vscode', parentThreadId: 'p' }, sources), false);
 });
 
 test('non-main threads never come up, are dismissed, and are not resumed again', async () => {

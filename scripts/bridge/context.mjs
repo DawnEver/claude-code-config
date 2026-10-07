@@ -31,15 +31,20 @@ export function bridgeSourceRevision(repoRoot = fileURLToPath(new URL('../../', 
   return hash.digest('hex');
 }
 
-/** The single source for the bridge's tunable defaults (0 = never for both). */
-export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 24 };
+/**
+ * The single source for the bridge's tunable defaults (0 = never for both).
+ * codexSources: the Codex SessionSource kinds bridged as main sessions — a string source
+ * (`cli`, `vscode`, `exec`, `appServer`, `unknown`) or an object source's key (`custom`,
+ * `subAgent`).
+ */
+export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli'] };
 
 const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
 
 /**
  * Normalised bridge config.
  * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId,
- *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours,
+ *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.codexSources,
  *          bridge.fleet.{chatId, topicId?, everyMinutes?, timeFormat?, order?, always?} (the fleet
  *          report; off without chatId. Its seats are the top-level `seats`, scripts/shared/seats.mjs)
  * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram
@@ -57,6 +62,7 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
     fallbackChatId: b.fallbackChatId ?? null,
     idleCloseMinutes: nonNegative(b.idleCloseMinutes, BRIDGE_DEFAULTS.idleCloseMinutes),
     deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
+    codexSources: Array.isArray(b.codexSources) ? b.codexSources.filter((s) => typeof s === 'string') : BRIDGE_DEFAULTS.codexSources,
     fleet: b.fleet?.chatId ? { chatId: b.fleet.chatId, topicId: b.fleet.topicId ?? null,
       everyMinutes: b.fleet.everyMinutes > 0 ? b.fleet.everyMinutes : 60,
       timeFormat: ['date', 'countdown'].includes(b.fleet.timeFormat) ? b.fleet.timeFormat : 'both',

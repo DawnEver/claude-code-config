@@ -25,6 +25,7 @@
   },
   "bridge": {
     "fallbackChatId": null,
+    "codexSources": ["cli"],
     "projects": {
       "your-repo-name": {
         "chatId": -1001234567890

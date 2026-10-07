@@ -732,7 +732,7 @@ export async function main() {
   const claude = new ClaudeAdapter();
   const port = await claude.listen(0);
   writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, sourceRevision }, null, 2));
-  const codex = new CodexAdapter();
+  const codex = new CodexAdapter({ sources: config.codexSources });
   const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, topicCacheFile: path.join(BRIDGE_RUNTIME_DIR, 'topics.json') });
 
   const ac = new AbortController();

@@ -25,10 +25,12 @@ holds for Claude and Codex alike.
 `isMainSession`, before it emits `up`; anything else never registers, never gets a Topic,
 and is never mirrored:
 
-- Codex (`codex-adapter.mjs`, from the Thread fields): main iff `parentThreadId` is null,
-  `source` is not `{subAgent: review | compact | memory_consolidation | thread_spawn | …}`,
-  and `source` is not `exec` (automated runs such as fabric or sharp-review reviewers). A
-  user fork (`forkedFromId`, no parent) is main. `thread/started` is judged from its payload
+- Codex (`codex-adapter.mjs`, from the Thread fields): main iff `parentThreadId` is null
+  and the source kind is in `bridge.codexSources` (default `["cli"]`). The kind is a string
+  `source` itself (`cli`, `vscode`, `exec`, `appServer`, `unknown`) or an object source's
+  key (`custom`, `subAgent`); a missing source is `unknown`. Note that the shared-daemon TUI
+  (`codc`) currently reports `vscode`. A user fork (`forkedFromId`, no parent) counts by its
+  own source. `thread/started` is judged from its payload
   without a resume; other threads are resumed once to learn it, and never again.
 - Claude (`claude_plugins/session-bridge/server.mjs`): in-process subagents never touch the
   bridge. A nested `claude` process (a plugin's `claude -p`, `ccc -p` run from a session's
@@ -192,11 +194,12 @@ Requires Anthropic auth: on a third-party provider (`ccds`) Claude Code drops ch
      "fallbackChatId": -1001111111111,
      "projects": { "claude-code-config": { "chatId": -1002222222222 } },
      "idleCloseMinutes": 30,
-     "deleteClosedAfterHours": 24
+     "deleteClosedAfterHours": 24,
+     "codexSources": ["cli"]
    }
    ```
    The tunables default as shown (`BRIDGE_DEFAULTS` in `scripts/bridge/context.mjs`);
-   `0` = never.
+   `0` = never. `codexSources` lists the Codex session source kinds bridged (see above).
 6. **Secrets** (machine-local, never synced) in `~/.claude/claude_env_settings.local.json`:
    ```json
    "bridge": {

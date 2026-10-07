@@ -37,8 +37,10 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
   fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '1:abc', allowedUserIds: ['42', 'x'], approvalsFromTelegram: true } }));
   try {
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }), {
-      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, fleet: null, projects: { a: { chatId: -100 } },
+      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli'], fleet: null, projects: { a: { chatId: -100 } },
     });
+    fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { codexSources: ['cli', 'vscode', 7] } }));
+    assert.deepEqual(readBridgeConfig({ sharedPath, localPath }).codexSources, ['cli', 'vscode']);
     fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '123456:your-bot-token' } }));
     const c = readBridgeConfig({ sharedPath, localPath });
     assert.equal(c.botToken, null, 'template placeholder is not a token');
