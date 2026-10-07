@@ -141,16 +141,16 @@ test('backlogSince replays only turns started after the bridge connected', () =>
   assert.deepEqual(backlogSince(turns, Infinity), []);
 });
 
-test('backlog keeps every final answer paragraph without commentary or duplicate items', () => {
+test('backlog keeps every message paragraph, commentary included, without duplicate items', () => {
   assert.equal(backlogSince([{ id: 't', startedAt: 2, status: 'completed', items: [
     { type: 'agentMessage', id: 'c', phase: 'commentary', text: 'I will inspect' },
     { type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'First paragraph' },
     { type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'First paragraph' },
     { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' },
-  ] }], 0)[0].text, 'First paragraph\n\nSecond paragraph');
+  ] }], 0)[0].text, 'I will inspect\n\nFirst paragraph\n\nSecond paragraph');
 });
 
-test('live turn keeps multiple final message items and ignores later commentary', async () => {
+test('live turn keeps every message item in order, commentary included', async () => {
   const { a, srv } = await started(); const finals = [];
   a.on('final', (f) => finals.push(f));
   srv.push('turn/started', { threadId: 't1', turn: { id: 't' } });
@@ -161,7 +161,7 @@ test('live turn keeps multiple final message items and ignores later commentary'
     { type: 'agentMessage', id: 'c', phase: 'commentary', text: 'working' },
   ]) srv.push('item/completed', { threadId: 't1', turnId: 't', item });
   srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed' } });
-  assert.equal(finals[0].text, 'First paragraph\n\nSecond paragraph');
+  assert.equal(finals[0].text, 'First paragraph\n\nSecond paragraph\n\nworking');
 });
 
 test('completed turn snapshot supplies lost items and replaces partial streamed text once', async () => {
@@ -174,7 +174,7 @@ test('completed turn snapshot supplies lost items and replaces partial streamed 
     { type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'Complete first paragraph' },
     { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' },
   ] } });
-  assert.equal(finals[0].text, 'Complete first paragraph\n\nSecond paragraph');
+  assert.equal(finals[0].text, 'working\n\nComplete first paragraph\n\nSecond paragraph');
 });
 
 test('unphased legacy final items are complete and cleared for the next turn', async () => {
@@ -189,7 +189,7 @@ test('unphased legacy final items are complete and cleared for the next turn', a
   assert.deepEqual(finals.map((f) => f.text), ['one first\n\none second', 'two first\n\ntwo second']);
 });
 
-test('phase from item start filters commentary even when completion notifications are missing', async () => {
+test('streamed items are complete even when completion notifications are missing', async () => {
   const { a, srv } = await started(); const finals = [];
   a.on('final', (f) => finals.push(f));
   srv.push('turn/started', { threadId: 't1', turn: { id: 't' } });
@@ -198,7 +198,7 @@ test('phase from item start filters commentary even when completion notification
     srv.push('item/agentMessage/delta', { threadId: 't1', turnId: 't', itemId: id, delta: text });
   }
   srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed' } });
-  assert.equal(finals[0].text, 'Answer');
+  assert.equal(finals[0].text, 'working\n\nAnswer');
 });
 
 test('late old-turn message events never contaminate the current final', async () => {

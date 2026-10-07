@@ -83,7 +83,7 @@ async function rig() {
   const a = new ClaudeAdapter();
   const port = await a.listen(0);
   const events = [];
-  for (const k of ['up', 'prompt', 'final', 'down']) a.on(k, (e) => events.push([k, e]));
+  for (const k of ['up', 'prompt', 'final', 'notice', 'down']) a.on(k, (e) => events.push([k, e]));
   const rpc = (sock, method, params) => new Promise((resolve) => {
     let buf = '';
     const onData = (d) => { buf += d; if (buf.includes('\n')) { sock.off('data', onData); resolve(JSON.parse(buf)); } };
@@ -189,12 +189,11 @@ test('a turn in flight across a bridge restart still mirrors its answer', async 
     const ch = await r.open();
     await r.rpc(ch, 'register', { sessionId: 's', cwd: '/repo' });
     await r.hook({ sessionIds: ['s'], kind: 'final', text: 'answer of a turn begun before the restart' });
-    await r.hook({ sessionIds: ['s'], kind: 'final', text: 'stop-hook continuation' });
     assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => e.text), ['answer of a turn begun before the restart']);
   } finally { await r.a.close(); }
 });
 
-test('envelope prompts and the finals of turns they (or a Stop hook) triggered are not mirrored', async () => {
+test('every turn end mirrors its unsent text; envelope prompts stay hidden', async () => {
   const r = await rig();
   try {
     const ch = await r.open();
@@ -203,14 +202,51 @@ test('envelope prompts and the finals of turns they (or a Stop hook) triggered a
     await r.hook({ sessionIds: ids, kind: 'prompt', text: 'human question' });
     await r.hook({ sessionIds: ids, kind: 'final', text: 'human answer' });
     await r.hook({ sessionIds: ids, kind: 'final', text: 'stop-hook continuation' });
-    await r.hook({ sessionIds: ids, kind: 'prompt', text: '<agent-message from="x">hand-back</agent-message>' });
-    await r.hook({ sessionIds: ids, kind: 'final', text: 'reaction to the hand-back' });
-    await r.a.inject('s', 'from phone', 'u');   // a Telegram turn counts even if its prompt never mirrors
+    await r.hook({ sessionIds: ids, kind: 'prompt', text: '<task-notification>done</task-notification>' });
+    await r.hook({ sessionIds: ids, kind: 'final', text: 'reaction to the background task' });
+    await r.a.inject('s', 'from phone', 'u');
     await r.hook({ sessionIds: ids, kind: 'final', text: 'phone answer' });
     assert.deepEqual(r.events.filter(([k]) => k !== 'up').map(([k, e]) => [k, e.text]), [
-      ['prompt', 'human question'], ['final', 'human answer'], ['final', 'phone answer'],
+      ['prompt', 'human question'], ['final', 'human answer'], ['final', 'stop-hook continuation'],
+      ['final', 'reaction to the background task'], ['final', 'phone answer'],
     ]);
     ch.destroy();
+  } finally { await r.a.close(); }
+});
+
+test('a final carries all text blocks of the turn; blocks already sent are not repeated', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's', cwd: '/repo' });
+    const ids = ['s'];
+    await r.hook({ sessionIds: ids, kind: 'prompt', text: 'go' });
+    await r.rpc(ch, 'reply', { text: 'heads-up' });
+    await r.hook({ sessionIds: ids, kind: 'final', texts: ['heads-up', 'analysis', 'answer'] });
+    await r.hook({ sessionIds: ids, kind: 'final', texts: ['heads-up', 'analysis', 'answer', 'after review'] });
+    await r.hook({ sessionIds: ids, kind: 'final', texts: ['answer'] });
+    await r.hook({ sessionIds: ids, kind: 'prompt', text: 'again' });
+    await r.hook({ sessionIds: ids, kind: 'final', texts: ['answer'] });
+    assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => e.text),
+      ['heads-up', 'analysis\n\nanswer', 'after review', 'answer']);
+  } finally { await r.a.close(); }
+});
+
+test('notices are mirrored; a local answer only for a question posted without controls', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's', cwd: '/repo' });
+    const ids = ['s'];
+    await r.hook({ sessionIds: ids, kind: 'activity', state: 'waiting-approval', text: 'Claude needs your permission to use Bash' });
+    await r.hook({ sessionIds: ids, kind: 'answer', text: 'Q? -> A' });
+    { const q = await r.open(); await r.rpc(q, 'question', { sessionIds: ids, questions: [{ question: 'Q?', options: [{ label: 'A' }] }] }); q.destroy(); }
+    await r.hook({ sessionIds: ids, kind: 'answer', text: 'Q? -> A' });
+    await r.hook({ sessionIds: ids, kind: 'answer', text: 'Q? -> A' });
+    await r.rpc(ch, 'permission_request', { request_id: 'p', tool_name: 'Bash' });
+    await r.hook({ sessionIds: ids, kind: 'activity', state: 'waiting-approval', text: 'Claude needs your permission to use Bash' });
+    assert.deepEqual(r.events.filter(([k]) => k === 'notice').map(([, e]) => [e.text, e.alert ?? false]),
+      [['Claude needs your permission to use Bash', true], ['answered locally: Q? -> A', false]]);
   } finally { await r.a.close(); }
 });
 

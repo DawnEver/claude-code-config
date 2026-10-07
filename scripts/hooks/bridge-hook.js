@@ -5,9 +5,13 @@
 // does for Codex — the session is mirrored mechanically through one authenticated call to the
 // bridge daemon's Claude adapter (claude-adapter.mjs; 127.0.0.1, port + token from
 // runtime.json), naming the session by id so the adapter finds its registered channel:
-//   UserPromptSubmit -> prompt;  Stop / StopFailure -> final;
-//   PreToolUse / PostToolUse -> activity running;  Notification -> waiting-approval |
-//   waiting-input | idle;  SessionEnd (not /clear) -> end.
+//   UserPromptSubmit -> prompt;  Stop -> final (every text block of the turn; the adapter
+//   drops blocks it already sent);  StopFailure -> failed final;
+//   PreToolUse / PostToolUse -> activity running (PostToolUse(AskUserQuestion) -> answer);
+//   Notification -> waiting-approval | waiting-input (with its message) | idle;
+//   SessionEnd (not /clear) -> end.
+// A prompt, final or answer the daemon did not take (down, restarting, slow) is spooled and
+// resent ahead of the next successful call, so a daemon hiccup delays rather than loses it.
 // A session Claude Code gives no channel (ccds, or no flag) has its Telegram messages queued
 // by the daemon; the Stop call gets them back and blocks the stop with them, so the session
 // continues with those messages as its next turn.
@@ -21,12 +25,15 @@
 
 import fs from 'fs';
 import net from 'net';
+import path from 'path';
 import { isMain } from '../shared/is-main.mjs';
 import { RUNTIME_FILE } from '../bridge/context.mjs';
 import { nearestClaude } from '../shared/process-tree.mjs';
 
 const TIMEOUT_MS = 2000;
 const QUESTION_TIMEOUT_MS = 10 * 60000;   // the settings hook timeout must exceed this
+const SPOOL_FILE = path.join(path.dirname(RUNTIME_FILE), 'spool.jsonl');
+const SPOOL_TTL_MS = 60 * 60000;
 const NOTIFICATION_STATES = { permission_prompt: 'waiting-approval', elicitation_dialog: 'waiting-input', idle_prompt: 'idle' };
 
 const isRealUser = (e) => {
@@ -36,8 +43,8 @@ const isRealUser = (e) => {
   return Array.isArray(c) && c.some((b) => b?.type === 'text');
 };
 
-/** Concatenated assistant text blocks after the last real user message of a JSONL transcript. */
-export function finalAssistantText(jsonl) {
+/** Assistant text blocks after the last real user message of a JSONL transcript. */
+export function turnTexts(jsonl) {
   const entries = [];
   for (const l of String(jsonl).split('\n')) {
     if (!l.trim()) continue;
@@ -50,7 +57,16 @@ export function finalAssistantText(jsonl) {
     if (e?.type !== 'assistant' || !Array.isArray(e.message?.content)) continue;
     for (const b of e.message.content) if (b?.type === 'text' && b.text?.trim()) texts.push(b.text.trim());
   }
-  return texts.join('\n\n');
+  return texts;
+}
+
+export const finalAssistantText = (jsonl) => turnTexts(jsonl).join('\n\n');
+
+/** `Q -> A` lines of an answered AskUserQuestion, from its tool response or input. */
+export function answerText(payload) {
+  const answers = payload.tool_response?.answers ?? payload.tool_input?.answers;
+  if (!answers || typeof answers !== 'object') return '';
+  return Object.entries(answers).map(([q, a]) => `${q} -> ${[].concat(a).join(', ')}`).join('\n');
 }
 
 /** The mirror call for one hook payload, or null when there is nothing to send. */
@@ -66,11 +82,12 @@ export function mirrorFor(payload, env = process.env) {
     return { ...base, kind: 'prompt', text };
   }
   if (payload?.hook_event_name === 'Stop') {
-    let text = typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message : '';
-    if (!text.trim() && payload.transcript_path) {
-      try { text = finalAssistantText(fs.readFileSync(payload.transcript_path, 'utf8')); } catch { return null; }
-    }
-    return text.trim() ? { ...base, kind: 'final', text } : null;
+    // The transcript may lag the last message; last_assistant_message never does.
+    let texts = [];
+    if (payload.transcript_path) try { texts = turnTexts(fs.readFileSync(payload.transcript_path, 'utf8')); } catch { /* none */ }
+    const last = typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message.trim() : '';
+    if (last && texts.at(-1) !== last) texts.push(last);
+    return texts.length ? { ...base, kind: 'final', texts } : null;
   }
   // A turn ended by an API error fires StopFailure instead of Stop; it waits for the human.
   if (payload?.hook_event_name === 'StopFailure') {
@@ -78,10 +95,14 @@ export function mirrorFor(payload, env = process.env) {
     return { ...base, kind: 'final', status: 'failed', text };
   }
   const event = payload?.hook_event_name;
+  if (event === 'PostToolUse' && payload.tool_name === 'AskUserQuestion') return { ...base, kind: 'answer', text: answerText(payload) };
   if ((event === 'PreToolUse' && payload.tool_name !== 'AskUserQuestion') || event === 'PostToolUse') return { ...base, kind: 'activity', state: 'running' };
   if (event === 'Notification') {
     const state = NOTIFICATION_STATES[payload.notification_type];
-    return state ? { ...base, kind: 'activity', state } : null;
+    if (!state) return null;
+    // What it waits for ("Claude needs your permission to use Bash") is worth a message.
+    const text = state !== 'idle' && typeof payload.message === 'string' ? payload.message.trim() : '';
+    return { ...base, kind: 'activity', state, ...(text ? { text } : {}) };
   }
   // /clear ends the old session id, but the claude process and its channel live on.
   if (event === 'SessionEnd') return payload.reason === 'clear' ? null : { ...base, kind: 'end' };
@@ -130,6 +151,28 @@ export function callHub(method, params, { runtimeFile = RUNTIME_FILE, timeoutMs 
   });
 }
 
+/** Keep a call the daemon did not take, for the next hook run to resend. */
+export function spool(call, { file = SPOOL_FILE, now = Date.now() } = {}) {
+  try { fs.appendFileSync(file, JSON.stringify({ at: now, call }) + '\n'); } catch { /* best effort */ }
+}
+
+/** Resend spooled calls oldest first; claimed by rename so concurrent hooks never double-send. */
+export async function flushSpool({ file = SPOOL_FILE, now = Date.now(), send = (c) => callHub('mirror', c) } = {}) {
+  const claimed = `${file}.${process.pid}`;
+  try { fs.renameSync(file, claimed); } catch { return; }
+  let lines = [];
+  try { lines = fs.readFileSync(claimed, 'utf8').split('\n'); } catch { /* gone */ } finally { fs.rmSync(claimed, { force: true }); }
+  for (const l of lines) {
+    let e;
+    try { e = JSON.parse(l); } catch { continue; }
+    if (!e?.call || now - e.at > SPOOL_TTL_MS) continue;
+    if ((await send(e.call)) === null) spool(e.call, { file, now: e.at });
+  }
+}
+
+/** Content worth resending; pure state changes are superseded by the next hook anyway. */
+const spoolable = (call) => (call.kind !== 'activity' && call.kind !== 'end') || Boolean(call.text);
+
 async function main() {
   if (!fs.existsSync(RUNTIME_FILE)) return;
   let raw = '';
@@ -151,7 +194,9 @@ async function main() {
   // process (the one owning the channel). Looked up only now — a process-table query is slow,
   // so never for the per-tool activity calls — and never from CLAUDE_PID, which a nested
   // `claude` inherits from its parent.
+  if (fs.existsSync(SPOOL_FILE)) await flushSpool();
   let r = await callHub('mirror', call);
+  if (r === null && spoolable(call)) { spool(call); return; }
   if (r?.routed === false && call.kind !== 'activity') {
     const claudePid = nearestClaude(process.ppid);
     if (claudePid) r = await callHub('mirror', { ...call, claudePid, retry: true });

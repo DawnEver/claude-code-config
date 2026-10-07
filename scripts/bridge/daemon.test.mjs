@@ -507,6 +507,16 @@ test('an injected prompt that never echoes back is forgotten after 10 minutes', 
   await until(() => texts(r.telegram).at(-1) === '> yes');
 });
 
+test('notices post as plain messages; only those asking for the human alert', async () => {
+  const r = make();
+  await live(r, 'claude', 'x');
+  r.hosts.claude.emit('notice', { id: 'x', text: 'Claude needs your permission to use Bash', alert: true });
+  r.hosts.claude.emit('notice', { id: 'x', text: 'answered locally: Q? -> A' });
+  await until(() => r.telegram.sent.length === 3);
+  assert.deepEqual(texts(r.telegram).slice(1), ['Claude needs your permission to use Bash', 'answered locally: Q? -> A']);
+  assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [[ALICE], null]);
+});
+
 test('progress lines collapse into one edited message; final is a new message', async () => {
   const r = make();
   await live(r, 'codex', 't1');

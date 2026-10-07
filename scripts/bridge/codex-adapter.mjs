@@ -85,17 +85,17 @@ export function progressLine(item) {
 
 const promptText = (item) => (item.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text).join('\n').trim();
 
-/** Native item order and IDs are authoritative; never collapse an answer to its last item. */
+/**
+ * Every agent message of the turn, commentary included: what the agent said along the way is
+ * part of the conversation. Native item order and IDs are authoritative.
+ */
 function finalText(items = []) {
   const messages = new Map();
   for (const item of items) {
     if (item?.type !== 'agentMessage') continue;
     messages.set(item.id ?? Symbol(), item);
   }
-  const all = [...messages.values()];
-  const hasFinalPhase = all.some((item) => item.phase === 'final_answer');
-  return all.filter((item) => hasFinalPhase ? item.phase === 'final_answer' : item.phase !== 'commentary')
-    .map((item) => item.text ?? '').filter((text) => text.trim()).join('\n\n');
+  return [...messages.values()].map((item) => item.text ?? '').filter((text) => text.trim()).join('\n\n');
 }
 
 /**

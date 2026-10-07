@@ -90,7 +90,7 @@ export class Bridge {
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
     a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
     a.on('status', e => this.updateStatus(sessionKey(a.agent, e.id)).catch(err => this.#warnOnce('status-card', err.message)));
-    for (const kind of ['prompt', 'progress', 'final', 'approval', 'question']) {
+    for (const kind of ['prompt', 'progress', 'final', 'notice', 'approval', 'question']) {
       a.on(kind, (e) => {
         const key = sessionKey(a.agent, e.id);
         const q = this.held.get(key);
@@ -122,6 +122,7 @@ export class Bridge {
     if (kind === 'prompt') return this.prompt(key, e.text);
     if (kind === 'progress') return this.progress(key, e.text);
     if (kind === 'final') return this.final(key, e.text, e.status);
+    if (kind === 'notice') return this.notice(key, e.text, e.alert);
     if (kind === 'question') return this.question(key, e);
     return this.approval(key, e);
   }
@@ -454,6 +455,12 @@ export class Bridge {
     // A failed turn has stopped and waits for the human, like an approval.
     await this.#send(s, status && status !== 'completed' ? `[${status}] ${body}` : body,
       status === 'failed' ? { alert: [...this.allowed] } : { rich: true });
+  }
+
+  /** A side note outside the turn's answer; `alert` when it waits for the human. */
+  async notice(key, text, alert) {
+    const s = this.sessions.get(key);
+    if (s && text?.trim()) await this.#send(s, text, alert ? { alert: [...this.allowed] } : {});
   }
 
   async sendAttachment(key, request) {

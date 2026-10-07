@@ -144,13 +144,21 @@ token in `runtime.json`):
   `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g. `ccc -p` run from inside a
   session) inherits its parent's, which once routed one session's output into another's
   Topic — the walk finds the nested process instead. Channel prompts are unwrapped to their text, so the echo suppression above
-  drops them. A final identical to a `reply` of the same turn is not posted twice; `reply`
-  stays for explicit mid-task messages.
-- Only human-initiated turns are mirrored: a prompt that is wholly harness/plugin envelopes
+  drops them. `reply` stays for explicit mid-task messages.
+- Every turn end is mirrored, with every assistant text block of the turn (the transcript
+  after the last user message, plus `last_assistant_message` when the transcript lags), not
+  just the last message. The adapter remembers the blocks it sent since the last prompt
+  (`reply` texts included) and posts only new ones, so a Stop-hook continuation (e.g.
+  sharp-review) adds just what it wrote. A prompt that is wholly harness/plugin envelopes
   (`<agent-message>`, `<task-notification>`, `<system-reminder>`, `Stop hook feedback:`) is
-  dropped with its final, and so is a final with no prompt since the last one (a Stop-hook
-  continuation, e.g. sharp-review). A Telegram inject always opens a mirrored turn.
-  Recognition lives in `isEnvelope` (`claude-adapter.mjs`).
+  not shown, but the answer it triggers is — a background task's or subagent's result
+  reaches the Topic. Recognition lives in `isEnvelope` (`claude-adapter.mjs`).
+- What a Notification waits for ("Claude needs your permission to use Bash") is posted with
+  an alert, unless a channel permission request already posted it with buttons. An
+  AskUserQuestion answered in the terminal is posted as `answered locally: Q -> A`.
+- A prompt, final or answer the daemon did not take (down, restarting, over the 2 s hook
+  budget) is spooled to `~/.claude/bridge/spool.jsonl` and resent, oldest first, by the next
+  hook run; entries older than an hour are dropped.
 - No `/interrupt` (use Esc locally).
 
 Nothing to do by hand once this machine has a `bridge.botToken`: `npm run setup` registers
@@ -569,9 +577,10 @@ neither retried nor downgraded. Original native answer text remains authoritativ
 
 Shell/PowerShell command executions and their output are not mirrored as progress.
 Approval prompts retain necessary command details for an informed decision.
-Codex answers are assembled from all native final-answer items in order, deduplicated
-by item ID. Turn-completion snapshots repair missed/partial stream content; explicit
-commentary is not mixed into final answers. Backlog replay uses the same assembly.
+Codex answers are assembled from all native agent-message items in order, commentary
+included (what the agent said along the way is part of the conversation), deduplicated
+by item ID. Turn-completion snapshots repair missed/partial stream content. Backlog
+replay uses the same assembly.
 
 Synthetic live Telegram document roundtrips preserved exact bytes; photo upload and
 download succeeded with Telegram transformation. Current Codex thread outbound file

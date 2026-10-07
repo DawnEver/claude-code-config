@@ -29,6 +29,7 @@ import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 import { isValidAlias } from '../shared/seats.mjs';
 
 const AUTH_TIMEOUT_MS = 5000;
+const heldKey = (m) => JSON.stringify([m.kind, m.text, m.texts ?? null]);
 const STATES = new Set(['running', 'idle', 'waiting-approval', 'waiting-input']);
 const HOLD_MS = 30000;
 
@@ -53,7 +54,7 @@ export class ClaudeAdapter extends EventEmitter {
     this.agent = 'claude';
     this.token = token;
     this.now = now;
-    // sessionId -> { peer, socket, replies, approvals, questions, claudePid, humanTurn, remoteTurn, activity }
+    // sessionId -> { peer, socket, sent, approvals, questions, claudePid, remoteTurn, localQuestion, activity }
     this.sessions = new Map();
     this.held = [];              // hook calls that arrived before their session registered
   }
@@ -95,9 +96,9 @@ export class ClaudeAdapter extends EventEmitter {
           }
           // A turn may be in flight when the bridge restarts: with no prompt seen by this
           // daemon, assume a human turn, so its answer is mirrored rather than lost.
-          this.sessions.set(sessionId, { peer, socket, replies: [], approvals: new Set(), questions: new Map(),
+          this.sessions.set(sessionId, { peer, socket, sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
-            queued: previous?.queued ?? [], humanTurn: previous ? previous.humanTurn : true,
+            queued: previous?.queued ?? [], localQuestion: false,
             remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
           this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, backlog: [] });
           this.#emitStatus(sessionId);
@@ -107,10 +108,11 @@ export class ClaudeAdapter extends EventEmitter {
         if (method === 'mirror') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
           const bad = () => Object.assign(new Error('bad kind'), { code: -32602 });
-          if (!['prompt', 'final', 'activity', 'end'].includes(p.kind)) throw bad();
+          if (!['prompt', 'final', 'answer', 'activity', 'end'].includes(p.kind)) throw bad();
           if (p.kind === 'activity' && !STATES.has(p.state)) throw bad();
           const r = this.#mirror({ ...ids(p), retry: p.retry === true, kind: p.kind,
-            ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? '') });
+            ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? ''),
+            ...(Array.isArray(p.texts) ? { texts: p.texts.map(String) } : {}) });
           return { ok: true, routed: r !== false, ...(Array.isArray(r) ? { deliver: r } : {}) };
         }
         if (method === 'question') {
@@ -130,7 +132,7 @@ export class ClaudeAdapter extends EventEmitter {
         }
         if (method === 'reply') {
           const text = String(p.text ?? '');
-          this.sessions.get(sessionId)?.replies.push(text.trim());
+          this.sessions.get(sessionId)?.sent.add(text.trim());
           this.emit('final', { id: sessionId, text });
           return { ok: true };
         }
@@ -214,6 +216,7 @@ export class ClaudeAdapter extends EventEmitter {
     s.activity = 'waiting-input';
     this.#emitStatus(id);
     if (!(p.wait === true && s.remoteTurn)) {
+      s.localQuestion = true;   // its answer, given in the terminal, is mirrored by PostToolUse
       this.emit('question', { id, ref, questions, answerable: false });
       return { answers: null };
     }
@@ -228,24 +231,32 @@ export class ClaudeAdapter extends EventEmitter {
     if (!id) {
       // Only prompts and finals are held for a channel that has not registered yet (a retry's
       // first copy already is); a later hook carries fresher state than a held activity.
-      if (m.kind !== 'prompt' && m.kind !== 'final') return false;
+      if (m.kind !== 'prompt' && m.kind !== 'final' && m.kind !== 'answer') return false;
       const now = this.now();
       this.held = [...this.held.filter((h) => now - h.at < HOLD_MS), ...(m.retry ? [] : [{ m, at: now }])];
       return false;
     }
     // A retry routed by process: its unroutable first copy must not be released later.
-    if (m.retry) this.held = this.held.filter((h) => !(h.m.kind === m.kind && h.m.text === m.text));
+    if (m.retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
     if (m.kind === 'end') { this.#end(id); return true; }
     const s = this.sessions.get(id);
-    s.activity = m.kind === 'activity' ? m.state : m.kind === 'prompt' ? 'running' : 'idle';
+    s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
     this.#emitStatus(id);
-    if (m.kind === 'activity') return true;
-    // Only human-initiated turns are mirrored: a prompt typed locally or sent from Telegram.
-    // Envelope prompts, and Stop-hook continuations (a final with no prompt since the last
-    // one), are the harness talking to itself.
+    if (m.kind === 'activity') {
+      // A Notification saying what it waits for; a channel permission request already posted it.
+      if (m.text.trim() && !(m.state === 'waiting-approval' && s.approvals.size)) this.emit('notice', { id, text: m.text, alert: true });
+      return true;
+    }
+    if (m.kind === 'answer') {
+      if (s.localQuestion && m.text.trim()) this.emit('notice', { id, text: `answered locally: ${m.text}` });
+      s.localQuestion = false;
+      return true;
+    }
+    // A prompt opens a new turn. Envelope prompts (harness/plugin injections) are not shown,
+    // but the answer they trigger is: every turn end mirrors the text not yet sent.
     if (m.kind === 'prompt') {
-      s.humanTurn = !isEnvelope(m.text);
-      if (s.humanTurn) {
+      s.sent = new Set();
+      if (!isEnvelope(m.text)) {
         // A channel prompt is wrapped: that turn came from Telegram, any other was typed here.
         const text = unwrapChannel(m.text);
         s.remoteTurn = text !== m.text;
@@ -253,17 +264,17 @@ export class ClaudeAdapter extends EventEmitter {
       }
       return true;
     }
-    const human = s.humanTurn;
-    s.humanTurn = false;
-    // The model may already have sent this answer with the reply tool.
-    const dup = s.replies.includes(m.text.trim());
-    s.replies = [];
-    if (human && m.text.trim() && !dup) this.emit('final', { id, text: m.text, ...(m.status ? { status: m.status } : {}) });
+    // A Stop-hook continuation ends with the same turn's blocks again: send only the new
+    // ones, and none the model already sent with the reply tool.
+    const blocks = (m.texts ?? [m.text]).map((t) => t.trim()).filter(Boolean);
+    const fresh = blocks.filter((b) => !s.sent.has(b));
+    for (const b of blocks) s.sent.add(b);
+    if (fresh.length || m.status === 'failed') this.emit('final', { id, text: fresh.join('\n\n'), ...(m.status ? { status: m.status } : {}) });
     // A failed turn (StopFailure) cannot be continued by its hook; the queue waits for the next.
     if (!s.queued.length || m.status === 'failed') return true;
     const deliver = s.queued;
     s.queued = [];
-    s.humanTurn = true;
+    s.sent = new Set();
     s.remoteTurn = true;
     s.activity = 'running';
     this.#emitStatus(id);
@@ -294,7 +305,6 @@ export class ClaudeAdapter extends EventEmitter {
       return { queued: true, note: `queued: ${why}, so ${when}. ${fix}` };
     }
     s.peer.notify('inbound', { text, user: user ?? '' });
-    s.humanTurn = true;   // whether or not UserPromptSubmit reports channel prompts
     s.remoteTurn = true;
     s.activity = 'running';
     this.#emitStatus(id);
