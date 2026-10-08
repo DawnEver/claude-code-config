@@ -69,6 +69,7 @@ test('mirrorFor: tool use is activity, notifications map to states, SessionEnd e
   assert.equal(at({ hook_event_name: 'Notification', notification_type: 'auth_success' }), null);
   assert.deepEqual(at({ hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' }), { sessionIds: ['s'], kind: 'end' });
   assert.equal(at({ hook_event_name: 'SessionEnd', reason: 'clear' }), null, 'the process and its channel live on');
+  assert.equal(at({ hook_event_name: 'SessionEnd', reason: 'resume' }), null, 'an in-process /resume keeps the process and its channel');
 });
 
 test('questionFor and answerOutput: AskUserQuestion only; answers ride updatedInput', () => {

@@ -9,7 +9,7 @@
 //   drops blocks it already sent);  StopFailure -> failed final;
 //   PreToolUse / PostToolUse -> activity running (PostToolUse(AskUserQuestion) -> answer);
 //   Notification -> waiting-approval | waiting-input (with its message) | idle;
-//   SessionEnd (not /clear) -> end.
+//   SessionEnd (not /clear or /resume) -> end.
 // A prompt, final or answer the daemon did not take (down, restarting, slow) is spooled and
 // resent ahead of the next successful call, so a daemon hiccup delays rather than loses it.
 // A session Claude Code gives no channel (ccds, or no flag) has its Telegram messages queued
@@ -103,8 +103,9 @@ export function mirrorFor(payload, env = process.env) {
     const text = state !== 'idle' && typeof payload.message === 'string' ? payload.message.trim() : '';
     return { ...base, kind: 'activity', state, ...(text ? { text } : {}) };
   }
-  // /clear ends the old session id, but the claude process and its channel live on.
-  if (event === 'SessionEnd') return payload.reason === 'clear' ? null : { ...base, kind: 'end' };
+  // /clear and an in-process /resume end the old session id, but the claude process and its
+  // channel live on: ending it would unregister a live channel and orphan the resumed session.
+  if (event === 'SessionEnd') return payload.reason === 'clear' || payload.reason === 'resume' ? null : { ...base, kind: 'end' };
   return null;
 }
 

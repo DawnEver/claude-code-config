@@ -548,7 +548,7 @@ is suppressed for both current adapters; final answers and approvals remain visi
   state of the channel it replaces); `UserPromptSubmit`, a Telegram inject, `PreToolUse` and
   `PostToolUse` -> Working; `Stop` / `StopFailure` -> Idle; `Notification`
   `permission_prompt` -> Needs approval, `elicitation_dialog` or an `AskUserQuestion` ->
-  Needs input, `idle_prompt` -> Idle; `SessionEnd` (except `/clear`, whose process and
+  Needs input, `idle_prompt` -> Idle; `SessionEnd` (except `/clear` and `/resume`, whose process and
   channel live on) or the channel socket closing -> Ended. An interrupted turn fires no Stop
   hook: it reads Working until the next edge (`idle_prompt` fires after about a minute
   idle). A channel `permission_request` alone does not change the state. Reply tool is not
