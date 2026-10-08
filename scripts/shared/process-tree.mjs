@@ -9,11 +9,15 @@ export function tokens(cmd, n) {
 
 export const base = (p) => String(p ?? '').split(/[\\/]/).pop().toLowerCase();
 
-/** Is this command line the claude CLI itself (not a shim, launcher or shell that names it)? */
+// Claude's own background-session hosts (`claude daemon run` -> `claude --bg-pty-host ... --
+// claude --resume ...`) run the CLI binary but are not a session around the one they host.
+const HOST_MODES = new Set(['daemon', '--bg-pty-host']);
+
+/** Is this command line a claude CLI session (not a shim, launcher, shell or background host)? */
 export function isClaudeProcess(cmd) {
-  const [prog, script] = tokens(cmd, 2);
-  if (/^claude(\.exe)?$/.test(base(prog))) return true;
-  return /^node(\.exe)?$/.test(base(prog)) && /@anthropic-ai[\\/]claude-code[\\/]/i.test(script ?? '');
+  const [prog, a, b] = tokens(cmd, 3);
+  if (/^claude(\.exe)?$/.test(base(prog))) return !HOST_MODES.has(a);
+  return /^node(\.exe)?$/.test(base(prog)) && /@anthropic-ai[\\/]claude-code[\\/]/i.test(a ?? '') && !HOST_MODES.has(b);
 }
 
 /** pid -> {ppid, cmd} for every process; empty when the OS will not say. */

@@ -295,6 +295,17 @@ test('a top-level ccc session (launcher, shim, claude) is main; one started from
   assert.equal(isMainSession({ ppid: 4, claudePid: undefined, ancestors: [own, shim, cc, { pid: 9, cmd: 'bash.exe' }, outer] }), false);
 });
 
+test('a background session (claude daemon -> --bg-pty-host -> claude) is main: the hosts are not sessions', () => {
+  const exe = String.raw`C:\Users\u\.local\bin\claude.exe`;
+  const own = { pid: 3292, cmd: String.raw`${exe} --resume C:\Users\u\.claude\projects\p\d3.jsonl --name task-x` };
+  const pty = { pid: 18148, cmd: String.raw`${exe} --bg-pty-host \\.\pipe\cc-daemon-49-pty-37 171 50 -- ${exe} --resume C:\x.jsonl` };
+  const daemon = { pid: 21708, cmd: String.raw`${exe} daemon run --json-path C:\Users\u\.claude\daemon.json` };
+  assert.equal(isClaudeProcess(pty.cmd), false);
+  assert.equal(isClaudeProcess(daemon.cmd), false);
+  assert.equal(isClaudeProcess('node /n/node_modules/@anthropic-ai/claude-code/cli.js daemon run'), false);
+  assert.equal(isMainSession({ ppid: 3292, claudePid: undefined, ancestors: [own, pty, daemon, { pid: 7484, cmd: 'wmiprvse.exe' }] }), true);
+});
+
 test('ancestorsOf walks a process table upward from a pid', () => {
   const table = new Map([[10, { ppid: 9, cmd: 'claude' }], [9, { ppid: 8, cmd: 'bash' }], [8, { ppid: 8, cmd: 'init' }]]);
   assert.deepEqual(ancestorsOf(10, table).map((a) => a.pid), [10, 9, 8]);

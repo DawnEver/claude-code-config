@@ -233,6 +233,8 @@ export class ClaudeAdapter extends EventEmitter {
       // first copy already is); a later hook carries fresher state than a held activity.
       if (m.kind !== 'prompt' && m.kind !== 'final' && m.kind !== 'answer') return false;
       const now = this.now();
+      const expired = this.held.filter((h) => now - h.at >= HOLD_MS);
+      for (const h of expired) this.emit('warn', `claude: dropped unroutable ${h.m.kind} for ${h.m.sessionIds.join('/')} (no registered channel)`);
       this.held = [...this.held.filter((h) => now - h.at < HOLD_MS), ...(m.retry ? [] : [{ m, at: now }])];
       return false;
     }

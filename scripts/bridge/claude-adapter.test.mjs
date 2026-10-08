@@ -384,3 +384,18 @@ test('a session missing only the flag says to resume with ccc', async () => {
     ch.destroy();
   } finally { await r.a.close(); }
 });
+
+test('a held hook call that never finds its channel is dropped with a warning, not silently', async () => {
+  const r = await rig();
+  let t = 0;
+  r.a.now = () => t;
+  const warns = [];
+  r.a.on('warn', (m) => warns.push(m));
+  try {
+    await r.hook({ sessionIds: ['orphan'], kind: 'prompt', text: 'lost' });
+    t = 31000;
+    await r.hook({ sessionIds: ['orphan'], kind: 'final', text: 'later' });
+    assert.equal(warns.length, 1);
+    assert.match(warns[0], /dropped unroutable prompt for orphan/);
+  } finally { await r.a.close(); }
+});
