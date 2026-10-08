@@ -64,7 +64,7 @@ Telegram + remote control on the same live session, per-machine bridge in
   `prune-cache-hook.js` (SessionStart: drops stale plugin-cache versions),
   `notify-hook.js` (cross-platform notifications), `hud-hook.js` (statusLine),
   `bridge-hook.js` (UserPromptSubmit + Stop + StopFailure: mirrors Claude prompts/final answers to the
-  session bridge's Telegram Topic; PreToolUse + PostToolUse + Notification + SessionEnd drive the
+  session bridge's Telegram Topic; PreToolUse + PostToolUse + Notification drive the
   bridge's Claude state machine; PreToolUse(AskUserQuestion) relays the question and, in a
   Telegram-started turn, waits up to 10 min for the answer; silent no-op unless the bridge
   daemon runs — `docs/bridge.md`),

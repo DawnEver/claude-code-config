@@ -5,19 +5,22 @@
 //   - each session's session-bridge channel (claude_plugins/session-bridge) stays connected:
 //       register {token, sessionId, cwd}, reply {text}, permission_request {...}
 //       <- inbound {text, user}, permission {request_id, behavior}
-//   - bridge-hook.js makes one-shot calls: mirror {token, sessionIds, kind, text|state}
-//     (kind prompt | final | activity | end; a final may answer {deliver: [{text, user}]}), and question {token, sessionIds, questions, wait},
+//   - bridge-hook.js makes one-shot calls: mirror {token, sessionId, kind, text|state}
+//     (kind prompt | final | answer | activity; a final may answer {deliver: [{text, user}]}), and question {token, sessionId, questions, wait},
 //     held open for a Telegram-started turn until the answer arrives
 // and it emits the host-neutral events every adapter emits (see daemon.mjs):
 //   up {id, cwd, backlog}, prompt {id, text}, final {id, text},
 //   approval {id, ref, summary, answerable}, question {id, ref, questions, answerable},
 //   question-resolved {id, ref}, down {id}.
-// Session state is a state machine driven only by hook edges: prompt / activity -> running,
-// final -> idle, Notification -> waiting-approval | waiting-input | idle, SessionEnd -> down.
-// A hook call names the session's current id and the id its process started with (the
-// channel registered under the latter; /clear mints a new current one), and is held briefly
-// when it beats the channel's registration. CLAUDE_PID is not usable: a nested `claude`
-// inherits its parent's.
+// One channel = one claude process, keyed by the conversation id it started with. Its socket
+// is the only liveness signal: it closes exactly when the process exits (SessionEnd also fires
+// on in-process /clear and /resume, so it proves nothing). Session state is driven by hook
+// edges: prompt / activity -> running, final -> idle, Notification -> waiting-approval |
+// waiting-input | idle.
+// A hook names the conversation id current in its process. /clear and /resume change it; the
+// hook's retry then names its claude process, and the session learns the new id, so later
+// calls (activity, questions) route by id again. A hook call is held briefly when it beats the
+// channel's registration. CLAUDE_PID is not usable: a nested `claude` inherits its parent's.
 // A session Claude Code gives no channel (no flag, or a third-party provider such as ccds)
 // cannot receive inbound: its Telegram messages are queued and handed to the Stop hook at the
 // end of its next turn, which continues the session with them.
@@ -54,7 +57,8 @@ export class ClaudeAdapter extends EventEmitter {
     this.agent = 'claude';
     this.token = token;
     this.now = now;
-    // sessionId -> { peer, socket, sent, approvals, questions, claudePid, remoteTurn, localQuestion, activity }
+    // sessionId -> { peer, socket, ids, sent, approvals, questions, claudePid, remoteTurn, localQuestion, activity }
+    // ids: every conversation id seen in this process; each id belongs to at most one session.
     this.sessions = new Map();
     this.held = [];              // hook calls that arrived before their session registered
   }
@@ -82,7 +86,7 @@ export class ClaudeAdapter extends EventEmitter {
     const authTimer = setTimeout(() => { if (!sessionId) socket.destroy(); }, AUTH_TIMEOUT_MS);
     authTimer.unref();
     const unauthorized = () => { setImmediate(() => socket.destroy()); return Object.assign(new Error('unauthorized'), { code: 401 }); };
-    const ids = (p) => ({ sessionIds: (Array.isArray(p.sessionIds) ? p.sessionIds : []).map(String), claudePid: Number(p.claudePid) || null });
+    const ids = (p) => ({ sessionId: typeof p.sessionId === 'string' ? p.sessionId : '', claudePid: Number(p.claudePid) || null });
     const peer = new JsonRpcPeer((t) => socket.write(t + '\n'), {
       onRequest: (method, p = {}) => {
         if (method === 'register') {
@@ -96,7 +100,8 @@ export class ClaudeAdapter extends EventEmitter {
           }
           // A turn may be in flight when the bridge restarts: with no prompt seen by this
           // daemon, assume a human turn, so its answer is mirrored rather than lost.
-          this.sessions.set(sessionId, { peer, socket, sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
+          this.#claim(sessionId, null);
+          this.sessions.set(sessionId, { peer, socket, ids: new Set([...(previous?.ids ?? []), sessionId]), sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
             queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
             remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
@@ -108,7 +113,7 @@ export class ClaudeAdapter extends EventEmitter {
         if (method === 'mirror') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
           const bad = () => Object.assign(new Error('bad kind'), { code: -32602 });
-          if (!['prompt', 'final', 'answer', 'activity', 'end'].includes(p.kind)) throw bad();
+          if (!['prompt', 'final', 'answer', 'activity'].includes(p.kind)) throw bad();
           if (p.kind === 'activity' && !STATES.has(p.state)) throw bad();
           const r = this.#mirror({ ...ids(p), retry: p.retry === true, ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
             ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? ''),
@@ -170,7 +175,7 @@ export class ClaudeAdapter extends EventEmitter {
     });
   }
 
-  /** The session is gone (channel closed or SessionEnd): withdraw its controls, report down. */
+  /** The claude process is gone (its channel closed): withdraw its controls, report down. */
   #end(id) {
     const s = this.sessions.get(id);
     if (!s) return;
@@ -189,12 +194,21 @@ export class ClaudeAdapter extends EventEmitter {
     this.#emitStatus(id);
   }
 
-  #route({ sessionIds, claudePid }) {
-    const byId = sessionIds.find((id) => this.sessions.has(id));
-    if (byId || !claudePid) return byId ?? null;
-    // After /clear no id matches; the claude process that owns the channel still does.
-    for (const [id, s] of this.sessions) if (s.claudePid === claudePid) return id;
+  #route({ sessionId, claudePid }) {
+    for (const [id, s] of this.sessions) if (s.ids.has(sessionId)) return id;
+    if (!claudePid) return null;
+    // After /clear or /resume no id matches; the claude process that owns the channel does.
+    for (const [id, s] of this.sessions) {
+      if (s.claudePid !== claudePid) continue;
+      if (sessionId) { this.#claim(sessionId, id); s.ids.add(sessionId); }
+      return id;
+    }
     return null;
+  }
+
+  /** A conversation id now lives in session `owner` (null: a channel registering it): no other keeps it. */
+  #claim(convId, owner) {
+    for (const [id, s] of this.sessions) if (id !== owner) s.ids.delete(convId);
   }
 
   /**
@@ -234,13 +248,12 @@ export class ClaudeAdapter extends EventEmitter {
       if (m.kind !== 'prompt' && m.kind !== 'final' && m.kind !== 'answer') return false;
       const now = this.now();
       const expired = this.held.filter((h) => now - h.at >= HOLD_MS);
-      for (const h of expired) this.emit('warn', `claude: dropped unroutable ${h.m.kind} for ${h.m.sessionIds.join('/')} (no registered channel)`);
+      for (const h of expired) this.emit('warn', `claude: dropped unroutable ${h.m.kind} for ${h.m.sessionId} (no registered channel)`);
       this.held = [...this.held.filter((h) => now - h.at < HOLD_MS), ...(m.retry ? [] : [{ m, at: now }])];
       return false;
     }
     // A retry routed by process: its unroutable first copy must not be released later.
     if (m.retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
-    if (m.kind === 'end') { this.#end(id); return true; }
     const s = this.sessions.get(id);
     s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
     this.#emitStatus(id);

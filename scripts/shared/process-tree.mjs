@@ -1,5 +1,5 @@
 // scripts/shared/process-tree.mjs — who is this process's claude? Used by the session-bridge
-// channel (main vs nested session) and bridge-hook.js (routing after /clear).
+// channel (main vs nested session) and bridge-hook.js (routing after /clear or /resume).
 import { execFileSync } from 'child_process';
 
 /** The first `n` tokens of a command line, honouring double quotes. */
@@ -21,14 +21,14 @@ export function isClaudeProcess(cmd) {
 }
 
 /** pid -> {ppid, cmd} for every process; empty when the OS will not say. */
-export function processTable() {
+export function processTable({ timeoutMs = 10000 } = {}) {
   const table = new Map();
   try {
     const out = process.platform === 'win32'
       ? execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
         'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$(if ($_.CommandLine) { $_.CommandLine } else { $_.Name })" }'],
-        { encoding: 'utf8', windowsHide: true, timeout: 10000, stdio: ['ignore', 'pipe', 'ignore'] })
-      : execFileSync('ps', ['-A', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
+        { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] })
+      : execFileSync('ps', ['-A', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] })
         .replace(/^\s*(\d+)\s+(\d+)\s+/gm, '$1\t$2\t');
     for (const line of out.split(/\r?\n/)) {
       const [pid, ppid, ...cmd] = line.split('\t');

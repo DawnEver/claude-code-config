@@ -131,18 +131,28 @@ token in `runtime.json`):
   `register {token, sessionId, cwd}` (`sessionId` = `CLAUDE_CODE_SESSION_ID`, so `--resume`
   re-attaches), then `reply`, `permission_request`.
   Inbound Telegram text arrives in the session as a `<channel source="session-bridge">`
-  event. Its socket closing is `down`.
+  event. Its socket closing is `down` — the only end signal: one channel is one `claude`
+  process, and the socket closes exactly when that process exits.
 - **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit`, `Stop`, `StopFailure`,
-  `PreToolUse`, `PostToolUse`, `Notification` and `SessionEnd`) mirrors every prompt and the
+  `PreToolUse`, `PostToolUse` and `Notification`) mirrors every prompt and the
   turn's final assistant text with a one-shot `mirror` call, so output does not depend on
-  the model calling `reply`; the other events are cheap state edges (`activity` / `end`,
+  the model calling `reply`; the other events are cheap state edges (`activity`,
   see Session status), and `PreToolUse(AskUserQuestion)` is a `question` call (see Questions).
-  Each call has a 2 s budget (a waiting question 10 min), exits 0 on any failure, and prints
-  nothing except a question's answer. Calls name the payload's `session_id` and the
-  hook's `CLAUDE_CODE_SESSION_ID`, and are held up to 30 s if they beat the channel's
-  registration. `/clear` evidently changes **both** ids (after it, the mirror stopped — 2026-10-02), so when no session
-  matches, the hook retries naming its own nearest `claude` process (a process-table walk,
-  done only on a miss because it is slow); the channel registered under that same process.
+  `SessionEnd` is not wired: it also fires on an in-process `/clear` or `/resume`, and
+  treating it as the end once unregistered a live channel, so a resumed session's turns
+  were all dropped (2026-10-08).
+  Each daemon call has a 2 s budget (a waiting question 10 min; a run at most 8.5 s, under
+  the 10 s settings timeout), exits 0 on any failure, and prints nothing except a question's
+  answer. Calls name the payload's `session_id` — the conversation id current in the
+  process; the hook's `CLAUDE_CODE_SESSION_ID` always equals it, so it adds nothing — and
+  are held up to 30 s if they beat the channel's registration. `/clear` and `/resume`
+  change that id, so when no session matches, a prompt, final or answer is retried naming
+  the hook's own nearest `claude` process (a process-table walk, done only on a miss
+  because it is slow); the channel registered under that same process, and the adapter
+  learns the new id, so later activity and questions route by id again. An id belongs to
+  one session at a time: a channel registering it, or a process retry naming it, takes it
+  from any other. A call spooled while the daemon was down carries its process too, since a
+  restarted daemon has forgotten every learned id.
   `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g. `ccc -p` run from inside a
   session) inherits its parent's, which once routed one session's output into another's
   Topic — the walk finds the nested process instead. Channel prompts are unwrapped to their text, so the echo suppression above
@@ -351,7 +361,7 @@ No macOS/Linux or multi-machine acceptance was performed in this baseline.
 | Discovery/main-session filtering | Automated: channel ancestry and adapter registration | Automated: native ancestry/source filtering; live handshake/list | Concurrent main/child sessions on each platform |
 | Prompt/final mirroring | Automated: hook routing, envelopes and dedupe; historical live clear recovery | Automated: deltas/backlog/final; recent live posts | Re-run after deployment, including failed turns |
 | Input and echo suppression | Automated: channel injection/disconnect; historical live closed-topic input | Automated: idle start and expected-turn steering | Local/remote contention and uncertain send outcome |
-| Clear/resume/fork | Historical live Claude clear; automated process-id routing | Automated user-fork classification/backlog | Resume identity and full fork isolation for both hosts |
+| Clear/resume/fork | Live clear and in-process resume (2026-10-08); automated process-id routing and id learning | Automated user-fork classification/backlog | Resume identity and full fork isolation for both hosts |
 | Command/file approvals | Historical live Claude permission button; automated relay | Automated command/file relay | Native acceptance, local-first/remote-first and stale callbacks |
 | Other tool approvals | Unverified: Write/Edit/Bash/WebFetch/MCP coverage under explicit modes | Unsupported remotely outside recognized native methods | Trace emitted request, bridge relay and native outcome separately |
 | Questions | Unverified channel behavior for AskUserQuestion | Native-only request_user_input | Do not infer support from ordinary text injection |
@@ -403,7 +413,7 @@ require separate acceptance evidence.
 - Channels together with `--remote-control` in one Claude session.
 - Telegram approval buttons answer a Claude permission request.
 - `deleteForumTopic` on a closed Topic (create, close, delete; a later send fails).
-- Mirroring after `/clear` through the process-id retry.
+- Mirroring after `/clear` and an in-process `/resume` through the process-id retry.
 
 ## Attachments
 
@@ -548,8 +558,7 @@ is suppressed for both current adapters; final answers and approvals remain visi
   state of the channel it replaces); `UserPromptSubmit`, a Telegram inject, `PreToolUse` and
   `PostToolUse` -> Working; `Stop` / `StopFailure` -> Idle; `Notification`
   `permission_prompt` -> Needs approval, `elicitation_dialog` or an `AskUserQuestion` ->
-  Needs input, `idle_prompt` -> Idle; `SessionEnd` (except `/clear` and `/resume`, whose process and
-  channel live on) or the channel socket closing -> Ended. An interrupted turn fires no Stop
+  Needs input, `idle_prompt` -> Idle; the channel socket closing -> Ended. An interrupted turn fires no Stop
   hook: it reads Working until the next edge (`idle_prompt` fires after about a minute
   idle). A channel `permission_request` alone does not change the state. Reply tool is not
   completion.

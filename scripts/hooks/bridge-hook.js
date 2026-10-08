@@ -4,14 +4,19 @@
 // The model is not trusted to call the channel's `reply` tool, so — like the Codex adapter
 // does for Codex — the session is mirrored mechanically through one authenticated call to the
 // bridge daemon's Claude adapter (claude-adapter.mjs; 127.0.0.1, port + token from
-// runtime.json), naming the session by id so the adapter finds its registered channel:
+// runtime.json), naming the conversation id current in this claude process (payload.session_id):
 //   UserPromptSubmit -> prompt;  Stop -> final (every text block of the turn; the adapter
 //   drops blocks it already sent);  StopFailure -> failed final;
 //   PreToolUse / PostToolUse -> activity running (PostToolUse(AskUserQuestion) -> answer);
-//   Notification -> waiting-approval | waiting-input (with its message) | idle;
-//   SessionEnd (not /clear or /resume) -> end.
+//   Notification -> waiting-approval | waiting-input (with its message) | idle.
+// SessionEnd is not mirrored: it also fires on in-process /clear and /resume, and the end of
+// the process is already observed by the daemon as its channel's socket closing.
+// After /clear or /resume the adapter does not know the new id yet: a prompt, final or answer
+// it could not route is retried naming this hook's claude process, and the adapter learns the
+// id from that, so activity and questions route by id again.
 // A prompt, final or answer the daemon did not take (down, restarting, slow) is spooled and
-// resent ahead of the next successful call, so a daemon hiccup delays rather than loses it.
+// resent ahead of the next successful call, so a daemon hiccup delays rather than loses it;
+// it carries its claude process, since a restarted daemon has forgotten the ids it learned.
 // A session Claude Code gives no channel (ccds, or no flag) has its Telegram messages queued
 // by the daemon; the Stop call gets them back and blocks the stop with them, so the session
 // continues with those messages as its next turn.
@@ -28,9 +33,11 @@ import net from 'net';
 import path from 'path';
 import { isMain } from '../shared/is-main.mjs';
 import { RUNTIME_FILE } from '../bridge/context.mjs';
-import { nearestClaude } from '../shared/process-tree.mjs';
+import { nearestClaude, processTable } from '../shared/process-tree.mjs';
 
-const TIMEOUT_MS = 2000;
+const TIMEOUT_MS = 2000;   // per daemon call, and for the process-table lookup
+// Hard exit: spool replay + call + process lookup + retry. The settings hook timeout exceeds it.
+const RUN_MS = 4 * TIMEOUT_MS + 500;
 const QUESTION_TIMEOUT_MS = 10 * 60000;   // the settings hook timeout must exceed this
 const SPOOL_FILE = path.join(path.dirname(RUNTIME_FILE), 'spool.jsonl');
 const SPOOL_TTL_MS = 60 * 60000;
@@ -69,11 +76,10 @@ export function answerText(payload) {
 }
 
 /** The mirror call for one hook payload, or null when there is nothing to send. */
-export function mirrorFor(payload, env = process.env) {
-  // The current id, and the one this claude process started with (its channel's id).
-  const sessionIds = [...new Set([payload?.session_id, env.CLAUDE_CODE_SESSION_ID].filter(Boolean))];
-  if (!sessionIds.length) return null;
-  const base = { sessionIds };
+export function mirrorFor(payload) {
+  const sessionId = payload?.session_id;
+  if (!sessionId) return null;
+  const base = { sessionId };
   if (payload?.hook_event_name === 'UserPromptSubmit') {
     const text = String(payload.prompt ?? '');
     // A channel prompt (from Telegram) is sent too: the daemon's echo suppression drops it.
@@ -103,18 +109,15 @@ export function mirrorFor(payload, env = process.env) {
     const text = state !== 'idle' && typeof payload.message === 'string' ? payload.message.trim() : '';
     return { ...base, kind: 'activity', state, ...(text ? { text } : {}) };
   }
-  // /clear and an in-process /resume end the old session id, but the claude process and its
-  // channel live on: ending it would unregister a live channel and orphan the resumed session.
-  if (event === 'SessionEnd') return payload.reason === 'clear' || payload.reason === 'resume' ? null : { ...base, kind: 'end' };
   return null;
 }
 
 /** The `question` call for a PreToolUse(AskUserQuestion) payload, or null. */
-export function questionFor(payload, env = process.env) {
+export function questionFor(payload) {
   if (payload?.hook_event_name !== 'PreToolUse' || payload.tool_name !== 'AskUserQuestion') return null;
   const questions = payload.tool_input?.questions;
-  const sessionIds = [...new Set([payload.session_id, env.CLAUDE_CODE_SESSION_ID].filter(Boolean))];
-  return Array.isArray(questions) && questions.length && sessionIds.length ? { sessionIds, questions, wait: true } : null;
+  const sessionId = payload.session_id;
+  return Array.isArray(questions) && questions.length && sessionId ? { sessionId, questions, wait: true } : null;
 }
 
 /** PreToolUse output that answers AskUserQuestion without showing its dialog. */
@@ -182,7 +185,10 @@ export async function flushSpool({ file = SPOOL_FILE, now = Date.now, budgetMs =
 }
 
 /** Content worth resending; pure state changes are superseded by the next hook anyway. */
-const spoolable = (call) => (call.kind !== 'activity' && call.kind !== 'end') || Boolean(call.text);
+const spoolable = (call) => call.kind !== 'activity' || Boolean(call.text);
+
+/** This hook's claude process (it owns the channel), within the hook's time budget. */
+const ownClaude = () => nearestClaude(process.ppid, processTable({ timeoutMs: TIMEOUT_MS }));
 
 async function main() {
   if (!fs.existsSync(RUNTIME_FILE)) return;
@@ -193,7 +199,7 @@ async function main() {
   // entries with an identical command, so the catch-all one must not be that entry's twin.
   const question = process.argv.includes('--question') ? questionFor(payload) : null;
   // A non-question run may spend one budget on a spool replay and one on its own call.
-  setTimeout(() => process.exit(0), (question ? QUESTION_TIMEOUT_MS : 2 * TIMEOUT_MS) + 500).unref();
+  setTimeout(() => process.exit(0), question ? QUESTION_TIMEOUT_MS + 500 : RUN_MS).unref();
   if (question) {
     const r = await callHub('question', question, { timeoutMs: QUESTION_TIMEOUT_MS });
     // Flushed before the process exits: stdout may be an asynchronous pipe.
@@ -202,15 +208,15 @@ async function main() {
   }
   const call = mirrorFor(payload);
   if (!call) return;
-  // No session matched: after /clear both ids are new. Retry naming this hook's own claude
-  // process (the one owning the channel). Looked up only now — a process-table query is slow,
-  // so never for the per-tool activity calls — and never from CLAUDE_PID, which a nested
+  // No session matched: after /clear or /resume the id is new. Retry naming this hook's own
+  // claude process (the one owning the channel). Looked up only now — a process-table query is
+  // slow, so never for the per-tool activity calls — and never from CLAUDE_PID, which a nested
   // `claude` inherits from its parent.
   if (fs.existsSync(SPOOL_FILE)) await flushSpool();
   let r = await callHub('mirror', call);
-  if (r === null && spoolable(call)) { spool(call); return; }
+  if (r === null && spoolable(call)) { spool({ ...call, claudePid: ownClaude() ?? undefined }); return; }
   if (r?.routed === false && call.kind !== 'activity') {
-    const claudePid = nearestClaude(process.ppid);
+    const claudePid = ownClaude();
     if (claudePid) r = await callHub('mirror', { ...call, claudePid, retry: true });
   }
   const out = payload.hook_event_name === 'Stop' && deliverOutput(r?.deliver);

@@ -63,7 +63,7 @@
           {
             "type": "command",
             "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }
@@ -108,15 +108,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "Notification": [
@@ -134,7 +125,7 @@
           {
             "type": "command",
             "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }
@@ -145,7 +136,7 @@
           {
             "type": "command",
             "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }
@@ -156,7 +147,7 @@
           {
             "type": "command",
             "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }
@@ -167,7 +158,7 @@
           {
             "type": "command",
             "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }
@@ -179,7 +170,7 @@
           {
             "type": "command",
             "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }

@@ -26,56 +26,54 @@ test('turnTexts: text blocks after the last real user message only', () => {
 });
 
 test('mirrorFor: prompt from payload, channel injections skipped, final prefers last_assistant_message', () => {
-  const env = { CLAUDE_CODE_SESSION_ID: 'boot' };
+  const env = {};
   assert.deepEqual(mirrorFor({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: 'hi' }, env),
-    { sessionIds: ['s', 'boot'], kind: 'prompt', text: 'hi' });
-  assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', prompt: '<channel source="session-bridge">x</channel>' }, env).text, '<channel source="session-bridge">x</channel>', 'passed through; the adapter unwraps it');
+    { sessionId: 's', kind: 'prompt', text: 'hi' });
+  assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: '<channel source="session-bridge">x</channel>' }, env).text, '<channel source="session-bridge">x</channel>', 'passed through; the adapter unwraps it');
   assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, {}), null, 'no session id -> no-op');
-  assert.deepEqual(mirrorFor({ hook_event_name: 'UserPromptSubmit', session_id: 'boot', prompt: 'hi' }, env).sessionIds, ['boot'], 'deduplicated');
   assert.deepEqual(mirrorFor({ hook_event_name: 'Stop', session_id: 's', last_assistant_message: 'bye' }, env),
-    { sessionIds: ['s', 'boot'], kind: 'final', texts: ['bye'] });
+    { sessionId: 's', kind: 'final', texts: ['bye'] });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-'));
   try {
     const tp = path.join(dir, 't.jsonl');
     fs.writeFileSync(tp, [user('q'), asst([{ type: 'text', text: 'checking' }]), asst([{ type: 'text', text: 'from transcript' }])].join('\n'));
-    assert.deepEqual(mirrorFor({ hook_event_name: 'Stop', transcript_path: tp }, env).texts, ['checking', 'from transcript']);
-    assert.deepEqual(mirrorFor({ hook_event_name: 'Stop', transcript_path: tp, last_assistant_message: 'from transcript' }, env).texts,
+    assert.deepEqual(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: tp }, env).texts, ['checking', 'from transcript']);
+    assert.deepEqual(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: tp, last_assistant_message: 'from transcript' }, env).texts,
       ['checking', 'from transcript'], 'the last message is not repeated');
-    assert.deepEqual(mirrorFor({ hook_event_name: 'Stop', transcript_path: tp, last_assistant_message: 'not flushed yet' }, env).texts,
+    assert.deepEqual(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: tp, last_assistant_message: 'not flushed yet' }, env).texts,
       ['checking', 'from transcript', 'not flushed yet'], 'a transcript lagging the last message');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  assert.equal(mirrorFor({ hook_event_name: 'Stop', transcript_path: '/nope' }, env), null);
+  assert.equal(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: '/nope' }, env), null);
 });
 
 test('mirrorFor: StopFailure (a turn ended by an API error) is a failed final', () => {
   assert.deepEqual(mirrorFor({ hook_event_name: 'StopFailure', session_id: 's', error_type: 'rate_limit', error_message: 'slow down' }, {}),
-    { sessionIds: ['s'], kind: 'final', status: 'failed', text: 'rate_limit: slow down' });
+    { sessionId: 's', kind: 'final', status: 'failed', text: 'rate_limit: slow down' });
   assert.equal(mirrorFor({ hook_event_name: 'StopFailure', session_id: 's' }, {}).text, 'unknown');
 });
 
-test('mirrorFor: tool use is activity, notifications map to states, SessionEnd ends unless it is a /clear', () => {
+test('mirrorFor: tool use is activity, notifications map to states, SessionEnd is not mirrored', () => {
   const env = {};
   const at = (p) => mirrorFor({ session_id: 's', ...p }, env);
-  assert.deepEqual(at({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }), { sessionIds: ['s'], kind: 'activity', state: 'running' });
+  assert.deepEqual(at({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }), { sessionId: 's', kind: 'activity', state: 'running' });
   assert.deepEqual(at({ hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', tool_response: { answers: { 'Which?': 'A', 'Also?': ['x', 'y'] } } }),
-    { sessionIds: ['s'], kind: 'answer', text: 'Which? -> A\nAlso? -> x, y' });
+    { sessionId: 's', kind: 'answer', text: 'Which? -> A\nAlso? -> x, y' });
   assert.deepEqual(at({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }),
-    { sessionIds: ['s'], kind: 'activity', state: 'waiting-approval', text: 'Claude needs your permission to use Bash' });
+    { sessionId: 's', kind: 'activity', state: 'waiting-approval', text: 'Claude needs your permission to use Bash' });
   assert.equal(at({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }).text, undefined, 'idle is no news');
   assert.equal(at({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion' }), null, 'a question is its own call');
   assert.equal(at({ hook_event_name: 'Notification', notification_type: 'permission_prompt' }).state, 'waiting-approval');
   assert.equal(at({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }).state, 'idle');
   assert.equal(at({ hook_event_name: 'Notification', notification_type: 'elicitation_dialog' }).state, 'waiting-input');
   assert.equal(at({ hook_event_name: 'Notification', notification_type: 'auth_success' }), null);
-  assert.deepEqual(at({ hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' }), { sessionIds: ['s'], kind: 'end' });
-  assert.equal(at({ hook_event_name: 'SessionEnd', reason: 'clear' }), null, 'the process and its channel live on');
-  assert.equal(at({ hook_event_name: 'SessionEnd', reason: 'resume' }), null, 'an in-process /resume keeps the process and its channel');
+  for (const reason of ['prompt_input_exit', 'clear', 'resume', 'other'])
+    assert.equal(at({ hook_event_name: 'SessionEnd', reason }), null, `${reason}: the channel socket closing is the only end signal`);
 });
 
 test('questionFor and answerOutput: AskUserQuestion only; answers ride updatedInput', () => {
   const tool_input = { questions: [{ question: 'Which?', header: 'H', multiSelect: false, options: [{ label: 'A', description: '' }] }] };
   assert.deepEqual(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's', tool_input }, {}),
-    { sessionIds: ['s'], questions: tool_input.questions, wait: true });
+    { sessionId: 's', questions: tool_input.questions, wait: true });
   assert.equal(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 's', tool_input }, {}), null);
   assert.equal(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's', tool_input: {} }, {}), null);
   assert.deepEqual(answerOutput(tool_input, { 'Which?': 'A' }), { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow',
@@ -89,10 +87,10 @@ test('callHub delivers to a live hub, and resolves quietly when none runs', asyn
     const port = await hub.listen(0);
     const runtimeFile = path.join(dir, 'runtime.json');
     fs.writeFileSync(runtimeFile, j({ port, token: hub.token }));
-    assert.deepEqual(await callHub('mirror', { sessionIds: ['s'], kind: 'final', text: 'ok' }, { runtimeFile }), { ok: true, routed: false });
-    assert.deepEqual(hub.held.map((h) => h.m), [{ sessionIds: ['s'], claudePid: null, retry: false, kind: 'final', text: 'ok' }], 'held until its session registers');
-    assert.deepEqual(await callHub('question', { sessionIds: ['s'], questions: [{ question: 'q' }], wait: true }, { runtimeFile }), { answers: null });
-    assert.equal(await callHub('mirror', { sessionIds: ['s'], kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), null);
+    assert.deepEqual(await callHub('mirror', { sessionId: 's', kind: 'final', text: 'ok' }, { runtimeFile }), { ok: true, routed: false });
+    assert.deepEqual(hub.held.map((h) => h.m), [{ sessionId: 's', claudePid: null, retry: false, kind: 'final', text: 'ok' }], 'held until its session registers');
+    assert.deepEqual(await callHub('question', { sessionId: 's', questions: [{ question: 'q' }], wait: true }, { runtimeFile }), { answers: null });
+    assert.equal(await callHub('mirror', { sessionId: 's', kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), null);
   } finally { await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
