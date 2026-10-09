@@ -413,3 +413,28 @@ test('a held hook call that never finds its channel is dropped with a warning, n
     assert.match(warns[0], /dropped unroutable prompt for orphan/);
   } finally { await r.a.close(); }
 });
+
+test('an agent-view relaunch (new id, same first message) supersedes the old session; the old one never steals back', async () => {
+  const r = await rig();
+  const moves = [];
+  r.a.on('superseded', (e) => moves.push(e));
+  try {
+    const old = await r.open();
+    await r.rpc(old, 'register', { sessionId: 'y' });
+    await r.hook({ sessionId: 'y', kind: 'prompt', text: 'before switch', origin: 'u0' });
+    const fresh = await r.open();
+    await r.rpc(fresh, 'register', { sessionId: 'x', inbound: false });
+    await r.hook({ sessionId: 'x', kind: 'activity', state: 'running', origin: 'u0' });
+    assert.deepEqual(moves, [{ id: 'x', from: 'y' }]);
+    assert.equal(r.a.statusSnapshot('y').state, 'disconnected');
+    await assert.rejects(r.a.inject('y', 'hi', 'u'), /disconnected/);
+    assert.match((await r.a.inject('x', 'hi', 'u')).note, /agent view[\s\S]*ccc --resume x/);
+    // The stale channel re-registers (reconnect): a session again, but it cannot take the Topic back.
+    const again = await r.open();
+    await r.rpc(again, 'register', { sessionId: 'y' });
+    await r.hook({ sessionId: 'y', kind: 'activity', state: 'idle', origin: 'u0' });
+    await r.hook({ sessionId: 'x', kind: 'final', text: 'answer', origin: 'u0' });
+    assert.deepEqual(moves, [{ id: 'x', from: 'y' }], 'no move back, none repeated');
+    for (const s of [old, fresh, again]) s.destroy();
+  } finally { await r.a.close(); }
+});

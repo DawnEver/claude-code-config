@@ -57,10 +57,12 @@ export class ClaudeAdapter extends EventEmitter {
     this.agent = 'claude';
     this.token = token;
     this.now = now;
-    // sessionId -> { peer, socket, ids, sent, approvals, questions, claudePid, remoteTurn, localQuestion, activity }
+    // sessionId -> { peer, socket, ids, sent, approvals, questions, claudePid, remoteTurn, localQuestion, activity, origin }
     // ids: every conversation id seen in this process; each id belongs to at most one session.
+    // origin: uuid of the conversation's first message (the hook reads it from the transcript).
     this.sessions = new Map();
     this.held = [];              // hook calls that arrived before their session registered
+    this.superseded = new Set(); // sessions a relaunch of their conversation replaced
   }
 
   listen(port = 0) {
@@ -86,7 +88,8 @@ export class ClaudeAdapter extends EventEmitter {
     const authTimer = setTimeout(() => { if (!sessionId) socket.destroy(); }, AUTH_TIMEOUT_MS);
     authTimer.unref();
     const unauthorized = () => { setImmediate(() => socket.destroy()); return Object.assign(new Error('unauthorized'), { code: 401 }); };
-    const ids = (p) => ({ sessionId: typeof p.sessionId === 'string' ? p.sessionId : '', claudePid: Number(p.claudePid) || null });
+    const ids = (p) => ({ sessionId: typeof p.sessionId === 'string' ? p.sessionId : '', claudePid: Number(p.claudePid) || null,
+      ...(typeof p.origin === 'string' && p.origin ? { origin: p.origin } : {}) });
     const peer = new JsonRpcPeer((t) => socket.write(t + '\n'), {
       onRequest: (method, p = {}) => {
         if (method === 'register') {
@@ -104,7 +107,7 @@ export class ClaudeAdapter extends EventEmitter {
           this.sessions.set(sessionId, { peer, socket, ids: new Set([...(previous?.ids ?? []), sessionId]), sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
             queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
-            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
+            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, origin: previous?.origin ?? null });
           this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, backlog: [] });
           this.#emitStatus(sessionId);
           this.#release();
@@ -206,6 +209,26 @@ export class ClaudeAdapter extends EventEmitter {
     return null;
   }
 
+  /**
+   * Agent view relaunches a conversation under a new session id and a new claude process
+   * (without ccc's channel flag), while the old process and its channel stay up. Both report
+   * the same first message: the session that reports it later is the live one, so it takes
+   * the conversation (the daemon moves the Topic), and the replaced one never takes it back.
+   */
+  #adopt(id, origin) {
+    const s = this.sessions.get(id);
+    if (!origin || !s || this.superseded.has(id)) return;
+    s.origin ??= origin;
+    if (s.origin !== origin) return;
+    for (const [old, o] of this.sessions) {
+      if (old === id || o.origin !== origin) continue;
+      this.#withdraw(old, o);
+      this.sessions.delete(old);
+      this.superseded.add(old);
+      this.emit('superseded', { id, from: old });
+    }
+  }
+
   /** A conversation id now lives in session `owner` (null: a channel registering it): no other keeps it. */
   #claim(convId, owner) {
     for (const [id, s] of this.sessions) if (id !== owner) s.ids.delete(convId);
@@ -220,6 +243,7 @@ export class ClaudeAdapter extends EventEmitter {
     const id = this.#route(route);
     const s = id && this.sessions.get(id);
     if (!s) return { answers: null };
+    this.#adopt(id, route.origin);
     const questions = (Array.isArray(p.questions) ? p.questions : []).map((q, i) => ({
       id: String(i), header: String(q?.header ?? ''), question: String(q?.question ?? ''),
       isOther: true, isSecret: false, multiSelect: q?.multiSelect === true,
@@ -254,6 +278,7 @@ export class ClaudeAdapter extends EventEmitter {
     }
     // A retry routed by process: its unroutable first copy must not be released later.
     if (m.retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
+    this.#adopt(id, m.origin);
     const s = this.sessions.get(id);
     s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
     this.#emitStatus(id);
@@ -314,10 +339,10 @@ export class ClaudeAdapter extends EventEmitter {
       s.queued.push({ text, user: user ?? '' });
       const why = s.thirdParty
         ? 'this session runs a third-party provider, which Claude Code gives no channel'
-        : 'this session was not started with ccc, so Claude Code drops channel messages';
+        : 'this session has no channel (not started with ccc, or relaunched by agent view / in the background, which drops ccc\'s channel flag), so Claude Code drops channel messages';
       const when = s.activity === 'running' ? 'it is delivered when the current turn ends'
         : 'the message waits for its next turn to end (type something locally to wake it)';
-      const fix = s.thirdParty ? 'Use ccc or cods to message it directly.' : 'Resume it with ccc --resume to message it directly.';
+      const fix = s.thirdParty ? 'Use ccc or cods to message it directly.' : `Resume it from a terminal with ccc --resume ${id} to message it directly.`;
       return { queued: true, note: `queued: ${why}, so ${when}. ${fix}` };
     }
     s.peer.notify('inbound', { text, user: user ?? '' });

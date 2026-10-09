@@ -498,6 +498,27 @@ test('an inject that fails is reported in the Topic', async () => {
   await until(() => texts(r.telegram).at(-1) === 'inject failed: channel disconnected');
 });
 
+test('a superseded session hands its Topic to the relaunch; the relaunch\'s own Topic is closed', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-supersede-'));
+  try {
+    const file = path.join(dir, 'topics.json');
+    const r = make({ topicCacheFile: file });
+    await live(r, 'claude', 'y');                     // topic 100
+    await live(r, 'claude', 'x');                     // topic 101
+    r.hosts.claude.emit('superseded', { id: 'x', from: 'y' });
+    await until(() => r.logs.includes('supersede claude:y -> claude:x topic=100'));
+    assert.equal(r.bridge.sessions.has('claude:y'), false);
+    await until(() => r.telegram.closed.some(([, t]) => t === 101));
+    await r.bridge.handleUpdate(msg(ALICE, 'hi after switch', 100));
+    assert.deepEqual(r.hosts.claude.injected.at(-1), ['x', 'hi after switch', 'u']);
+    await r.bridge.final('claude:x', 'answer');
+    assert.equal(r.telegram.sent.at(-1).threadId, 100);
+    const cache = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.equal(cache['-100|claude:x'].topicId, 100);
+    assert.equal(cache['-100|claude:y'], undefined);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('an injected prompt that never echoes back is forgotten after 10 minutes', async () => {
   const r = make();
   await up(r, 'claude', 's1');

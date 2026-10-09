@@ -153,6 +153,17 @@ token in `runtime.json`):
   one session at a time: a channel registering it, or a process retry naming it, takes it
   from any other. A call spooled while the daemon was down carries its process too, since a
   restarted daemon has forgotten every learned id.
+  Agent view (and a background relaunch) moves a conversation to a NEW session id in a NEW
+  claude process, while the old process and its channel stay connected; the new one does not
+  carry ccc's `--dangerously-load-development-channels` flag (agent view passes only
+  configuration flags such as `--settings`/`--mcp-config`, and no setting enables
+  development channels). Every hook call therefore carries `origin`, the uuid of the
+  transcript's first message, which the relaunch copies. The session that reports an
+  `origin` another session already holds supersedes it: the daemon moves the old Topic to it
+  (`supersede claude:<old> -> claude:<new> topic=N`; a Topic the new one had is closed), so
+  Telegram messages reach the live session — queued until its next Stop when it has no
+  channel, with a note naming `ccc --resume <id>`. The replaced session never takes it back.
+  A `--fork-session` copies the first message too, so a fork takes the Topic the same way.
   `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g. `ccc -p` run from inside a
   session) inherits its parent's, which once routed one session's output into another's
   Topic — the walk finds the nested process instead. Channel prompts are unwrapped to their text, so the echo suppression above
