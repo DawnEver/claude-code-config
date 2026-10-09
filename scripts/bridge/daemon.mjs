@@ -90,7 +90,7 @@ export class Bridge {
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
     a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
     a.on('status', e => this.updateStatus(sessionKey(a.agent, e.id)).catch(err => this.#warnOnce('status-card', err.message)));
-    for (const kind of ['prompt', 'progress', 'final', 'notice', 'approval', 'question']) {
+    for (const kind of ['superseded', 'prompt', 'progress', 'final', 'notice', 'approval', 'question']) {
       a.on(kind, (e) => {
         const key = sessionKey(a.agent, e.id);
         const q = this.held.get(key);
@@ -119,6 +119,7 @@ export class Bridge {
   }
 
   #event(key, kind, e) {
+    if (kind === 'superseded') return Promise.resolve(this.supersede(key, e.from));
     if (kind === 'prompt') return this.prompt(key, e.text);
     if (kind === 'progress') return this.progress(key, e.text);
     if (kind === 'final') return this.final(key, e.text, e.status);
@@ -197,6 +198,36 @@ export class Bridge {
     const pending = s.chain.catch(() => {});
     this.retiring.set(key, pending);
     pending.finally(() => { if (this.retiring.get(key) === pending) this.retiring.delete(key); });
+  }
+
+  /**
+   * The host found session `key` continues the conversation of session `fromId` (agent view
+   * relaunched it under a new id): `key` takes over that Topic, so the conversation keeps one
+   * Topic and Telegram messages reach the live session. A Topic `key` already had is closed.
+   */
+  supersede(key, fromId) {
+    const x = this.sessions.get(key);
+    const fromKey = x && sessionKey(x.agent, fromId);
+    const y = fromKey && this.sessions.get(fromKey);
+    if (!y) return;
+    this.sessions.delete(fromKey);
+    for (const [id, a] of this.approvals) if (a.key === fromKey) this.approvals.delete(id);
+    for (const [id, q] of this.questions) if (q.key === fromKey) this.questions.delete(id);
+    if (y.chatId !== null) this.topics.set(TopicCache.key(y.chatId, fromKey), null);
+    this.log(`supersede ${fromKey} -> ${key} topic=${y.topicId ?? '-'}`);
+    if (!y.topicId) return;
+    if (x.topicId && !(x.chatId === y.chatId && x.topicId === y.topicId)) {
+      // Cached under a retired key: closed, it ages out through the sweep like any other.
+      const own = { ...newSession({ key: `${key}|retired:${x.topicId}`, cached: cacheEntry(x, x.title), now: this.now() }),
+        chatId: x.chatId, title: x.title, chain: x.chain };
+      this.#apply(own, onDown(own, this.now())).catch(() => {});
+    }
+    // The old session's in-flight writes land before the new owner's first one.
+    x.chain = Promise.all([x.chain, y.chain]).then(() => {}, () => {});
+    Object.assign(x, { chatId: y.chatId, topicId: y.topicId, statusMessageId: y.statusMessageId,
+      state: y.state, closedAt: y.closedAt, title: y.title, base: y.base });
+    this.#save(x);
+    this.updateStatus(key).catch(err => this.#warnOnce('status-card', err.message));
   }
 
   /**

@@ -25,6 +25,7 @@
 // cannot receive inbound: its Telegram messages are queued and handed to the Stop hook at the
 // end of its next turn, which continues the session with them.
 
+import fs from 'fs';
 import net from 'net';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
@@ -35,6 +36,30 @@ const AUTH_TIMEOUT_MS = 5000;
 const heldKey = (m) => JSON.stringify([m.kind, m.text, m.texts ?? null]);
 const STATES = new Set(['running', 'idle', 'waiting-approval', 'waiting-input']);
 const HOLD_MS = 30000;
+
+const CONTINUED_TAIL_BYTES = 64 * 1024;   // the record is appended when the conversation moves on
+
+/** The session a transcript says its conversation continued in, or null (read from its tail). */
+export function continuedIn(file) {
+  let tail = '';
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const buf = Buffer.alloc(Math.min(size, CONTINUED_TAIL_BYTES));
+      tail = buf.toString('utf8', 0, fs.readSync(fd, buf, 0, buf.length, size - buf.length));
+    } finally { fs.closeSync(fd); }
+  } catch { return null; }
+  let next = null;
+  for (const l of tail.split('\n')) {
+    if (!l.includes('"continued-in"')) continue;
+    try {
+      const e = JSON.parse(l);
+      if (e?.type === 'continued-in' && typeof e.continuedInSessionId === 'string' && e.continuedInSessionId) next = e.continuedInSessionId;
+    } catch { /* cut line */ }
+  }
+  return next;
+}
 
 /** A prompt that arrived through a channel, as UserPromptSubmit reports it -> its text. */
 export function unwrapChannel(text) {
@@ -57,10 +82,12 @@ export class ClaudeAdapter extends EventEmitter {
     this.agent = 'claude';
     this.token = token;
     this.now = now;
-    // sessionId -> { peer, socket, ids, sent, approvals, questions, claudePid, remoteTurn, localQuestion, activity }
+    // sessionId -> { peer, socket, ids, sent, approvals, questions, claudePid, remoteTurn, localQuestion, activity, transcript }
     // ids: every conversation id seen in this process; each id belongs to at most one session.
+    // transcript: its JSONL path (from the channel, then the hooks), read for `continued-in`.
     this.sessions = new Map();
     this.held = [];              // hook calls that arrived before their session registered
+    this.sockets = new Set();
   }
 
   listen(port = 0) {
@@ -72,7 +99,8 @@ export class ClaudeAdapter extends EventEmitter {
   }
 
   close() {
-    for (const s of this.sessions.values()) s.socket.destroy();
+    // Every socket, not only sessions': a stale channel stays connected without being one.
+    for (const s of this.sockets) s.destroy();
     return new Promise((r) => (this.server ? this.server.close(() => r()) : r()));
   }
 
@@ -82,17 +110,24 @@ export class ClaudeAdapter extends EventEmitter {
   }
 
   #onSocket(socket) {
+    this.sockets.add(socket);
+    socket.once('close', () => this.sockets.delete(socket));
     let sessionId = null;
     const authTimer = setTimeout(() => { if (!sessionId) socket.destroy(); }, AUTH_TIMEOUT_MS);
     authTimer.unref();
     const unauthorized = () => { setImmediate(() => socket.destroy()); return Object.assign(new Error('unauthorized'), { code: 401 }); };
-    const ids = (p) => ({ sessionId: typeof p.sessionId === 'string' ? p.sessionId : '', claudePid: Number(p.claudePid) || null });
+    const ids = (p) => ({ sessionId: typeof p.sessionId === 'string' ? p.sessionId : '', claudePid: Number(p.claudePid) || null,
+      ...(typeof p.transcriptPath === 'string' && p.transcriptPath ? { transcriptPath: p.transcriptPath } : {}) });
     const peer = new JsonRpcPeer((t) => socket.write(t + '\n'), {
       onRequest: (method, p = {}) => {
         if (method === 'register') {
           if (!this.#tokenOk(p.token) || !p.sessionId) throw unauthorized();
           clearTimeout(authTimer);
           sessionId = String(p.sessionId);
+          const transcript = typeof p.transcriptPath === 'string' && p.transcriptPath ? p.transcriptPath : null;
+          // A channel of a conversation already continued in a live session is stale: never a session.
+          const next = transcript && continuedIn(transcript);
+          if (next && next !== sessionId && this.sessions.has(next)) return { ok: true, continuedIn: next };
           const previous = this.sessions.get(sessionId);
           if (previous) {
             this.#withdraw(sessionId, previous);
@@ -104,9 +139,10 @@ export class ClaudeAdapter extends EventEmitter {
           this.sessions.set(sessionId, { peer, socket, ids: new Set([...(previous?.ids ?? []), sessionId]), sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
             queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
-            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity });
+            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null });
           this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, backlog: [] });
           this.#emitStatus(sessionId);
+          this.#takeOver(sessionId);
           this.#release();
           return { ok: true };
         }
@@ -206,6 +242,43 @@ export class ClaudeAdapter extends EventEmitter {
     return null;
   }
 
+  /**
+   * Agent view relaunches a conversation under a new session id and a new claude process
+   * (without ccc's channel flag), while the old process and its channel stay up. Claude Code
+   * records it in the OLD transcript only: `{type: 'continued-in', continuedInSessionId}`.
+   * That record is the sole trigger — a fork shares history but never writes one.
+   */
+  #takeOver(id) {
+    for (const [old, o] of [...this.sessions]) {
+      if (old !== id && o.transcript && continuedIn(o.transcript) === id) this.#supersede(old, id);
+    }
+  }
+
+  /** A hook names the session's transcript: the first time, look for the session it continues. */
+  #learnTranscript(id, file) {
+    const s = this.sessions.get(id);
+    if (!s || !file || s.transcript === file) return;
+    s.transcript = file;
+    this.#takeOver(id);
+  }
+
+  /** Session `next` continues session `old`: the daemon moves its Topic, its queue moves along. */
+  #supersede(old, next) {
+    const o = this.sessions.get(old);
+    const n = this.sessions.get(next);
+    if (!o || !n) return;
+    this.#withdraw(old, o);
+    this.sessions.delete(old);
+    this.emit('superseded', { id: next, from: old });
+    const queued = o.queued;
+    if (!queued.length) return;
+    if (!n.inbound) { n.queued.push(...queued); return; }
+    for (const q of queued) n.peer.notify('inbound', q);
+    n.remoteTurn = true;
+    n.activity = 'running';
+    this.#emitStatus(next);
+  }
+
   /** A conversation id now lives in session `owner` (null: a channel registering it): no other keeps it. */
   #claim(convId, owner) {
     for (const [id, s] of this.sessions) if (id !== owner) s.ids.delete(convId);
@@ -220,6 +293,7 @@ export class ClaudeAdapter extends EventEmitter {
     const id = this.#route(route);
     const s = id && this.sessions.get(id);
     if (!s) return { answers: null };
+    this.#learnTranscript(id, route.transcriptPath);
     const questions = (Array.isArray(p.questions) ? p.questions : []).map((q, i) => ({
       id: String(i), header: String(q?.header ?? ''), question: String(q?.question ?? ''),
       isOther: true, isSecret: false, multiSelect: q?.multiSelect === true,
@@ -254,6 +328,7 @@ export class ClaudeAdapter extends EventEmitter {
     }
     // A retry routed by process: its unroutable first copy must not be released later.
     if (m.retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
+    this.#learnTranscript(id, m.transcriptPath);
     const s = this.sessions.get(id);
     s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
     this.#emitStatus(id);
@@ -310,14 +385,21 @@ export class ClaudeAdapter extends EventEmitter {
   async inject(id, text, user) {
     const s = this.sessions.get(id);
     if (!s) throw new Error('channel disconnected');
+    // Agent view moved the conversation on: deliver to the live session, or hold for it.
+    const next = s.transcript && continuedIn(s.transcript);
+    if (next && next !== id) {
+      if (this.sessions.has(next)) { this.#supersede(id, next); return this.inject(next, text, user); }
+      s.queued.push({ text, user: user ?? '' });
+      return { queued: true, note: `queued: this conversation continued in session ${next} (agent view relaunched it), which has not connected yet; the message is delivered when it does.` };
+    }
     if (!s.inbound) {
       s.queued.push({ text, user: user ?? '' });
       const why = s.thirdParty
         ? 'this session runs a third-party provider, which Claude Code gives no channel'
-        : 'this session was not started with ccc, so Claude Code drops channel messages';
+        : 'this session has no channel (not started with ccc, or relaunched by agent view / in the background, which drops ccc\'s channel flag), so Claude Code drops channel messages';
       const when = s.activity === 'running' ? 'it is delivered when the current turn ends'
         : 'the message waits for its next turn to end (type something locally to wake it)';
-      const fix = s.thirdParty ? 'Use ccc or cods to message it directly.' : 'Resume it with ccc --resume to message it directly.';
+      const fix = s.thirdParty ? 'Use ccc or cods to message it directly.' : `Resume it from a terminal with ccc --resume ${id} to message it directly.`;
       return { queued: true, note: `queued: ${why}, so ${when}. ${fix}` };
     }
     s.peer.notify('inbound', { text, user: user ?? '' });

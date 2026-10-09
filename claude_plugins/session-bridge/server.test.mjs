@@ -7,7 +7,7 @@ import os from 'os';
 import net from 'net';
 import http from 'http';
 import path from 'path';
-import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity, pruneChannelLogs } from './server.mjs';
+import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity, pruneChannelLogs, transcriptPathOf } from './server.mjs';
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
 import { Bridge } from '../../scripts/bridge/daemon.mjs';
 import { TelegramClient } from '../../scripts/bridge/telegram.mjs';
@@ -310,6 +310,12 @@ test('ancestorsOf walks a process table upward from a pid', () => {
   const table = new Map([[10, { ppid: 9, cmd: 'claude' }], [9, { ppid: 8, cmd: 'bash' }], [8, { ppid: 8, cmd: 'init' }]]);
   assert.deepEqual(ancestorsOf(10, table).map((a) => a.pid), [10, 9, 8]);
   assert.deepEqual(ancestorsOf(99, table), []);
+});
+
+test('transcriptPathOf: where Claude Code writes the session transcript (projects/<cwd slug>/<id>.jsonl)', () => {
+  assert.equal(transcriptPathOf('/cfg', 'C:\\Users\\me\\Documents\\sample-lab', 'abc'),
+    path.join('/cfg', 'projects', 'C--Users-me-Documents-sample-lab', 'abc.jsonl'));
+  assert.equal(transcriptPathOf('/cfg', '/home/me/a_b.c', 'x'), path.join('/cfg', 'projects', '-home-me-a-b-c', 'x.jsonl'));
 });
 
 test('sessionIdentity: CLAUDE_CODE_SESSION_ID, else a fallback whose inputs are spelled out for the log', () => {

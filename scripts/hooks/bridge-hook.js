@@ -20,6 +20,8 @@
 // A session Claude Code gives no channel (ccds, or no flag) has its Telegram messages queued
 // by the daemon; the Stop call gets them back and blocks the stop with them, so the session
 // continues with those messages as its next turn.
+// Every call carries the session's `transcriptPath`: when agent view relaunches a conversation
+// under a new id, Claude Code appends a `continued-in` record there, and the adapter reads it.
 // PreToolUse(AskUserQuestion) is a `question` call instead: in a turn started from Telegram
 // the daemon holds it open until the answer is tapped there (up to QUESTION_TIMEOUT_MS), and
 // the hook prints it as the tool's `answers`, so the terminal dialog never shows.
@@ -198,15 +200,17 @@ async function main() {
   // Only the dedicated AskUserQuestion entry (long timeout) waits: Claude Code merges hook
   // entries with an identical command, so the catch-all one must not be that entry's twin.
   const question = process.argv.includes('--question') ? questionFor(payload) : null;
+  const transcriptPath = typeof payload.transcript_path === 'string' ? payload.transcript_path : '';
+  const withTranscript = (c) => (c && transcriptPath ? { ...c, transcriptPath } : c);
   // A non-question run may spend one budget on a spool replay and one on its own call.
   setTimeout(() => process.exit(0), question ? QUESTION_TIMEOUT_MS + 500 : RUN_MS).unref();
   if (question) {
-    const r = await callHub('question', question, { timeoutMs: QUESTION_TIMEOUT_MS });
+    const r = await callHub('question', withTranscript(question), { timeoutMs: QUESTION_TIMEOUT_MS });
     // Flushed before the process exits: stdout may be an asynchronous pipe.
     if (r?.answers && typeof r.answers === 'object') await new Promise((done) => process.stdout.write(JSON.stringify(answerOutput(payload.tool_input, r.answers)), done));
     return;
   }
-  const call = mirrorFor(payload);
+  const call = withTranscript(mirrorFor(payload));
   if (!call) return;
   // No session matched: after /clear or /resume the id is new. Retry naming this hook's own
   // claude process (the one owning the channel). Looked up only now — a process-table query is
