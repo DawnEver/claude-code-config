@@ -157,13 +157,17 @@ token in `runtime.json`):
   claude process, while the old process and its channel stay connected; the new one does not
   carry ccc's `--dangerously-load-development-channels` flag (agent view passes only
   configuration flags such as `--settings`/`--mcp-config`, and no setting enables
-  development channels). Every hook call therefore carries `origin`, the uuid of the
-  transcript's first message, which the relaunch copies. The session that reports an
-  `origin` another session already holds supersedes it: the daemon moves the old Topic to it
-  (`supersede claude:<old> -> claude:<new> topic=N`; a Topic the new one had is closed), so
-  Telegram messages reach the live session — queued until its next Stop when it has no
-  channel, with a note naming `ccc --resume <id>`. The replaced session never takes it back.
-  A `--fork-session` copies the first message too, so a fork takes the Topic the same way.
+  development channels). Claude Code records the move in the OLD transcript only:
+  `{"type":"continued-in","continuedInSessionId":"<new>"}`. That record is the sole trigger
+  (a fork shares history but writes none, so it keeps its own Topic). The adapter knows each
+  session's transcript (the channel derives it at register, the hooks send `transcriptPath`)
+  and reads its last 64 KiB when a session registers or first names its transcript, and
+  before every inject. On a hit the new session supersedes the old: the daemon moves the
+  Topic (`supersede claude:<old> -> claude:<new> topic=N`; a Topic the new one had is closed),
+  messages go to the live session (queued until its next Stop when it has no channel, with a
+  note naming `ccc --resume <id>`), and a message sent before the new session connects is
+  held and delivered when it does. The old channel is refused if it re-registers. Nothing is
+  persisted: after a daemon restart the transcripts say it again.
   `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g. `ccc -p` run from inside a
   session) inherits its parent's, which once routed one session's output into another's
   Topic — the walk finds the nested process instead. Channel prompts are unwrapped to their text, so the echo suppression above

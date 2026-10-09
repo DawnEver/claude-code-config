@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { turnTexts, transcriptOrigin, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
+import { turnTexts, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 
 const j = (o) => JSON.stringify(o);
@@ -23,20 +23,6 @@ test('turnTexts: text blocks after the last real user message only', () => {
   assert.deepEqual(turnTexts(lines), ['Let me look.', 'Done.']);
   assert.deepEqual(turnTexts(user('q')), []);
   assert.deepEqual(turnTexts('garbage\n' + user([{ type: 'text', text: 'q' }]) + '\n' + asst([{ type: 'text', text: 'a' }])), ['a']);
-});
-
-test('transcriptOrigin: the uuid of the first message, which survives an agent-view relaunch', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-origin-'));
-  try {
-    const f = path.join(dir, 't.jsonl');
-    fs.writeFileSync(f, [j({ type: 'ai-title', uuid: 'not-a-message' }), 'partial{', j({ type: 'user', uuid: 'u0', message: {} }),
-      j({ type: 'assistant', uuid: 'u1', message: {} })].join('\n'));
-    assert.equal(transcriptOrigin(f), 'u0');
-    fs.writeFileSync(f, j({ type: 'mode', mode: 'normal' }));
-    assert.equal(transcriptOrigin(f), null);
-    assert.equal(transcriptOrigin(path.join(dir, 'missing.jsonl')), null);
-    assert.equal(transcriptOrigin(undefined), null);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('mirrorFor: prompt from payload, channel injections skipped, final prefers last_assistant_message', () => {

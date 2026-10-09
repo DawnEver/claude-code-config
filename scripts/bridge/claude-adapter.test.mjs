@@ -1,7 +1,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'net';
-import { ClaudeAdapter, unwrapChannel, isEnvelope } from './claude-adapter.mjs';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { ClaudeAdapter, unwrapChannel, isEnvelope, continuedIn } from './claude-adapter.mjs';
+import { lineSplitter } from './jsonrpc.mjs';
+
+const until = async (fn, ms = 2000) => {
+  const end = Date.now() + ms;
+  while (!fn()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 5)); }
+};
+
+test('continuedIn: the last continued-in record of the tail; none, cut or missing reads null', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-continued-'));
+  try {
+    const f = path.join(dir, 't.jsonl');
+    fs.writeFileSync(f, `${'x'.repeat(70000)}\n{"type":"continued-in","sessionId":"a","continuedInSessionId":"b"}\n{"type":"queue-operation"}\n`);
+    assert.equal(continuedIn(f), 'b');
+    fs.writeFileSync(f, '{"type":"user","uuid":"u"}\n{"type":"continued-in","sess');
+    assert.equal(continuedIn(f), null);
+    assert.equal(continuedIn(path.join(dir, 'missing.jsonl')), null);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('claude status follows the turn edges the hooks report', async () => {
   const r = await rig();
@@ -86,7 +107,12 @@ async function rig() {
   for (const k of ['up', 'prompt', 'final', 'notice', 'down']) a.on(k, (e) => events.push([k, e]));
   const rpc = (sock, method, params) => new Promise((resolve) => {
     let buf = '';
-    const onData = (d) => { buf += d; if (buf.includes('\n')) { sock.off('data', onData); resolve(JSON.parse(buf)); } };
+    // The response may share a chunk with a notification (an inbound delivered on register).
+    const onData = (d) => {
+      buf += d;
+      const reply = buf.split('\n').slice(0, -1).map((l) => JSON.parse(l)).find((m) => m.id !== undefined);
+      if (reply) { sock.off('data', onData); resolve(reply); }
+    };
     sock.on('data', onData);
     sock.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { token: a.token, ...params } }) + '\n');
   });
@@ -414,27 +440,105 @@ test('a held hook call that never finds its channel is dropped with a warning, n
   } finally { await r.a.close(); }
 });
 
-test('an agent-view relaunch (new id, same first message) supersedes the old session; the old one never steals back', async () => {
+// Agent-view handoff: Claude Code appends `continued-in` to the OLD transcript only.
+const handoff = async (fn) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-handoff-'));
   const r = await rig();
   const moves = [];
   r.a.on('superseded', (e) => moves.push(e));
-  try {
-    const old = await r.open();
-    await r.rpc(old, 'register', { sessionId: 'y' });
-    await r.hook({ sessionId: 'y', kind: 'prompt', text: 'before switch', origin: 'u0' });
-    const fresh = await r.open();
-    await r.rpc(fresh, 'register', { sessionId: 'x', inbound: false });
-    await r.hook({ sessionId: 'x', kind: 'activity', state: 'running', origin: 'u0' });
-    assert.deepEqual(moves, [{ id: 'x', from: 'y' }]);
-    assert.equal(r.a.statusSnapshot('y').state, 'disconnected');
-    await assert.rejects(r.a.inject('y', 'hi', 'u'), /disconnected/);
-    assert.match((await r.a.inject('x', 'hi', 'u')).note, /agent view[\s\S]*ccc --resume x/);
-    // The stale channel re-registers (reconnect): a session again, but it cannot take the Topic back.
-    const again = await r.open();
-    await r.rpc(again, 'register', { sessionId: 'y' });
-    await r.hook({ sessionId: 'y', kind: 'activity', state: 'idle', origin: 'u0' });
-    await r.hook({ sessionId: 'x', kind: 'final', text: 'answer', origin: 'u0' });
-    assert.deepEqual(moves, [{ id: 'x', from: 'y' }], 'no move back, none repeated');
-    for (const s of [old, fresh, again]) s.destroy();
-  } finally { await r.a.close(); }
-});
+  const transcript = (id, lines = []) => {
+    const f = path.join(dir, `${id}.jsonl`);
+    fs.writeFileSync(f, [JSON.stringify({ type: 'user', uuid: 'u0', sessionId: id, message: { content: 'shared history' } }), ...lines].join('\n') + '\n');
+    return f;
+  };
+  const continued = (f, from, to) => fs.appendFileSync(f, JSON.stringify({ type: 'continued-in', sessionId: from, continuedInSessionId: to }) + '\n');
+  const inbox = (sock) => {
+    const got = [];
+    sock.on('data', lineSplitter((l) => { const m = JSON.parse(l); if (m.method === 'inbound') got.push(m.params.text); }));
+    return got;
+  };
+  try { await fn({ r, moves, transcript, continued, inbox }); } finally { await r.a.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+};
+
+test('handoff: a fork shares history but writes no continued-in, so it keeps its own session', () => handoff(async ({ r, moves, transcript, inbox }) => {
+  const orig = await r.open();
+  const got = inbox(orig);
+  await r.rpc(orig, 'register', { sessionId: 'y', transcriptPath: transcript('y') });
+  const fork = await r.open();
+  await r.rpc(fork, 'register', { sessionId: 'f', transcriptPath: transcript('f') });
+  await r.hook({ sessionId: 'f', kind: 'prompt', text: 'fork work', transcriptPath: transcript('f') });
+  await r.a.inject('y', 'to original', 'u');
+  await until(() => got.length);
+  assert.deepEqual(got, ['to original']);
+  assert.deepEqual(moves, []);
+  orig.destroy(); fork.destroy();
+}));
+
+test('handoff: the relaunch registering moves the session; the stale channel gets no inbound and cannot re-register', () => handoff(async ({ r, moves, transcript, continued, inbox }) => {
+  const ty = transcript('y');
+  const old = await r.open();
+  const stale = inbox(old);
+  await r.rpc(old, 'register', { sessionId: 'y', transcriptPath: ty });
+  continued(ty, 'y', 'x');
+  const fresh = await r.open();
+  await r.rpc(fresh, 'register', { sessionId: 'x', inbound: false, transcriptPath: transcript('x') });
+  assert.deepEqual(moves, [{ id: 'x', from: 'y' }]);
+  await assert.rejects(r.a.inject('y', 'hi', 'u'), /disconnected/);
+  assert.match((await r.a.inject('x', 'hi', 'u')).note, /agent view[\s\S]*ccc --resume x/);
+  const again = await r.open();
+  assert.deepEqual((await r.rpc(again, 'register', { sessionId: 'y', transcriptPath: ty })).result, { ok: true, continuedIn: 'x' });
+  assert.equal(r.a.statusSnapshot('y').state, 'disconnected');
+  assert.deepEqual(stale, []);
+  assert.deepEqual(moves, [{ id: 'x', from: 'y' }]);
+  old.destroy(); fresh.destroy(); again.destroy();
+}));
+
+test('handoff: an inject before the relaunch\'s first hook is redirected to it', () => handoff(async ({ r, moves, transcript, continued, inbox }) => {
+  const ty = transcript('y');
+  const old = await r.open();
+  const stale = inbox(old);
+  await r.rpc(old, 'register', { sessionId: 'y', transcriptPath: ty });
+  // The relaunch's channel connects before the record is written, so register cannot see it.
+  const fresh = await r.open();
+  const got = inbox(fresh);
+  await r.rpc(fresh, 'register', { sessionId: 'x' });
+  continued(ty, 'y', 'x');
+  assert.equal(await r.a.inject('y', 'hi', 'u'), undefined);
+  await until(() => got.length);
+  assert.deepEqual(got, ['hi']);
+  assert.deepEqual(stale, []);
+  assert.deepEqual(moves, [{ id: 'x', from: 'y' }]);
+  old.destroy(); fresh.destroy();
+}));
+
+test('handoff: an inject before the relaunch connects is held for it, then delivered', () => handoff(async ({ r, moves, transcript, continued, inbox }) => {
+  const ty = transcript('y');
+  const old = await r.open();
+  const stale = inbox(old);
+  await r.rpc(old, 'register', { sessionId: 'y', transcriptPath: ty });
+  continued(ty, 'y', 'z');
+  assert.match((await r.a.inject('y', 'early', 'u')).note, /continued in session z[\s\S]*delivered when it does/);
+  assert.deepEqual(moves, []);
+  const fresh = await r.open();
+  const got = inbox(fresh);
+  await r.rpc(fresh, 'register', { sessionId: 'z' });
+  assert.deepEqual(moves, [{ id: 'z', from: 'y' }]);
+  await until(() => got.length);
+  assert.deepEqual(got, ['early']);
+  assert.deepEqual(stale, []);
+  old.destroy(); fresh.destroy();
+}));
+
+test('handoff: the relaunch\'s first hook naming its transcript also moves the session', () => handoff(async ({ r, moves, transcript, continued }) => {
+  const ty = transcript('y');
+  const old = await r.open();
+  await r.rpc(old, 'register', { sessionId: 'y' });
+  await r.hook({ sessionId: 'y', kind: 'prompt', text: 'before', transcriptPath: ty });
+  const fresh = await r.open();
+  await r.rpc(fresh, 'register', { sessionId: 'x' });
+  continued(ty, 'y', 'x');
+  assert.deepEqual(moves, []);
+  await r.hook({ sessionId: 'x', kind: 'activity', state: 'running', transcriptPath: transcript('x') });
+  assert.deepEqual(moves, [{ id: 'x', from: 'y' }]);
+  old.destroy(); fresh.destroy();
+}));

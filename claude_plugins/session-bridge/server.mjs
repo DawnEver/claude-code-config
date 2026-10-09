@@ -214,6 +214,14 @@ export function sessionIdentity(env, { hostname, pid, rand }) {
   return { sessionId: `${hostname}-${pid}-${rand}`, source: `fallback (CLAUDE_CODE_SESSION_ID unset; hostname=${hostname} pid=${pid} random=${rand})` };
 }
 
+/**
+ * Where Claude Code writes this session's transcript. Sent at register so a restarted daemon
+ * can read it for an agent-view `continued-in` record before any hook names it again.
+ */
+export function transcriptPathOf(dir, cwd, sessionId) {
+  return path.join(dir, 'projects', String(cwd).replace(/[^A-Za-z0-9]/g, '-'), `${sessionId}.jsonl`);
+}
+
 /** One log per channel process accumulates forever; drop the ones nobody will read again. */
 export function pruneChannelLogs(dir, { now = Date.now(), maxAgeDays = 7 } = {}) {
   let names = [];
@@ -234,6 +242,7 @@ function main() {
     cwd,
     // The seat this session runs as (scripts/shared/seats.mjs); null = an unassigned base dir.
     seat: seatOf(configDir(), readSeats(), readMachineName()),
+    transcriptPath: transcriptPathOf(configDir(), cwd, identity.sessionId),
   };
   // Claude Code swallows an MCP server's stderr, so the reason this process ends goes to a
   // machine-local file as well; a channel that vanishes silently is otherwise undiagnosable.
