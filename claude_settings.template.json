@@ -18,8 +18,13 @@
       "Read",
       "Edit",
       "Write",
+      "Glob",
+      "Grep",
+      "NotebookEdit",
+      "Monitor",
       "PowerShell",
       "WebSearch",
+      "WebFetch",
       "Skill(rem:rem)",
       "Skill(rem:todo)",
       "Skill(fabric:continue)",
@@ -31,7 +36,9 @@
     "deny": [
       "Bash(rm -rf *)",
       "Bash(sudo *)",
-      "Bash(curl * | bash)"
+      "Bash(curl * | bash)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)"
     ],
     "defaultMode": "auto"
   },

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, parseHookCommands,
+  looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, comparePermissionRules, parseHookCommands,
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks,
   checkCodexPluginCache,
   checkPlugins, checkBridgeRevision,
@@ -124,6 +124,26 @@ test('compareKeySets reports drift in both directions', () => {
   const { onlyInActual, onlyInTemplate } = compareKeySets({ a: 1, b: 2 }, { b: 2, c: 3 });
   assert.deepEqual(onlyInActual, ['a']);
   assert.deepEqual(onlyInTemplate, ['c']);
+});
+
+test('comparePermissionRules reports allow/deny drift in both directions', () => {
+  const live = { permissions: { allow: ['Bash', 'Glob'], deny: ['Bash(sudo *)'] } };
+  const template = { permissions: { allow: ['Bash', 'Read'], deny: ['Bash(sudo *)', 'Bash(rm -rf *)'] } };
+  assert.deepEqual(comparePermissionRules(live, template), {
+    onlyInActual: ['allow:Glob'],
+    onlyInTemplate: ['allow:Read', 'deny:Bash(rm -rf *)'],
+  });
+  assert.deepEqual(comparePermissionRules({}, {}), { onlyInActual: [], onlyInTemplate: [] });
+});
+
+test('checkPayloadShape flags permission rules that drifted from the template', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-perm-'));
+  fs.writeFileSync(path.join(dir, 'claude_settings.template.json'),
+    JSON.stringify({ permissions: { allow: ['Bash'], deny: [] } }));
+  fs.writeFileSync(path.join(dir, 'claude_settings.json'),
+    JSON.stringify({ permissions: { allow: ['Bash', 'Glob'], deny: [] } }));
+  const ids = checkPayloadShape(dir, dir, ['claude_settings.json']).map((f) => f.id);
+  assert.deepEqual(ids, ['payload-permission-drift']);
 });
 
 // ── hook parsing ──
