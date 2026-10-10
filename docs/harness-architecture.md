@@ -101,7 +101,10 @@ every session, own the machine's single bot token, and multiplex all its session
 
 Built. How it works — the host adapters, the one session lifecycle shared by Claude and
 Codex, setup and config — is described once, in [`bridge.md`](bridge.md). Pushes, verdicts and issues are
-not mirrored to Telegram: git and the forge own them.
+not mirrored to Telegram: git and the forge own them. A repo's own duty or conflict
+reminders (computed by its tooling, e.g. lab-commons) reach the human only through the agent's
+own turns, which the bridge already mirrors and the notification hook already announces;
+cc-config adds no notifier, no contract file and no per-repo command registry for them.
 
 ## 7. Permissions
 
@@ -115,7 +118,9 @@ not mirrored to Telegram: git and the forge own them.
 Already solved by the family protocol and adopted as is: **readiness is the branch tip
 moving on origin** (detected by `git cherry` against remote lane refs), and origin is the
 only shared medium — "a chat message is a priority hint and may never be the trigger".
-The coordinator integrates and re-gates.
+The coordinator integrates and re-gates. The same holds for test requests: a pushed
+integration-branch sha that lacks its results IS the request, and a pending commit status is
+the claim (both specified in lab-commons).
 
 Issues fit as **intent, not trigger**: a human files the what and why; lanes reference
 it in commits; closing follows the integration landing. Any issue or label convention is
