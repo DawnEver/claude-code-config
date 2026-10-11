@@ -1,23 +1,24 @@
 // prune-cache-hook.js — prune stale cached plugin versions across ALL marketplaces.
 // Run on SessionStart to prevent version bloat.
 //
-// Strategy: keep the latest version + any version currently referenced by a
-// live process. Live-process detection scans command lines across all processes
-// (cross-platform) to avoid deleting versions still loaded by running Claude Code
-// sessions or MCP servers. The scan runs in a detached background child process
-// and writes results to a cache file; the current run reads the PREVIOUS scan's
-// cache so SessionStart is never blocked by process enumeration.
+// Keep the latest version of each plugin plus every version a running process references
+// (Claude sessions and their MCP servers load plugin code from the cache by path, often
+// lazily: deleting a version a live server still imports from breaks it mid-session).
+// The process scan runs synchronously, and only when there is something to delete — rare,
+// right after a plugin update. A failed scan deletes nothing: an extra directory on disk
+// costs nothing, a deleted live one breaks a session.
 
-import { readdirSync, rmSync, statSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { execFileSync, spawn } from 'child_process';
-import { join, dirname } from 'path';
+import { readdirSync, rmSync, statSync, existsSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { join } from 'path';
 import { homedir } from 'os';
+import { isMain } from '../shared/is-main.mjs';
 
 const CACHE_ROOTS = [
   join(homedir(), '.claude', 'plugins', 'cache'),
   join(homedir(), '.codex', 'plugins', 'cache'),
 ];
-const LIVE_CACHE = join(homedir(), '.claude', 'plugins', '.prune-live-cache.json');
+const VERSION = /^\d+\.\d+\.\d+$/;
 
 function compareVersion(a, b) {
   const ap = a.split('.').map(Number);
@@ -29,115 +30,75 @@ function compareVersion(a, b) {
   return 0;
 }
 
+/** Command lines -> Set of `<marketplace>/<plugin>/<version>` they reference. */
+export function liveVersions(text) {
+  const live = new Set();
+  for (const [, mp, name, version] of String(text).matchAll(/[\\/]cache[\\/]([^\\/\s"']+)[\\/]([^\\/\s"']+)[\\/](\d+\.\d+\.\d+)(?=[\\/\s"']|$)/g))
+    live.add(`${mp}/${name}/${version}`);
+  return live;
+}
+
+/** The versions of one plugin to delete: all but the latest and the live ones. */
+export function staleVersions(versions, isLive) {
+  const sorted = versions.filter((v) => VERSION.test(v)).sort(compareVersion);
+  sorted.pop();
+  return sorted.filter((v) => !isLive(v));
+}
+
+/** Every running process's command line mentioning a plugin cache; throws on failure. */
+function scanProcesses() {
+  if (process.platform === 'win32') {
+    const ps = "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*plugins*cache*' } | ForEach-Object { $_.CommandLine }";
+    return execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      { encoding: 'utf8', timeout: 15000, maxBuffer: 8 << 20, windowsHide: true });
+  }
+  return execFileSync('ps', ['-axww', '-o', 'command='], { encoding: 'utf8', timeout: 15000, maxBuffer: 8 << 20 });
+}
+
 function countFiles(dir) {
   let n = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory()) { n += countFiles(join(dir, entry.name)); }
-    else { n++; }
-  }
+  for (const entry of readdirSync(dir, { withFileTypes: true })) n += entry.isDirectory() ? countFiles(join(dir, entry.name)) : 1;
   return n;
 }
 
-// Read the cached live-version map from the previous background scan.
-function readCachedLiveVersions() {
-  try {
-    if (!existsSync(LIVE_CACHE)) return {};
-    return JSON.parse(readFileSync(LIVE_CACHE, 'utf8'));
-  } catch {
-    return {};
-  }
+function subdirs(dir) {
+  return readdirSync(dir).filter((name) => statSync(join(dir, name)).isDirectory());
 }
 
-// Launch a non-blocking background scan for live versions. Results are written
-// to LIVE_CACHE and picked up by the NEXT SessionStart run — the current run
-// uses the previous cache, so session startup is never delayed by scanning.
-function spawnLiveVersionScan() {
-  const script = `
-import { execFileSync } from 'child_process';
-import { writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
-
-const LIVE_CACHE = ${JSON.stringify(LIVE_CACHE)};
-const isWin = ${JSON.stringify(process.platform === 'win32')};
-
-const inUse = {};
-try {
-  let output;
-  if (isWin) {
-    const ps = "Get-WmiObject Win32_Process | Where-Object { $_.ProcessId -ne $pid -and $_.CommandLine -like '*plugins*cache*' } | ForEach-Object { $_.CommandLine }";
-    output = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8', timeout: 5000, maxBuffer: 1048576, windowsHide: true });
-  } else {
-    const raw = execFileSync('ps', ['aux'], { encoding: 'utf8', timeout: 5000, maxBuffer: 1048576 });
-    output = raw.split('\\n').filter(line => line.includes('plugins/cache')).join('\\n');
+export function prune({ roots = CACHE_ROOTS, scan = scanProcesses, log = (m) => console.error(m) } = {}) {
+  const plugins = [];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    for (const mp of subdirs(root)) for (const name of subdirs(join(root, mp))) {
+      const dir = join(root, mp, name);
+      const versions = readdirSync(dir);
+      if (staleVersions(versions, () => false).length) plugins.push({ dir, key: `${mp}/${name}`, versions });
+    }
   }
-  const regex = /[\\\\/]cache[\\\\/]([^\\\\/]+)[\\\\/]([^\\\\/]+)[\\\\/](\\d+\\.\\d+\\.\\d+)/g;
-  let match;
-  while ((match = regex.exec(output)) !== null) {
-    const [, mp, name, version] = match;
-    const key = mp + '/' + name;
-    if (!inUse[key]) inUse[key] = [];
-    if (!inUse[key].includes(version)) inUse[key].push(version);
+  if (!plugins.length) return 0;
+
+  let live;
+  try { live = liveVersions(scan()); } catch (e) {
+    log(`[prune-cache-hook] process scan failed, nothing pruned: ${e.message}`);
+    return 0;
   }
-} catch {}  // scan failure is non-fatal — next run just has no live cache
-
-mkdirSync(dirname(LIVE_CACHE), { recursive: true });
-writeFileSync(LIVE_CACHE, JSON.stringify(inUse), 'utf8');
-`;
-  try {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    child.unref();
-  } catch {}  // spawn failure is non-fatal
-}
-
-let totalRemoved = 0;
-const liveVersions = readCachedLiveVersions();
-
-try {
-  for (const cacheRoot of CACHE_ROOTS) {
-    if (!existsSync(cacheRoot)) continue;
-    for (const mp of readdirSync(cacheRoot)) {
-    const mpDir = join(cacheRoot, mp);
-    if (!statSync(mpDir).isDirectory()) continue;
-
-    for (const plugin of readdirSync(mpDir)) {
-      const pluginDir = join(mpDir, plugin);
-      if (!statSync(pluginDir).isDirectory()) continue;
-
-      const versions = readdirSync(pluginDir).filter(v => /^\d+\.\d+\.\d+$/.test(v));
-      if (versions.length <= 1) continue;
-
-      versions.sort(compareVersion);
-      const latest = versions.pop();
-      const key = mp + '/' + plugin;
-      const keepLive = new Set(liveVersions[key] || []);
-      const keep = new Set([latest, ...keepLive]);
-
-      for (const old of versions) {
-        if (keep.has(old)) continue;
-        const oldDir = join(pluginDir, old);
-        try {
-          const fileCount = countFiles(oldDir);
-          rmSync(oldDir, { recursive: true, force: true });
-          totalRemoved += fileCount;
-          console.error(`[prune-cache-hook] removed ${key}@${old} (${fileCount} files, keeping ${[...keep].join(', ')})`);
-        } catch (e) {
-          console.error(`[prune-cache-hook] failed to remove ${key}@${old}: ${e.message}`);
-        }
+  let removed = 0;
+  for (const { dir, key, versions } of plugins) {
+    for (const old of staleVersions(versions, (v) => live.has(`${key}/${v}`))) {
+      const oldDir = join(dir, old);
+      try {
+        const files = countFiles(oldDir);
+        rmSync(oldDir, { recursive: true, force: true });
+        removed += files;
+        log(`[prune-cache-hook] removed ${key}@${old} (${files} files)`);
+      } catch (e) {
+        log(`[prune-cache-hook] failed to remove ${key}@${old}: ${e.message}`);
       }
     }
-    }
   }
+  return removed;
+}
 
-  if (totalRemoved > 0) {
-    console.error(`[prune-cache-hook] done — removed ${totalRemoved} stale files`);
-  }
-
-  // Kick off the background scan for next time AFTER pruning completes.
-  spawnLiveVersionScan();
-} catch (e) {
-  if (e.code !== 'ENOENT') console.error(`[prune-cache-hook] error: ${e.message}`);
+if (isMain(import.meta.url)) {
+  try { prune(); } catch (e) { if (e.code !== 'ENOENT') console.error(`[prune-cache-hook] error: ${e.message}`); }
 }
