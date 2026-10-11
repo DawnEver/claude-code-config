@@ -46,7 +46,7 @@ test('status card reuses cached message on restart and status failure does not l
   try {
     const file = path.join(dir, 'topics.json');
     fs.writeFileSync(file, JSON.stringify({ '-100|codex:card': { topicId: 77,
-      title: 'proj | main | host-a | codex', statusMessageId: 55 } }));
+      title: 'host-a | proj | main | codex', statusMessageId: 55 } }));
     const r = make({ topicCacheFile: file });
     r.hosts.codex.statusSnapshot = () => ({ state: 'idle' });
     await up(r, 'codex', 'card');
@@ -85,15 +85,24 @@ test('reconnect drains the old offline-card write before showing live status', a
   assert.match(r.telegram.edits.at(-1).text, /^Working · since /);
 });
 
-test('Topic fields use readable separators and display-only project abbreviations', () => {
-  assert.equal(topicTitle('host-a', 'plant-studio', 'feat/example', 'codex'), 'plant | feat/example | host-a | codex');
-  assert.equal(topicTitle('host-a', 'sample lab', 'main', 'claude'), 'sample | main | host-a | claude');
+test('Topic fields lead with the machine and use display-only project abbreviations', () => {
+  const t = (machine, project, branch, agent, suffix) => topicTitle({ machine, project, branch, agent, suffix });
+  assert.equal(t('host-a', 'plant-studio', 'feat/example', 'codex'), 'host-a | plant | feat/example | codex');
+  assert.equal(t('host-a', 'sample lab', 'main', 'claude'), 'host-a | sample | main | claude');
   for (const [repo, name] of [['acme-lab-lib', 'acme-lib'], ['acme-lab-webui', 'acme-webui'], ['lab-tools', 'lab-tools'], ['acme-lab', 'acme']])
-    assert.equal(topicTitle('h', repo, 'main', 'claude'), `${name} | main | h | claude`);
-  const title = topicTitle('host-a', 'proj', 'x'.repeat(200), 'codex', 'abcdef');
+    assert.equal(t('h', repo, 'main', 'claude'), `h | ${name} | main | claude`);
+  const title = t('host-a', 'proj', 'x'.repeat(200), 'codex', 'abcdef');
   assert.ok(Array.from(title).length <= 128);
-  assert.ok(title.endsWith(' | host-a | codex · abcdef'));
-  assert.ok(Array.from(topicTitle('m'.repeat(200), 'p'.repeat(200), 'b'.repeat(200), 'codex', 'a'.repeat(16))).length <= 128);
+  assert.ok(title.startsWith('host-a | proj | xxx') && title.endsWith('… | codex · abcdef'));
+  assert.ok(Array.from(t('m'.repeat(200), 'p'.repeat(200), 'b'.repeat(200), 'codex', 'a'.repeat(16))).length <= 128);
+});
+
+test('projectInTitle drops the project name per group', () => {
+  const t = (branch, projectInTitle) => topicTitle({ machine: 'host-a', project: 'acme', branch, agent: 'claude', suffix: '3883c6', projectInTitle });
+  assert.equal(t('feat/solver', 'main'), 'host-a | feat/solver | claude · 3883c6');
+  assert.equal(t('main', 'main'), 'host-a | acme | main | claude · 3883c6');
+  assert.equal(t('main', 'never'), 'host-a | main | claude · 3883c6');
+  assert.equal(t('feat/x', 'always'), 'host-a | acme | feat/x | claude · 3883c6');
 });
 
 test('cached active Topics are renamed without replacing their Topic identity', async () => {
@@ -103,7 +112,7 @@ test('cached active Topics are renamed without replacing their Topic identity', 
     fs.writeFileSync(file, JSON.stringify({ '-100|codex:s': { topicId: 77, title: 'host-a/codex/main #4' } }));
     const r = make({ topicCacheFile: file });
     await up(r, 'codex', 's');
-    assert.deepEqual(r.telegram.renamed, [[-100, 77, 'proj | main | host-a | codex']]);
+    assert.deepEqual(r.telegram.renamed, [[-100, 77, 'host-a | proj | main | codex']]);
     assert.equal(r.bridge.sessions.get('codex:s').topicId, 77);
     assert.equal(r.telegram.topics.length, 0);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -319,8 +328,8 @@ test('topics: <machine>/<agent>/<branch> in the project group, fallback otherwis
   await r.bridge.sessionUp('claude', { id: 's1', cwd: '/elsewhere' });
   await r.bridge.prompt('claude:s1', 'go');
   await live(r, 'codex', 't2', { branch: 'feat/x' });
-  assert.deepEqual(r.telegram.topics.slice(0, 2), [[-100, 'proj | feat/x | host-a | codex'], [-999, 'other | main | host-a | claude']]);
-  assert.match(r.telegram.topics[2][1], /^proj \| feat\/x \| host-a \| codex · [a-f0-9]{6}$/);
+  assert.deepEqual(r.telegram.topics.slice(0, 2), [[-100, 'host-a | proj | feat/x | codex'], [-999, 'host-a | other | main | claude']]);
+  assert.match(r.telegram.topics[2][1], /^host-a \| proj \| feat\/x \| codex · [a-f0-9]{6}$/);
   assert.deepEqual(r.telegram.pinned, []);
 });
 
@@ -483,7 +492,7 @@ test('strangers are dropped; /status, /interrupt go through the host interface',
   assert.deepEqual(r.hosts.codex.injected, []);
   assert.equal(r.telegram.sent.length, before);
   await r.bridge.handleUpdate(msg(ALICE, '/status@my_bot', 100));
-  await until(() => texts(r.telegram).at(-1) === 'proj | main | host-a | codex: idle');
+  await until(() => texts(r.telegram).at(-1) === 'host-a | proj | main | codex: idle');
   await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 100));
   await until(() => texts(r.telegram).at(-1) === 'interrupt sent');
   await r.bridge.handleUpdate(msg(ALICE, '/interrupt', 101));

@@ -51,7 +51,7 @@ and is never mirrored:
 - **One forum group per project**, Topics enabled. Project = origin repo name of the
   session's cwd, so all worktrees of a repo share a group. Unknown projects go to
   `bridge.fallbackChatId`; without one the session is registered but not mirrored.
-- **One Topic per session**, titled `<project> | <branch> | <machine> | <agent>`.
+- **One Topic per session**, titled `<machine> | <project> | <branch> | <agent>`; a group dedicated to one repo can drop `<project>` with `bridge.projects.<repo>.projectInTitle`: `"main"` (keep it only on main/master) or `"never"` (default `"always"`).
   Display-only project names drop a trailing `studio` or `lab` (separated by spaces,
   hyphens or underscores); configuration/routing still use the full origin repo name.
   Concurrent same-name live sessions use a stable six-hex session-derived suffix

@@ -45,15 +45,20 @@ export const sessionKey = (agent, id) => `${agent}:${id}`;
 const STATUS_LABELS = { running: 'Working', idle: 'Idle', 'waiting-approval': 'Needs approval', 'waiting-input': 'Needs input', unknown: 'Unknown', disconnected: 'Ended' };
 const clock = t => new Date(t).toTimeString().slice(0, 5);
 
-export function topicTitle(machine, project, branch, agent, suffix = '') {
+/**
+ * `machine | [project |] branch | agent[ · suffix]`. projectInTitle drops the project in a
+ * group dedicated to one repo: 'main' keeps it only on main/master, 'never' always drops it.
+ */
+export function topicTitle({ machine, project, branch, agent, suffix = '', projectInTitle = 'always' }) {
   const clean = value => String(value ?? '').replace(/[|\r\n]/g, ' ').trim();
   const clip = (value, max) => {
     const chars = Array.from(value);
     return chars.length > max ? chars.slice(0, max - 1).join('') + '…' : value;
   };
   const name = clean(project).replace(/[-_ ]+(?:studio|lab)(?=$|[-_ ])/gi, '') || 'unknown';
-  const head = `${clip(name, 32)} | `;
-  const tail = ` | ${clip(clean(machine), 24)} | ${clip(clean(agent), 20)}${suffix ? ` · ${suffix}` : ''}`;
+  const showProject = projectInTitle === 'always' || (projectInTitle === 'main' && ['main', 'master'].includes(clean(branch)));
+  const head = `${clip(clean(machine), 24)} | ${showProject ? `${clip(name, 32)} | ` : ''}`;
+  const tail = ` | ${clip(clean(agent), 20)}${suffix ? ` · ${suffix}` : ''}`;
   const available = Math.max(1, 128 - Array.from(head + tail).length);
   const source = Array.from(clean(branch) || 'detached');
   const shortened = source.length > available ? source.slice(0, available - 1).join('') + '…' : source.join('');
@@ -148,8 +153,10 @@ export class Bridge {
       const cacheKey = chatId === null ? null : TopicCache.key(chatId, key);
       const cached = cacheKey === null || this.deletingTopics.has(cacheKey) ? null : this.topics.get(cacheKey);
       // A Claude seat (scripts/shared/seats.mjs) names the login the session runs as.
-      const base = topicTitle(this.machine, ctx.project, ctx.branch, seat ? `${agent}:${seat}` : agent);
-      const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, base,
+      const titleOf = (suffix = '') => topicTitle({ machine: this.machine, project: ctx.project, branch: ctx.branch,
+        agent: seat ? `${agent}:${seat}` : agent, suffix, projectInTitle: this.config.projects[ctx.project]?.projectInTitle });
+      const base = titleOf();
+      const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, base, titleOf,
         title: base, project: ctx.project, branch: ctx.branch, cwd, seat, chain: Promise.resolve(), progress: null, injected: [] };
       this.sessions.set(key, s);
       s.title = this.#selectTitle(s, cached?.title);
@@ -369,12 +376,12 @@ export class Bridge {
     const hash = createHash('sha256').update(s.key).digest('hex');
     // Keep an already-derived short identity across reconnects, not historical counters.
     for (let length = 6; length <= 16; length += 2) {
-      const candidate = topicTitle(this.machine, s.project, s.branch, s.agent, hash.slice(0, length));
+      const candidate = s.titleOf(hash.slice(0, length));
       if (previous === candidate && !taken.has(candidate)) return candidate;
     }
     if (!taken.has(s.base)) return s.base;
     for (let length = 6; length <= 16; length += 2) {
-      const candidate = topicTitle(this.machine, s.project, s.branch, s.agent, hash.slice(0, length));
+      const candidate = s.titleOf(hash.slice(0, length));
       if (!taken.has(candidate)) return candidate;
     }
     throw new Error('could not derive a unique live Topic title');

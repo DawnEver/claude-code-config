@@ -48,7 +48,7 @@ const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
 
 /**
  * Normalised bridge config.
- * shared:  bridge.projects.<repo>.chatId, bridge.fallbackChatId,
+ * shared:  bridge.projects.<repo>.{chatId, projectInTitle?: 'always'|'main'|'never'}, bridge.fallbackChatId,
  *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.codexSources,
  *          bridge.fleet.{chatId, topicId?, everyMinutes?, timeFormat?, order?, always?} (the fleet
  *          report; off without chatId. Its seats are the top-level `seats`, scripts/shared/seats.mjs)
@@ -59,7 +59,8 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
   const merged = readMergedEnvSettings({ sharedPath, localPath }) ?? {};
   const b = merged.bridge ?? {};
   const projects = {};
-  for (const [name, p] of Object.entries(b.projects ?? {})) if (p?.chatId) projects[name] = { chatId: p.chatId };
+  for (const [name, p] of Object.entries(b.projects ?? {})) if (p?.chatId) projects[name] = { chatId: p.chatId,
+    projectInTitle: ['main', 'never'].includes(p.projectInTitle) ? p.projectInTitle : 'always' };
   return {
     botToken: typeof b.botToken === 'string' && !/your-|^$/.test(b.botToken) ? b.botToken : null,
     allowedUserIds: (b.allowedUserIds ?? []).map(Number).filter(Number.isFinite),
