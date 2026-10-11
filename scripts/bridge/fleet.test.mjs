@@ -200,13 +200,11 @@ test('renderReport shows a host only when it runs something, has a reset to act 
   assert.match(render({ sessions: [RUN('claude', 'Idle'), RUN('codex', 'Unknown')] }), /^## Claude[\s\S]*_Idle_[\s\S]*## Codex[\s\S]*_Unknown_/, 'any registered session counts');
   assert.match(render({ sessions: [RUN('codex', 'Needs approval')] }), /^## Codex[\s\S]*proj\\-x\*\* · main · _Needs approval_/);
   assert.match(render({ sessions: [RUN('claude', 'Needs input')] }), /^## Claude[\s\S]*proj\\-x\*\* · main · _Needs input_/);
-  assert.match(render({ extra: { Claude: { banked: [{ id: 'o', name: 'Opus 5.5', expires: NOW + 18 * 24 * H }], scheduled: null } } }),
-    /^## Claude[\s\S]*`banked reset \(Opus 5\.5\) · use by \d\d\/Oct \d\d:\d\d \(18d 0h\)`$/);
-  assert.equal(render({ registry: { seats: [{ ...SEAT, claimed: ['o'] }] }, extra: { Claude: { banked: [{ id: 'o', expires: NOW + H }], scheduled: null } } }), null, 'a claimed reset is not offered');
+  assert.match(render({ extra: { Claude: { scheduled: { at: NOW + H, url: null } } } }), /^## Claude[\s\S]*\*\*extra reset announced\*\* · /);
   assert.match(render({ codexResetCredits: { availableCount: 2, credits: [{ expiresAt: (NOW + 20 * H) / 1000 }, { expiresAt: null }] } }),
     /^## Codex[\s\S]*`reset credits: 2`\n\n- expires \d\d\/Oct \d\d:\d\d \\\(20h 0m\\\)\n- no expiry$/);
   assert.equal(render({ codexResetCredits: { availableCount: 0, credits: [] } }), null);
-  assert.match(render({ extra: { Codex: { banked: [], scheduled: { at: NOW + 2 * H, url: 'https://x/s' } } } }), /^## Codex[\s\S]*\*\*\[extra reset announced\]\(https:\/\/x\/s\)\*\* · \d\d:\d\d \\\(2h 0m\\\)$/);
+  assert.match(render({ extra: { Codex: { scheduled: { at: NOW + 2 * H, url: 'https://x/s' } } } }), /^## Codex[\s\S]*\*\*\[extra reset announced\]\(https:\/\/x\/s\)\*\* · \d\d:\d\d \\\(2h 0m\\\)$/);
 });
 
 test('renderReport seat problems show the Claude block and name the expected seat in full', () => {

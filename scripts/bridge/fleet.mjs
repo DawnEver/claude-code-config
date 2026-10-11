@@ -199,18 +199,10 @@ function resetCreditLines(rc, now, t) {
   return [`\`reset credits: ${rc.availableCount}\``, ...(expiries.length ? [expiries.map((x) => `- ${x === Infinity ? 'no expiry' : `expires ${md(t(x, now))}`}`).join('\n')] : [])];
 }
 
-/** Banked resets still to claim and an announced one: what a person can act on. */
-function actionableResets(x, claimed = []) {
-  return { banked: (x?.banked ?? []).filter((e) => !claimed.includes(e.id)), scheduled: x?.scheduled ?? null };
-}
-
-/** Only resets a person can act on; past ones are history, not news. */
-function resetLines(act, now, t) {
-  const link = (e, text) => (e.url ? `[${text}](${e.url})` : text);
-  return [
-    ...act.banked.map((e) => `\`banked reset${e.name ? ` (${e.name})` : ''} · ${e.expires ? `use by ${t(e.expires, now)}` : 'no stated expiry'}\``),
-    ...(act.scheduled ? [`**${link(act.scheduled, 'extra reset announced')}**${act.scheduled.at ? ` · ${md(t(act.scheduled.at, now))}` : ''}`] : []),
-  ];
+/** An announced extra reset not applied yet; past ones are history, not news. */
+function resetLines(s, now, t) {
+  if (!s) return [];
+  return [`**${s.url ? `[extra reset announced](${s.url})` : 'extra reset announced'}**${s.at ? ` · ${md(t(s.at, now))}` : ''}`];
 }
 
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
@@ -258,8 +250,8 @@ function claudeGroups(dirs, seats, machine) {
 /**
  * Render this machine's report (rich Markdown), or null when there is nothing to say. The
  * bot that posts it names the machine, so there is no machine title. A block appears only
- * when it is running something here, has a reset to act on (a banked reset to claim, an
- * announced one, Codex reset credits), has a seat problem, or has quota data and
+ * when it is running something here, has a reset to act on (an announced
+ * one, Codex reset credits), has a seat problem, or has quota data and
  * bridge.fleet.always is on for its host. Claude has one block per seat (`claude` = the
  * local config dirs, see readClaudeDirs), headed by the seat alias and the account it runs
  * as; seat checks sit there. Running means any registered session, whatever its state; a
@@ -284,19 +276,18 @@ export function renderReport({ machine, registry, codexAccount, claude = [], cod
 
   const claudeRun = running('claude');
   for (const g of claudeGroups(claude, registry?.seats, machine)) {
-    const act = actionableResets(extra?.Claude, g.seat?.claimed);
     const run = claudeRun.filter((x) => g.aliases.includes(x.seat ?? null));
-    if ((always.claude && g.quota) || run.length || act.banked.length || act.scheduled || g.problems.length) {
+    if ((always.claude && g.quota) || run.length || extra?.Claude?.scheduled || g.problems.length) {
       block(g.label ? `Claude · ${md(g.label)}` : 'Claude', g.quota, g.account?.email,
         [g.account?.org, g.account?.tier && planName(g.account.tier)].filter(Boolean).join(' · '),
-        [...g.problems.map((p) => `**(\\!) ${md(p)}**`), ...quotaLines(g.quota, now, t), ...runLines(run), ...resetLines(act, now, t)]);
+        [...g.problems.map((p) => `**(\\!) ${md(p)}**`), ...quotaLines(g.quota, now, t), ...runLines(run), ...resetLines(extra?.Claude?.scheduled, now, t)]);
     }
   }
-  const codexAct = actionableResets(extra?.Codex);
+  const codexScheduled = extra?.Codex?.scheduled ?? null;
   const codexRun = running('codex');
-  if ((always.codex && codex) || codexRun.length || codexAct.scheduled || codexResetCredits?.availableCount > 0) {
+  if ((always.codex && codex) || codexRun.length || codexScheduled || codexResetCredits?.availableCount > 0) {
     block('Codex', codex, codexAccount?.email, codexAccount?.plan && planName(codexAccount.plan), [...quotaLines(codex, now, t),
-      ...runLines(codexRun), ...resetCreditLines(codexResetCredits, now, t), ...resetLines(codexAct, now, t)]);
+      ...runLines(codexRun), ...resetCreditLines(codexResetCredits, now, t), ...resetLines(codexScheduled, now, t)]);
   }
   return blocks.length ? blocks.join('\n\n') : null;
 }
@@ -320,7 +311,7 @@ export function reportSlot(registry, machine) {
 export class FleetReport {
   constructor({ telegram, chatId, topicId = null, everyMinutes = 60, machine, stateFile = null, sessions = () => [],
     codexQuota: codexSource = () => null, codexAccount = () => null, log = () => {}, now = Date.now,
-    extraResets = (at) => fetchExtraResets({ now: at, log }),
+    extraResets = () => fetchExtraResets({ log }),
     read = { registry: () => ({ ...readBridgeConfig().fleet, seats: readSeats() }), claude: readClaudeDirs } }) {
     Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, codexAccount, extraResets, log, now, read });
     this.cycleMs = everyMinutes * 60000;
@@ -353,7 +344,7 @@ export class FleetReport {
     const text = renderReport({ machine: this.machine, registry,
       codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null,
       claude: this.read.claude(registry?.seats, this.machine), codex: cx ? codexQuota(cx.limits, cx.at) : null,
-      extra: await this.extraResets(now).catch(() => null), sessions: this.sessions(), now });
+      extra: await this.extraResets().catch(() => null), sessions: this.sessions(), now });
     const previous = this.state.messageId;
     // Nothing to say (idle, no reset to act on): the round still replaces the old report.
     const [sent] = text ? await this.telegram.sendMessage(this.chatId, text, { threadId: this.topicId ?? undefined, rich: true }) : [];

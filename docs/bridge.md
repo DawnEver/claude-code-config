@@ -484,10 +484,10 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 
 | Line | Source |
 | --- | --- |
-| Claude seat | top-level `seats` (`{alias, email, org?, orgUuid?, machines, claimed?}`; `claimed` lists the ids of banked resets the seat has already used, which the report then stops offering): the Claude account x Team each machine should run as, one block per seat. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
+| Claude seat | top-level `seats` (`{alias, email, org?, orgUuid?, machines}`): the Claude account x Team each machine should run as, one block per seat. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
 | Codex account | app-server `account/read` (email, plan) |
 | Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count, and each credit's expiry |
-| extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, a banked reset still to claim with its use-by and one announced but not applied. Past resets are history and not shown. Not official data |
+| extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, one announced but not applied. Whether an account holds a reset to spend is account state: Codex reads it from the account (reset credits); Claude exposes none, so the report claims none. Past resets are history and not shown. Not official data |
 | Claude account | each config dir's `.claude.json` `oauthAccount` (email, organization), shown in full |
 | Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js` into `<config dir>/bridge/claude-usage.json`; fresh only while a session in that dir renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
@@ -496,8 +496,8 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 A report answers first what a reader acts on: will the quota last until it resets, and is
 there a reset to use. It is a Telegram rich Markdown message (`sendRichMessage`), every value
 Markdown-escaped. The posting bot names the machine, so there is no machine title. A host
-block appears only when that host runs something on this machine, has a reset to act on (a
-banked reset to claim, an announced one, Codex reset credits) or has a seat problem; a
+block appears only when that host runs something on this machine, has a reset to act on (an
+announced one, Codex reset credits) or has a seat problem; a
 machine with none of these posts nothing that round. `always` overrides that per host:
 a host it is on for shows whenever it has quota data, idle or not, so each round is a steady
 heartbeat. Default `{ "claude": true, "codex": false }`. Each block:
@@ -510,7 +510,6 @@ heartbeat. Default `{ "claude": true, "codex": false }`. Each block:
 | 5h | `███░░░░░░┃░` 26% / 92% | 19:44 (24m) |     ┃ inserted at pace: fill past it = too fast
 | 7d | `████┃█░░░░░` 45% / 44% | 09/Oct 04:20 (5d 9h) |
 - **claude-code-config** · main                  what runs here
-`banked reset (Opus 5.5) · use by 21/Oct 19:20 (18d 0h)`
 ```
 
 The binding window is the one projected to run out soonest, else the fullest. Codex blocks

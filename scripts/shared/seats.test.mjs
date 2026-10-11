@@ -42,11 +42,11 @@ test('the base keeps .claude.json in home; a seat keeps it inside its dir', () =
 });
 
 test('seatsFor returns this machine\'s seats normalised and survives junk', () => {
-  const seats = [{ alias: 'team-a', email: 'a@x', machines: ['m1'] }, { alias: 'Bad', email: 'b@x', machines: ['m1'], claimed: [1] },
+  const seats = [{ alias: 'team-a', email: 'a@x', machines: ['m1'] }, { alias: 'Bad', email: 'b@x', machines: ['m1'] },
     { alias: 'team-b', machines: ['m2'] }, null, 3, { machines: 'm1' }];
   assert.deepEqual(seatsFor(seats, 'm1'), [
-    { alias: 'team-a', email: 'a@x', org: null, orgUuid: null, claimed: [] },
-    { alias: null, email: 'b@x', org: null, orgUuid: null, claimed: ['1'] }]);
+    { alias: 'team-a', email: 'a@x', org: null, orgUuid: null },
+    { alias: null, email: 'b@x', org: null, orgUuid: null }]);
   for (const bad of [null, 'x', {}]) assert.deepEqual(seatsFor(bad, 'm1'), []);
 });
 

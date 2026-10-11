@@ -2,7 +2,7 @@
 //
 // A seat is declared once, in the top-level `seats` of claude_env_settings.json (sync
 // payload, never in git — it names accounts):
-//   seats: [{alias, email, org?, orgUuid?, machines: [<machine>], claimed?: [<offer id>]}]
+//   seats: [{alias, email, org?, orgUuid?, machines: [<machine>]}]
 // `alias` (lowercase, e.g. `team-a`) names the seat on a machine, so it is unique per
 // machine; the same alias may name different accounts' seats on different machines.
 //
@@ -99,7 +99,7 @@ export function resolveSeat(input, aliases) {
 export const usageFile = (dir) => path.join(dir, 'bridge', 'claude-usage.json');
 
 const norm = (s) => ({ alias: isValidAlias(s.alias) ? s.alias : null, email: s.email ?? null, org: s.org ?? null,
-  orgUuid: s.orgUuid ?? null, claimed: Array.isArray(s.claimed) ? s.claimed.map(String) : [] });
+  orgUuid: s.orgUuid ?? null });
 
 /** The seats `machine` holds, normalised; junk entries are skipped. */
 export function seatsFor(seats, machine) {
