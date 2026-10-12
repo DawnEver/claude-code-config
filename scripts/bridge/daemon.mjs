@@ -611,7 +611,10 @@ export class Bridge {
     if (u.callback_query) return this.#onCallback(u.callback_query);
     const m = u.message;
     if (!m || !this.allowed.has(Number(m.from?.id))) return;
-    const s = this.#sessionAt(m.chat.id, m.is_topic_message ? m.message_thread_id : null);
+    // Every session talks in its own Topic. General is no session's: a Topic-less session
+    // (topicId null, not yet active) would otherwise match it and receive the message.
+    if (!m.is_topic_message) return;
+    const s = this.#sessionAt(m.chat.id, m.message_thread_id);
     if (!s || s.state === 'ended') return;
     const host = this.hosts.get(s.agent);
     let text = (m.text ?? m.caption ?? '').trim();

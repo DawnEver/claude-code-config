@@ -224,6 +224,15 @@ test('approval buttons cannot be reused across daemon restarts or wrong origins'
   assert.equal(current.telegram.answers.at(-1), 'submitted', 'submission is not proof of native acceptance');
 });
 
+test('a message in the General topic is dropped, even while a session has no Topic yet', async () => {
+  const r = make();
+  await up(r, 'codex', 'x');   // up, but no Topic until its first activity: topicId is null
+  const general = msg(ALICE, 'hello');
+  delete general.message.is_topic_message; delete general.message.message_thread_id;
+  await r.bridge.handleUpdate(general);
+  assert.deepEqual(r.hosts.codex.injected, []);
+});
+
 for (const agent of HOSTS) {
   test(`${agent}: ended sessions and failed sends invalidate approval controls`, async () => {
     const r = make({ config: { approvalsFromTelegram: true } });
