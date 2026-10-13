@@ -15,6 +15,7 @@ import { readBridgeConfig } from '../bridge/context.mjs';
 import { planService, runAction, SERVICE_NAME } from '../bridge/install-service.mjs';
 import { isValidMachineName, readMachineName, writeMachineName, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import { accountFile, baseSeat, readSeats, seatDir, seatsFor } from '../shared/seats.mjs';
+import { applyGlobalDefaults } from '../shared/claude-defaults.mjs';
 import {
   resolveSyncDir,
   syncDirSource,
@@ -703,6 +704,12 @@ export function setup(options = {}) {
   if (process.platform === 'darwin') {
     console.log('\n--- macOS Notifications ---');
     if (!checkMacNotify()) counters.errors++;
+  }
+
+  // UI defaults stored in each config dir's .claude.json (scripts/shared/claude-defaults.mjs);
+  // ccc re-applies them per launch, this covers a bare `claude`.
+  for (const { alias, dir } of [{ alias: null, dir: claudeDir }, ...localSeats()]) {
+    if (applyGlobalDefaults(accountFile(dir))) console.log(`OK    Claude UI defaults applied (${alias ? `seat ${alias}` : 'base'})`);
   }
 
   // Install standalone wrappers; shell profiles are deliberately not required.

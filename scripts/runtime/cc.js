@@ -19,9 +19,11 @@ import { syncBeforeLaunch } from './startup-sync.mjs';
 const sync = syncBeforeLaunch();
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
-const [{ buildClaudeInvocation }, { prepareSpawn }] = await Promise.all([
+const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { accountFile, configDir }] = await Promise.all([
   import('./cc-launcher.mjs'),
   import('./win-spawn.mjs'),
+  import('../shared/claude-defaults.mjs'),
+  import('../shared/seats.mjs'),
 ]);
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -64,6 +66,9 @@ if (error) {
 // Anything short of the exact alias says what it resolved to, before the session starts.
 if (seatMatch && (seatMatch !== 'exact' || resolvedSeat !== seat)) console.log(`[cc] seat "${seat}" matched ${resolvedSeat} (${seatMatch})`);
 console.log(provider ? `[cc] Using provider: ${provider}` : `[cc] Using Claude (official subscription${resolvedSeat ? `, seat ${resolvedSeat}` : ''})`);
+
+// Best-effort: a UI preference must never block a launch.
+try { applyGlobalDefaults(accountFile(configDir(env))); } catch { /* ignore */ }
 
 // Not `shell: true`: that concatenates args unescaped, so any argument containing a space
 // or a cmd metacharacter is mangled. `prepareSpawn` resolves the npm shim and quotes for us.
