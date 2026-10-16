@@ -793,7 +793,7 @@ export async function main() {
   }
   if (config.fleet) {
     const report = new FleetReport({ telegram, ...config.fleet, machine, log,
-      stateFile: path.join(BRIDGE_RUNTIME_DIR, 'fleet-report.json'),
+      stateFile: path.join(BRIDGE_RUNTIME_DIR, 'fleet-report.json'), codexSeriesFile: path.join(BRIDGE_RUNTIME_DIR, 'codex-usage.jsonl'),
       sessions: () => bridge.fleetSessions(), codexQuota: () => codex.quota, codexAccount: () => codex.account });
     // No tick at startup: sessions re-register over the first seconds, and a report taken
     // before that would say nothing is running.

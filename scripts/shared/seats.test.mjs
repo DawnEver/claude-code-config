@@ -38,7 +38,7 @@ test('configDir follows CLAUDE_CONFIG_DIR, else the base dir', () => {
 test('the base keeps .claude.json in home; a seat keeps it inside its dir', () => {
   assert.equal(accountFile(baseDir(HOME), HOME), path.join(HOME, '.claude.json'));
   assert.equal(accountFile(seatDir('team-b', HOME), HOME), path.join(HOME, '.claude-team-b', '.claude.json'));
-  assert.equal(usageFile(seatDir('team-b', HOME)), path.join(HOME, '.claude-team-b', 'bridge', 'claude-usage.json'));
+  assert.equal(usageFile(seatDir('team-b', HOME)), path.join(HOME, '.claude-team-b', 'bridge', 'claude-usage.jsonl'));
 });
 
 test('seatsFor returns this machine\'s seats normalised and survives junk', () => {

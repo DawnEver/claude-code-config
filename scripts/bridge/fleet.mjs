@@ -6,21 +6,24 @@
 // machines and nothing calls a private endpoint:
 //   - Claude quota and account, per local config dir (the base dir and each seat dir, see
 //     scripts/shared/seats.mjs): the statusLine payload's `rate_limits`, teed by hud-hook.js
-//     into <dir>/bridge/claude-usage.json (only fresh while a session there renders), and the
-//     dir's `.claude.json` `oauthAccount` (email + organization).
-//   - Codex quota: the shared app-server's `account/rateLimits` (codex-adapter.mjs).
+//     into the series <dir>/bridge/claude-usage.jsonl (only fresh while a session there
+//     renders), and the dir's `.claude.json` `oauthAccount` (email + organization).
+//   - Codex quota: the shared app-server's `account/rateLimits` (codex-adapter.mjs), recorded
+//     every tick into the bridge runtime's codex-usage.jsonl series.
 //   - Expected seats: top-level `seats`; report order: `bridge.fleet`; both in
 //     claude_env_settings.json (sync payload, never in git), re-read every tick.
-// Rates are averaged since the window opened (resetsAt - window length) as of the
-// snapshot, so no history is kept: a window's ETA is when that average pace reaches 100%.
+// A series (quota-series.mjs) holds each window's samples while it is current; its last
+// sample is the quota now, the rest say where in the window it was spent (the trend row).
+// One forecast per window (project): the current speed carried to the reset.
 // A stale snapshot is shown as a floor (use only grows until a reset), never projected from;
-// a passed reset reads as renewed. No data age is ever shown: only what is still true now.
+// a passed reset is a new window at 0%. No data age is ever shown: only what is still true now.
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { readBridgeConfig } from './context.mjs';
 import { fetchExtraResets } from './extra-resets.mjs';
+import { burn, readSeries, recordSample } from './quota-series.mjs';
 import { baseDir, holds, orgOk, readAccount, readSeats, sameText, seatDir, seatsFor, usageFile } from '../shared/seats.mjs';
 
 const H = 3600000;
@@ -36,65 +39,73 @@ const pct = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(100, 
 const span = (ms) => (ms < 24 * H ? `${Math.round(ms / H)}h` : `${Math.round(ms / (24 * H))}d`);
 
 /**
- * One quota window as observed at `at` (epoch ms, like `resetsAt`).
- * @returns {{used, resetsAt, windowMs, perHour, eta, short}|null} short = projected to run out before
- *   reset
+ * One quota window as observed at `at` (epoch ms, like `resetsAt`). `perHour`: the average
+ * % per hour since the window opened, null too early in it to mean anything.
+ * @returns {{used, resetsAt, windowMs, perHour}|null}
  */
 export function windowView({ used, resetsAt, windowMs, at }) {
   used = pct(used);
   if (used === null || !(resetsAt > at) || !(windowMs > 0)) return null;
   const elapsed = windowMs - (resetsAt - at);
-  if (used >= 100) return { used, resetsAt, windowMs, perHour: null, eta: at, short: true };
-  if (elapsed < windowMs * MIN_ELAPSED_FRACTION || used <= 0) return { used, resetsAt, windowMs, perHour: null, eta: null, short: false };
-  const perMs = used / elapsed;
-  const eta = at + (100 - used) / perMs;
-  return { used, resetsAt, windowMs, perHour: perMs * H, eta, short: eta < resetsAt };
-}
-
-/** The hud-hook tee: {at, five_hour:{used_percentage, resets_at(sec)}, seven_day:{...}}. */
-export function claudeQuota(snapshot) {
-  if (!(snapshot?.at > 0)) return null;
-  const windows = {};
-  for (const [name, windowMs] of Object.entries(CLAUDE_WINDOWS)) {
-    const w = snapshot[name];
-    const v = w && windowView({ used: w.used_percentage, resetsAt: w.resets_at * 1000, windowMs, at: snapshot.at });
-    if (v) windows[span(windowMs)] = v;
-  }
-  return Object.keys(windows).length ? { at: snapshot.at, windows } : null;
-}
-
-/** Codex `account/rateLimits` snapshot ({primary, secondary}) observed at `at` -> windows. */
-export function codexQuota(limits, at) {
-  if (!limits || !(at > 0)) return null;
-  const windows = {};
-  for (const w of [limits.primary, limits.secondary]) {
-    if (!(w?.windowDurationMins > 0)) continue;
-    const windowMs = w.windowDurationMins * 60000;
-    const v = windowView({ used: w.usedPercent, resetsAt: w.resetsAt * 1000, windowMs, at });
-    if (v) windows[span(windowMs)] = v;
-  }
-  return Object.keys(windows).length ? { at, windows } : null;
+  const early = elapsed < windowMs * MIN_ELAPSED_FRACTION;
+  return { used, resetsAt, windowMs, perHour: early ? null : used / elapsed * H };
 }
 
 /**
- * hud-hook.js side: keep the latest statusLine `rate_limits` for the daemon. Rewritten only
- * when the values change or the copy is a minute old, so renders stay cheap. Fail-silent.
+ * The one forecast of a window: where its use goes if spending keeps its current speed.
+ * Speed is the last observed trend cell's (`recent`, % per hour), else the average since the
+ * window opened. No forecast from a stale snapshot, or too early in the window (`perHour`
+ * null), or for an exhausted window (it says so itself). Feeds both the headline's run-out
+ * warning and the trend row, so the two can never disagree.
+ * @returns {{rate, atReset, eta, short}|null} rate % per hour; atReset: use at the reset
+ *   (may exceed 100); eta: when it reaches 100%, null if never; short: eta before the reset
  */
+export function project(v, { recent = null, now, fresh }) {
+  if (!fresh || v.used >= 100 || v.perHour == null || !(v.resetsAt > now)) return null;
+  const rate = recent ?? v.perHour;
+  const eta = rate > 0 ? now + (100 - v.used) / rate * H : null;
+  return { rate, atReset: v.used + rate * (v.resetsAt - now) / H, eta, short: eta != null && eta < v.resetsAt };
+}
+
+/** statusLine `rate_limits` ({five_hour:{used_percentage, resets_at(sec)}, seven_day}) -> windows. */
+export function claudeWindows(rl) {
+  const windows = {};
+  for (const [name, windowMs] of Object.entries(CLAUDE_WINDOWS)) {
+    const w = rl?.[name];
+    if (w && pct(w.used_percentage) !== null && w.resets_at > 0) windows[span(windowMs)] = { used: pct(w.used_percentage), resetsAt: w.resets_at * 1000, windowMs };
+  }
+  return windows;
+}
+
+/** Codex `account/rateLimits` ({primary, secondary}) -> windows. */
+export function codexWindows(limits) {
+  const windows = {};
+  for (const w of [limits?.primary, limits?.secondary]) {
+    if (!(w?.windowDurationMins > 0) || pct(w.usedPercent) === null || !(w.resetsAt > 0)) continue;
+    const windowMs = w.windowDurationMins * 60000;
+    windows[span(windowMs)] = { used: pct(w.usedPercent), resetsAt: w.resetsAt * 1000, windowMs };
+  }
+  return windows;
+}
+
+/**
+ * An account's quota from its series (quota-series.mjs): the last sample's windows as views,
+ * with the series kept for the burn row. Null when there is nothing current to show.
+ */
+export function quotaOf(series) {
+  const last = series?.at(-1);
+  if (!last) return null;
+  const windows = {};
+  for (const [k, w] of Object.entries(last.windows)) {
+    const v = windowView({ ...w, at: last.at });
+    if (v) windows[k] = v;
+  }
+  return Object.keys(windows).length ? { at: last.at, windows, series } : null;
+}
+
+/** hud-hook.js side: record the statusLine's quota into this config dir's series. Fail-silent. */
 export function teeClaudeUsage(statusLine, { file, now = Date.now() } = {}) {
-  try {
-    const rl = statusLine?.rate_limits;
-    if (!rl?.five_hour && !rl?.seven_day) return false;
-    const values = { five_hour: rl.five_hour ?? null, seven_day: rl.seven_day ?? null };
-    const prev = readJson(file);
-    if (prev && now - prev.at < 60000 && JSON.stringify({ five_hour: prev.five_hour, seven_day: prev.seven_day }) === JSON.stringify(values)) return false;
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    try {
-      fs.writeFileSync(tmp, JSON.stringify({ at: now, ...values }));
-      fs.renameSync(tmp, file);
-    } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
-    return true;
-  } catch { return false; }
+  return recordSample(file, claudeWindows(statusLine?.rate_limits), now);
 }
 
 /**
@@ -104,7 +115,7 @@ export function teeClaudeUsage(statusLine, { file, now = Date.now() } = {}) {
 export function readClaudeDirs(seats, machine, home = os.homedir()) {
   const dirs = [{ alias: null, dir: baseDir(home) }, ...seatsFor(seats, machine).filter((x) => x.alias)
     .map((x) => ({ alias: x.alias, dir: seatDir(x.alias, home) })).filter((x) => fs.existsSync(x.dir))];
-  return dirs.map(({ alias, dir }) => ({ alias, account: readAccount(dir, home), quota: claudeQuota(readJson(usageFile(dir))) }));
+  return dirs.map(({ alias, dir }) => ({ alias, account: readAccount(dir, home), quota: quotaOf(readSeries(usageFile(dir))) }));
 }
 
 
@@ -134,15 +145,42 @@ export function timeFormatter(format) {
   return (ms, now) => `${when(ms, now)} (${countdown(ms, now)})`;
 }
 
-// Ten cells of `used`, with `┃` inserted at the cell boundary an even spend would have
-// reached: fill past the marker is spending faster than the window lasts, fill short of it is
-// headroom. Inserted, not overlaid, so the marker never hides a cell of fill.
+// Position: ten cells of `used`, with `┃` inserted at the cell boundary an even spend would
+// have reached: fill past the marker is spending faster than the window lasts, fill short of
+// it is headroom. Inserted, not overlaid, so the marker never hides a cell of fill.
 const bar = (used, pace) => {
   const n = Math.round(used / 10);
   const cells = [...('█'.repeat(n) + '░'.repeat(10 - n))];
   if (pace != null) cells.splice(Math.round(pace / 10), 0, '┃');
   return cells.join('');
 };
+
+// Trend: the window on time, opening to reset. A past cell is the quota spent in that slice
+// against an even spend in solid blocks (`▄` = on pace, `█` = twice it or more, blank =
+// nothing, `░` never observed); a future cell is the current speed on the same scale in
+// braille (`⣤` = on pace), so the forecast reads as a dotted continuation; `·` = no forecast.
+const SOLID = '▁▂▃▄▅▆▇█';
+const DOTTED = '⡀⣀⣄⣤⣦⣶⣷⣿';
+const glyph = (set, level) => set[Math.min(set.length, Math.max(1, Math.ceil(level * 4))) - 1];
+// About as wide as the position bar: 5h -> 10 cells of 30 min, 7d -> 14 of 12h.
+const cellsFor = (windowMs) => Math.max(1, Math.round(windowMs / (windowMs <= 24 * H ? 30 * 60000 : 12 * H)));
+const trend = (levels, ahead) => levels.map((l) => (l === null ? (ahead > 0 ? glyph(DOTTED, ahead) : '·')
+  : l === undefined ? '░' : l <= 0 ? ' ' : glyph(SOLID, l))).join('');
+
+/**
+ * Every window of `q` with what the report says about it, computed once: the view `v`, the
+ * even-spend use by now (`pace`), the trend cells, and the forecast `p` (see project).
+ */
+function windowModels(q, now) {
+  return Object.entries(q?.windows ?? {}).map(([k, v]) => {
+    const n = cellsFor(v.windowMs);
+    if (v.resetsAt <= now) return { k, v, renewed: true, n };
+    const fresh = !stale(q, now);
+    const b = burn(q.series ?? [], k, { now, cells: n, seenUntil: fresh ? now : q.at });
+    const p = project(v, { recent: b?.now ?? null, now, fresh });
+    return { k, v, pace: paceAt(v, now), cells: b?.cells ?? Array(n).fill(null), p };
+  });
+}
 
 // The report is Telegram rich Markdown (sendRichMessage): a `##` heading per host, a table of
 // quota windows, bold warnings, code for things to act on. Every interpolated value is
@@ -159,15 +197,15 @@ export const planName = (id) => PLAN_NAMES[id] ?? String(id).split('_').map((w) 
  * is the one that runs out soonest, else the fullest. It heads the block as `NN% left`,
  * and a projected run-out sits right under the heading next to that window's reset.
  */
-function headline(q, now, t) {
-  const live = Object.entries(q?.windows ?? {}).filter(([, v]) => v.resetsAt > now);
+function headline(q, models, now, t) {
+  const live = models.filter((m) => !m.renewed);
   if (!live.length) return { title: '', warn: [] };
-  const short = live.filter(([, v]) => v.short).sort((a, b) => a[1].eta - b[1].eta);
-  const [k, v] = short[0] ?? live.sort((a, b) => b[1].used - a[1].used)[0];
+  const short = live.filter((m) => m.p?.short).sort((a, b) => a.p.eta - b.p.eta);
+  const { k, v, p } = short[0] ?? [...live].sort((a, b) => b.v.used - a.v.used)[0];
   const resets = `resets ${md(t(v.resetsAt, now))}`;
-  // Exhausted stays true until the reset; a projection is only as good as a fresh snapshot.
+  // Exhausted stays true until the reset; a forecast exists only from a fresh snapshot.
   const warn = v.used >= 100 ? `${k} exhausted · ${resets}`
-    : v.short && !stale(q, now) ? `${k} runs out ${md(t(v.eta, now))} · ${resets}` : null;
+    : p?.short ? `${k} runs out ${md(t(p.eta, now))} · ${resets}` : null;
   return { title: ` · ${bound(q, v, now, '≤')}${Math.round(100 - v.used)}% left`, warn: warn ? [`**(\\!) ${warn}**`] : [] };
 }
 
@@ -179,16 +217,23 @@ const bound = (q, v, now, mark) => (stale(q, now) && v.used < 100 ? mark : '');
 /** The % of a window an even spend would have used by `now`: clock-only, so never stale. */
 const paceAt = (v, now) => Math.min(100, Math.max(0, (1 - (v.resetsAt - now) / v.windowMs) * 100));
 
-/** The quota windows as one table: the detail under the headline. */
-function quotaLines(q, now, t) {
+/**
+ * The quota windows as one table, two rows each: position (where the use is against an even
+ * spend) and trend (where it went since the reset, and where it is heading). `→` is the use at
+ * the reset at the current speed; past 100% it is the run-out time instead, in bold. A passed
+ * reset is a new window not yet started: zero use, nothing spent, no reset time yet.
+ */
+function quotaLines(q, models, now, t) {
   if (!q) return ['_no quota data yet_'];
-  const rows = Object.entries(q.windows).map(([k, v]) => {
-    // A passed reset is a full window again; when it was is history.
-    if (v.resetsAt <= now) return `| ${k} | renewed | — |`;
-    const pace = paceAt(v, now);
-    return `| ${k} | \`${bar(v.used, pace)}\` ${bound(q, v, now, '≥')}${Math.round(v.used)}% / ${Math.round(pace)}% | ${md(t(v.resetsAt, now))} |`;
+  const rows = models.flatMap(({ k, v, renewed, n, pace, cells, p }) => {
+    if (renewed) return [`| ${k} | \`${'░'.repeat(10)}\` 0% | — |`, `| | \`${'·'.repeat(n)}\` | |`];
+    const ahead = p ? p.rate / (100 / (v.windowMs / H)) : null;
+    // Times share the third column: the reset on the position row, a run-out on the trend row.
+    const forecast = !p ? '→ —' : p.short ? `**→ ${Math.round(p.atReset)}%**` : `→ ${Math.round(p.atReset)}%`;
+    return [`| ${k} | \`${bar(v.used, pace)}\` ${bound(q, v, now, '≥')}${Math.round(v.used)}% / ${Math.round(pace)}% | ${md(t(v.resetsAt, now))} |`,
+      `| | \`${trend(cells, ahead)}\` ${forecast} |${p?.short ? ` **${md(t(p.eta, now))}** ` : ' '}|`];
   });
-  return [['| | used / pace | resets |', '|---|---|---|', ...rows].join('\n')];
+  return [['| | position · trend | resets · runs out |', '|---|---|---|', ...rows].join('\n')];
 }
 
 /** Codex reset credits still to spend, each with its expiry, soonest first. */
@@ -267,11 +312,14 @@ export function renderReport({ machine, registry, codexAccount, claude = [], cod
   // not. Default: Claude on, Codex off.
   const always = { claude: true, codex: false, ...registry?.always };
   const blocks = [];
-  // Heading = verdict; then the warning; then who it runs as; then the detail.
-  const block = (host, q, email, detail, lines) => {
-    const h = headline(q, now, t);
+  // Heading = verdict; then the warning; then who it runs as; then problems, the quota table,
+  // and the rest. Headline and table read the same window models.
+  const block = (host, q, email, detail, problems, rest) => {
+    const models = windowModels(q, now);
+    const h = headline(q, models, now, t);
     // Blank lines between parts: a single newline would fold them into one paragraph.
-    blocks.push([`## ${host}${h.title}`, ...h.warn, `${accountName(email)}${detail ? ` · _${md(detail)}_` : ''}`, ...lines].join('\n\n'));
+    blocks.push([`## ${host}${h.title}`, ...h.warn, `${accountName(email)}${detail ? ` · _${md(detail)}_` : ''}`,
+      ...problems, ...quotaLines(q, models, now, t), ...rest].join('\n\n'));
   };
 
   const claudeRun = running('claude');
@@ -280,14 +328,14 @@ export function renderReport({ machine, registry, codexAccount, claude = [], cod
     if ((always.claude && g.quota) || run.length || extra?.Claude?.scheduled || g.problems.length) {
       block(g.label ? `Claude · ${md(g.label)}` : 'Claude', g.quota, g.account?.email,
         [g.account?.org, g.account?.tier && planName(g.account.tier)].filter(Boolean).join(' · '),
-        [...g.problems.map((p) => `**(\\!) ${md(p)}**`), ...quotaLines(g.quota, now, t), ...runLines(run), ...resetLines(extra?.Claude?.scheduled, now, t)]);
+        g.problems.map((p) => `**(\\!) ${md(p)}**`), [...runLines(run), ...resetLines(extra?.Claude?.scheduled, now, t)]);
     }
   }
   const codexScheduled = extra?.Codex?.scheduled ?? null;
   const codexRun = running('codex');
   if ((always.codex && codex) || codexRun.length || codexScheduled || codexResetCredits?.availableCount > 0) {
-    block('Codex', codex, codexAccount?.email, codexAccount?.plan && planName(codexAccount.plan), [...quotaLines(codex, now, t),
-      ...runLines(codexRun), ...resetCreditLines(codexResetCredits, now, t), ...resetLines(codexScheduled, now, t)]);
+    block('Codex', codex, codexAccount?.email, codexAccount?.plan && planName(codexAccount.plan), [],
+      [...runLines(codexRun), ...resetCreditLines(codexResetCredits, now, t), ...resetLines(codexScheduled, now, t)]);
   }
   return blocks.length ? blocks.join('\n\n') : null;
 }
@@ -310,10 +358,10 @@ export function reportSlot(registry, machine) {
  */
 export class FleetReport {
   constructor({ telegram, chatId, topicId = null, everyMinutes = 60, machine, stateFile = null, sessions = () => [],
-    codexQuota: codexSource = () => null, codexAccount = () => null, log = () => {}, now = Date.now,
+    codexQuota: codexSource = () => null, codexAccount = () => null, codexSeriesFile = null, log = () => {}, now = Date.now,
     extraResets = () => fetchExtraResets({ log }),
     read = { registry: () => ({ ...readBridgeConfig().fleet, seats: readSeats() }), claude: readClaudeDirs } }) {
-    Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, codexAccount, extraResets, log, now, read });
+    Object.assign(this, { telegram, chatId, topicId, machine, stateFile, sessions, codexSource, codexSeriesFile, codexAccount, extraResets, log, now, read });
     this.cycleMs = everyMinutes * 60000;
     const saved = stateFile && readJson(stateFile);
     this.state = saved?.chatId === chatId && (saved.topicId ?? null) === topicId
@@ -337,13 +385,15 @@ export class FleetReport {
 
   async #tick() {
     const now = this.now();
+    // Every tick feeds the Codex series, so a report shows where the quota went between rounds.
+    const cx = this.codexSource();
+    if (cx && this.codexSeriesFile) recordSample(this.codexSeriesFile, codexWindows(cx.limits), cx.at);
     const registry = this.read.registry();
     const round = Math.floor((now - reportSlot(registry, this.machine)) / this.cycleMs);
     if (round === this.state.round) return;
-    const cx = this.codexSource();
     const text = renderReport({ machine: this.machine, registry,
       codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null,
-      claude: this.read.claude(registry?.seats, this.machine), codex: cx ? codexQuota(cx.limits, cx.at) : null,
+      claude: this.read.claude(registry?.seats, this.machine), codex: cx ? quotaOf(this.codexSeriesFile ? readSeries(this.codexSeriesFile) : [{ from: cx.at, at: cx.at, windows: codexWindows(cx.limits) }]) : null,
       extra: await this.extraResets().catch(() => null), sessions: this.sessions(), now });
     const previous = this.state.messageId;
     // Nothing to say (idle, no reset to act on): the round still replaces the old report.
