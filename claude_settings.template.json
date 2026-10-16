@@ -1,4 +1,5 @@
 {
+  "syncClaudeAiSkills": false,
   "env": {
     "CLAUDE_CODE_WORKFLOWS": "1",
     "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
@@ -18,63 +19,32 @@
       "Read",
       "Edit",
       "Write",
-      "Glob",
-      "Grep",
-      "NotebookEdit",
-      "Monitor",
       "PowerShell",
       "WebSearch",
-      "WebFetch",
       "Skill(rem:rem)",
       "Skill(rem:todo)",
       "Skill(fabric:continue)",
       "Skill(fabric:models)",
       "Skill(fabric:handoff)",
       "mcp__plugin_fabric_fabric__call",
-      "mcp__plugin_fabric_fabric__list_providers"
+      "mcp__plugin_fabric_fabric__list_providers",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "Monitor",
+      "NotebookEdit"
     ],
     "deny": [
       "Bash(rm -rf *)",
       "Bash(sudo *)",
       "Bash(curl * | bash)",
-      "Bash(git push --force *)",
-      "Bash(git reset --hard *)"
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)"
     ],
     "defaultMode": "auto"
   },
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/loop-guard-hook.js",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/bridge-hook.js --question",
-            "timeout": 660
-          }
-        ]
-      },
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "hooks": [
@@ -106,17 +76,6 @@
         ]
       }
     ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/sync-hook.js --remind",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "Notification": [
       {
         "hooks": [
@@ -128,6 +87,49 @@
       },
       {
         "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/sync-hook.js --remind",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/loop-guard-hook.js",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/scripts/hooks/bridge-hook.js --question",
+            "timeout": 660
+          }
+        ]
+      },
+      {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
@@ -186,7 +188,6 @@
   "worktree": {
     "baseRef": "fresh"
   },
-  "syncClaudeAiSkills": false,
   "enableArtifact": false,
   "statusLine": {
     "type": "command",
@@ -197,7 +198,8 @@
     "rem@cc-market": true,
     "sharp-review@cc-market": true,
     "evolve@cc-market": true,
-    "fabric@cc-market": true
+    "fabric@cc-market": true,
+    "cc-plugin-you-should-know@builtin": true
   },
   "extraKnownMarketplaces": {
     "claude-hud": {
@@ -216,9 +218,19 @@
     }
   },
   "effortLevel": "low",
+  "modelSettings": {
+    "deepseek-v4-flash": {
+      "effortLevel": "medium"
+    },
+    "claude-opus-5-5": {
+      "effortLevel": "low"
+    }
+  },
+  "autoCompactWindow": 720000,
   "askUserQuestionTimeout": "10m",
   "autoUpdatesChannel": "latest",
   "tui": "fullscreen",
+  "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "theme": "auto",
   "editorMode": "normal",
@@ -235,12 +247,5 @@
     "environment": [
       "$defaults"
     ]
-  },
-  "autoCompactWindow": 720000,
-  "skipDangerousModePermissionPrompt": true,
-  "modelSettings": {
-    "claude-opus-5": {
-      "effortLevel": "low"
-    }
   }
 }
