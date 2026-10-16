@@ -340,7 +340,7 @@ Transport exception URLs are not logged because they can contain bot tokens.
 | `offset.json` | last `update_id` (cache) |
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
-| `claude-usage.json` | latest Claude statusLine `rate_limits`, teed by `hud-hook.js` for the fleet report |
+| `codex-usage.jsonl` | the Codex account's quota series, recorded every fleet tick (`quota-series.mjs`) |
 | `fleet-report.json` | this machine's last fleet report id and round (cache) |
 | `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit; pruned after 7 days |
 
@@ -489,7 +489,7 @@ Nothing is reported in the first minute after a daemon start, while sessions re-
 | Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count, and each credit's expiry |
 | extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, one announced but not applied. Whether an account holds a reset to spend is account state: Codex reads it from the account (reset credits); Claude exposes none, so the report claims none. Past resets are history and not shown. Not official data |
 | Claude account | each config dir's `.claude.json` `oauthAccount` (email, organization), shown in full |
-| Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js` into `<config dir>/bridge/claude-usage.json`; fresh only while a session in that dir renders |
+| Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js` into the series `<config dir>/bridge/claude-usage.jsonl`; fresh only while a session in that dir renders |
 | Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
 | running | every registered session, with its state unless Working (Idle and Unknown included); a Claude session under its seat |
 
@@ -506,22 +506,46 @@ heartbeat. Default `{ "claude": true, "codex": false }`. Each block:
 ## Claude · team-a · 55% left                    heading: seat alias, the binding window's headroom
 **(!) 7d runs out 05/Oct 19:00 (1d 23h) · resets 09/Oct 04:20 (5d 9h)**
 `alice@example.com` · _Uni Team A_               account as code (not a link), org italic
-| | used / pace | resets |                       pace = % an even spend would be at now
-| 5h | `███░░░░░░┃░` 26% / 92% | 19:44 (24m) |     ┃ inserted at pace: fill past it = too fast
+| | position · trend | resets · runs out |      two rows per window
+| 5h | `███░░░░░░┃░` 26% / 92% | 19:44 (24m) |      position: ┃ = even pace, fill past it = ahead
+| | `▂▃▅▇█▆▃▂ ⣀` → 27% | |                          trend: since reset, then the current speed
 | 7d | `████┃█░░░░░` 45% / 44% | 09/Oct 04:20 (5d 9h) |
+| | `▃▂▅▆▃▄▅⣶⣶⣶⣶⣶⣶⣶` **→ 118%** | **05/Oct 19:00 (1d 23h)** |
 - **claude-code-config** · main                  what runs here
 ```
+
+Each window answers three questions, each in one way. **Position** (quota axis): ten cells of
+use with `┃` inserted where an even spend would be now, then `used / pace`. **Trend** (time
+axis, opening to reset; 5h: 10 cells of 30 min, 7d: 14 of 12h): a past cell is the quota spent
+in that slice against an even spend in solid blocks (`▄` on pace, `█` twice it or more,
+blank nothing, `░` never observed); the future is the current speed on the same scale in
+braille (`⣤` on pace), a dotted continuation; `·` when there is no forecast. **Outcome**:
+`→ N%` is the use at the reset at the current speed; past 100% it is
+bold, with the run-out time in the third column under the reset. No legend: the header and
+the one-glyph-one-meaning rule carry it.
+
+That forecast (`project()` in fleet.mjs) is the only one in the report: the headline's
+`runs out` warning reads it too. Its speed is the last observed trend cell's (30 min for 5h, 12h for 7d), else the average
+since the window opened; there is none from a stale snapshot, in the first tenth of a window,
+or for an exhausted one. A passed reset is a new window not yet started (Claude starts the
+next one at first use): `░░░░░░░░░░ 0%`, an empty trend, no reset time.
+
+The rows come from each account's quota series (`quota-series.mjs`): a JSONL sample
+`{from, at, windows}` per change (an unchanged reading only moves `at`), the last one being
+the quota now. A rise between two samples is spread over the time it could have happened
+in, and the first sample's use from the window's opening, so a fresh series reads as a flat
+average. Samples whose windows have all reset are dropped on the next write. Quota is per
+account, so the curve includes what other machines on that account spent.
 
 The binding window is the one projected to run out soonest, else the fullest. Codex blocks
 add `reset credits: N` with each credit's expiry when credits remain.
 
 `timeFormat` picks how times read: `both` (default: `08/Oct 23:00 (4d 7h)`; `HH:MM` for
-today), `date` (`08/Oct 23:00` only) or `countdown` (time left only: `4d 7h`, `3h 15m`, `12m`). The run-out projection is
-the average rate since the window opened, as of the snapshot, so no history is kept; the
-pace marker is read at render time (it depends only on the clock). The report never states
+today), `date` (`08/Oct 23:00` only) or `countdown` (time left only: `4d 7h`, `3h 15m`, `12m`).
+Pace is read at render time (it depends only on the clock). The report never states
 a data age, only what is still true now: use only grows until a reset, so a snapshot over 15
 minutes old shows its use as a floor (`≥60%`, heading `≤40% left`) and is never projected
-from; 100% stays `exhausted` until the reset; a passed reset reads `renewed`. Nothing is posted
+from; 100% stays `exhausted` until the reset; a passed reset reads `0%`. Nothing is posted
 between rounds: every warning is a bold `(!)` line of the report — a window exhausted or running out before reset,
 a seat logged into another account/org than registered (`org` = case-insensitive substring
 of organizationName, or exact `orgUuid`), no subscription login in a seat, a seat dir not
@@ -537,7 +561,7 @@ same account in two Teams. Each seat is declared once, in the top-level `seats` 
 | Layer | Where | Holds |
 | --- | --- | --- |
 | base dir | `~/.claude` | code, machine files, plugin installs; plain `ccc` and the IDE extension (which ignores `CLAUDE_CONFIG_DIR`) |
-| seat dir | `~/.claude-<alias>` (`CLAUDE_CONFIG_DIR`), except for the seat the base dir's login already holds, which runs in `~/.claude` (one login, never a copied credential) | that seat's login, `.claude.json` (account, user-scope MCP), transcripts, `bridge/claude-usage.json`; links `CLAUDE.md`, `settings.json`, `skills`, `output-styles`, `keybindings.json` like the base dir, and `plugins` to the base dir's |
+| seat dir | `~/.claude-<alias>` (`CLAUDE_CONFIG_DIR`), except for the seat the base dir's login already holds, which runs in `~/.claude` (one login, never a copied credential) | that seat's login, `.claude.json` (account, user-scope MCP), transcripts, `bridge/claude-usage.jsonl`; links `CLAUDE.md`, `settings.json`, `skills`, `output-styles`, `keybindings.json` like the base dir, and `plugins` to the base dir's |
 
 - `setup` creates every seat dir of this machine with its links (`SEAT_LINKS`), registers the
   `session-bridge` channel in each dir's `.claude.json`, and says which seats still need a login.
