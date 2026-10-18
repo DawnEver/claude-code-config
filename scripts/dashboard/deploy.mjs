@@ -89,7 +89,8 @@ async function setMenu() {
   };
   await call('setChatMenuButton', menuRequest(g, token));
   const now = await call('getChatMenuButton');
-  if (now?.web_app?.url !== g.url) throw new Error(`menu button reads back ${now?.web_app?.url ?? now?.type}, not ${g.url}`);
+  // Telegram normalises the URL (a trailing slash), so compare what the URLs mean.
+  if (!now?.web_app?.url || new URL(now.web_app.url).href !== new URL(g.url).href) throw new Error(`menu button reads back ${now?.web_app?.url ?? now?.type}, not ${g.url}`);
   console.log(`menu button "${now.text}" -> ${now.web_app.url} (read back)`);
 }
 
@@ -100,4 +101,5 @@ export async function main([cmd] = process.argv.slice(2)) {
   throw new Error('usage: deploy.mjs host-token | deploy | set-menu');
 }
 
-if (isMain(import.meta.url)) main().catch((e) => { console.error(e.message); process.exit(1); });
+// exitCode, not exit(): exiting with fetch sockets still open trips a libuv assertion on Windows.
+if (isMain(import.meta.url)) main().catch((e) => { console.error(e.message); process.exitCode = 1; });
