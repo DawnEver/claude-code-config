@@ -3,10 +3,12 @@
 // anything but display. All data is rendered with textContent, never as HTML.
 
 import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView } from './view.mjs';
+import { demoMasker } from './demo.mjs';
 
 const POLL_MS = 8000;
 const tg = window.Telegram?.WebApp;
-const mock = new URLSearchParams(location.search).has('mock');
+const params = new URLSearchParams(location.search);
+const mock = params.has('mock');
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const filters = { group: 'all', host: '', agent: '', project: '' };
@@ -25,8 +27,18 @@ let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ??
 let seenAt = store.get('dashboard.eventsSeenAt');
 // The Events tab lists what was unread when it was opened: read events are cleared on the next visit.
 let shownFrom = seenAt;
+// Demo mode (Config tab, or `?demo`): the live data with every identity masked in this browser,
+// for showing the dashboard to others. A setting of this device only: nothing reaches the gateway.
+if (params.has('demo')) store.set('dashboard.demo', '1');
+let demoOn = store.get('dashboard.demo') === '1';
+let masker = null;   // one per page: names stay put when demo is toggled off and on
+let raw = null;      // the last snapshot as fetched; `snapshot` is what is shown
+const shown = () => (raw && demoOn ? (masker ??= demoMasker())(raw) : raw);
 // Quota alerts read on this device (tapped in the needs-you card); only keys still standing are kept.
-let readAlerts = (() => { try { const v = JSON.parse(store.get('dashboard.readAlerts')); return Array.isArray(v) ? v : []; } catch { return []; } })();
+// Demo keys are masked, so they are kept apart from the real ones.
+const readKey = () => (demoOn ? 'dashboard.readAlerts.demo' : 'dashboard.readAlerts');
+const loadRead = () => { try { const v = JSON.parse(store.get(readKey())); return Array.isArray(v) ? v : []; } catch { return []; } };
+let readAlerts = loadRead();
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
 let accounts = new Map();
@@ -71,7 +83,7 @@ function renderSummary() {
   if (snapshot.accounts) {
     const standing = quotaAlerts(snapshot).map(alertKey);
     readAlerts = readAlerts.filter((k) => standing.includes(k));
-    store.set('dashboard.readAlerts', JSON.stringify(readAlerts));
+    store.set(readKey(), JSON.stringify(readAlerts));
   }
   const quota = quotaAlerts(snapshot, Date.now(), readAlerts);
   const n = waiting.length + quota.length;
@@ -94,7 +106,7 @@ function quotaAlertRow(q) {
   row.append(el('span', 'dot'), main, el('span', 'pill', q.verdict === 'exhausted' ? 'Exhausted' : 'Runs out'));
   // Tapping marks it read: it leaves the card until the verdict or the window period changes.
   row.title = 'Mark read';
-  row.addEventListener('click', () => { readAlerts.push(alertKey(q)); store.set('dashboard.readAlerts', JSON.stringify(readAlerts)); render(); });
+  row.addEventListener('click', () => { readAlerts.push(alertKey(q)); store.set(readKey(), JSON.stringify(readAlerts)); render(); });
   return row;
 }
 
@@ -329,7 +341,7 @@ function configRow(r) {
   input.addEventListener('input', () => {
     configDirty = true; save.disabled = parse() === r.value || (!r.meta.options && !(Number.isInteger(parse()) && parse() >= r.meta.min && parse() <= r.meta.max)); });
   save.addEventListener('click', () => saveConfig(r.key, parse(), save));
-  if (mock || !tg?.initData) input.disabled = true;
+  if (mock || demoOn || !tg?.initData) input.disabled = true;
   edit.append(input, save);
   top.append(edit);
   row.append(top);
@@ -341,9 +353,29 @@ function configRow(r) {
   return row;
 }
 
+function demoToggle() {
+  const row = el('label', 'cfg demo-toggle');
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = demoOn;
+  box.addEventListener('change', () => {
+    demoOn = box.checked;
+    store.set('dashboard.demo', demoOn ? '1' : '0');
+    readAlerts = loadRead();
+    filters.host = filters.project = '';   // the chosen names belong to the other view
+    selectsKey = null;
+    snapshot = shown();
+    configShown = null;
+    render();
+  });
+  row.append(box, el('span', null, 'Demo mode: mask machines, accounts, projects and ids on this device (config edits off)'));
+  return row;
+}
+
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
+  if (!mock) box.append(el('div', 'section-h', 'This device'), demoToggle());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }
   box.append(el('div', 'section-h', 'Shared settings'));
@@ -398,7 +430,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
 function render() {
   if (!snapshot) return;
   accounts = accountIndex(snapshot);
-  $('updated').textContent = snapshot.mock ? 'example data' : lastOk ? `updated ${ago(new Date(lastOk).toISOString())}` : '';
+  $('updated').textContent = snapshot.mock ? 'example data' : lastOk && snapshot.demo ? `demo · updated ${ago(new Date(lastOk).toISOString())}` : lastOk ? `updated ${ago(new Date(lastOk).toISOString())}` : '';
   renderSummary();
   renderTabs();
   renderQuota();
@@ -436,7 +468,8 @@ async function fetchSnapshot() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const next = await res.json();
     if (!Array.isArray(next?.hosts)) throw new Error('unexpected response');
-    snapshot = next;
+    raw = next;
+    snapshot = shown();
     lastOk = Date.now();
     $('banner').textContent = '';
   } catch {

@@ -1,9 +1,11 @@
 ---
 name: sharp-review-2026-10-18
-description: Sharp review findings — 50 total
+description: Sharp review findings — 56 total
 metadata:
   type: project
 ---
+
+
 
 
 
@@ -526,3 +528,84 @@ Collision is contrived but possible.
 - **Suggestion:** Document/test the intended behavior
 
 standing only contains exhausted/short alerts.
+
+
+
+
+## Review 2026-10-18 (follow-up)
+
+## Review 2026-10-18 (session) — adversarial review (对抗性审查) + diff review
+
+### Reviewer Status
+- Reviewer claude (claude): OK
+- Reviewer codex (codex): skipped
+- Reviewer deepseek (deepseek): FAILED
+- Warning: only 1/2 reviewers succeeded
+
+### Confirmed findings
+
+---
+
+### [SR-20261018-051] [HIGH] scripts/dashboard/public/view.mjs — Config events leak the real project name and the host's refusal text
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Run configKey() on bridge.projects.<p>.projectInTitle substrings in free text before the name pass; add a test with a real registry config-applied/refused event.
+
+registry.mjs:78 writes events like `config bridge.projects.acme-app.projectInTitle = "never" refused by DESK: <error>`. text()'s lookbehind excludes '.', so the project inside the dotted key passes unmasked; free-form r.error only gets the already-seen-name pass. Test covers only a quota event.
+
+---
+
+### [SR-20261018-052] [MEDIUM] scripts/dashboard/public/view.mjs — Free text is masked only for names already seen in structured fields, so other identities leak
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Replace free text with category labels/templates in demo mode, or seed maps from configPending and document the gap.
+
+Events persist up to 200 per host and outlive the hosts/sessions/projects they mention; names never entering a map show raw, as do paths/usernames in dashboardError, problems, refusal errors. Doc claim of masking every identity is false.
+
+---
+
+### [SR-20261018-053] [MEDIUM] scripts/dashboard/public/view.mjs — Session ids only match as whole tokens, so truncated or prefixed ids in text pass through
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Also mask hex/UUID-like runs of 8+ chars by shape, or drop ids from free text.
+
+Boundaries exclude '-' and '/', so 8-char prefixes or ids in paths are not matched; `DESK-2` escapes when only `DESK` is known.
+
+---
+
+### [SR-20261018-054] [LOW] scripts/dashboard/public/view.mjs — Short seat or host names corrupt unrelated words in free text
+
+- **Category:** Bug
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Template-based masking or a minimum name length for the free-text pass.
+
+A seat called me/pro/codex rewrites ordinary words in events, garbling text and revealing the alias by position.
+
+---
+
+### [SR-20261018-055] [LOW] scripts/dashboard/public/app.js — Demo mode hides how fresh the data is
+
+- **Category:** Feature
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Show `demo · updated <ago>`.
+
+'demo · names masked' replaces 'updated Xs ago', hiding stalled daemon pushes.
+
+---
+
+### [SR-20261018-056] [LOW] scripts/dashboard/public/view.mjs — demoMasker is dense one-liners in a 316-line file and rebuilds regexes every poll
+
+- **Category:** Performance
+- **Status:** FIXED
+- **Confidence:** single-reviewer
+- **Suggestion:** Move to public/demo.mjs, one combined alternation regex per poll, and test against the dashboard-schema field list.
+
+Hard to audit for leaks; pairs rebuilt, sorted and a RegExp compiled per string per 8s poll with ever-growing maps.

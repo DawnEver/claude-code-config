@@ -6,6 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
+import { demoMasker } from './public/demo.mjs';
 import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView } from './public/view.mjs';
 
 const BOT_ID = 123456;
@@ -216,7 +217,7 @@ test('end to end: bridge registry -> push -> gateway -> viewer', async () => {
 
 test('static app: every script parses (a syntax error only shows as a stuck page)', async () => {
   const { spawnSync } = await import('child_process');
-  for (const f of ['app.js', 'view.mjs']) {
+  for (const f of ['app.js', 'view.mjs', 'demo.mjs']) {
     const r = spawnSync(process.execPath, ['--check', new URL(`./public/${f}`, import.meta.url).pathname.replace(/^\/(\w:)/, '$1')], { encoding: 'utf8' });
     assert.equal(r.status, 0, `${f}: ${r.stderr}`);
   }
@@ -448,4 +449,71 @@ test('end to end: a dashboard edit reaches the shared settings through a host pu
     assert.match(snap.events[0].text, /^config bridge\.idleCloseMinutes = 45 applied by host-a$/);
     assert.deepEqual(JSON.parse(fs2.readFileSync(sharedPath, 'utf8')).bridge.allowedUserIds, [1], 'nothing else touched');
   } finally { fs2.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('view: demo masking — every identity replaced by rule, stable across polls, structure and numbers kept', () => {
+  const real = {
+    schemaVersion: 1, generatedAt: 'x', hosts: [
+      { id: 'DESK', online: true, config: { editable: { 'bridge.projects.acme-app.projectInTitle': 'always', 'bridge.idleCloseMinutes': 30 }, localOverrides: [], facts: { dashboardError: 'DESK push failed' } },
+        sessions: [{ id: '0b6c4e1a-9f', hostId: 'DESK', agent: 'claude', project: 'acme-app', branch: 'fix/x', seat: 'zed',
+          account: 'claude:me@corp.example.com|org-1', status: 'working', topic: { url: 'https://t.me/c/5550001234/12', closed: false } }] },
+      { id: 'LAPTOP', online: false, sessions: [{ id: 's2', hostId: 'LAPTOP', agent: 'codex', project: 'acme-lib', branch: 'main', seat: null, account: 'codex:x@other.example.com', status: 'idle', topic: null }] }],
+    accounts: [
+      { key: 'claude:me@corp.example.com|org-1', agent: 'claude', label: 'zed', email: 'me@corp.example.com', detail: 'Zed Lab · Team Premium',
+        problems: ['wrong account, expected me@corp.example.com · Zed Lab'], hosts: ['DESK', 'LAPTOP'], windows: [{ k: '5h', used: 26 }] },
+      { key: 'codex:x@other.example.com', agent: 'codex', label: null, email: 'x@other.example.com', detail: 'Pro', problems: [], hosts: ['LAPTOP'], windows: [] }],
+    events: [{ at: 1, text: 'Claude · zed (me@corp.example.com): 7d runs out, seen on DESK' },
+      { at: 2, text: 'config bridge.projects.acme-lib.projectInTitle = "never" refused by DESK: session 0b6c4e1a busy' }],
+    configPending: [{ id: 'c1', key: 'bridge.projects.acme-app.projectInTitle', value: 'never', host: 'DESK' }],
+  };
+  const mask = demoMasker();
+  const d = mask(real);
+  const s = JSON.stringify(d);
+  for (const leak of ['DESK', 'LAPTOP', 'zed', 'Zed Lab', 'corp.example', 'other.example', 'acme-app', 'acme-lib', 'fix/x', '0b6c4e1a', '5550001234', 'org-1'])
+    assert.ok(!s.includes(leak), `no ${leak}`);
+  assert.deepEqual(d.hosts.map((h) => h.id), ['Workstation 1', 'Workstation 2']);
+  const [a, b] = d.hosts.map((h) => h.sessions[0]);
+  assert.equal(a.hostId, 'Workstation 1');
+  assert.equal(a.seat, 'team-a');
+  assert.equal(a.project, 'project-a');
+  assert.equal(a.branch, 'branch-1');
+  assert.equal(b.branch, 'main', 'main is kept');
+  assert.equal(a.account, d.accounts[0].key, 'session still finds its account');
+  assert.equal(a.topic.url, 'https://t.me/c/1000000001/12', 'Topic number kept');
+  assert.equal(d.accounts[0].label, 'team-a');
+  assert.equal(d.accounts[0].email, 'user1@example.com');
+  assert.equal(d.accounts[0].detail, 'Team A · Team Premium');
+  assert.equal(d.accounts[1].email, 'user2@example.com');
+  assert.equal(d.accounts[1].detail, 'Pro', 'plan kept');
+  assert.deepEqual(d.accounts[0].hosts, ['Workstation 1', 'Workstation 2']);
+  assert.equal(d.accounts[0].problems[0], 'wrong account, expected user1@example.com · Team A');
+  assert.equal(d.events[0].text, 'Claude · team-a (user1@example.com): 7d runs out, seen on Workstation 1');
+  assert.equal(d.events[1].text, 'config bridge.projects.project-b.projectInTitle = "never" refused by Workstation 1: session session-3 busy', 'config keys and id prefixes in text');
+  assert.equal(d.hosts[0].config.facts.dashboardError, 'Workstation 1 push failed');
+  assert.ok('bridge.projects.project-a.projectInTitle' in d.hosts[0].config.editable);
+  assert.equal(d.configPending[0].key, 'bridge.projects.project-a.projectInTitle');
+  assert.equal(d.configPending[0].host, 'Workstation 1');
+  assert.equal(d.accounts[0].windows[0].used, 26, 'numbers kept');
+  assert.equal(d.demo, true);
+  // Next poll lists hosts in another order: names stay with their machine.
+  const again = mask({ ...real, hosts: [...real.hosts].reverse() });
+  assert.deepEqual(again.hosts.map((h) => h.id), ['Workstation 2', 'Workstation 1']);
+  assert.equal(real.hosts[0].id, 'DESK', 'input untouched');
+});
+
+test('demo masking: free text by template — names only in text are masked, short names corrupt nothing', () => {
+  const mask = demoMasker();
+  const d = mask({ hosts: [{ id: 'X', sessions: [] }], accounts: [{ key: 'claude:k', agent: 'claude', label: 'p', email: null, detail: null,
+    problems: ['wrong team, expected solo@corp.example.com · Quiet Org'], hosts: ['X'] }], events: [
+    { at: 1, text: 'Claude · p (solo@corp.example.com): 5h exhausted · resets in 2h 0m' },
+    { at: 2, text: 'Claude · ghost (ghost@corp.example.com): no subscription login, expected not logged in' },
+    { at: 3, text: 'config bridge.projects.hidden-app.projectInTitle = "main" applied by OTHERBOX' },
+    { at: 4, text: 'config bridge.idleCloseMinutes = 10 refused by X: X said p is busy' },
+    { at: 5, text: 'config bridge.idleCloseMinutes = 10 requested' }] });
+  assert.equal(d.accounts[0].problems[0], 'wrong team, expected user1@example.com · Team B', 'an org seen only in text gets its own team');
+  assert.equal(d.events[0].text, 'Claude · team-a (user1@example.com): 5h exhausted · resets in 2h 0m', '"p" is not replaced inside words');
+  assert.equal(d.events[1].text, 'Claude · team-c (user2@example.com): no subscription login, expected not logged in', 'a seat only in text');
+  assert.equal(d.events[2].text, 'config bridge.projects.project-a.projectInTitle = "main" applied by Workstation 2', 'a host only in text');
+  assert.equal(d.events[3].text, 'config bridge.idleCloseMinutes = 10 refused by Workstation 1: Workstation 1 said team-a is busy');
+  assert.equal(d.events[4].text, 'config bridge.idleCloseMinutes = 10 requested');
 });

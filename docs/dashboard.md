@@ -200,6 +200,15 @@ is whitelisted field by field; at most 200 per host.
   `TELEGRAM_PUBLIC_KEY=<hex>`. A host daemon may push to it over `http://127.0.0.1`.
 - UI without Telegram: open `/?mock` — built-in example data, no API call. Mock rendering is
   not dashboard acceptance.
+- Demo mode, for showing the dashboard to others: Config tab -> "This device" -> Demo mode
+  (or open with `?demo`, which turns it on). Pure front end: a per-device setting in
+  localStorage; the live data is masked in the browser by `demoMasker()` (`public/demo.mjs`),
+  nothing is sent or changed on the gateway or any host. Rules, numbered by first appearance:
+  machines -> `Workstation N`, seats -> `team-a/b/…`, their orgs -> `Team A/B/…`, emails ->
+  `userN@example.com`, projects -> `project-a/…`, branches other than `main`/`master` ->
+  `branch-N`, session ids, Topic chat ids. Free text (alerts, seat problems, config events) is
+  rebuilt from the templates that produce it; anything else is masked by shape plus known names.
+  Config edits are off in demo. Real data still reaches the browser: allowlisted viewers only.
 - Live acceptance needs the real chain: daemons pushing, the Worker deployed, the app opened
   from the dashboard bot on each client in use (Android, iOS, Desktop), a Topic link tapped.
 
