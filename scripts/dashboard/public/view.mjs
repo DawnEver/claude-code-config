@@ -112,14 +112,14 @@ export function verdictText(q, now = Date.now()) {
 
 /**
  * The quota alerts a change of `q` warrants against what was last alerted for its account
- * (`prev`): the verdict turning short or exhausted, a new seat problem, a newly announced
+ * (`prev`): a window turning exhausted (a forecast run-out is shown, never alerted), a new seat problem, a newly announced
  * extra reset. Returns the alert texts and the state to remember. Events, not state: an
  * unchanged condition alerts once; recovering clears it, so a relapse alerts again.
  */
 export function quotaAlertsFor(prev, q, now = Date.now()) {
   const who = `${accountName(q)}${q.email ? ` (${q.email})` : ''}`;
   const texts = [];
-  if ((q.verdict === 'short' || q.verdict === 'exhausted') && prev?.verdict !== q.verdict) texts.push(`${who}: ${verdictText(q, now)}`);
+  if (q.verdict === 'exhausted' && prev?.verdict !== 'exhausted') texts.push(`${who}: ${verdictText(q, now)}`);
   for (const p of q.problems) if (!prev?.problems?.includes(p)) texts.push(`${who}: ${p}`);
   const extraAt = q.extraReset ? q.extraReset.at ?? 0 : null;
   if (extraAt !== null && prev?.extraAt !== extraAt) {
@@ -128,9 +128,16 @@ export function quotaAlertsFor(prev, q, now = Date.now()) {
   return { texts, state: { verdict: q.verdict, problems: [...q.problems], extraAt } };
 }
 
-/** Accounts that need the human: a window exhausted, or projected to run out before its reset. */
-export const quotaAlerts = (snapshot, now = Date.now()) =>
-  (snapshot.accounts ?? []).map((a) => quotaView(a, now)).filter((q) => q.verdict === 'exhausted' || q.verdict === 'short');
+/** One alert's identity: the account, its verdict and the window period. A new period is a new alert. */
+export const alertKey = (q) => `${q.key}|${q.verdict}|${q.bind?.k}|${q.bind?.resetsAt}`;
+
+/**
+ * Accounts that need the human: a window exhausted (a projected run-out is only shown);
+ * minus the alerts already read (`read`: alert keys).
+ */
+export const quotaAlerts = (snapshot, now = Date.now(), read = []) =>
+  (snapshot.accounts ?? []).map((a) => quotaView(a, now))
+    .filter((q) => q.verdict === 'exhausted' && !read.includes(alertKey(q)));
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -203,12 +210,12 @@ export function quotaByHost(snapshot, now = Date.now()) {
 /**
  * The tabs below the needs-you card, each answering one question: what runs (sessions), will
  * the quota last (quota), what happened (events: the alerts, as history). `alert` marks the
- * quota tab while an account needs the human; `unseen` counts events newer than `seenAt`.
+ * quota tab while an unread quota alert stands; `unseen` counts events newer than `seenAt`.
  */
-export function tabs(snapshot, now = Date.now(), seenAt = null) {
+export function tabs(snapshot, now = Date.now(), seenAt = null, read = []) {
   const accounts = snapshot.accounts ?? [];
   const events = snapshot.events ?? [];
-  return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now).length > 0,
+  return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now, read).length > 0,
     events: events.length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length,
     show: accounts.length > 0 || events.length > 0 };
 }
@@ -244,7 +251,7 @@ export function mockDashboard(now = Date.now()) {
         { k: '7d', used: 45, resetsAt: now + 129 * H, windowMs: 168 * H, cells: [0.6, 1.4, 1.8, 0.9, 1.1, 2.2, 2.6, 2.4, 2.5, null, null, null, null, null], forecast: { atReset: 118, eta: now + 47 * H, short: true } }] },
     { key: 'codex:b', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-a', 'host-b'],
       resetCredits: { count: 1, expiries: [now + 3 * 24 * H] }, extraReset: null, windows: [
-        { k: '5h', used: 8, resetsAt: now + 3 * H, windowMs: 5 * H, cells: [-1, -1, 0.3, 0.5, null, null, null, null, null, null], forecast: { atReset: 14, eta: null, short: false } },
+        { k: '5h', used: 100, resetsAt: now + 3 * H, windowMs: 5 * H, cells: [-1, -1, 30, 40, null, null, null, null, null, null], forecast: null },
         { k: '7d', used: 12, resetsAt: now + 100 * H, windowMs: 168 * H, cells: [0.4, 0.7, 0.6, 0.9, 0.5, null, null, null, null, null, null, null, null, null], forecast: { atReset: 30, eta: null, short: false } }] },
   ] };
 }

@@ -6,7 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -262,8 +262,12 @@ test('view: quota verdict on the reader\'s clock; stale readings are floors that
   const renewed = quotaView(account(), NOW + 4 * HR);
   assert.equal(renewed.windows[0].renewed, true);
   assert.equal(renewed.verdict, 'none');
-  assert.deepEqual(quotaAlerts({ accounts: [account(), account({ key: 'k2', windows: [{ ...account().windows[0], forecast: { atReset: 80, eta: null, short: false } }] })] }, NOW).map((x) => x.key),
-    ['claude:a@example.com|u1'], 'only accounts that need the human');
+  const hit = (over = {}) => account({ key: 'k2', windows: [{ ...account().windows[0], used: 100, forecast: null, ...over }] });
+  assert.deepEqual(quotaAlerts({ accounts: [account(), hit()] }, NOW).map((x) => x.key), ['k2'], 'only a hit limit, not a forecast run-out');
+  const [read] = quotaAlerts({ accounts: [hit()] }, NOW);
+  assert.deepEqual(quotaAlerts({ accounts: [hit()] }, NOW, [alertKey(read)]), [], 'a read alert leaves the card');
+  const next = hit({ resetsAt: account().windows[0].resetsAt + 5 * HR });
+  assert.equal(quotaAlerts({ accounts: [next] }, NOW, [alertKey(read)]).length, 1, 'a new window period is a new alert');
 });
 
 test('view: tabs count each view and flag quota that needs the human; no accounts, no tabs', () => {
@@ -271,47 +275,51 @@ test('view: tabs count each view and flag quota that needs the human; no account
   assert.deepEqual(tabs(m, NOW), { sessions: 5, quota: 2, alert: true, events: 2, unseen: 2, show: true });
   assert.equal(tabs(m, NOW, m.events[1].at).unseen, 1, 'only events newer than the last look');
   assert.equal(tabs(m, NOW, m.events[0].at).unseen, 0);
+  assert.equal(tabs(m, NOW, null, quotaAlerts(m, NOW).map(alertKey)).alert, false, 'read alerts do not flag the quota tab');
   assert.deepEqual(tabs({ hosts: [] }, NOW), { sessions: 0, quota: 0, alert: false, events: 0, unseen: 0, show: false });
 });
 
 test('alerts are events: a change once, judged on the merged account, so two hosts on one seat alert once', () => {
   let t = NOW;
   const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => t });
-  const first = r.accept('host-a', parseHostPush(push({ seq: 1, accounts: [account()] })));
-  assert.equal(first.alerts.length, 1);
-  assert.match(first.alerts[0], /^Claude · team-a \(a@example\.com\): 5h runs out in 1h 18m · resets in 3h 0m$/);
-  assert.deepEqual(r.accept('host-b', parseHostPush(push({ seq: 1, accounts: [account()] }))).alerts, [], 'the same condition from another host');
-  assert.deepEqual(r.accept('host-a', parseHostPush(push({ seq: 2, accounts: [account()] }))).alerts, [], 'an unchanged condition alerts once');
+  const hit = account({ windows: [{ ...account().windows[0], used: 100, forecast: null }] });
+  assert.deepEqual(r.accept('host-a', parseHostPush(push({ seq: 1, accounts: [account()] }))).alerts, [], 'a forecast run-out is not an alert');
+  const first = r.accept('host-a', parseHostPush(push({ seq: 2, accounts: [hit] })));
+  assert.deepEqual(first.alerts, ['Claude · team-a (a@example.com): 5h exhausted · resets in 3h 0m']);
+  assert.deepEqual(r.accept('host-b', parseHostPush(push({ seq: 1, accounts: [hit] }))).alerts, [], 'the same condition from another host');
+  assert.deepEqual(r.accept('host-a', parseHostPush(push({ seq: 3, accounts: [hit] }))).alerts, [], 'an unchanged condition alerts once');
   const fine = { ...account().windows[0], forecast: { atReset: 80, eta: null, short: false } };
-  assert.deepEqual(r.accept('host-a', parseHostPush(push({ seq: 3, accounts: [account({ windows: [fine] })] }))).alerts, [], 'recovering is quiet');
-  assert.equal(r.accept('host-a', parseHostPush(push({ seq: 4, accounts: [account()] }))).alerts.length, 1, 'a relapse alerts again');
-  const extra = r.accept('host-a', parseHostPush(push({ seq: 5, accounts: [account({ problems: ['wrong team, expected a@example.com · Team A'], extraReset: { at: NOW + HR, url: 'https://x.test/r' } })] })));
+  assert.deepEqual(r.accept('host-a', parseHostPush(push({ seq: 4, accounts: [account({ windows: [fine] })] }))).alerts, [], 'recovering is quiet');
+  assert.equal(r.accept('host-a', parseHostPush(push({ seq: 5, accounts: [hit] }))).alerts.length, 1, 'a relapse alerts again');
+  const extra = r.accept('host-a', parseHostPush(push({ seq: 6, accounts: [account({ problems: ['wrong team, expected a@example.com · Team A'], extraReset: { at: NOW + HR, url: 'https://x.test/r' } })] })));
   assert.deepEqual(extra.alerts, ['Claude · team-a (a@example.com): wrong team, expected a@example.com · Team A',
     'Claude · team-a (a@example.com): extra reset announced · in 1h 0m · https://x.test/r']);
 });
 
-test('alert texts: exhausted, run-out, and nothing for a healthy account', () => {
+test('alert texts: exhausted only; a forecast run-out and a healthy account say nothing', () => {
   const q = (over) => quotaView(account(over), NOW);
   assert.deepEqual(quotaAlertsFor(undefined, q({ windows: [{ ...account().windows[0], used: 100, forecast: null }] }), NOW).texts,
     ['Claude · team-a (a@example.com): 5h exhausted · resets in 3h 0m']);
   assert.deepEqual(quotaAlertsFor(undefined, q({ windows: [{ ...account().windows[0], forecast: { atReset: 70, eta: null, short: false } }] }), NOW).texts, []);
+  assert.deepEqual(quotaAlertsFor(undefined, q(), NOW).texts, [], 'runs out before reset: shown, not alerted');
 });
 
 test('events: every alert is kept as history for the dashboard, newest first, bounded', async () => {
   const { MAX_EVENTS } = await import('./registry.mjs');
   let t = NOW;
   const r = new Registry({ hosts: ['host-a'], ttlMs: 60000, now: () => t });
-  r.accept('host-a', parseHostPush(push({ seq: 1, accounts: [account()] })));
+  const hit = account({ windows: [{ ...account().windows[0], used: 100, forecast: null }] });
+  r.accept('host-a', parseHostPush(push({ seq: 1, accounts: [hit] })));
   const fine = { ...account().windows[0], forecast: { atReset: 80, eta: null, short: false } };
   r.accept('host-a', parseHostPush(push({ seq: 2, accounts: [account({ windows: [fine] })] })));
   t += 60000;
-  r.accept('host-a', parseHostPush(push({ seq: 3, accounts: [account({ windows: [{ ...account().windows[0], used: 100, forecast: null }] })] })));
+  r.accept('host-a', parseHostPush(push({ seq: 3, accounts: [hit] })));
   const { events } = r.snapshot();
-  assert.deepEqual(events.map((e) => e.text.replace(/^.*: /, '')), ['5h exhausted · resets in 2h 59m', '5h runs out in 1h 18m · resets in 3h 0m']);
+  assert.deepEqual(events.map((e) => e.text.replace(/^.*: /, '')), ['5h exhausted · resets in 2h 59m', '5h exhausted · resets in 3h 0m']);
   assert.equal(events[0].at, new Date(NOW + 60000).toISOString());
   for (let i = 0; i < MAX_EVENTS + 5; i++) {
     r.accept('host-a', parseHostPush(push({ seq: 4 + 2 * i, accounts: [account({ windows: [fine] })] })));
-    r.accept('host-a', parseHostPush(push({ seq: 5 + 2 * i, accounts: [account()] })));
+    r.accept('host-a', parseHostPush(push({ seq: 5 + 2 * i, accounts: [hit] })));
   }
   assert.equal(r.snapshot().events.length, MAX_EVENTS);
 });

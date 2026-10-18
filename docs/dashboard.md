@@ -88,10 +88,11 @@ app-server); the Worker never recomputes it.
 - **On the reader's clock**: the even-spend pace and every countdown are computed in the page
   (`quotaView` in `public/view.mjs`). A reading older than 15 min is a floor (`≥` used,
   `≤` left) and forecasts nothing; a passed reset is a new window not yet started.
-- **Verdict**: the binding window is the one that runs out soonest, else the fullest. An
-  exhausted window, or one projected to run out before its reset, joins the needs-you card.
-- **Alerts**: the Worker turns verdict changes into events (`quotaAlertsFor` in `view.mjs`)
-  and returns them in the push reply; the host posts them with its own bot to
+- **Verdict**: the binding window is the one that runs out soonest, else the fullest. Only an
+  exhausted window joins the needs-you card (tap it to mark it read on this device; it returns
+  with the next window period). A projected run-out is shown on the account row, never alerted.
+- **Alerts**: the Worker turns a window hitting its limit, a seat problem, or an announced extra
+  reset into events (`quotaAlertsFor` in `view.mjs`) and returns them in the push reply; the host posts them with its own bot to
   `bridge.alerts`. See `docs/bridge.md` "Agents Dashboard and quota alerts".
 - **Events**: every alert is also kept in the Worker (last 50, memory only) and shown in the
   Events tab, newest first, with an unread count since this device last opened it — the

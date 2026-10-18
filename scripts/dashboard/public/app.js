@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView } from './view.mjs';
 
 const POLL_MS = 8000;
 const tg = window.Telegram?.WebApp;
@@ -23,6 +23,8 @@ const hashTab = location.hash.slice(1);
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
 // Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
 let seenAt = store.get('dashboard.eventsSeenAt');
+// Quota alerts read on this device (tapped in the needs-you card); only keys still standing are kept.
+let readAlerts = (() => { try { const v = JSON.parse(store.get('dashboard.readAlerts')); return Array.isArray(v) ? v : []; } catch { return []; } })();
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
 let accounts = new Map();
@@ -64,7 +66,12 @@ function renderSummary() {
   const box = $('summary');
   const st = stats(snapshot);
   const waiting = attention(snapshot);
-  const quota = quotaAlerts(snapshot);
+  if (snapshot.accounts) {
+    const standing = quotaAlerts(snapshot).map(alertKey);
+    readAlerts = readAlerts.filter((k) => standing.includes(k));
+    store.set('dashboard.readAlerts', JSON.stringify(readAlerts));
+  }
+  const quota = quotaAlerts(snapshot, Date.now(), readAlerts);
   const n = waiting.length + quota.length;
   box.className = `summary${n ? ' alert' : ''}`;
   box.replaceChildren();
@@ -83,6 +90,9 @@ function quotaAlertRow(q) {
   const main = el('div', 'main');
   main.append(el('div', 'title', accountName(q)), el('div', 'sub', verdictText(q)));
   row.append(el('span', 'dot'), main, el('span', 'pill', q.verdict === 'exhausted' ? 'Exhausted' : 'Runs out'));
+  // Tapping marks it read: it leaves the card until the verdict or the window period changes.
+  row.title = 'Mark read';
+  row.addEventListener('click', () => { readAlerts.push(alertKey(q)); store.set('dashboard.readAlerts', JSON.stringify(readAlerts)); render(); });
   return row;
 }
 
@@ -358,7 +368,7 @@ function renderConfig() {
 
 function renderTabs() {
   // Looking at the events marks them seen (after this render still shows which were new).
-  const t = tabs(snapshot, Date.now(), seenAt);
+  const t = tabs(snapshot, Date.now(), seenAt, readAlerts);
   $('tabs').hidden = !t.show;
   if (!t.show) tab = 'sessions';
   $('n-sessions').textContent = String(t.sessions);

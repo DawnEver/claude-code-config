@@ -474,7 +474,7 @@ Quota is state, read on demand in the dashboard; Telegram carries only **events*
 dashboard judges them on the merged view of every host (so an account two hosts report alerts
 once) and hands each to the host whose push raised it, which posts one plain message with its
 own bot to `bridge.alerts` (shared: `{ "chatId": -100…, "topicId": 42 }`, absent = no alerts):
-a window turning exhausted or projected to run out before its reset, a new seat problem, a
+a window turning exhausted (a projected run-out is never alerted), a new seat problem, a
 newly announced extra reset. An unchanged condition alerts once; recovering clears it.
 
 ## Claude seats (`scripts/shared/seats.mjs`)

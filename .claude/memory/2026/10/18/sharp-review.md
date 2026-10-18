@@ -1,9 +1,10 @@
 ---
 name: sharp-review-2026-10-18
-description: Sharp review findings — 44 total
+description: Sharp review findings — 50 total
 metadata:
   type: project
 ---
+
 
 
 ## Review 2026-10-18 (session) — architecture survey (架构锐评) + diff review
@@ -447,3 +448,81 @@ No import cycles found in bridge, gateway or shared.
 - **Status:** OPEN
 - **Confidence:** single-reviewer
 - **Suggestion:** Optionally mention npm run fleet-gateway -- host-token.
+
+
+## Review 2026-10-18 (follow-up)
+
+## Review 2026-10-18 (session) — diff review + adversarial review (对抗性审查)
+
+### Reviewer Status
+- Reviewer claude (claude): skipped
+- Reviewer codex (codex): OK
+- Reviewer deepseek (deepseek): OK
+
+### Confirmed findings
+
+---
+
+### [SR-20261018-045] [HIGH] scripts/dashboard/public/app.js — Stored dashboard.readAlerts that parses to a non-array ('5', '{}') survives `?? []`, so readAlerts.filter throws and every render fails
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Use Array.isArray(parsed) ? parsed : [] when loading readAlerts; add a test seeding a non-array value
+
+JSON.parse('5') === 5 and 5 ?? [] is 5; renderSummary then calls readAlerts.filter.
+
+---
+
+### [SR-20261018-046] [MEDIUM] scripts/dashboard/public/app.js — renderSummary writes to localStorage unguarded on every render; a throwing store.set (quota/private mode) breaks render, and the write happens even when nothing changed
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Write only when the pruned list changed, inside try/catch (or rely on store's own guard)
+
+Read path is guarded, write path is not.
+
+---
+
+### [SR-20261018-047] [MEDIUM] scripts/dashboard/public/app.js — A click is persisted only by the next renderSummary, which skips the write when snapshot.accounts is falsy, so the read mark can be lost on reload
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Persist in the click handler directly
+
+Click pushes to readAlerts then render(); store.set only runs inside if (snapshot.accounts).
+
+---
+
+### [SR-20261018-048] [MEDIUM] scripts/dashboard/public/view.mjs — alertKey includes bind?.k/bind?.resetsAt; an alert read while bind is undefined re-fires once bind is populated
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Make the key stable when bind is absent, or accept and test the behavior
+
+Key 'k|exhausted|undefined|undefined' differs from later 'k|exhausted|x|T'.
+
+---
+
+### [SR-20261018-049] [LOW] scripts/dashboard/public/view.mjs — alertKey joins with '|' without escaping; account keys already contain '|' so field boundaries are ambiguous
+
+- **Category:** Bug
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** JSON.stringify the tuple
+
+Collision is contrived but possible.
+
+---
+
+### [SR-20261018-050] [LOW] scripts/dashboard/public/app.js — Pruning drops a read key when the verdict blips to ok; returning to the same verdict in the same window re-alerts
+
+- **Category:** Feature
+- **Status:** OPEN
+- **Confidence:** single-reviewer
+- **Suggestion:** Document/test the intended behavior
+
+standing only contains exhausted/short alerts.
