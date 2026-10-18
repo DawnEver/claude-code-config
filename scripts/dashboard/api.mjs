@@ -34,8 +34,8 @@ const json = (status, body) => new Response(JSON.stringify(body), { status,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
 const error = (status, code) => json(status, { error: { code } });
 
-export function createApi(config, { now = Date.now, log = () => {} } = {}) {
-  const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000, now });
+export function createApi(config, { now = Date.now, log = () => {}, store = null } = {}) {
+  const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000, now, store });
   const hits = new Map();   // client -> requests in the current minute
   let window = null;
 

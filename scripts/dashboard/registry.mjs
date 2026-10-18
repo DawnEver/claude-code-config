@@ -1,23 +1,25 @@
-// scripts/dashboard/registry.mjs — the gateway's only state: the last accepted push of each
-// host, in memory. An aggregate cache, never an authority: it is rebuilt by the next round of
-// pushes, so a gateway restart loses nothing. Time is the gateway's own clock (host clocks
+// scripts/dashboard/registry.mjs — the gateway's only state. The last accepted push of each
+// host is an aggregate cache in memory, never an authority: the next round of pushes rebuilds
+// it. The events and what each account was last alerted for are history, which no push can
+// rebuild: they live in `store` (the Durable Object's storage), so a restart neither loses the
+// history nor re-alerts a standing condition. Time is the gateway's own clock (host clocks
 // may disagree): `lastSeen` is when a push arrived, and a host silent for `ttlMs` is offline
 // and every session it last reported is `stale`.
 
 import { SCHEMA_VERSION, configKeysMeta } from '../shared/dashboard-schema.mjs';
 import { quotaAlertsFor, quotaView } from './public/view.mjs';
 
-/** How many past alerts the dashboard keeps (memory only: a Worker restart starts afresh). */
+/** How many past events the dashboard keeps. */
 export const MAX_EVENTS = 50;
 /** A change handed to a host that does not report it within this goes to the next host. */
 export const CHANGE_RETRY_MS = 120000;
 
 export class Registry {
-  constructor({ hosts = [], ttlMs = 60000, now = Date.now } = {}) {
-    Object.assign(this, { ttlMs, now });
+  constructor({ hosts = [], ttlMs = 60000, now = Date.now, store = null } = {}) {
+    Object.assign(this, { ttlMs, now, store });
     this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
-    this.alerted = new Map();   // account key -> what was last alerted (view.mjs quotaAlertsFor)
-    this.events = [];           // alerts and config changes as a history for the dashboard, newest first
+    this.alerted = new Map(Object.entries(store?.get('alerted') ?? {}));   // account key -> what was last alerted (view.mjs quotaAlertsFor)
+    this.events = store?.get('events') ?? [];   // alerts and config changes as a history for the dashboard, newest first
     this.changes = new Map();   // pending config change id -> {id, key, value, by, at, host?, sentAt?}
   }
 
@@ -41,12 +43,14 @@ export class Registry {
       this.alerted.set(key, state);
       alerts.push(...texts);
     }
+    this.store?.put('alerted', Object.fromEntries(this.alerted));
     for (const text of alerts) this.#event(text);
     return { accepted: true, alerts, configChanges };
   }
 
   #event(text) {
     this.events = [{ at: new Date(this.now()).toISOString(), text }, ...this.events].slice(0, MAX_EVENTS);
+    this.store?.put('events', this.events);
   }
 
   /**

@@ -129,7 +129,7 @@ export function quotaAlertsFor(prev, q, now = Date.now()) {
 }
 
 /** One alert's identity: the account, its verdict and the window period. A new period is a new alert. */
-export const alertKey = (q) => `${q.key}|${q.verdict}|${q.bind?.k}|${q.bind?.resetsAt}`;
+export const alertKey = (q) => JSON.stringify([q.key, q.verdict, q.bind?.k ?? null, q.bind?.resetsAt ?? null]);
 
 /**
  * Accounts that need the human: a window exhausted (a projected run-out is only shown);

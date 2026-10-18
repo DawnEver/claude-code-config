@@ -308,6 +308,17 @@ test('alert texts: exhausted only; a forecast run-out and a healthy account say 
   assert.deepEqual(quotaAlertsFor(undefined, q(), NOW).texts, [], 'runs out before reset: shown, not alerted');
 });
 
+test('a restart keeps the events and what was alerted: no history lost, no duplicate alert', () => {
+  const kv = new Map();
+  const store = { get: (k) => kv.get(k), put: (k, v) => kv.set(k, structuredClone(v)) };
+  const hit = account({ windows: [{ ...account().windows[0], used: 100, forecast: null }] });
+  const r1 = new Registry({ hosts: ['host-a'], ttlMs: 60000, now: () => NOW, store });
+  assert.equal(r1.accept('host-a', parseHostPush(push({ seq: 1, accounts: [hit] }))).alerts.length, 1);
+  const r2 = new Registry({ hosts: ['host-a'], ttlMs: 60000, now: () => NOW, store });
+  assert.equal(r2.snapshot().events.length, 1, 'history survives');
+  assert.deepEqual(r2.accept('host-a', parseHostPush(push({ seq: 1, accounts: [hit] }))).alerts, [], 'the standing condition does not alert again');
+});
+
 test('events: every alert is kept as history for the dashboard, newest first, bounded', async () => {
   const { MAX_EVENTS } = await import('./registry.mjs');
   let t = NOW;
