@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs } from './view.mjs';
 
 const POLL_MS = 8000;
 const tg = window.Telegram?.WebApp;
@@ -14,6 +14,8 @@ let snapshot = null;
 let lastOk = null;
 let loading = false;
 let selectsKey = null;
+// The open tab survives a reopen; sessions is the default view.
+let tab = (() => { try { return localStorage.getItem('dashboard.tab') === 'quota' ? 'quota' : 'sessions'; } catch { return 'sessions'; } })();
 
 tg?.ready();
 tg?.expand();
@@ -133,7 +135,7 @@ function renderQuota() {
   if (!accounts.length) return;
   const grid = el('div', 'quota-grid');
   for (const q of accounts) grid.append(quotaCard(q));
-  box.append(el('h2', null, 'Quota'), grid);
+  box.append(grid);
 }
 
 function renderChips() {
@@ -192,12 +194,32 @@ function renderHosts() {
   }
 }
 
+function renderTabs() {
+  const t = tabs(snapshot);
+  $('tabs').hidden = !t.show;
+  if (!t.show) tab = 'sessions';
+  $('n-sessions').textContent = String(t.sessions);
+  $('n-quota').textContent = String(t.quota);
+  $('quota-dot').hidden = !t.alert;
+  for (const b of document.querySelectorAll('#tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  for (const v of document.querySelectorAll('.view')) v.hidden = v.dataset.view !== tab;
+}
+
+for (const b of document.querySelectorAll('#tabs [data-tab]')) {
+  b.addEventListener('click', () => {
+    tab = b.dataset.tab;
+    try { localStorage.setItem('dashboard.tab', tab); } catch { /* private mode */ }
+    tg?.HapticFeedback?.selectionChanged?.();
+    render();
+  });
+}
+
 function render() {
   if (!snapshot) return;
   $('updated').textContent = snapshot.mock ? 'example data' : lastOk ? `updated ${ago(new Date(lastOk).toISOString())}` : '';
   renderSummary();
+  renderTabs();
   renderQuota();
-  $('sessions-h').hidden = false;
   renderChips();
   renderSelects();
   renderHosts();
@@ -208,7 +230,7 @@ function stop(message) {
   $('hosts').replaceChildren();
   $('chips').replaceChildren();
   $('quota').replaceChildren();
-  $('sessions-h').hidden = true;
+  $('tabs').hidden = true;
 }
 
 async function fetchSnapshot() {

@@ -6,7 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -263,4 +263,9 @@ test('view: quota verdict on the reader\'s clock; stale readings are floors that
   assert.equal(renewed.verdict, 'none');
   assert.deepEqual(quotaAlerts({ accounts: [account(), account({ key: 'k2', windows: [{ ...account().windows[0], forecast: { atReset: 80, eta: null, short: false } }] })] }, NOW).map((x) => x.key),
     ['claude:a@example.com|u1'], 'only accounts that need the human');
+});
+
+test('view: tabs count each view and flag quota that needs the human; no accounts, no tabs', () => {
+  assert.deepEqual(tabs(mockDashboard(NOW), NOW), { sessions: 5, quota: 2, alert: true, show: true });
+  assert.deepEqual(tabs({ hosts: [] }, NOW), { sessions: 0, quota: 0, alert: false, show: false });
 });

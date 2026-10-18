@@ -73,7 +73,13 @@
   .on-dot { background: var(--ok); } .off-dot { background: transparent; border: 2px solid var(--idle); }
 
   /* Quota: one card per account. */
-  #quota h2, .section-h { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--hint); margin: 4px 4px 8px; }
+  /* Tabs: one question per view; the needs-you card above covers both. */
+  .tabs { display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content; }
+  .tabs button { position: relative; border: 0; border-radius: 9px; padding: 7px 16px; font: inherit; font-size: 14px; font-weight: 600;
+    background: none; color: var(--hint); cursor: pointer; }
+  .tabs button b { font-weight: 600; margin-left: 4px; opacity: .7; }
+  .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px color-mix(in srgb, var(--fg) 15%, transparent); }
+  .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
   .quota-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-bottom: 16px; }
   .quota-card { background: var(--card); border-radius: 14px; padding: 12px 14px; }
   .quota-card.stale { opacity: .75; }
@@ -115,12 +121,17 @@
 <body>
   <header class="top"><h1>Agents Dashboard</h1><span id="updated" class="muted"></span></header>
   <section id="summary" class="summary"><div class="summary-head">Loading…</div></section>
-  <section id="quota"></section>
-  <h2 id="sessions-h" class="section-h" hidden>Sessions</h2>
+  <nav id="tabs" class="tabs" role="tablist" hidden>
+    <button role="tab" data-tab="sessions">Sessions <b id="n-sessions"></b></button>
+    <button role="tab" data-tab="quota">Quota <b id="n-quota"></b><i class="tab-dot" id="quota-dot" hidden></i></button>
+  </nav>
+  <div id="banner" class="banner"></div>
+  <section id="quota" class="view" data-view="quota" hidden></section>
+  <div class="view" data-view="sessions">
   <nav id="chips" class="chips" aria-label="Status"></nav>
   <div id="selects" class="selects"></div>
-  <div id="banner" class="banner"></div>
   <main id="hosts"></main>
+  </div>
   <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -105,6 +105,17 @@ export function quotaView(a, now = Date.now()) {
 export const quotaAlerts = (snapshot, now = Date.now()) =>
   (snapshot.accounts ?? []).map((a) => quotaView(a, now)).filter((q) => q.verdict === 'exhausted' || q.verdict === 'short');
 
+/**
+ * The two tabs below the needs-you card, each answering one question: what runs (sessions)
+ * and will the quota last (quota). `alert` marks the quota tab while an account needs the
+ * human; the card above lists it whichever tab is open.
+ */
+export function tabs(snapshot, now = Date.now()) {
+  const accounts = snapshot.accounts ?? [];
+  return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now).length > 0,
+    show: accounts.length > 0 };
+}
+
 /** Example data for `?mock`: rendering only, no gateway involved. */
 export function mockDashboard(now = Date.now()) {
   const H = 3600000;
