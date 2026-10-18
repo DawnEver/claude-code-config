@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { FleetReport, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, project, claudeWindows, codexWindows, quotaOf, readClaudeDirs, renderReport } from './fleet.mjs';
+import { AccountReader, FleetReport, accountModels, planName, reportSlot, when, countdown, teeClaudeUsage, windowView, project, claudeWindows, codexWindows, quotaOf, readClaudeDirs, renderReport } from './fleet.mjs';
 import { readSeries } from './quota-series.mjs';
 
 // One observation as a series: what a host knows the moment it first sees its quota.
@@ -301,4 +301,42 @@ test('renderReport: the base dir joins the seat its login matches; the freshest 
 test('renderReport: a seat dir that is not registered for this machine is a problem', () => {
   const text = render({ registry: REG, dirs: [{ alias: null, account: ME, quota: null }, { alias: 'team-b', account: ME, quota: null }] });
   assert.match(text, /## Claude · team\\-b[\s\S]*seat team\\-b is not registered for m1/);
+});
+
+test('accountModels: the report\'s numbers as data — every account with quota, its forecast, no rendering', () => {
+  const [a] = accountModels({ machine: 'm1', registry: REG, now: NOW, claude: [{ alias: null, account: ME, quota: short5h() }] });
+  assert.equal(a.agent, 'claude');
+  assert.equal(a.email, 'a@example.com');
+  assert.equal(a.detail, 'Uni Team A');
+  assert.equal(a.key, 'claude:a@example.com|u1', 'one key per account and org, so hosts on one seat merge');
+  const [w] = a.windows;
+  assert.deepEqual([w.k, w.used, w.resetsAt, w.windowMs], ['5h', 60, NOW + 3 * H, 5 * H]);
+  assert.equal(w.forecast.short, true);
+  assert.equal(Math.round(w.forecast.atReset), 150);
+  assert.ok(w.cells.every((c) => c === null || typeof c === 'number'), 'JSON-safe cells: -1 unseen, null ahead');
+  assert.ok(!JSON.stringify(a).match(/██|⣶|\*\*/), 'no rendering in the data');
+  const stale = accountModels({ machine: 'm1', registry: REG, now: NOW, claude: [{ alias: null, account: ME, quota: short5h(NOW - 30 * 60000) }] });
+  assert.equal(stale[0].windows[0].forecast, null, 'a stale reading forecasts nothing');
+  assert.deepEqual(accountModels({ machine: 'm1', registry: REG, now: NOW, claude: [{ alias: null, account: ME, quota: null }] }), [],
+    'no quota and no seat problem: nothing to show');
+  const [cx] = accountModels({ machine: 'm1', registry: REG, now: NOW, codexAccount: { email: 'C@example.com', plan: 'pro' },
+    codex: codexQuota({ primary: { windowDurationMins: 300, usedPercent: 10, resetsAt: (NOW + H) / 1000 } }, NOW),
+    codexResetCredits: { availableCount: 2, credits: [{ expiresAt: (NOW + 5 * H) / 1000 }, { expiresAt: (NOW - H) / 1000 }] } });
+  assert.deepEqual([cx.key, cx.detail, cx.resetCredits], ['codex:c@example.com', 'Pro', { count: 2, expiries: [NOW + 5 * H] }]);
+});
+
+test('AccountReader: extra resets fetched in the background at most once per interval', async () => {
+  let fetches = 0, t = NOW;
+  const r = new AccountReader({ machine: 'm1', now: () => t, extraEveryMs: 60000,
+    extraResets: async () => { fetches++; return { Claude: { scheduled: { at: NOW + H, url: 'https://x.test/r' } } }; },
+    sources: { registry: () => REG, claude: () => [{ alias: null, account: ME, quota: short5h() }] } });
+  assert.equal(r.read()[0].extraReset, null, 'the first read does not wait for the network');
+  await new Promise((done) => setTimeout(done, 5));
+  assert.deepEqual(r.read()[0].extraReset, { at: NOW + H, url: 'https://x.test/r' });
+  r.read();
+  assert.equal(fetches, 1);
+  t += 61000;
+  r.read();
+  await new Promise((done) => setTimeout(done, 5));
+  assert.equal(fetches, 2);
 });

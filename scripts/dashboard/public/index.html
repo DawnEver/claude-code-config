@@ -11,7 +11,7 @@
     --hint: var(--tg-theme-hint-color, #8a8a8e); --card: var(--tg-theme-secondary-bg-color, #f2f2f7);
     --accent: var(--tg-theme-button-color, #2481cc); --accent-fg: var(--tg-theme-button-text-color, #fff);
     --sep: color-mix(in srgb, var(--hint) 22%, transparent);
-    --ok: #34c759; --warn: #ff9500; --run: #0a84ff; --idle: #8e8e93;
+    --ok: #34c759; --warn: #ff9500; --bad: #ff3b30; --run: #0a84ff; --idle: #8e8e93;
     --claude: #d97757; --codex: #6b7bff;
   }
   * { box-sizing: border-box; min-width: 0; }
@@ -72,6 +72,35 @@
   .s-stale .dot, .s-unknown .dot, .s-ended .dot { background: transparent; border: 2px solid var(--idle); }
   .on-dot { background: var(--ok); } .off-dot { background: transparent; border: 2px solid var(--idle); }
 
+  /* Quota: one card per account. */
+  #quota h2, .section-h { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--hint); margin: 4px 4px 8px; }
+  .quota-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-bottom: 16px; }
+  .quota-card { background: var(--card); border-radius: 14px; padding: 12px 14px; }
+  .quota-card.stale { opacity: .75; }
+  .quota-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .quota-head .left { font-weight: 700; font-size: 17px; }
+  .v-short .quota-head .left { color: var(--warn); } .v-exhausted .quota-head .left { color: var(--bad); }
+  .warn { color: var(--warn); font-size: 13px; font-weight: 600; margin-top: 6px; }
+  .v-exhausted .warn { color: var(--bad); }
+  .win { display: grid; grid-template-columns: 26px 1fr 44px; align-items: center; gap: 8px; margin-top: 10px; }
+  .win .k { color: var(--hint); font-size: 12px; font-weight: 600; }
+  .win .used { text-align: right; font-size: 13px; font-weight: 600; }
+  .bar { position: relative; height: 8px; border-radius: 4px; background: var(--sep); }
+  .bar .fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 4px; background: var(--run); }
+  .bar.hot .fill { background: var(--warn); }
+  .bar .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--fg); opacity: .55; border-radius: 1px; }
+  .win-sub { display: grid; grid-template-columns: 26px 1fr 44px; gap: 2px 8px; color: var(--hint); font-size: 12px; margin-top: 4px; }
+  .win-sub > span { grid-column: 2 / 4; }
+  .trend { grid-column: 2; display: flex; align-items: flex-end; gap: 2px; height: 18px; border-bottom: 1px dashed var(--sep); }
+  .trend span { flex: 1; border-radius: 2px 2px 0 0; }
+  .trend .seen { background: color-mix(in srgb, var(--run) 55%, transparent); }
+  .trend .unseen { height: 100%; background: repeating-linear-gradient(45deg, var(--sep) 0 2px, transparent 2px 4px); }
+  .trend .ahead { height: 2px; background: var(--sep); }
+  .note { display: block; margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; font-family: inherit; text-align: left; }
+  .note.link { cursor: pointer; }
+  .foot { margin-top: 8px; }
+  .s-exhausted .dot { background: var(--bad); } .s-exhausted .pill { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+
   /* Responsive, continuously: columns appear as the width allows (one per ~340 px); auto-fit
      collapses unused tracks, so the cards always share the full row. Spacing and the title
      scale with the viewport. No cap. */
@@ -86,6 +115,8 @@
 <body>
   <header class="top"><h1>Agents Dashboard</h1><span id="updated" class="muted"></span></header>
   <section id="summary" class="summary"><div class="summary-head">Loading…</div></section>
+  <section id="quota"></section>
+  <h2 id="sessions-h" class="section-h" hidden>Sessions</h2>
   <nav id="chips" class="chips" aria-label="Status"></nav>
   <div id="selects" class="selects"></div>
   <div id="banner" class="banner"></div>

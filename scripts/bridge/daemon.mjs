@@ -30,7 +30,7 @@ import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
-import { FleetReport } from './fleet.mjs';
+import { AccountReader, FleetReport } from './fleet.mjs';
 import { DashboardPush } from './dashboard-push.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
@@ -819,7 +819,11 @@ export async function main() {
     setInterval(tick, 60000).unref();
   }
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
-  if (config.dashboard) new DashboardPush({ ...config.dashboard, machine, log, sessions: () => bridge.dashboardSnapshot() }).start();
+  if (config.dashboard) {
+    const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
+      codexSeriesFile: path.join(BRIDGE_RUNTIME_DIR, 'codex-usage.jsonl') });
+    new DashboardPush({ ...config.dashboard, machine, log, sessions: () => bridge.dashboardSnapshot(), accounts: () => accounts.read() }).start();
+  }
   if (config.deleteClosedAfterHours > 0) {
     const sweep = (orphans) => bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`));
     sweep(false);

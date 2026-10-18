@@ -69,8 +69,45 @@ export function ago(iso, now = Date.now()) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// ── Quota (per account; computed by the host, scripts/bridge/fleet.mjs accountModels) ──
+
+/** A reading older than this is a floor on use (`≥`) and is never projected from. */
+export const QUOTA_STALE_MS = 15 * 60000;
+
+/** Time to `ms` in its two largest units: `4d 7h`, `3h 15m`, `12m`. */
+export function countdown(ms, now = Date.now()) {
+  const m = Math.max(0, Math.round((ms - now) / 60000));
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), min = m % 60;
+  return d ? `${d}d ${h}h` : h ? `${h}h ${min}m` : `${min}m`;
+}
+
+/**
+ * One account as the page reads it, on the reader's clock: each window's use, the even-spend
+ * pace by now, and the forecast (none from a stale reading); then the binding window — the one
+ * that runs out soonest, else the fullest — and its verdict.
+ */
+export function quotaView(a, now = Date.now()) {
+  const stale = !a.at || now - a.at > QUOTA_STALE_MS;
+  const windows = a.windows.map((w) => {
+    const renewed = !w.resetsAt || w.resetsAt <= now;
+    return { k: w.k, renewed, used: renewed ? 0 : w.used, resetsAt: renewed ? null : w.resetsAt,
+      pace: renewed ? 0 : Math.min(100, Math.max(0, (1 - (w.resetsAt - now) / w.windowMs) * 100)),
+      cells: renewed ? [] : w.cells, forecast: renewed || stale ? null : w.forecast };
+  });
+  const live = windows.filter((w) => !w.renewed);
+  const bind = live.filter((w) => w.forecast?.short).sort((x, y) => x.forecast.eta - y.forecast.eta)[0]
+    ?? [...live].sort((x, y) => y.used - x.used)[0] ?? null;
+  const verdict = !bind ? 'none' : bind.used >= 100 ? 'exhausted' : bind.forecast?.short ? 'short' : 'ok';
+  return { ...a, stale, windows, bind, verdict, left: bind ? Math.round(100 - bind.used) : null };
+}
+
+/** Accounts that need the human: a window exhausted, or projected to run out before its reset. */
+export const quotaAlerts = (snapshot, now = Date.now()) =>
+  (snapshot.accounts ?? []).map((a) => quotaView(a, now)).filter((q) => q.verdict === 'exhausted' || q.verdict === 'short');
+
 /** Example data for `?mock`: rendering only, no gateway involved. */
 export function mockDashboard(now = Date.now()) {
+  const H = 3600000;
   const t = (sec) => new Date(now - sec * 1000).toISOString();
   const s = (hostId, stale, id, agent, project, branch, status, sec, topic, seat = null) =>
     ({ id, hostId, agent, project, branch, seat, status, lastActivityAt: t(sec), stale, topic });
@@ -83,5 +120,14 @@ export function mockDashboard(now = Date.now()) {
       s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null)] },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
+  ], accounts: [
+    { key: 'claude:a', agent: 'claude', label: 'team-a', email: 'alice@example.com', detail: 'Team A · Team Premium', problems: [],
+      at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null, windows: [
+        { k: '5h', used: 26, resetsAt: now + 24 * 60000, windowMs: 5 * H, cells: [0.4, 0.8, 1.2, 0.9, 1.6, 2, 1.1, 0.7, 0.9, null], forecast: { atReset: 31, eta: null, short: false } },
+        { k: '7d', used: 45, resetsAt: now + 129 * H, windowMs: 168 * H, cells: [0.6, 1.4, 1.8, 0.9, 1.1, 2.2, 2.6, 2.4, 2.5, null, null, null, null, null], forecast: { atReset: 118, eta: now + 47 * H, short: true } }] },
+    { key: 'codex:b', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-b'],
+      resetCredits: { count: 1, expiries: [now + 3 * 24 * H] }, extraReset: null, windows: [
+        { k: '5h', used: 8, resetsAt: now + 3 * H, windowMs: 5 * H, cells: [-1, -1, 0.3, 0.5, null, null, null, null, null, null], forecast: { atReset: 14, eta: null, short: false } },
+        { k: '7d', used: 12, resetsAt: now + 100 * H, windowMs: 168 * H, cells: [0.4, 0.7, 0.6, 0.9, 0.5, null, null, null, null, null, null, null, null, null], forecast: { atReset: 30, eta: null, short: false } }] },
   ] };
 }

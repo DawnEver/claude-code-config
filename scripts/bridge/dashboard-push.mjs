@@ -8,8 +8,8 @@
 import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 
 export class DashboardPush {
-  constructor({ url, hostToken, machine, sessions, everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
-    Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, machine, sessions, everySeconds, log, fetch, timeoutMs });
+  constructor({ url, hostToken, machine, sessions, accounts = () => [], everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
+    Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, machine, sessions, accounts, everySeconds, log, fetch, timeoutMs });
     this.bootAt = now();
     this.seq = 0;
     this.inFlight = false;
@@ -17,7 +17,7 @@ export class DashboardPush {
   }
 
   body() {
-    return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions() };
+    return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(), accounts: this.accounts() };
   }
 
   /** Off the message path: an unref'd timer, never awaited by Telegram routing. */

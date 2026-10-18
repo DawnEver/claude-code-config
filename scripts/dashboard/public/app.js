@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, stats } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats } from './view.mjs';
 
 const POLL_MS = 8000;
 const tg = window.Telegram?.WebApp;
@@ -47,15 +47,93 @@ function renderSummary() {
   const box = $('summary');
   const st = stats(snapshot);
   const waiting = attention(snapshot);
-  box.className = `summary${waiting.length ? ' alert' : ''}`;
+  const quota = quotaAlerts(snapshot);
+  const n = waiting.length + quota.length;
+  box.className = `summary${n ? ' alert' : ''}`;
   box.replaceChildren();
-  const head = el('div', 'summary-head', waiting.length ? `${waiting.length} need${waiting.length === 1 ? 's' : ''} you` : 'All clear');
-  box.append(head, el('div', 'summary-sub',
+  box.append(el('div', 'summary-head', n ? `${n} need${n === 1 ? 's' : ''} you` : 'All clear'), el('div', 'summary-sub',
     `${st.working} working · ${st.hostsOnline}/${st.hosts} host${st.hosts === 1 ? '' : 's'} online`));
-  if (!waiting.length) return;
+  if (!n) return;
   const list = el('div', 'waiting');
   for (const s of waiting) list.append(sessionRow(s, { withHost: true }));
+  for (const q of quota) list.append(quotaAlertRow(q));
   box.append(list);
+}
+
+const accountName = (q) => `${q.agent === 'claude' ? 'Claude' : 'Codex'}${q.label ? ` · ${q.label}` : ''}`;
+const verdictText = (q) => (q.verdict === 'exhausted' ? `${q.bind.k} exhausted · resets in ${countdown(q.bind.resetsAt)}`
+  : q.verdict === 'short' ? `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta)} · resets in ${countdown(q.bind.resetsAt)}` : '');
+
+/** A quota alert in the needs-you card: the account and why. */
+function quotaAlertRow(q) {
+  const row = el('div', `row s-${q.verdict === 'exhausted' ? 'exhausted' : 'needs_input'}`);
+  const main = el('div', 'main');
+  main.append(el('div', 'title', accountName(q)), el('div', 'sub', verdictText(q)));
+  row.append(el('span', 'dot'), main, el('span', 'pill', q.verdict === 'exhausted' ? 'Exhausted' : 'Runs out'));
+  return row;
+}
+
+/** Position bar: fill = use, the line = where an even spend would be by now. */
+function bar(w, stale) {
+  const track = el('div', `bar${w.forecast?.short || w.used >= 100 ? ' hot' : ''}`);
+  const fill = el('div', 'fill');
+  fill.style.width = `${w.used}%`;
+  const pace = el('div', 'pace');
+  pace.style.left = `${w.pace}%`;
+  track.append(fill, pace);
+  track.title = `${stale ? '≥' : ''}${Math.round(w.used)}% used · even pace ${Math.round(w.pace)}%`;
+  return track;
+}
+
+/** Trend: spend per slice of the window against an even spend (half height); hatched = never observed. */
+function trend(cells) {
+  const box = el('div', 'trend');
+  for (const c of cells) {
+    const cell = el('span', c === null ? 'ahead' : c < 0 ? 'unseen' : 'seen');
+    if (c !== null && c >= 0) cell.style.height = `${Math.max(4, Math.min(100, c * 50))}%`;
+    box.append(cell);
+  }
+  return box;
+}
+
+function quotaCard(q) {
+  const card = el('section', `quota-card v-${q.verdict}${q.stale ? ' stale' : ''}`);
+  const head = el('div', 'quota-head');
+  head.append(el('span', `agent ${q.agent}`, accountName(q)),
+    el('span', 'left', q.left === null ? 'no data' : `${q.stale && q.bind.used < 100 ? '≤' : ''}${q.left}% left`));
+  card.append(head, el('div', 'sub', [q.email ?? 'not logged in', q.detail].filter(Boolean).join(' · ')));
+  if (q.verdict === 'short' || q.verdict === 'exhausted') card.append(el('div', 'warn', verdictText(q)));
+  for (const p of q.problems) card.append(el('div', 'warn', p));
+  for (const w of q.windows) {
+    const row = el('div', 'win');
+    const used = w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`;
+    row.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', used));
+    const sub = el('div', 'win-sub');
+    const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${Math.round(w.forecast.atReset)}% at reset`);
+    sub.append(trend(w.cells), el('span', null, w.renewed ? 'new window, not started' : [`resets in ${countdown(w.resetsAt)}`, forecast].filter(Boolean).join(' · ')));
+    card.append(row, sub);
+  }
+  if (q.resetCredits) {
+    const first = q.resetCredits.expiries.filter(Boolean).sort((x, y) => x - y)[0];
+    card.append(el('div', 'note', `${q.resetCredits.count} reset credit${q.resetCredits.count === 1 ? '' : 's'}${first ? ` · first expires in ${countdown(first)}` : ''}`));
+  }
+  if (q.extraReset) {
+    const note = el(q.extraReset.url ? 'button' : 'div', 'note link', `extra reset announced${q.extraReset.at ? ` · in ${countdown(q.extraReset.at)}` : ''}`);
+    if (q.extraReset.url) note.addEventListener('click', () => (tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener')));
+    card.append(note);
+  }
+  card.append(el('div', 'muted foot', `${(q.hosts ?? []).join(', ')}${q.at ? ` · reading ${ago(new Date(q.at).toISOString())}` : ''}`));
+  return card;
+}
+
+function renderQuota() {
+  const box = $('quota');
+  box.replaceChildren();
+  const accounts = (snapshot.accounts ?? []).map((a) => quotaView(a));
+  if (!accounts.length) return;
+  const grid = el('div', 'quota-grid');
+  for (const q of accounts) grid.append(quotaCard(q));
+  box.append(el('h2', null, 'Quota'), grid);
 }
 
 function renderChips() {
@@ -118,6 +196,8 @@ function render() {
   if (!snapshot) return;
   $('updated').textContent = snapshot.mock ? 'example data' : lastOk ? `updated ${ago(new Date(lastOk).toISOString())}` : '';
   renderSummary();
+  renderQuota();
+  $('sessions-h').hidden = false;
   renderChips();
   renderSelects();
   renderHosts();
@@ -127,6 +207,8 @@ function stop(message) {
   $('summary').replaceChildren(el('div', 'summary-head', message));
   $('hosts').replaceChildren();
   $('chips').replaceChildren();
+  $('quota').replaceChildren();
+  $('sessions-h').hidden = true;
 }
 
 async function fetchSnapshot() {

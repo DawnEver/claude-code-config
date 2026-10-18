@@ -64,10 +64,31 @@ no API, no authentication.
   opened with `Telegram.WebApp.openTelegramLink`. A closed Topic still links (marked closed);
   re-binding (resume, supersede, recreate) shows on the next push. The group id appears only
   inside that link (Telegram needs it); the chat id itself is not served.
-- **Not exported**: cwd, Topic titles, accounts, tokens. `lastActivityAt` is the bridge's last
+- **Not exported**: cwd, Topic titles, tokens. Account emails are (Quota, below). `lastActivityAt` is the bridge's last
   mirrored activity (a session with no group configured stays at its `up` time).
 - The Durable Object keeps nothing on disk: when Cloudflare evicts or restarts it, the dashboard is
   empty until the next push round (`everySeconds`).
+
+## Quota
+
+The same quota the fleet report reads, as data: each host's `AccountReader`
+(`scripts/bridge/fleet.mjs`) runs the report's own seat grouping, window views, trend and
+forecast (`accountModels()`), and the push carries the result as `accounts[]` — numbers only,
+no rendering. One algorithm, on the host, where the inputs live (statusLine series, the Codex
+app-server); the Worker never recomputes it.
+
+- **Per account, not per host**: the Worker merges an account reported by several hosts
+  (`key` = agent + email + org) into its freshest reading (`at`) and lists every host on it.
+  An offline host's last reading still counts: use only grows until a reset.
+- **On the reader's clock**: the even-spend pace and every countdown are computed in the page
+  (`quotaView` in `public/view.mjs`). A reading older than 15 min is a floor (`≥` used,
+  `≤` left) and forecasts nothing; a passed reset is a new window not yet started.
+- **Verdict**: the binding window is the one that runs out soonest, else the fullest. An
+  exhausted window, or one projected to run out before its reset, joins the needs-you card.
+- **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
+  the trend (spend per slice against an even spend; hatched = never observed), reset time and
+  forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most
+  every 30 min).
 
 ## Setup
 

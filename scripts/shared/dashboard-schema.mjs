@@ -36,7 +36,36 @@ function parseSession(s) {
   };
 }
 
-/** A host's POST body -> {bootAt, seq, sessions} or null. Unknown session entries are dropped, not fatal. */
+export const MAX_ACCOUNTS = 20;
+const num = (v, lo = -Infinity, hi = Infinity) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null);
+const epoch = (v) => num(v, 1e12, 1e14);   // ms, 2001..5138
+
+/** One quota window (scripts/bridge/fleet.mjs accountModels): numbers only, bounded. */
+function parseWindow(w) {
+  const k = typeof w?.k === 'string' && /^\d{1,3}[hd]$/.test(w.k) ? w.k : null;
+  const windowMs = num(w?.windowMs, 60000, 400 * 86400000);
+  if (!k || windowMs === null) return null;
+  const f = w.forecast;
+  return { k, used: num(w.used, 0, 100) ?? 0, resetsAt: epoch(w.resetsAt), windowMs,
+    cells: (Array.isArray(w.cells) ? w.cells.slice(0, 32) : []).map((c) => (c === null ? null : num(c, -1, 1000) ?? -1)),
+    forecast: f && typeof f === 'object' ? { atReset: num(f.atReset, 0, 100000), eta: epoch(f.eta), short: f.short === true } : null };
+}
+
+/** One account's quota: identity, seat checks, windows, resets to act on. */
+function parseAccount(a) {
+  const key = text(a?.key, 200);
+  if (!key || !AGENTS.includes(a.agent)) return null;
+  const rc = a.resetCredits;
+  const ex = a.extraReset;
+  const url = typeof ex?.url === 'string' && /^https:\/\/[^\s"<>]{1,300}$/.test(ex.url) ? ex.url : null;
+  return { key, agent: a.agent, label: text(a.label, 64), email: text(a.email, 200), detail: text(a.detail, 200),
+    problems: (Array.isArray(a.problems) ? a.problems : []).map((p) => text(p, 200)).filter(Boolean).slice(0, 5),
+    at: epoch(a.at), windows: (Array.isArray(a.windows) ? a.windows : []).slice(0, 4).map(parseWindow).filter(Boolean),
+    resetCredits: num(rc?.count, 1, 1000) ? { count: rc.count, expiries: (Array.isArray(rc.expiries) ? rc.expiries : []).slice(0, 10).map((x) => (x === null ? null : epoch(x))) } : null,
+    extraReset: ex && typeof ex === 'object' ? { at: epoch(ex.at), url } : null };
+}
+
+/** A host's POST body -> {bootAt, seq, sessions, accounts} or null. Unknown session entries are dropped, not fatal. */
 export function parseHostPush(body) {
   if (!body || body.schemaVersion !== SCHEMA_VERSION || !Array.isArray(body.sessions)) return null;
   if (!Number.isSafeInteger(body.bootAt) || body.bootAt < 1 || !Number.isSafeInteger(body.seq) || body.seq < 1) return null;
@@ -46,5 +75,6 @@ export function parseHostPush(body) {
     const s = parseSession(raw);
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
-  return { bootAt: body.bootAt, seq: body.seq, sessions };
+  const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
+  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts };
 }

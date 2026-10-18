@@ -341,6 +341,69 @@ export function renderReport({ machine, registry, codexAccount, claude = [], cod
 }
 
 /**
+ * This machine's accounts as data for the dashboard: the same seat grouping, window models,
+ * trend and forecast the report renders, minus any rendering. Every account with quota data
+ * or a seat problem is listed (no `always` gate: a dashboard is read on demand). Times are
+ * epoch ms; pace and countdowns are left to the reader's clock. Trend cells: a number is
+ * spend against an even spend, -1 never observed, null still ahead.
+ */
+export function accountModels({ machine, registry, codexAccount, claude = [], codex, codexResetCredits = null, extra = null, now }) {
+  const windowsOf = (q) => windowModels(q, now).map(({ k, v, renewed, cells, p }) => ({ k, used: renewed ? 0 : v.used,
+    resetsAt: renewed ? null : v.resetsAt, windowMs: v.windowMs, cells: (cells ?? []).map((c) => (c === undefined ? -1 : c)),
+    forecast: p ? { atReset: p.atReset, eta: p.eta, short: p.short } : null }));
+  const scheduled = (s) => (s ? { at: s.at ?? null, url: s.url ?? null } : null);
+  const out = [];
+  for (const g of claudeGroups(claude, registry?.seats, machine)) {
+    if (!g.quota && !g.problems.length) continue;
+    const email = g.account?.email ?? null;
+    out.push({ key: `claude:${(email ?? `${machine}/${g.label ?? 'base'}`).toLowerCase()}|${g.account?.orgUuid ?? g.account?.org ?? ''}`,
+      agent: 'claude', label: g.label ?? null, email,
+      detail: [g.account?.org, g.account?.tier && planName(g.account.tier)].filter(Boolean).join(' · ') || null,
+      problems: g.problems, at: g.quota?.at ?? null, windows: windowsOf(g.quota), resetCredits: null,
+      extraReset: scheduled(extra?.Claude?.scheduled) });
+  }
+  if (codex || codexAccount) {
+    const expiries = (Array.isArray(codexResetCredits?.credits) ? codexResetCredits.credits : [])
+      .map((c) => (c?.expiresAt > 0 ? c.expiresAt * 1000 : null)).filter((x) => x === null || x > now);
+    out.push({ key: `codex:${(codexAccount?.email ?? machine).toLowerCase()}`, agent: 'codex', label: null,
+      email: codexAccount?.email ?? null, detail: codexAccount?.plan ? planName(codexAccount.plan) : null, problems: [],
+      at: codex?.at ?? null, windows: windowsOf(codex),
+      resetCredits: codexResetCredits?.availableCount > 0 ? { count: codexResetCredits.availableCount, expiries } : null,
+      extraReset: scheduled(extra?.Codex?.scheduled) });
+  }
+  return out;
+}
+
+/**
+ * Reads this machine's accounts for the dashboard push: Claude config dirs, the Codex
+ * series (recorded here too, so the dashboard needs no fleet report), and the community
+ * extra-reset APIs at most every `extraEveryMs` (the push runs every few seconds).
+ */
+export class AccountReader {
+  constructor({ machine, codexQuota = () => null, codexAccount = () => null, codexSeriesFile = null, log = () => {}, now = Date.now,
+    extraResets = () => fetchExtraResets({ log }), extraEveryMs = 30 * 60000,
+    sources = { registry: () => ({ ...readBridgeConfig().fleet, seats: readSeats() }), claude: readClaudeDirs } }) {
+    Object.assign(this, { machine, codexQuota, codexAccount, codexSeriesFile, now, extraResets, extraEveryMs, sources });
+    this.extra = { at: -Infinity, value: null, pending: null };
+  }
+
+  /** Synchronous for the push: the extra-reset fetch refreshes in the background. */
+  read() {
+    const now = this.now();
+    if (now - this.extra.at >= this.extraEveryMs && !this.extra.pending) {
+      this.extra.pending = this.extraResets().then((v) => { this.extra.value = v; }, () => {})
+        .finally(() => { this.extra.at = this.now(); this.extra.pending = null; });
+    }
+    const cx = this.codexQuota();
+    if (cx && this.codexSeriesFile) recordSample(this.codexSeriesFile, codexWindows(cx.limits), cx.at);
+    const registry = this.sources.registry();
+    const codex = cx ? quotaOf(this.codexSeriesFile ? readSeries(this.codexSeriesFile) : [{ from: cx.at, at: cx.at, windows: codexWindows(cx.limits) }]) : null;
+    return accountModels({ machine: this.machine, registry, codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null,
+      claude: this.sources.claude(registry?.seats, this.machine), codex, extra: this.extra.value, now });
+  }
+}
+
+/**
  * The report slot of `machine`: bridge.fleet `order` lists machines in reporting order; one
  * not listed reports last. Slots are a minute apart, so a round reads top to bottom.
  */

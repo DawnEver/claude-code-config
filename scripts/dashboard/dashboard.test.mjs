@@ -6,7 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, stats } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -220,4 +220,47 @@ test('static app: every script parses (a syntax error only shows as a stuck page
     const r = spawnSync(process.execPath, ['--check', new URL(`./public/${f}`, import.meta.url).pathname.replace(/^\/(\w:)/, '$1')], { encoding: 'utf8' });
     assert.equal(r.status, 0, `${f}: ${r.stderr}`);
   }
+});
+
+const HR = 3600000;
+const account = (over = {}) => ({ key: 'claude:a@example.com|u1', agent: 'claude', label: 'team-a', email: 'a@example.com', detail: 'Team A',
+  problems: [], at: NOW - 60000, resetCredits: null, extraReset: null,
+  windows: [{ k: '5h', used: 60, resetsAt: NOW + 3 * HR, windowMs: 5 * HR, cells: [1.5, 1.5, -1, null], forecast: { atReset: 150, eta: NOW + 1.3 * HR, short: true } }], ...over });
+
+test('schema: accounts are whitelisted and bounded like sessions', () => {
+  const p = parseHostPush(push({ accounts: [account({ token: 'x', windows: [{ ...account().windows[0], k: '5h; drop', extra: 1 }] }),
+    account({ key: 'codex:b', agent: 'codex', extraReset: { at: NOW, url: 'javascript:alert(1)' }, resetCredits: { count: 2, expiries: [NOW, 'x'] } }),
+    { agent: 'gpt', key: 'z' }] }));
+  assert.equal(p.accounts.length, 2, 'unknown agent dropped');
+  assert.ok(!('token' in p.accounts[0]));
+  assert.deepEqual(p.accounts[0].windows, [], 'a malformed window key is dropped');
+  assert.equal(p.accounts[1].extraReset.url, null, 'only https links');
+  assert.deepEqual(p.accounts[1].resetCredits, { count: 2, expiries: [NOW, null] });
+  assert.deepEqual(parseHostPush(push()).accounts, [], 'a host without quota pushes no accounts');
+});
+
+test('registry: one account across hosts, its freshest reading, with every host on it', () => {
+  const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => NOW });
+  r.accept('host-a', parseHostPush(push({ accounts: [account({ at: NOW - 600000, detail: 'old' })] })));
+  r.accept('host-b', parseHostPush(push({ accounts: [account({ at: NOW - 60000, detail: 'new' })] })));
+  const [a, ...rest] = r.snapshot().accounts;
+  assert.equal(rest.length, 0);
+  assert.equal(a.detail, 'new');
+  assert.deepEqual(a.hosts, ['host-a', 'host-b']);
+});
+
+test('view: quota verdict on the reader\'s clock; stale readings are floors that forecast nothing', () => {
+  const q = quotaView(account(), NOW);
+  assert.deepEqual([q.verdict, q.left, q.bind.k], ['short', 40, '5h']);
+  assert.equal(Math.round(q.windows[0].pace), 40, 'even pace from the clock, not the host');
+  const old = quotaView(account({ at: NOW - 30 * 60000 }), NOW);
+  assert.equal(old.stale, true);
+  assert.equal(old.windows[0].forecast, null);
+  assert.equal(old.verdict, 'ok', 'no forecast, no run-out claim');
+  assert.equal(quotaView(account({ windows: [{ ...account().windows[0], used: 100, forecast: null }] }), NOW).verdict, 'exhausted');
+  const renewed = quotaView(account(), NOW + 4 * HR);
+  assert.equal(renewed.windows[0].renewed, true);
+  assert.equal(renewed.verdict, 'none');
+  assert.deepEqual(quotaAlerts({ accounts: [account(), account({ key: 'k2', windows: [{ ...account().windows[0], forecast: { atReset: 80, eta: null, short: false } }] })] }, NOW).map((x) => x.key),
+    ['claude:a@example.com|u1'], 'only accounts that need the human');
 });
