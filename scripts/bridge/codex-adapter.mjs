@@ -19,11 +19,11 @@ import { JsonRpcPeer } from './jsonrpc.mjs';
 import { BRIDGE_DEFAULTS } from './context.mjs';
 
 const QUOTA_REFRESH_MS = 5 * 60000;
-// Codex keeps a thread loaded while any client subscribes (and for an undocumented while
-// after), and says nothing about who does, so the bridge's own subscription would keep a closed
-// window's thread loaded forever. After this long idle the bridge lets go and watches it with
-// `thread/read` (no subscription): updated since, or active, means someone works in it, and it
-// is taken back; unloaded means it is gone. Codex alone decides; no timer guesses.
+// Codex keeps a thread in memory ("loaded") long after its last client left (an idle one is
+// never unloaded in practice), and says nothing about who holds it: loaded is a cache, not
+// presence. Activity is the only presence signal Codex gives. So a thread quiet this long, or
+// in systemError, is released: unsubscribed and down. A released thread is watched with
+// `thread/read` (no subscription) and comes back up when it is active or updated since.
 const IDLE_RELEASE_MS = 10 * 60000;
 const isCodexBucket = (l) => Boolean(l) && (l.limitId ?? 'codex') === 'codex';
 const dropNulls = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null));
@@ -154,7 +154,7 @@ export class CodexAdapter extends EventEmitter {
     this.clientName = clientName;
     this.rpc = null;
     this.connection = 0;
-    this.errored = new Set();     // threads in systemError: let go until Codex reports them recovered
+    this.released = new Map();    // threadId -> Codex updatedAt when released: watched, not subscribed
     this.threads = new Map();     // threadId -> { cwd, branch, status, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
     this.questions = new Map();   // key -> { rpcId, threadId, answerable, submitted? } (item/tool/requestUserInput)
@@ -182,7 +182,7 @@ export class CodexAdapter extends EventEmitter {
       for (const id of [...this.threads.keys()]) this.#drop(id);
       this.pending.clear();
       this.skipped.clear();
-      this.errored.clear();
+      this.released.clear();
     });
     await new Promise((resolve) => t.onOpen(resolve));
     await rpc.request('initialize', { clientInfo: { name: this.clientName, version: '1' } });
@@ -214,36 +214,22 @@ export class CodexAdapter extends EventEmitter {
       cursor = r.nextCursor;
     } while (cursor);
     for (const id of [...this.threads.keys()]) if (!ids.has(id)) this.#drop(id);
-    for (const id of [...this.errored]) if (!ids.has(id)) this.errored.delete(id);
+    for (const id of [...this.released.keys()]) if (!ids.has(id)) this.released.delete(id);
     const now = this.now();
-    for (const [id, th] of [...this.threads]) {
-      if (th.released !== null) {
-        const read = (await this.rpc?.request('thread/read', { threadId: id }).catch(() => null))?.thread;
-        if (!read) continue;
-        if (read.status?.type === 'systemError') { this.#abandon(id); continue; }
-        if (read.status?.type === 'active' || (read.updatedAt ?? 0) > th.updatedAt) {
-          await this.#resume(id, th.released).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
-        }
-      } else if (th.idleSince !== null && now - th.idleSince >= IDLE_RELEASE_MS) {
-        th.released = now;
-        await this.rpc?.request('thread/unsubscribe', { threadId: id }).catch(() => {});
-      }
-    }
+    for (const [id, th] of [...this.threads]) if (th.idleSince !== null && now - th.idleSince >= IDLE_RELEASE_MS) this.#release(id, th.updatedAt);
     for (const id of ids) {
       if (this.threads.has(id)) continue;
-      // A thread in systemError is not a session; it is taken back only once Codex says it recovered.
-      if (this.errored.has(id)) {
-        const st = (await this.rpc?.request('thread/read', { threadId: id }).catch(() => null))?.thread?.status;
-        if (!st || st.type === 'systemError') continue;
-        this.errored.delete(id);
+      if (this.released.has(id)) {
+        const read = (await this.rpc?.request('thread/read', { threadId: id }).catch(() => null))?.thread;
+        if (!read || !(read.status?.type === 'active' || (read.updatedAt ?? 0) > this.released.get(id))) continue;
       }
       await this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
     }
   }
 
-  /** Let go of a thread for good: unsubscribed, down, not resubscribed while it stays errored. */
-  #abandon(threadId) {
-    this.errored.add(threadId);
+  /** No presence left to show: unsubscribed, down, watched until it is used again. */
+  #release(threadId, updatedAt) {
+    this.released.set(threadId, updatedAt ?? 0);
     this.rpc?.request('thread/unsubscribe', { threadId }).catch(() => {});
     this.#drop(threadId);
   }
@@ -272,16 +258,22 @@ export class CodexAdapter extends EventEmitter {
     } finally { if (connection === this.connection) this.pending.delete(threadId); }
   }
 
-  /** Subscribe to a thread; `releasedAt` re-holds a released one: no new `up`, missed turns replayed. */
-  async #resume(threadId, releasedAt = null) {
+  async #resume(threadId) {
     const rpc = this.rpc;
     if (!rpc) return;
     const r = await rpc.request('thread/resume', { threadId });
     if (this.rpc !== rpc) return;
+    const released = this.released.get(threadId);
+    this.released.delete(threadId);
     const th = r.thread ?? {};
     if (th.ephemeral) return;
     if (!isMainSession(th, this.sources)) { this.#dismiss(threadId); return; }
-    if (th.status?.type === 'systemError') { this.#abandon(threadId); return; }
+    // Quiet since before IDLE_RELEASE_MS (Codex's updatedAt is seconds on this machine's clock), or broken: not a presence.
+    if (th.status?.type === 'systemError' || (th.status?.type === 'idle' && (th.updatedAt ?? 0) * 1000 < this.now() - IDLE_RELEASE_MS)) {
+      this.released.set(threadId, th.updatedAt ?? 0);
+      rpc.request('thread/unsubscribe', { threadId }).catch(() => {});
+      return;
+    }
     const running = (th.turns ?? []).findLast?.((t) => t.status === 'inProgress');
     const info = {
       cwd: th.cwd ?? r.cwd,
@@ -292,18 +284,12 @@ export class CodexAdapter extends EventEmitter {
       activeTurnId: running?.id ?? null,
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
       idleSince: th.status?.type === 'idle' ? this.now() : null,
-      released: null,
-      updatedAt: th.updatedAt ?? 0,   // Codex's own clock: compared only with itself
+      updatedAt: th.updatedAt ?? 0,
     };
-    if (releasedAt !== null) {
-      if (!this.threads.has(threadId)) return;   // closed meanwhile
-      this.threads.set(threadId, info);
-      for (const b of backlogSince(th.turns, releasedAt)) this.emit(b.kind, { id: threadId, ...b });
-      this.emit('status', { id: threadId });
-      return;
-    }
     this.threads.set(threadId, info);
-    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, backlog: backlogSince(th.turns, this.connectedAt) });
+    // Back from release: what ran since it went quiet replays (updatedAt is seconds).
+    const since = released === undefined ? this.connectedAt : released * 1000;
+    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, backlog: backlogSince(th.turns, since) });
   }
 
   /** A non-main thread: never subscribed again; `dismiss` lets the daemon close any Topic it has. */
@@ -337,7 +323,7 @@ export class CodexAdapter extends EventEmitter {
         break;
       case 'thread/status/changed':
         if (!th) break;
-        if (p.status?.type === 'systemError') { this.#abandon(p.threadId); break; }
+        if (p.status?.type === 'systemError') { this.#release(p.threadId, th.updatedAt); break; }
         if (p.status?.type !== 'idle') th.idleSince = null;
         else if (th.status?.type !== 'idle') th.idleSince = this.now();
         th.status = p.status ?? null;

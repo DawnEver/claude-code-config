@@ -173,7 +173,7 @@ const ALICE = 42, MALLORY = 666;
 const baseConfig = { projects: { proj: { chatId: -100 } }, fallbackChatId: -999, allowedUserIds: [ALICE],
   approvalsFromTelegram: false, idleCloseMinutes: 30, deleteClosedAfterHours: 24 };
 
-function make({ config = {}, topicCacheFile = null } = {}) {
+function make({ config = {}, topicCacheFile = null, alertGraceMs = 20 } = {}) {
   const telegram = fakeTelegram();
   const hosts = { codex: fakeHost('codex'), claude: fakeHost('claude') };
   const logs = [];
@@ -181,7 +181,7 @@ function make({ config = {}, topicCacheFile = null } = {}) {
   const bridge = new Bridge({
     telegram, adapters: Object.values(hosts), machine: 'host-a', config: { ...baseConfig, ...config }, topicCacheFile,
     resolveContext: (cwd, h) => ({ project: cwd === '/proj' ? 'proj' : 'other', branch: h.branch ?? 'main' }),
-    log: (m) => logs.push(m), now: () => t,
+    log: (m) => logs.push(m), now: () => t, alertGraceMs,
   });
   return { bridge, telegram, hosts, logs, at: (v) => { t = v; } };
 }
@@ -456,7 +456,7 @@ for (const agent of HOSTS) {
   });
 
   test(`${agent}: approvals are notices by default; opt-in buttons honour only the allowlist`, async () => {
-    const off = make();
+    const off = make({ alertGraceMs: 60000 });
     await live(off, agent, 'x');
     off.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
     await until(() => off.telegram.sent.length === 2);
@@ -464,7 +464,7 @@ for (const agent of HOSTS) {
     await off.bridge.handleUpdate({ callback_query: { id: 'q', data: 'ap:1:y', from: { id: ALICE } } });
     assert.deepEqual(off.hosts[agent].answered, []);
 
-    const on = make({ config: { approvalsFromTelegram: true } });
+    const on = make({ config: { approvalsFromTelegram: true }, alertGraceMs: 60000 });
     await live(on, agent, 'x');
     on.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
     await until(() => on.telegram.sent.length === 2);
@@ -481,14 +481,25 @@ for (const agent of HOSTS) {
     assert.equal(on.telegram.sent[2].replyMarkup, undefined, 'unanswerable kinds never get buttons');
   });
 
-  test(`${agent}: only what needs the human alerts them; the rest is silent`, async () => {
+  test(`${agent}: posts are silent; one still waiting after the grace mentions the human once`, async () => {
     const r = make();
     await live(r, agent, 'x');
     r.hosts[agent].emit('final', { id: 'x', text: 'done' });
     r.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
     r.hosts[agent].emit('final', { id: 'x', text: 'boom', status: 'failed' });
-    await until(() => r.telegram.sent.length === 4);
-    assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [null, [ALICE], [ALICE]]);
+    await until(() => r.telegram.sent.length === 5);
+    assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [null, null, null, [ALICE]]);
+    assert.equal(r.telegram.sent.at(-1).text, 'waiting for you');
+  });
+
+  test(`${agent}: handled at the machine within the grace, nobody is mentioned`, async () => {
+    const r = make({ alertGraceMs: 40 });
+    await live(r, agent, 'x');
+    r.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
+    r.at(10);
+    r.hosts[agent].emit('final', { id: 'x', text: 'ran it' });
+    await new Promise((done) => setTimeout(done, 80));
+    assert.equal(r.telegram.sent.some((m) => m.alert), false);
   });
 }
 
@@ -551,9 +562,9 @@ test('notices post as plain messages; only those asking for the human alert', as
   await live(r, 'claude', 'x');
   r.hosts.claude.emit('notice', { id: 'x', text: 'Claude needs your permission to use Bash', alert: true });
   r.hosts.claude.emit('notice', { id: 'x', text: 'answered locally: Q? -> A' });
-  await until(() => r.telegram.sent.length === 3);
-  assert.deepEqual(texts(r.telegram).slice(1), ['Claude needs your permission to use Bash', 'answered locally: Q? -> A']);
-  assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [[ALICE], null]);
+  await until(() => r.telegram.sent.length === 4);
+  assert.deepEqual(texts(r.telegram).slice(1), ['Claude needs your permission to use Bash', 'answered locally: Q? -> A', 'waiting for you']);
+  assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [null, null, [ALICE]]);
 });
 
 test('progress lines collapse into one edited message; final is a new message', async () => {
@@ -714,7 +725,7 @@ for (const agent of HOSTS) {
     const [first, second] = r.telegram.sent.slice(-2);
     assert.match(first.text, /Which colour?/);
     assert.deepEqual(first.replyMarkup.inline_keyboard.map((row) => row[0].text), ['Red', 'Blue']);
-    assert.ok(first.alert?.includes(ALICE));
+    assert.equal(first.alert, undefined, 'silent: the mention follows only if still unanswered');
     assert.match(second.text, /Name it\n\(reply with text to answer\)$/);
     assert.equal(second.replyMarkup, undefined);
     await r.bridge.handleUpdate(tap(first, MALLORY, 1));

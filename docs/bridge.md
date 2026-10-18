@@ -111,8 +111,13 @@ app-server daemon. `exec` and other non-interactive subcommands, an explicit `--
 and third-party providers (`cods`, whose overrides the daemon would not apply) are left as
 they are.
 
-- Live sessions = `thread/loaded/list`, polled every 15 s plus `thread/started`; each is
-  subscribed with `thread/resume` (needs a rollout, so ephemeral threads are skipped).
+- Live sessions = loaded threads (`thread/loaded/list`, polled every 15 s plus `thread/started`)
+  that show activity; each is subscribed with `thread/resume` (needs a rollout, so ephemeral
+  threads are skipped). Codex keeps an idle thread loaded long after its window closed and
+  names no holder, so loaded is a cache, not presence: a thread quiet 10 min (or in
+  `systemError`, or already quiet when first seen) is released — unsubscribed, down — and
+  watched with `thread/read`; it comes back up, with what ran meanwhile, once it is active or
+  updated again.
   `thread/resume` also yields the backlog: turns that started after the bridge connected.
 - Output: prompts, one `working…` message per turn edited in place with compact progress
   lines (throttled to one edit per 3 s), then the final agent message.
@@ -181,7 +186,7 @@ token in `runtime.json`):
   not shown, but the answer it triggers is — a background task's or subagent's result
   reaches the Topic. Recognition lives in `isEnvelope` (`claude-adapter.mjs`).
 - What a Notification waits for ("Claude needs your permission to use Bash") is posted with
-  an alert, unless a channel permission request already posted it with buttons. An
+  a nudge, unless a channel permission request already posted it with buttons. An
   AskUserQuestion answered in the terminal is posted as `answered locally: Q -> A`.
 - A prompt, final or answer the daemon did not take (down, restarting, over the 2 s hook
   budget) is spooled to `~/.claude/bridge/spool.jsonl` and resent, oldest first, by the next
@@ -266,9 +271,12 @@ chars; 429s honour `retry_after`.
 
 ## Approvals
 
-Notifications: every mirrored message is sent silently. Only what waits for the human —
-an approval, or a turn that ended `failed` (Codex `failed`; Claude `StopFailure`: an API error such as a rate limit) — notifies, and it mentions each `allowedUserIds`
-user by id (`@you`), so it gets through a muted group or Topic.
+Notifications: every mirrored message is sent silently. What waits for the human — an
+approval, a question, a permission Notification, or a turn that ended `failed` (Codex
+`failed`; Claude `StopFailure`: an API error such as a rate limit) — arms a nudge: if after
+30 s the session has not moved (no later post, not running again), one `waiting for you` reply
+mentions each `allowedUserIds` user by id (`@you`), so it gets through a muted group or
+Topic. Handled at the machine within the grace, it mentions nobody.
 
 Default: `approval needed on <machine>, answer locally or via official remote`, never
 answered. Opt-in per machine with `bridge.approvalsFromTelegram: true`: Accept/Decline

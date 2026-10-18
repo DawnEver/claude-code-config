@@ -38,6 +38,8 @@ import { DashboardPush } from './dashboard-push.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
+/** How long a request for the human may be handled at the machine before anyone is mentioned. */
+const ALERT_GRACE_MS = 30000;
 const PROGRESS_MIN_INTERVAL_MS = 3000;
 const PROGRESS_LINES = 12;
 const ECHO_TTL_MS = 10 * 60000;   // a Telegram inject that never echoes back is forgotten
@@ -80,9 +82,9 @@ export class Bridge {
    *           topicCacheFile?: string|null, log?: (msg) => void, now?: () => number }} deps
    */
   constructor({ telegram, adapters = [], config, machine, resolveContext = gitContext,
-    topicCacheFile = null, log = () => {}, now = Date.now,
+    topicCacheFile = null, log = () => {}, now = Date.now, alertGraceMs = ALERT_GRACE_MS,
     uploadsDir = path.join(BRIDGE_RUNTIME_DIR, 'uploads') }) {
-    Object.assign(this, { telegram, config, machine, resolveContext, log, now, uploadsDir });
+    Object.assign(this, { telegram, config, machine, resolveContext, log, now, alertGraceMs, uploadsDir });
     this.hosts = new Map(adapters.map((a) => [a.agent, a]));
     this.sessions = new Map();   // key -> session (lifecycle.mjs record + routing fields)
     this.held = new Map();       // key -> live events that arrived during bring-up
@@ -453,11 +455,33 @@ export class Bridge {
     }
   }
 
-  /** Activity: run the lifecycle (create or reopen the Topic), then post, in order. */
-  #send(s, text, opts = {}) {
+  /**
+   * Activity: run the lifecycle (create or reopen the Topic), then post, in order. Every post is
+   * silent; one that needs the human (`alert`) arms a nudge instead of mentioning at once.
+   */
+  #send(s, text, { alert, ...opts } = {}) {
     if (s.chatId === null) return Promise.resolve([]);
     this.#activity(s);
+    if (alert?.length) this.#nudgeLater(s);
     return this.#serial(s, () => this.#postNow(s, text, opts));
+  }
+
+  /**
+   * A mention means "you are needed, still". So it waits `alertGraceMs`: if the session moved
+   * meanwhile (any later post, or it runs again: handled at the machine), nobody is disturbed;
+   * otherwise one short reply mentions the allowed users.
+   */
+  #nudgeLater(s) {
+    s.nudgeAt = s.lastActivity;
+    if (s.nudge) return;
+    s.nudge = setTimeout(() => {
+      s.nudge = null;
+      if (this.sessions.get(s.key) !== s || s.lastActivity > s.nudgeAt) return;
+      if (this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.state === 'running') return;
+      this.#serial(s, () => this.#postNow(s, 'waiting for you', { alert: [...this.allowed] }))
+        .catch((e) => this.#warnOnce('nudge', e.message));
+    }, this.alertGraceMs);
+    s.nudge.unref?.();
   }
 
   #activity(s) {

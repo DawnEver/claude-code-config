@@ -89,7 +89,7 @@ test('account quota: read on refresh, replaced by pushes for the codex bucket on
 });
 
 test('status follows Codex\'s own thread status, not the adapter\'s turn bookkeeping', async () => {
-  const { a, srv } = await started({ threads: { t1: { id: 't1', cwd: '/w', ephemeral: false, gitInfo: { branch: 'main' }, turns: [], status: { type: 'idle' } } } });
+  const { a, srv } = await started({ threads: { t1: { id: 't1', cwd: '/w', ephemeral: false, gitInfo: { branch: 'main' }, turns: [], status: { type: 'idle' }, updatedAt: Date.now() / 1000 } } });
   const statuses = [];
   a.on('status', (e) => statuses.push(e.id));
   srv.push('turn/started', { threadId: 't1', turn: { id: 'T' } });   // a turn whose end is never seen
@@ -124,8 +124,8 @@ async function clocked(opts) {
   return { a, srv, clock, ev };
 }
 
-test('a thread in systemError goes down and stays out until Codex reports it recovered', async () => {
-  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' } } };
+test('a thread in systemError is released: down, and up again once it is used', async () => {
+  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' }, updatedAt: 1000 } };
   const { a, srv, ev } = await clocked({ threads });
   srv.push('thread/status/changed', { threadId: 't1', status: { type: 'systemError' } });
   await tick();
@@ -133,38 +133,40 @@ test('a thread in systemError goes down and stays out until Codex reports it rec
   assert.ok(srv.calls.some((c) => c.method === 'thread/unsubscribe' && c.params.threadId === 't1'), 'the bridge lets go of it');
   threads.t1.status = { type: 'systemError' };
   await a.refresh();
-  assert.equal(ev.length, 2, 'still errored: not resubscribed');
-  threads.t1.status = { type: 'idle' };
+  assert.equal(ev.length, 2, 'still broken and unused: stays released');
+  threads.t1.status = { type: 'active' };
   await a.refresh();
-  assert.deepEqual(ev.at(-1), ['up', 't1', null], 'recovered: tracked again');
+  assert.deepEqual(ev.at(-1), ['up', 't1', null], 'used again: up');
 });
 
-test('an idle thread is released after 10 min and taken back only on evidence of activity, never on a timer', async () => {
-  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' }, updatedAt: 100 } };
+test('presence is activity: quiet 10 min means down, used again means up with what ran meanwhile', async () => {
+  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' }, updatedAt: 1000 } };
   const { a, srv, clock, ev } = await clocked({ threads });
-  const resumes = () => srv.calls.filter((c) => c.method === 'thread/resume').length;
   clock.t += 9 * 60000;
   await a.refresh();
-  assert.ok(!srv.calls.some((c) => c.method === 'thread/unsubscribe'), 'not before 10 min idle');
+  assert.deepEqual(ev, [['up', 't1', null]], 'not before 10 min quiet');
   clock.t += 60000;
   await a.refresh();
+  assert.deepEqual(ev, [['up', 't1', null], ['down', 't1', null]]);
   assert.equal(srv.calls.filter((c) => c.method === 'thread/unsubscribe').length, 1);
-  assert.deepEqual(ev, [['up', 't1', null]], 'released, not down: Codex decides when it is gone');
-  // Still loaded and quiet for an hour: Codex has not unloaded it yet. Not taken back.
-  for (let i = 0; i < 4; i++) { clock.t += 15 * 60000; await a.refresh(); }
-  assert.equal(resumes(), 1, 'no timer re-holds a quiet thread');
-  // Someone works in it: updated since the release. Taken back without a new up; what ran replays.
-  threads.t1.updatedAt = 200;
-  threads.t1.turns = [{ id: 'T9', startedAt: (clock.t - 1000) / 1000, status: 'completed', items: [{ type: 'agentMessage', id: 'm', text: 'done' }] }];
+  // Still loaded (Codex never unloads it) and quiet for hours: stays down, never re-subscribed.
+  for (let i = 0; i < 8; i++) { clock.t += 30 * 60000; await a.refresh(); }
+  assert.equal(srv.calls.filter((c) => c.method === 'thread/resume').length, 1);
+  // Someone works in it: up, with the turn that ran while it was released.
+  threads.t1.updatedAt = clock.t / 1000;
+  threads.t1.status = { type: 'idle' };
+  threads.t1.turns = [{ id: 'T9', startedAt: clock.t / 1000 - 1, status: 'completed', items: [{ type: 'agentMessage', id: 'm', text: 'done' }] }];
+  const ups = [];
+  a.on('up', (u) => ups.push(u));
   await a.refresh();
-  assert.equal(resumes(), 2);
-  assert.deepEqual(ev, [['up', 't1', null], ['final', 't1', 'done']]);
-  // Released again, then Codex unloads it: down.
-  clock.t += 10 * 60000;
-  await a.refresh();
-  srv.setLoaded([]);
-  await a.refresh();
-  assert.deepEqual(ev.at(-1), ['down', 't1', null]);
+  assert.equal(ups.length, 1);
+  assert.deepEqual(ups[0].backlog.map((b) => [b.kind, b.text]), [['final', 'done']]);
+});
+
+test('a thread already quiet when first seen is not a presence: never up', async () => {
+  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' }, updatedAt: 1 } };
+  const { ev } = await clocked({ threads });
+  assert.deepEqual(ev, []);
 });
 
 test('deltas aggregate; final message is emitted on turn/completed; progress per item', async () => {
