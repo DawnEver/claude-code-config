@@ -1,8 +1,8 @@
-// scripts/fleet-gateway/auth.mjs — the two identities the gateway accepts (WebCrypto only: runs
+// scripts/dashboard/auth.mjs — the two identities the gateway accepts (WebCrypto only: runs
 // in the Worker and in Node tests alike).
-//   Viewer: a Telegram Mini App user, opened from the fleet bot. The raw `initData` is verified
+//   Viewer: a Telegram Mini App user, opened from the dashboard bot. The raw `initData` is verified
 //     by its Ed25519 `signature` (https://core.telegram.org/bots/webapps#validating-data-for-third-party-use):
-//     only the fleet bot's id and Telegram's public key are needed, never a bot token. Then
+//     only the dashboard bot's id and Telegram's public key are needed, never a bot token. Then
 //     freshness by auth_date and the user id against the allowlist. initDataUnsafe and any
 //     client-sent id are never trusted.
 //   Host: a bridge daemon, by its own bearer token; the gateway holds only its SHA-256.

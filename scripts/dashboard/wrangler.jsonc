@@ -1,0 +1,11 @@
+// The dashboard Worker. The domain and DASHBOARD_CONFIG are not here: deploy.mjs derives both
+// from the shared bridge.dashboard config, so this file stays generic.
+{
+  "name": "agents-dashboard",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "public", "not_found_handling": "none" },
+  "durable_objects": { "bindings": [{ "name": "DASHBOARD", "class_name": "DashboardHub" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DashboardHub"] }],
+  "observability": { "enabled": true }
+}

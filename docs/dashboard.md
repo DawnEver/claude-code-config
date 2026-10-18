@@ -1,4 +1,4 @@
-# Fleet gateway and Mini App (V0.1, read-only)
+# Agents Dashboard (V0.1, read-only)
 
 One Telegram Mini App showing every machine's live Claude Code / Codex sessions: host
 online state, per-session status, project, branch, seat, last activity, and a jump to the
@@ -7,36 +7,36 @@ control. The Topics stay the conversation surface; the bridge stays the session 
 
 ```
 Native session ── adapter.statusSnapshot ── Bridge.sessions        (daemon.mjs: the only state)
-                                                 │ fleetSnapshot()  read-only projection
+                                                 │ dashboardSnapshot()  read-only projection
                                                  ▼
-                                   fleet-push.mjs  ── HTTPS POST, host bearer token ──▶ Cloudflare Worker
-                                                                                          │ FleetHub Durable Object
-Telegram ─ fleet bot ─ Mini App (public/) ─ GET /api/fleet, Authorization: tma <initData> ┘ (registry, memory only)
+                                   dashboard-push.mjs  ── HTTPS POST, host bearer token ──▶ Cloudflare Worker
+                                                                                          │ DashboardHub Durable Object
+Telegram ─ dashboard bot ─ Mini App (public/) ─ GET /api/dashboard, Authorization: tma <initData> ┘ (registry, memory only)
 ```
 
 | Layer | File | Owns |
 | --- | --- | --- |
-| Export | `Bridge.fleetSnapshot()` in `scripts/bridge/daemon.mjs` | projection of the existing registry + adapter snapshot; no new state |
-| Contract | `scripts/shared/fleet-schema.mjs` | wire format, status codes, Topic link rule, the trust boundary `parseHostPush` |
-| Transport | `scripts/bridge/fleet-push.mjs` | outbound push on a timer; never on the Telegram message path |
-| Gateway | `scripts/fleet-gateway/{worker,api,auth,registry}.mjs` | Worker entry + Durable Object (`worker.mjs`), the HTTP API on Web-standard Request/Response (`api.mjs`), Ed25519 viewer + host-token auth (`auth.mjs`), last push per host (`registry.mjs`) |
-| Operations | `scripts/fleet-gateway/deploy.mjs`, `wrangler.jsonc` | host tokens, deploy, menu button |
-| UI | `scripts/fleet-gateway/public/` | `view.mjs` (pure, tested), `app.js` (DOM), `index.html`, `_headers` (CSP) |
+| Export | `Bridge.dashboardSnapshot()` in `scripts/bridge/daemon.mjs` | projection of the existing registry + adapter snapshot; no new state |
+| Contract | `scripts/shared/dashboard-schema.mjs` | wire format, status codes, Topic link rule, the trust boundary `parseHostPush` |
+| Transport | `scripts/bridge/dashboard-push.mjs` | outbound push on a timer; never on the Telegram message path |
+| Gateway | `scripts/dashboard/{worker,api,auth,registry}.mjs` | Worker entry + Durable Object (`worker.mjs`), the HTTP API on Web-standard Request/Response (`api.mjs`), Ed25519 viewer + host-token auth (`auth.mjs`), last push per host (`registry.mjs`) |
+| Operations | `scripts/dashboard/deploy.mjs`, `wrangler.jsonc` | host tokens, deploy, menu button |
+| UI | `scripts/dashboard/public/` | `view.mjs` (pure, tested), `app.js` (DOM), `index.html`, `_headers` (CSP) |
 
-Why Cloudflare: the gateway is the fleet's one public endpoint and belongs to no workstation.
+Why Cloudflare: the dashboard is the hosts' one public endpoint and belongs to no workstation.
 A Worker on the free plan gives https on your own domain, no server to run, and a single
 Durable Object is exactly the registry's shape (one in-memory state all requests share).
 Budget: the free plan allows 100,000 Durable Object requests a day; a host pushing every
-15 s costs 5,760, an open Mini App polling every 8 s 450 an hour. Over budget the Fleet is
+15 s costs 5,760, an open Mini App polling every 8 s 450 an hour. Over budget the dashboard is
 down until 00:00 UTC; the bridge is unaffected. GitHub Pages cannot host it: static only,
 no API, no authentication.
 
 ## Identities
 
-- **Fleet bot**: a bot of its own (`@BotFather` -> `/newbot`), the fleet's entry point — the
+- **Dashboard bot**: a bot of its own (`@BotFather` -> `/newbot`), the dashboard's entry point — the
   control plane belongs to no workstation, so it does not borrow a workstation's bridge bot.
   The Worker verifies `initData` by its **Ed25519 `signature`** (Telegram's third-party
-  validation): it needs only the fleet bot's numeric id and Telegram's public key, never the
+  validation): it needs only the dashboard bot's numeric id and Telegram's public key, never the
   bot token. The token is used once, locally, to set the menu button, and stored nowhere.
 - **Viewer**: allowlisted by `bridge.allowedUserIds` (the bridge's own allowlist), freshness by
   `auth_date` within `initDataMaxAgeSeconds` (default 1 h; past it the app asks to be
@@ -66,19 +66,19 @@ no API, no authentication.
   inside that link (Telegram needs it); the chat id itself is not served.
 - **Not exported**: cwd, Topic titles, accounts, tokens. `lastActivityAt` is the bridge's last
   mirrored activity (a session with no group configured stays at its `up` time).
-- The Durable Object keeps nothing on disk: when Cloudflare evicts or restarts it, the fleet is
+- The Durable Object keeps nothing on disk: when Cloudflare evicts or restarts it, the dashboard is
   empty until the next push round (`everySeconds`).
 
 ## Setup
 
-Fleet membership has one home: the shared `bridge.fleetGateway` block of
+Dashboard membership has one home: the shared `bridge.dashboard` block of
 `claude_env_settings.json` (synced). Only the host tokens are machine-local.
 
-1. **Fleet bot**: `@BotFather` -> `/newbot`. Its numeric id is the part of the token before `:`.
+1. **Dashboard bot**: `@BotFather` -> `/newbot`. Its numeric id is the part of the token before `:`.
 2. **Shared config** (`~/.claude/claude_env_settings.json`):
    ```json
-   "bridge": { "fleetGateway": {
-     "url": "https://fleet.example.com",
+   "bridge": { "dashboard": {
+     "url": "https://dashboard.example.com",
      "botId": 1234567890,
      "everySeconds": 15,
      "hosts": { "host-a": "<sha256 from step 3>" }
@@ -86,26 +86,26 @@ Fleet membership has one home: the shared `bridge.fleetGateway` block of
    ```
    `url` is an origin (the gateway serves at its root, no path) on a domain whose DNS is on
    Cloudflare; `everySeconds` is 5..3600.
-3. **On each host**: `npm run fleet-gateway -- host-token`. It writes the token into this
-   machine's `~/.claude/claude_env_settings.local.json` (`bridge.fleetGateway.hostToken`) and
+3. **On each host**: `npm run dashboard -- host-token`. It writes the token into this
+   machine's `~/.claude/claude_env_settings.local.json` (`bridge.dashboard.hostToken`) and
    prints the line to add under `hosts` in the shared config. The host id is the machine's
    `machine.json` name.
 4. **Deploy** (any one host, once per membership change): `npx wrangler login` once, then
-   `npm run fleet-gateway -- deploy`. It derives the Worker's `FLEET_CONFIG` secret (`botId`,
+   `npm run dashboard -- deploy`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`,
    `allowedUserIds`, `hosts`) from the merged config — never a host token — and deploys to
    the url's domain (Cloudflare creates the DNS record and certificate).
-5. **Menu button**: `FLEET_BOT_TOKEN=<token> npm run fleet-gateway -- set-menu`. The token is
-   checked against `botId` and used for this one call. Open the fleet bot -> **Fleet**.
+5. **Menu button**: `DASHBOARD_BOT_TOKEN=<token> npm run dashboard -- set-menu`. The token is
+   checked against `botId` and used for this one call. Open the dashboard bot -> **Dashboard**.
 6. **Daemons** pick the config up at their next restart (`ensure.mjs` restarts a daemon whose
    config changed at the next session start). A configured but unusable block logs
-   `fleet gateway: off (<reason>)`.
+   `dashboard: off (<reason>)`.
 
 ## API
 
 | Route | Auth | Returns |
 | --- | --- | --- |
 | `GET /api/health` | none | `{ok, schemaVersion}` |
-| `GET /api/fleet` | `Authorization: tma <raw initData>` | `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[]}]}` |
+| `GET /api/dashboard` | `Authorization: tma <raw initData>` | `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[]}]}` |
 | `GET /api/hosts/:hostId/sessions` | same | one host of the above |
 | `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted}` (false = not newer than held) |
 
@@ -118,26 +118,26 @@ is whitelisted field by field; at most 200 per host.
 
 ## Develop and test
 
-- `node --test scripts/fleet-gateway/*.test.mjs scripts/bridge/fleet-push.test.mjs` (also in
+- `node --test scripts/dashboard/*.test.mjs scripts/bridge/dashboard-push.test.mjs` (also in
   `npm test`): Ed25519 auth (foreign key, other bot, expired, future, tampered, unlisted user),
   host tokens, schema, registry ordering/TTL, the API, rate limit, config derivation, view
   logic, and an end-to-end Bridge -> push -> API -> viewer run. `api.mjs` is runtime-agnostic,
   so the tests drive it with plain `Request` objects.
-- Real Workers runtime: `npx wrangler dev` in `scripts/fleet-gateway/` with a `.dev.vars`
-  (gitignored) holding `FLEET_CONFIG=<json>` (unquoted) and, for locally signed test data,
+- Real Workers runtime: `npx wrangler dev` in `scripts/dashboard/` with a `.dev.vars`
+  (gitignored) holding `DASHBOARD_CONFIG=<json>` (unquoted) and, for locally signed test data,
   `TELEGRAM_PUBLIC_KEY=<hex>`. A host daemon may push to it over `http://127.0.0.1`.
 - UI without Telegram: open `/?mock` — built-in example data, no API call. Mock rendering is
-  not fleet acceptance.
+  not dashboard acceptance.
 - Live acceptance needs the real chain: daemons pushing, the Worker deployed, the app opened
-  from the fleet bot on each client in use (Android, iOS, Desktop), a Topic link tapped.
+  from the dashboard bot on each client in use (Android, iOS, Desktop), a Topic link tapped.
 
 ## Failure isolation and rollback
 
 - The push is an unref'd timer in the daemon, at most one in flight, 5 s timeout, never
   awaited by Telegram routing; a failing or refusing gateway logs once and the bridge carries on.
-- Roll back a host: remove its `hostToken` (or the whole `bridge.fleetGateway` block). Roll
-  back the gateway: `npx wrangler delete --config scripts/fleet-gateway/wrangler.jsonc`.
-  Revert the code: additive on the bridge side — `fleetSnapshot()`, the push, the config key.
+- Roll back a host: remove its `hostToken` (or the whole `bridge.dashboard` block). Roll
+  back the gateway: `npx wrangler delete --config scripts/dashboard/wrangler.jsonc`.
+  Revert the code: additive on the bridge side — `dashboardSnapshot()`, the push, the config key.
 
 ## Known limits (V0.1)
 

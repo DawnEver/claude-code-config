@@ -1,23 +1,23 @@
-// scripts/fleet-gateway/api.mjs — the gateway's HTTP API on Web-standard Request/Response, so the
+// scripts/dashboard/api.mjs — the gateway's HTTP API on Web-standard Request/Response, so the
 // same code runs in the Worker's Durable Object and in Node tests.
 
-import { SCHEMA_VERSION, isHostId, parseHostPush } from '../shared/fleet-schema.mjs';
+import { SCHEMA_VERSION, isHostId, parseHostPush } from '../shared/dashboard-schema.mjs';
 import { Registry } from './registry.mjs';
 import { TELEGRAM_PUBLIC_KEY, verifyHostToken, verifyInitData } from './auth.mjs';
 
 const MAX_BODY = 256 * 1024;
 
 /**
- * FLEET_CONFIG (JSON): {botId, allowedUserIds, hosts: {machine: sha256}, ttlSeconds?,
+ * DASHBOARD_CONFIG (JSON): {botId, allowedUserIds, hosts: {machine: sha256}, ttlSeconds?,
  * initDataMaxAgeSeconds?, ratePerMinute?}. Malformed = throws: a gateway that cannot
  * authenticate anyone must fail loudly, not serve 401s.
  */
-export function parseFleetConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
+export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
   const c = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  if (!Number.isSafeInteger(c?.botId) || c.botId <= 0) throw new Error('FLEET_CONFIG.botId: the fleet bot id required');
+  if (!Number.isSafeInteger(c?.botId) || c.botId <= 0) throw new Error('DASHBOARD_CONFIG.botId: the dashboard bot id required');
   const hosts = c.hosts ?? {};
   for (const [id, h] of Object.entries(hosts)) {
-    if (!isHostId(id) || !/^[a-f0-9]{64}$/.test(h)) throw new Error(`FLEET_CONFIG.hosts["${id}"] must map a machine name to a sha256`);
+    if (!isHostId(id) || !/^[a-f0-9]{64}$/.test(h)) throw new Error(`DASHBOARD_CONFIG.hosts["${id}"] must map a machine name to a sha256`);
   }
   return {
     botId: c.botId,
@@ -75,7 +75,7 @@ export function createApi(config, { now = Date.now, log = () => {} } = {}) {
       log(`viewer refused: ${who.status === 403 ? 'user not allowlisted' : 'initData missing, invalid or expired'}`);
       return error(who.status, who.status === 403 ? 'forbidden' : 'unauthorized');
     }
-    if (url.pathname === '/api/fleet') return json(200, registry.snapshot());
+    if (url.pathname === '/api/dashboard') return json(200, registry.snapshot());
     const sessions = /^\/api\/hosts\/([^/]+)\/sessions$/.exec(url.pathname);
     const host = sessions && isHostId(sessions[1]) && registry.host(sessions[1]);
     if (host) return json(200, { schemaVersion: SCHEMA_VERSION, ...host });

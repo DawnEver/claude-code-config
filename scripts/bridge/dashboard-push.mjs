@@ -1,13 +1,13 @@
-// scripts/bridge/fleet-push.mjs — pushes this machine's session snapshot to the fleet gateway
-// (docs/fleet-gateway.md). Outbound HTTPS only: the gateway never reaches this machine, and
+// scripts/bridge/dashboard-push.mjs — pushes this machine's session snapshot to the dashboard
+// (docs/dashboard.md). Outbound HTTPS only: the gateway never reaches this machine, and
 // the bridge's IPC stays on 127.0.0.1. Fire-and-forget: a push overlapping the previous one
 // is skipped, every failure is logged once, nothing is retried, nothing is awaited by the
 // Telegram path. `bootAt` (this daemon's start) + `seq` let the gateway drop a delayed push
 // from an older daemon or an earlier tick: both are this host's own clock and counter.
 
-import { SCHEMA_VERSION } from '../shared/fleet-schema.mjs';
+import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 
-export class FleetPush {
+export class DashboardPush {
   constructor({ url, hostToken, machine, sessions, everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
     Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, machine, sessions, everySeconds, log, fetch, timeoutMs });
     this.bootAt = now();
@@ -36,13 +36,13 @@ export class FleetPush {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       // Refused: the gateway holds a push it ranks newer (this host's clock went backwards or ahead).
       if ((await res.json().catch(() => ({}))).accepted !== true) throw new Error('refused as not newer than the one held');
-      if (this.lastError) this.log('fleet gateway: push restored');
+      if (this.lastError) this.log('dashboard: push restored');
       this.lastError = null;
       return true;
     } catch (e) {
       // Never log the URL's query or the token: only the outcome.
       const msg = e.name === 'TimeoutError' ? 'timeout' : e.message;
-      if (this.lastError !== msg) this.log(`fleet gateway: push failed (${msg}); retrying next tick`);
+      if (this.lastError !== msg) this.log(`dashboard: push failed (${msg}); retrying next tick`);
       this.lastError = msg;
       return false;
     } finally { this.inFlight = false; }

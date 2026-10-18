@@ -810,7 +810,7 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-approval' });
   await up(r, 'codex', 'quiet');
   await live(r, 'claude', 'busy', { seat: 'team-a' });
-  const snap = Object.fromEntries(r.bridge.fleetSnapshot().map((s) => [s.id, s]));
+  const snap = Object.fromEntries(r.bridge.dashboardSnapshot().map((s) => [s.id, s]));
   assert.equal(snap.quiet.status, 'needs_approval');
   assert.equal(snap.quiet.topic, null, 'lazy Topic: none before activity');
   assert.equal(snap.busy.seat, 'team-a');
@@ -819,7 +819,7 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
   assert.deepEqual(r.bridge.fleetSessions().find((s) => s.agent === 'codex'), { agent: 'codex', project: 'proj', branch: 'main', seat: null, status: 'Needs approval' });
   r.hosts.codex.statusSnapshot = () => null;
-  assert.equal(r.bridge.fleetSnapshot().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
+  assert.equal(r.bridge.dashboardSnapshot().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
   r.bridge.sessionDown('codex:quiet');
-  assert.deepEqual(r.bridge.fleetSnapshot().map((s) => s.id), ['busy']);
+  assert.deepEqual(r.bridge.dashboardSnapshot().map((s) => s.id), ['busy']);
 });

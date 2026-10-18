@@ -52,9 +52,9 @@ const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
  *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.codexSources,
  *          bridge.fleet.{chatId, topicId?, everyMinutes?, timeFormat?, order?, always?} (the fleet
  *          report; off without chatId. Its seats are the top-level `seats`, scripts/shared/seats.mjs)
- *          bridge.fleetGateway.{url, everySeconds?} (push to the fleet gateway; off without url + hostToken)
- * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram, bridge.fleetGateway.hostToken
- * Either layer may set any key; local wins — except fleetGateway.hostToken, local only.
+ *          bridge.dashboard.{url, everySeconds?} (push to the dashboard; off without url + hostToken)
+ * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram, bridge.dashboard.hostToken
+ * Either layer may set any key; local wins — except dashboard.hostToken, local only.
  */
 export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
   const merged = readMergedEnvSettings({ sharedPath, localPath }) ?? {};
@@ -75,7 +75,7 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
       timeFormat: ['date', 'countdown'].includes(b.fleet.timeFormat) ? b.fleet.timeFormat : 'both',
       order: Array.isArray(b.fleet.order) ? b.fleet.order : [],
       always: b.fleet.always && typeof b.fleet.always === 'object' ? b.fleet.always : {} } : null,
-    ...fleetGatewayConfig(b.fleetGateway, localBridge(localPath).fleetGateway?.hostToken),
+    ...dashboardConfig(b.dashboard, localBridge(localPath).dashboard?.hostToken),
     projects,
   };
 }
@@ -85,23 +85,23 @@ function localBridge(localPath) {
 }
 
 /**
- * {fleetGateway, fleetGatewayError}: the push config, or null with the reason a configured one
+ * {dashboard, dashboardError}: the push config, or null with the reason a configured one
  * is off. The gateway serves at the root of its origin, https only except on loopback (local
  * development). The host token is a secret: read from the machine-local layer only, so one
  * written into the synced file is ignored.
  */
-function fleetGatewayConfig(g, hostToken) {
-  const off = (fleetGatewayError) => ({ fleetGateway: null, fleetGatewayError });
+function dashboardConfig(g, hostToken) {
+  const off = (dashboardError) => ({ dashboard: null, dashboardError });
   if (g === undefined && hostToken === undefined) return off(null);
-  if (typeof hostToken !== 'string' || !hostToken) return off('no bridge.fleetGateway.hostToken in the local settings');
+  if (typeof hostToken !== 'string' || !hostToken) return off('no bridge.dashboard.hostToken in the local settings');
   let url;
-  try { url = new URL(g?.url); } catch { return off('bridge.fleetGateway.url missing or not a URL'); }
+  try { url = new URL(g?.url); } catch { return off('bridge.dashboard.url missing or not a URL'); }
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return off('bridge.fleetGateway.url must be https (http only on loopback)');
-  if (url.pathname !== '/' || url.search) return off('bridge.fleetGateway.url must be an origin: the gateway serves at its root');
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) return off('bridge.dashboard.url must be https (http only on loopback)');
+  if (url.pathname !== '/' || url.search) return off('bridge.dashboard.url must be an origin: the gateway serves at its root');
   const every = g.everySeconds ?? 15;
-  if (!(every >= 5 && every <= 3600)) return off('bridge.fleetGateway.everySeconds must be 5..3600');
-  return { fleetGateway: { url: url.origin, hostToken, everySeconds: every }, fleetGatewayError: null };
+  if (!(every >= 5 && every <= 3600)) return off('bridge.dashboard.everySeconds must be 5..3600');
+  return { dashboard: { url: url.origin, hostToken, everySeconds: every }, dashboardError: null };
 }
 
 function git(cwd, args) {

@@ -1,10 +1,10 @@
-// scripts/fleet-gateway/registry.mjs — the gateway's only state: the last accepted push of each
+// scripts/dashboard/registry.mjs — the gateway's only state: the last accepted push of each
 // host, in memory. An aggregate cache, never an authority: it is rebuilt by the next round of
 // pushes, so a gateway restart loses nothing. Time is the gateway's own clock (host clocks
 // may disagree): `lastSeen` is when a push arrived, and a host silent for `ttlMs` is offline
 // and every session it last reported is `stale`.
 
-import { SCHEMA_VERSION } from '../shared/fleet-schema.mjs';
+import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 
 export class Registry {
   constructor({ hosts = [], ttlMs = 60000, now = Date.now } = {}) {

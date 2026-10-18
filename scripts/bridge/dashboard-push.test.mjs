@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FleetPush } from './fleet-push.mjs';
+import { DashboardPush } from './dashboard-push.mjs';
 import { readBridgeConfig } from './context.mjs';
 import fs from 'fs';
 import os from 'os';
@@ -10,7 +10,7 @@ test('push: authenticated, ordered, never overlapping, failures logged once and 
   const calls = [], logs = [];
   const ok = () => ({ ok: true, status: 200, json: async () => ({ accepted: true }) });
   let respond = ok;
-  const push = new FleetPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', log: (m) => logs.push(m),
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', log: (m) => logs.push(m),
     sessions: () => [{ id: 's1' }], fetch: async (url, init) => { calls.push({ url, init }); return respond(); } });
   assert.equal(await push.tick(), true);
   assert.equal(calls[0].url, 'https://gw.example/api/hosts/host-a/snapshot');
@@ -36,21 +36,21 @@ test('push: authenticated, ordered, never overlapping, failures logged once and 
   assert.equal(await first, true);
 });
 
-test('config: fleetGateway needs url + hostToken, https unless loopback', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fgw-'));
+test('config: dashboard needs url + hostToken, https unless loopback', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-'));
   const read = (shared, local = {}) => {
     fs.writeFileSync(path.join(dir, 's.json'), JSON.stringify({ bridge: shared }));
     fs.writeFileSync(path.join(dir, 'l.json'), JSON.stringify({ bridge: local }));
     const c = readBridgeConfig({ sharedPath: path.join(dir, 's.json'), localPath: path.join(dir, 'l.json') });
-    return c.fleetGateway ?? c.fleetGatewayError;
+    return c.dashboard ?? c.dashboardError;
   };
-  const local = { fleetGateway: { hostToken: 't' } };
+  const local = { dashboard: { hostToken: 't' } };
   assert.equal(read({}), null, 'not configured: off, nothing to report');
-  assert.match(read({ fleetGateway: { url: 'https://gw.example/' } }), /hostToken/);
-  assert.match(read({ fleetGateway: { url: 'https://gw.example/', hostToken: 't' } }), /hostToken/, 'token in the synced layer is ignored');
-  assert.deepEqual(read({ fleetGateway: { url: 'https://gw.example/' } }, local), { url: 'https://gw.example', hostToken: 't', everySeconds: 15 });
-  assert.match(read({ fleetGateway: { url: 'https://gw.example/fleet/' } }, local), /origin/, 'a subpath the gateway cannot serve');
-  assert.match(read({ fleetGateway: { url: 'http://gw.example' } }, local), /https/, 'plain http off loopback');
-  assert.match(read({ fleetGateway: { url: 'https://gw.example', everySeconds: 1e9 } }, local), /5\.\.3600/);
-  assert.equal(read({ fleetGateway: { url: 'http://127.0.0.1:8787', everySeconds: 30 } }, local).everySeconds, 30);
+  assert.match(read({ dashboard: { url: 'https://gw.example/' } }), /hostToken/);
+  assert.match(read({ dashboard: { url: 'https://gw.example/', hostToken: 't' } }), /hostToken/, 'token in the synced layer is ignored');
+  assert.deepEqual(read({ dashboard: { url: 'https://gw.example/' } }, local), { url: 'https://gw.example', hostToken: 't', everySeconds: 15 });
+  assert.match(read({ dashboard: { url: 'https://gw.example/dashboard/' } }, local), /origin/, 'a subpath the gateway cannot serve');
+  assert.match(read({ dashboard: { url: 'http://gw.example' } }, local), /https/, 'plain http off loopback');
+  assert.match(read({ dashboard: { url: 'https://gw.example', everySeconds: 1e9 } }, local), /5\.\.3600/);
+  assert.equal(read({ dashboard: { url: 'http://127.0.0.1:8787', everySeconds: 30 } }, local).everySeconds, 30);
 });

@@ -50,6 +50,6 @@ skills/synced/
 # when absent.
 claude_plugins/claude-hud/config.json
 
-# wrangler dev secrets (scripts/fleet-gateway)
+# wrangler dev secrets (scripts/dashboard)
 .dev.vars
 .wrangler/

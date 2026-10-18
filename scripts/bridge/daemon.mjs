@@ -31,7 +31,7 @@ import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { FleetReport } from './fleet.mjs';
-import { FleetPush } from './fleet-push.mjs';
+import { DashboardPush } from './dashboard-push.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
@@ -43,7 +43,7 @@ const TOPIC_CLOSED = /TOPIC_CLOSED/i;
 const TOPIC_UNCHANGED = /TOPIC_NOT_MODIFIED/i;
 
 export const sessionKey = (agent, id) => `${agent}:${id}`;
-/** Native adapter state -> status code, the one vocabulary (STATUSES in scripts/shared/fleet-schema.mjs). */
+/** Native adapter state -> status code, the one vocabulary (STATUSES in scripts/shared/dashboard-schema.mjs). */
 export const STATUS_CODES = { running: 'working', idle: 'idle', 'waiting-approval': 'needs_approval', 'waiting-input': 'needs_input', unknown: 'unknown', disconnected: 'ended' };
 /** Status code -> the text of the status card and the fleet report. */
 export const STATUS_LABELS = { working: 'Working', idle: 'Idle', needs_approval: 'Needs approval', needs_input: 'Needs input', unknown: 'Unknown', ended: 'Ended' };
@@ -194,15 +194,15 @@ export class Bridge {
 
   /** What the fleet report lists: every registered session with its status. */
   fleetSessions() {
-    return this.fleetSnapshot().map(({ agent, project, branch, seat, status }) => ({ agent, project, branch, seat, status: STATUS_LABELS[status] }));
+    return this.dashboardSnapshot().map(({ agent, project, branch, seat, status }) => ({ agent, project, branch, seat, status: STATUS_LABELS[status] }));
   }
 
   /**
-   * This machine's sessions for the fleet gateway: read-only, from the same registry and
+   * This machine's sessions for the dashboard: read-only, from the same registry and
    * adapter snapshots the status cards use. No cwd, no title: the project name stands in.
    * A Topic is listed only once Telegram confirmed it (lazy creation: many sessions have none).
    */
-  fleetSnapshot() {
+  dashboardSnapshot() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({
       id: s.id, agent: s.agent, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null,
       status: statusCode(this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.state),
@@ -818,8 +818,8 @@ export async function main() {
     const tick = () => report.tick().catch((e) => log(`fleet report: ${e.message}`));
     setInterval(tick, 60000).unref();
   }
-  if (config.fleetGatewayError) log(`fleet gateway: off (${config.fleetGatewayError})`);
-  if (config.fleetGateway) new FleetPush({ ...config.fleetGateway, machine, log, sessions: () => bridge.fleetSnapshot() }).start();
+  if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
+  if (config.dashboard) new DashboardPush({ ...config.dashboard, machine, log, sessions: () => bridge.dashboardSnapshot() }).start();
   if (config.deleteClosedAfterHours > 0) {
     const sweep = (orphans) => bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`));
     sweep(false);

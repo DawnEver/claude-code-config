@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
-import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/fleet-schema.mjs';
+import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schema.mjs';
 import { Registry } from './registry.mjs';
-import { createApi, parseFleetConfig } from './api.mjs';
-import { fleetConfigFrom } from './deploy.mjs';
-import { ago, applyFilters, displayStatus, filterOptions, mockFleet, stats } from './public/view.mjs';
+import { createApi, parseDashboardConfig } from './api.mjs';
+import { dashboardConfigFrom } from './deploy.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, stats } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -27,7 +27,7 @@ async function initData({ user = ALICE, authDate = NOW / 1000, botId = BOT_ID, k
 }
 const opts = { botId: BOT_ID, allowedUserIds: [ALICE], maxAgeSeconds: 3600, now: NOW, publicKey: PUBLIC_KEY };
 
-test('initData: Ed25519-signed for the fleet bot, fresh and allowlisted only', async () => {
+test('initData: Ed25519-signed for the dashboard bot, fresh and allowlisted only', async () => {
   assert.deepEqual(await verifyInitData(await initData(), opts), { ok: true, userId: ALICE });
   assert.equal((await verifyInitData(await initData({ user: MALLORY }), opts)).status, 403);
   assert.equal((await verifyInitData(await initData({ botId: 999 }), opts)).status, 401, 'opened from another bot');
@@ -90,9 +90,9 @@ test('registry: ordering per boot, offline after TTL, configured hosts listed be
 async function gateway(over = {}) {
   const { token, hash } = await newHostToken();
   let now = NOW;
-  const api = createApi(parseFleetConfig({ botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash }, ratePerMinute: 1000, ...over }, PUBLIC_KEY),
+  const api = createApi(parseDashboardConfig({ botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash }, ratePerMinute: 1000, ...over }, PUBLIC_KEY),
     { now: () => now });
-  const req = (p, init = {}) => api(new Request(`https://fleet.example${p}`, init));
+  const req = (p, init = {}) => api(new Request(`https://dashboard.example${p}`, init));
   return { api, token, req, tick: (ms) => { now += ms; } };
 }
 const asViewer = async (user) => ({ headers: { authorization: `tma ${await initData({ user })}` } });
@@ -108,24 +108,24 @@ test('api: host push and viewer read, each authenticated', async () => {
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, 'x'.repeat(300 * 1024)))).status, 413);
   assert.deepEqual(await (await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()))).json(), { accepted: true });
 
-  assert.equal((await g.req('/api/fleet')).status, 401);
-  assert.equal((await g.req('/api/fleet', { headers: { authorization: 'tma user=%7B%22id%22%3A42%7D' } })).status, 401, 'unsigned client claim');
-  assert.equal((await g.req('/api/fleet', await asViewer(MALLORY))).status, 403);
-  const res = await g.req('/api/fleet', await asViewer(ALICE));
+  assert.equal((await g.req('/api/dashboard')).status, 401);
+  assert.equal((await g.req('/api/dashboard', { headers: { authorization: 'tma user=%7B%22id%22%3A42%7D' } })).status, 401, 'unsigned client claim');
+  assert.equal((await g.req('/api/dashboard', await asViewer(MALLORY))).status, 403);
+  const res = await g.req('/api/dashboard', await asViewer(ALICE));
   assert.equal(res.status, 200);
   const body = await res.text();
   assert.doesNotMatch(body, /-100\d+/, 'raw chat id never served');
-  const fleet = JSON.parse(body);
-  assert.equal(fleet.schemaVersion, 1);
-  assert.equal(fleet.hosts[0].online, true);
-  assert.equal(fleet.hosts[0].sessions[0].hostId, 'host-a');
+  const snapshot = JSON.parse(body);
+  assert.equal(snapshot.schemaVersion, 1);
+  assert.equal(snapshot.hosts[0].online, true);
+  assert.equal(snapshot.hosts[0].sessions[0].hostId, 'host-a');
   assert.equal((await (await g.req('/api/hosts/host-a/sessions', await asViewer(ALICE))).json()).sessions.length, 1);
   assert.equal((await g.req('/api/hosts/host-x/sessions', await asViewer(ALICE))).status, 404);
   assert.equal((await g.req('/api/hosts/%E0%A4%A/sessions', await asViewer(ALICE))).status, 404, 'malformed escape is no 500');
   assert.equal((await g.req('/api/hosts/%E0%A4%A/snapshot', hostPost(g.token, push()))).status, 401);
   assert.equal((await g.req('/api/hosts/host-a/sessions')).status, 401);
   g.tick(61000);
-  assert.equal((await (await g.req('/api/fleet', await asViewer(ALICE))).json()).hosts[0].online, false);
+  assert.equal((await (await g.req('/api/dashboard', await asViewer(ALICE))).json()).hosts[0].online, false);
 });
 
 test('api: health, unknown routes, rate limit by CF-Connecting-IP', async () => {
@@ -133,7 +133,7 @@ test('api: health, unknown routes, rate limit by CF-Connecting-IP', async () => 
   const from = (ip) => ({ headers: { 'cf-connecting-ip': ip } });
   assert.deepEqual(await (await g.req('/api/health', from('1.1.1.1'))).json(), { ok: true, schemaVersion: 1 });
   assert.equal((await g.req('/api/nope', from('1.1.1.1'))).status, 401, 'unknown viewer route needs auth first');
-  assert.equal((await g.req('/api/fleet', { method: 'DELETE', ...from('1.1.1.1') })).status, 404);
+  assert.equal((await g.req('/api/dashboard', { method: 'DELETE', ...from('1.1.1.1') })).status, 404);
   assert.equal((await g.req('/api/health', from('1.1.1.1'))).status, 429);
   assert.equal((await g.req('/api/health', from('2.2.2.2'))).status, 200, 'per client');
   g.tick(60000);
@@ -146,40 +146,45 @@ test('static app: CSP for Telegram framing, no secret in any asset', () => {
   for (const f of ['index.html', 'app.js', 'view.mjs']) assert.doesNotMatch(fs.readFileSync(new URL(f, dir), 'utf8'), /\d{6,}:[A-Za-z0-9_-]{30,}/, `${f}: no bot token`);
 });
 
-test('config: FLEET_CONFIG fails loudly, and is derived from the shared bridge config', async () => {
-  assert.throws(() => parseFleetConfig({ hosts: {} }), /botId/);
-  assert.throws(() => parseFleetConfig({ botId: BOT_ID, hosts: { 'host-a': 'not-a-hash' } }), /sha256/);
+test('config: DASHBOARD_CONFIG fails loudly, and is derived from the shared bridge config', async () => {
+  assert.throws(() => parseDashboardConfig({ hosts: {} }), /botId/);
+  assert.throws(() => parseDashboardConfig({ botId: BOT_ID, hosts: { 'host-a': 'not-a-hash' } }), /sha256/);
   const { hash } = await newHostToken();
-  const bridge = { allowedUserIds: [ALICE], fleetGateway: { url: 'https://fleet.example.com', botId: BOT_ID, hosts: { 'host-a': hash }, hostToken: 'local-secret' } };
-  const derived = fleetConfigFrom(bridge);
-  assert.deepEqual(derived, { domain: 'fleet.example.com', config: { botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash } } });
+  const bridge = { allowedUserIds: [ALICE], dashboard: { url: 'https://dashboard.example.com', botId: BOT_ID, hosts: { 'host-a': hash }, hostToken: 'local-secret' } };
+  const derived = dashboardConfigFrom(bridge);
+  assert.deepEqual(derived, { domain: 'dashboard.example.com', config: { botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash } } });
   assert.ok(!JSON.stringify(derived).includes('local-secret'), 'a host token never reaches the Worker');
-  assert.throws(() => fleetConfigFrom({ ...bridge, fleetGateway: { ...bridge.fleetGateway, url: 'https://fleet.example.com/x' } }), /origin/);
-  assert.throws(() => fleetConfigFrom({ ...bridge, allowedUserIds: [] }), /allowedUserIds/);
+  assert.throws(() => dashboardConfigFrom({ ...bridge, dashboard: { ...bridge.dashboard, url: 'https://dashboard.example.com/x' } }), /origin/);
+  assert.throws(() => dashboardConfigFrom({ ...bridge, allowedUserIds: [] }), /allowedUserIds/);
 });
 
 test('one status vocabulary from native state to the wire', async () => {
   const { STATUS_CODES, STATUS_LABELS } = await import('../bridge/daemon.mjs');
-  const { STATUSES } = await import('../shared/fleet-schema.mjs');
+  const { STATUSES } = await import('../shared/dashboard-schema.mjs');
   assert.deepEqual([...new Set(Object.values(STATUS_CODES))].sort(), [...STATUSES].sort());
   assert.deepEqual(Object.keys(STATUS_LABELS).sort(), [...STATUSES].sort());
 });
 
-test('view: stale is freshness, filters narrow, stats count live state only', () => {
-  const f = mockFleet(NOW);
+test('view: needs-you first, stale is freshness, chips narrow, hosts online first', () => {
+  const f = mockDashboard(NOW);
+  const all = { group: 'all', host: '', agent: '', project: '' };
   assert.equal(displayStatus(f.hosts[2].sessions[0]), 'stale');
   assert.deepEqual(stats(f), { hostsOnline: 2, hosts: 3, working: 2, attention: 1 });
-  assert.ok(filterOptions(f).status.includes('stale'));
-  assert.deepEqual(applyFilters(f, { host: '', agent: 'codex', project: '', status: '' }).map((h) => h.sessions.length), [1, 1]);
-  assert.deepEqual(applyFilters(f, { host: 'host-c', agent: '', project: '', status: '' }).map((h) => h.id), ['host-c']);
-  assert.equal(applyFilters(f, { host: '', agent: '', project: 'backend-api', status: 'stale' })[0].id, 'host-c');
+  assert.deepEqual(attention(f).map((s) => s.project), ['frontend'], 'live sessions waiting for the human');
+  assert.deepEqual(filterOptions(f).counts, { all: 5, attention: 1, working: 2, idle: 1, stale: 1 });
+  assert.deepEqual(applyFilters(f, all)[0].sessions.map((s) => s.status), ['needs_approval', 'working'], 'most urgent first');
+  assert.deepEqual(applyFilters(f, all).map((h) => h.id), ['host-a', 'host-b', 'host-c'], 'offline host last');
+  assert.deepEqual(applyFilters(f, { ...all, agent: 'codex' }).map((h) => h.sessions.length), [1, 1]);
+  assert.deepEqual(applyFilters(f, { ...all, group: 'attention' }).map((h) => h.id), ['host-a']);
+  assert.deepEqual(applyFilters(f, { ...all, group: 'stale', project: 'backend-api' }).map((h) => h.id), ['host-c']);
+  assert.equal(ago(new Date(NOW - 5000).toISOString(), NOW), 'just now');
   assert.equal(ago('garbage'), 'never');
 });
 
 test('end to end: bridge registry -> push -> gateway -> viewer', async () => {
   const { EventEmitter } = await import('events');
   const { Bridge } = await import('../bridge/daemon.mjs');
-  const { FleetPush } = await import('../bridge/fleet-push.mjs');
+  const { DashboardPush } = await import('../bridge/dashboard-push.mjs');
   const g = await gateway();
   const codex = Object.assign(new EventEmitter(), { agent: 'codex', statusSnapshot: () => ({ state: 'running' }), inject: async () => ({}) });
   let thread = 500;
@@ -189,14 +194,14 @@ test('end to end: bridge registry -> push -> gateway -> viewer', async () => {
     config: { projects: { proj: { chatId: -1001234567890 } }, allowedUserIds: [ALICE], idleCloseMinutes: 30, deleteClosedAfterHours: 24 } });
   await bridge.sessionUp('codex', { id: 'thread-1', cwd: '/secret/home/proj' });
   await bridge.prompt('codex:thread-1', 'go');
-  const push = new FleetPush({ url: 'https://fleet.example', hostToken: g.token, machine: 'host-a',
-    sessions: () => bridge.fleetSnapshot(), fetch: (url, init) => g.api(new Request(url, init)) });
+  const push = new DashboardPush({ url: 'https://dashboard.example', hostToken: g.token, machine: 'host-a',
+    sessions: () => bridge.dashboardSnapshot(), fetch: (url, init) => g.api(new Request(url, init)) });
   assert.equal(await push.tick(), true);
-  const fleet = await (await g.req('/api/fleet', await asViewer(ALICE))).json();
-  const [s] = fleet.hosts[0].sessions;
+  const snapshot = await (await g.req('/api/dashboard', await asViewer(ALICE))).json();
+  const [s] = snapshot.hosts[0].sessions;
   assert.deepEqual([s.id, s.agent, s.project, s.status, s.stale], ['thread-1', 'codex', 'proj', 'working', false]);
   assert.equal(s.topic.url, `https://t.me/c/1234567890/${thread}`);
-  assert.ok(!JSON.stringify(fleet).includes('/secret/home'));
+  assert.ok(!JSON.stringify(snapshot).includes('/secret/home'));
 });
 
 test('static app: every script parses (a syntax error only shows as a stuck page)', async () => {

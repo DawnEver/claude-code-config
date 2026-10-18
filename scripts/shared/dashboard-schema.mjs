@@ -1,5 +1,5 @@
-// scripts/shared/fleet-schema.mjs — the fleet wire format, the single definition shared by
-// the host push (scripts/bridge/fleet-push.mjs) and the gateway. `parseHostPush` is the trust
+// scripts/shared/dashboard-schema.mjs — the dashboard wire format, the single definition shared by
+// the host push (scripts/bridge/dashboard-push.mjs) and the gateway. `parseHostPush` is the trust
 // boundary: it whitelists fields, bounds sizes and drops anything malformed, so nothing a
 // host sends reaches the Mini App unchecked.
 

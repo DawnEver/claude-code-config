@@ -44,6 +44,6 @@ Providers are declared once in `claude_env_settings.json` and projected to both 
 | [`docs/operations.md`](docs/operations.md) | Hooks, `npm run doctor` checks, repo sync, memory & rules |
 | [`docs/sync-architecture.md`](docs/sync-architecture.md) | Where every file lives and why |
 | [`docs/bridge.md`](docs/bridge.md) | Telegram session bridge |
-| [`docs/fleet-gateway.md`](docs/fleet-gateway.md) | Read-only fleet dashboard (Telegram Mini App + gateway) |
+| [`docs/dashboard.md`](docs/dashboard.md) | Agents Dashboard: read-only Telegram Mini App over every host's sessions |
 | [`docs/harness-architecture.md`](docs/harness-architecture.md) | Multi-machine collaboration design |
 | [`AGENTS.md`](AGENTS.md) | Repo map for contributors and agents |

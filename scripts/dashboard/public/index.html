@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agents Dashboard</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #fff); --fg: var(--tg-theme-text-color, #111);
+    --hint: var(--tg-theme-hint-color, #8a8a8e); --card: var(--tg-theme-secondary-bg-color, #f2f2f7);
+    --accent: var(--tg-theme-button-color, #2481cc); --accent-fg: var(--tg-theme-button-text-color, #fff);
+    --sep: color-mix(in srgb, var(--hint) 22%, transparent);
+    --ok: #34c759; --warn: #ff9500; --run: #0a84ff; --idle: #8e8e93;
+    --claude: #d97757; --codex: #6b7bff;
+  }
+  * { box-sizing: border-box; min-width: 0; }
+  html, body { overflow-x: hidden; }
+  body { margin: 0; padding: 12px 12px calc(16px + env(safe-area-inset-bottom)); font: 15px/1.35 -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  h1 { font-size: 20px; margin: 0; }
+  .muted { color: var(--hint); font-size: 12px; }
+
+  /* 1. Does anything need me? */
+  .summary { border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; background: var(--card); }
+  .summary.alert { background: color-mix(in srgb, var(--warn) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
+  .summary-head { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .summary-sub { color: var(--hint); font-size: 13px; margin-top: 2px; }
+  .summary .row { margin-top: 8px; }
+
+  /* 2. Filters */
+  .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; margin-bottom: 8px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; border: 0; border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600;
+    background: var(--card); color: var(--fg); cursor: pointer; }
+  .chip b { font-weight: 600; color: var(--hint); margin-left: 4px; }
+  .chip.on { background: var(--accent); color: var(--accent-fg); }
+  .chip.on b { color: inherit; opacity: .8; }
+  .selects { display: flex; gap: 6px; margin-bottom: 10px; }
+  .selects:empty { display: none; }
+  select { flex: 1; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--sep); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; }
+  .banner { padding: 8px 12px; border-radius: 10px; margin-bottom: 10px; background: var(--card); color: var(--warn); font-size: 13px; }
+  .banner:empty { display: none; }
+
+  /* 3. Where: one section per host */
+  .host { margin-bottom: 14px; }
+  .host.off { opacity: .6; }
+  .host-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; }
+  .host-head .name { font-weight: 700; }
+  .host-head .meta { margin-left: auto; }
+  .list { background: var(--card); border-radius: 14px; overflow: hidden; }
+  .empty { color: var(--hint); text-align: center; padding: 16px; font-size: 13px; }
+
+  .row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; width: 100%; border: 0; background: none;
+    color: inherit; font: inherit; text-align: left; }
+  .list .row + .row { border-top: 1px solid var(--sep); }
+  .row.link { cursor: pointer; }
+  .row.link:active { background: var(--sep); }
+  .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--idle); }
+  .main { flex: 1; }
+  .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { color: var(--hint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .agent { font-weight: 600; } .agent.claude { color: var(--claude); } .agent.codex { color: var(--codex); }
+  .pill { flex: none; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: var(--sep); color: var(--hint); }
+  .chev { flex: none; color: var(--hint); font-size: 20px; line-height: 1; width: 10px; }
+
+  .s-working .dot { background: var(--run); } .s-working .pill { background: color-mix(in srgb, var(--run) 15%, transparent); color: var(--run); }
+  .s-needs_approval .dot, .s-needs_input .dot { background: var(--warn); }
+  .s-needs_approval .pill, .s-needs_input .pill { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .s-idle .dot { background: var(--idle); }
+  .s-stale .dot, .s-unknown .dot, .s-ended .dot { background: transparent; border: 2px solid var(--idle); }
+  .on-dot { background: var(--ok); } .off-dot { background: transparent; border: 2px solid var(--idle); }
+</style>
+</head>
+<body>
+  <header class="top"><h1>Agents Dashboard</h1><span id="updated" class="muted"></span></header>
+  <section id="summary" class="summary"><div class="summary-head">Loading…</div></section>
+  <nav id="chips" class="chips" aria-label="Status"></nav>
+  <div id="selects" class="selects"></div>
+  <div id="banner" class="banner"></div>
+  <main id="hosts"></main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
