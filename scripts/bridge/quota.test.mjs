@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { AccountReader, accountModels, planName, teeClaudeUsage, windowView, project, claudeWindows, codexWindows, quotaOf, readClaudeDirs } from './quota.mjs';
+import { AccountReader, accountModels, recordsQuota, planName, teeClaudeUsage, windowView, project, claudeWindows, codexWindows, quotaOf, readClaudeDirs } from './quota.mjs';
 import { readSeries } from './quota-series.mjs';
 
 // One observation as a series: what a host knows the moment it first sees its quota.
@@ -148,4 +148,19 @@ test('AccountReader: extra resets fetched in the background at most once per int
   r.read();
   await new Promise((done) => setTimeout(done, 5));
   assert.equal(fetches, 2);
+});
+
+test('recordsQuota: a host without a configured dashboard records nothing', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-cfg-'));
+  try {
+    const sharedPath = path.join(dir, 's.json'), localPath = path.join(dir, 'l.json');
+    const write = (shared, local) => { fs.writeFileSync(sharedPath, JSON.stringify(shared)); fs.writeFileSync(localPath, JSON.stringify(local)); };
+    write({}, {});
+    assert.equal(recordsQuota({ sharedPath, localPath }), false, 'unconfigured: off');
+    write({ bridge: { dashboard: { url: 'https://dashboard.example.com' } } }, {});
+    assert.equal(recordsQuota({ sharedPath, localPath }), false, 'shared url alone: this host is not on it');
+    write({ bridge: { dashboard: { url: 'https://dashboard.example.com' } } }, { bridge: { dashboard: { hostToken: 't' } } });
+    assert.equal(recordsQuota({ sharedPath, localPath }), true);
+    assert.equal(recordsQuota({ sharedPath: path.join(dir, 'missing.json'), localPath }), false, 'no settings at all');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

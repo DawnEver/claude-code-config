@@ -133,14 +133,16 @@ export const quotaAlerts = (snapshot, now = Date.now()) =>
   (snapshot.accounts ?? []).map((a) => quotaView(a, now)).filter((q) => q.verdict === 'exhausted' || q.verdict === 'short');
 
 /**
- * The two tabs below the needs-you card, each answering one question: what runs (sessions)
- * and will the quota last (quota). `alert` marks the quota tab while an account needs the
- * human; the card above lists it whichever tab is open.
+ * The tabs below the needs-you card, each answering one question: what runs (sessions), will
+ * the quota last (quota), what happened (events: the alerts, as history). `alert` marks the
+ * quota tab while an account needs the human; `unseen` counts events newer than `seenAt`.
  */
-export function tabs(snapshot, now = Date.now()) {
+export function tabs(snapshot, now = Date.now(), seenAt = null) {
   const accounts = snapshot.accounts ?? [];
+  const events = snapshot.events ?? [];
   return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now).length > 0,
-    show: accounts.length > 0 };
+    events: events.length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length,
+    show: accounts.length > 0 || events.length > 0 };
 }
 
 /** Example data for `?mock`: rendering only, no gateway involved. */
@@ -158,6 +160,9 @@ export function mockDashboard(now = Date.now()) {
       s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null)] },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
+  ], events: [
+    { at: t(40), text: 'Claude · team-a (alice@example.com): 7d runs out in 1d 23h · resets in 5d 9h' },
+    { at: t(7200), text: 'Codex (bob@example.com): extra reset announced · in 2h 0m' },
   ], accounts: [
     { key: 'claude:a', agent: 'claude', label: 'team-a', email: 'alice@example.com', detail: 'Team A · Team Premium', problems: [],
       at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null, windows: [

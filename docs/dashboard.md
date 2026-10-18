@@ -14,6 +14,12 @@ Native session ── adapter.statusSnapshot ── Bridge.sessions        (daem
 Telegram ─ dashboard bot ─ Mini App (public/) ─ GET /api/dashboard, Authorization: tma <initData> ┘ (registry, memory only)
 ```
 
+**Optional, off by default.** Nothing here runs until a host is configured for it: the bridge
+needs `bridge.botToken`, the push needs the shared `bridge.dashboard.url` and this host's local
+`bridge.dashboard.hostToken`, Telegram alerts need `bridge.alerts`, and the statusLine records
+quota only on a host that pushes (`recordsQuota` in `quota.mjs`). An unconfigured clone starts
+no daemon, loads no channel and writes no series.
+
 | Layer | File | Owns |
 | --- | --- | --- |
 | Export | `Bridge.dashboardSnapshot()` in `scripts/bridge/daemon.mjs` | projection of the existing registry + adapter snapshot; no new state |
@@ -87,6 +93,9 @@ app-server); the Worker never recomputes it.
 - **Alerts**: the Worker turns verdict changes into events (`quotaAlertsFor` in `view.mjs`)
   and returns them in the push reply; the host posts them with its own bot to
   `bridge.alerts`. See `docs/bridge.md` "Agents Dashboard and quota alerts".
+- **Events**: every alert is also kept in the Worker (last 50, memory only) and shown in the
+  Events tab, newest first, with an unread count since this device last opened it — the
+  history of what happened while nobody looked. Independent of `bridge.alerts`.
 - **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
   the trend (spend per slice against an even spend; hatched = never observed), reset time and
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most

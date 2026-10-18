@@ -15,6 +15,7 @@
 
 import fs from 'fs';
 import os from 'os';
+import { readBridgeConfig } from './context.mjs';
 import { fetchExtraResets } from './extra-resets.mjs';
 import { burn, readSeries, recordSample } from './quota-series.mjs';
 import { baseDir, holds, orgOk, readAccount, readSeats, sameText, seatDir, seatsFor, usageFile } from '../shared/seats.mjs';
@@ -92,6 +93,14 @@ export function quotaOf(series) {
     if (v) windows[k] = v;
   }
   return Object.keys(windows).length ? { at: last.at, windows, series } : null;
+}
+
+/**
+ * Whether this host records quota at all: only the dashboard reads the series, so a host
+ * without a configured dashboard (bridge.dashboard, docs/dashboard.md) writes nothing.
+ */
+export function recordsQuota(paths) {
+  try { return readBridgeConfig(paths).dashboard !== null; } catch { return false; }
 }
 
 /** hud-hook.js side: record the statusLine's quota into this config dir's series. Fail-silent. */

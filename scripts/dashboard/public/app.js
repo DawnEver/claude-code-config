@@ -15,7 +15,13 @@ let lastOk = null;
 let loading = false;
 let selectsKey = null;
 // The open tab survives a reopen; sessions is the default view.
-let tab = (() => { try { return localStorage.getItem('dashboard.tab') === 'quota' ? 'quota' : 'sessions'; } catch { return 'sessions'; } })();
+const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
+// A #quota / #events link opens that tab; otherwise the last one used.
+const TABS = ['sessions', 'quota', 'events'];
+let tab = [location.hash.slice(1), store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
+// Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
+let seenAt = store.get('dashboard.eventsSeenAt');
 
 tg?.ready();
 tg?.expand();
@@ -190,13 +196,31 @@ function renderHosts() {
   }
 }
 
+function renderEvents() {
+  const box = $('events');
+  box.replaceChildren();
+  const events = snapshot.events ?? [];
+  if (!events.length) { box.append(el('div', 'empty', 'No events yet')); return; }
+  const list = el('div', 'event-list');
+  for (const e of events) {
+    const row = el('div', `event${!seenAt || e.at > seenAt ? ' new' : ''}`);
+    row.append(el('div', 'text', e.text), el('div', 'muted', ago(e.at)));
+    list.append(row);
+  }
+  box.append(list);
+}
+
 function renderTabs() {
-  const t = tabs(snapshot);
+  // Looking at the events marks them seen (after this render still shows which were new).
+  const t = tabs(snapshot, Date.now(), seenAt);
   $('tabs').hidden = !t.show;
   if (!t.show) tab = 'sessions';
   $('n-sessions').textContent = String(t.sessions);
   $('n-quota').textContent = String(t.quota);
   $('quota-dot').hidden = !t.alert;
+  $('n-events').textContent = String(t.events);
+  $('events-badge').hidden = !t.unseen || tab === 'events';
+  $('events-badge').textContent = String(t.unseen);
   for (const b of document.querySelectorAll('#tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
   for (const v of document.querySelectorAll('.view')) v.hidden = v.dataset.view !== tab;
 }
@@ -204,7 +228,7 @@ function renderTabs() {
 for (const b of document.querySelectorAll('#tabs [data-tab]')) {
   b.addEventListener('click', () => {
     tab = b.dataset.tab;
-    try { localStorage.setItem('dashboard.tab', tab); } catch { /* private mode */ }
+    store.set('dashboard.tab', tab);
     tg?.HapticFeedback?.selectionChanged?.();
     render();
   });
@@ -216,6 +240,8 @@ function render() {
   renderSummary();
   renderTabs();
   renderQuota();
+  renderEvents();
+  if (tab === 'events' && snapshot.events?.length) { seenAt = snapshot.events[0].at; store.set('dashboard.eventsSeenAt', seenAt); }
   renderChips();
   renderSelects();
   renderHosts();
@@ -226,6 +252,7 @@ function stop(message) {
   $('hosts').replaceChildren();
   $('chips').replaceChildren();
   $('quota').replaceChildren();
+  $('events').replaceChildren();
   $('tabs').hidden = true;
 }
 

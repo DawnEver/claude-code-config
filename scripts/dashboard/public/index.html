@@ -79,6 +79,12 @@
     background: none; color: var(--hint); cursor: pointer; }
   .tabs button b { font-weight: 600; margin-left: 4px; opacity: .7; }
   .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px color-mix(in srgb, var(--fg) 15%, transparent); }
+  .tab-badge { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: var(--warn); color: #fff; font: 600 10px/16px system-ui, sans-serif; font-style: normal; text-align: center; }
+  .event-list { background: var(--card); border-radius: 14px; overflow: hidden; }
+  .event { padding: 10px 12px; } .event + .event { border-top: 1px solid var(--sep); }
+  .event.new { border-left: 3px solid var(--warn); }
+  .event .text { font-size: 14px; overflow-wrap: anywhere; }
   .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
   .quota-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-bottom: 16px; }
   .quota-card { background: var(--card); border-radius: 14px; padding: 12px 14px; }
@@ -124,9 +130,11 @@
   <nav id="tabs" class="tabs" role="tablist" hidden>
     <button role="tab" data-tab="sessions">Sessions <b id="n-sessions"></b></button>
     <button role="tab" data-tab="quota">Quota <b id="n-quota"></b><i class="tab-dot" id="quota-dot" hidden></i></button>
+    <button role="tab" data-tab="events">Events <b id="n-events"></b><i class="tab-badge" id="events-badge" hidden></i></button>
   </nav>
   <div id="banner" class="banner"></div>
   <section id="quota" class="view" data-view="quota" hidden></section>
+  <section id="events" class="view" data-view="events" hidden></section>
   <div class="view" data-view="sessions">
   <nav id="chips" class="chips" aria-label="Status"></nav>
   <div id="selects" class="selects"></div>

@@ -266,8 +266,11 @@ test('view: quota verdict on the reader\'s clock; stale readings are floors that
 });
 
 test('view: tabs count each view and flag quota that needs the human; no accounts, no tabs', () => {
-  assert.deepEqual(tabs(mockDashboard(NOW), NOW), { sessions: 5, quota: 2, alert: true, show: true });
-  assert.deepEqual(tabs({ hosts: [] }, NOW), { sessions: 0, quota: 0, alert: false, show: false });
+  const m = mockDashboard(NOW);
+  assert.deepEqual(tabs(m, NOW), { sessions: 5, quota: 2, alert: true, events: 2, unseen: 2, show: true });
+  assert.equal(tabs(m, NOW, m.events[1].at).unseen, 1, 'only events newer than the last look');
+  assert.equal(tabs(m, NOW, m.events[0].at).unseen, 0);
+  assert.deepEqual(tabs({ hosts: [] }, NOW), { sessions: 0, quota: 0, alert: false, events: 0, unseen: 0, show: false });
 });
 
 test('alerts are events: a change once, judged on the merged account, so two hosts on one seat alert once', () => {
@@ -291,4 +294,23 @@ test('alert texts: exhausted, run-out, and nothing for a healthy account', () =>
   assert.deepEqual(quotaAlertsFor(undefined, q({ windows: [{ ...account().windows[0], used: 100, forecast: null }] }), NOW).texts,
     ['Claude · team-a (a@example.com): 5h exhausted · resets in 3h 0m']);
   assert.deepEqual(quotaAlertsFor(undefined, q({ windows: [{ ...account().windows[0], forecast: { atReset: 70, eta: null, short: false } }] }), NOW).texts, []);
+});
+
+test('events: every alert is kept as history for the dashboard, newest first, bounded', async () => {
+  const { MAX_EVENTS } = await import('./registry.mjs');
+  let t = NOW;
+  const r = new Registry({ hosts: ['host-a'], ttlMs: 60000, now: () => t });
+  r.accept('host-a', parseHostPush(push({ seq: 1, accounts: [account()] })));
+  const fine = { ...account().windows[0], forecast: { atReset: 80, eta: null, short: false } };
+  r.accept('host-a', parseHostPush(push({ seq: 2, accounts: [account({ windows: [fine] })] })));
+  t += 60000;
+  r.accept('host-a', parseHostPush(push({ seq: 3, accounts: [account({ windows: [{ ...account().windows[0], used: 100, forecast: null }] })] })));
+  const { events } = r.snapshot();
+  assert.deepEqual(events.map((e) => e.text.replace(/^.*: /, '')), ['5h exhausted · resets in 2h 59m', '5h runs out in 1h 18m · resets in 3h 0m']);
+  assert.equal(events[0].at, new Date(NOW + 60000).toISOString());
+  for (let i = 0; i < MAX_EVENTS + 5; i++) {
+    r.accept('host-a', parseHostPush(push({ seq: 4 + 2 * i, accounts: [account({ windows: [fine] })] })));
+    r.accept('host-a', parseHostPush(push({ seq: 5 + 2 * i, accounts: [account()] })));
+  }
+  assert.equal(r.snapshot().events.length, MAX_EVENTS);
 });

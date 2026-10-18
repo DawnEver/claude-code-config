@@ -7,11 +7,15 @@
 import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 import { quotaAlertsFor, quotaView } from './public/view.mjs';
 
+/** How many past alerts the dashboard keeps (memory only: a Worker restart starts afresh). */
+export const MAX_EVENTS = 50;
+
 export class Registry {
   constructor({ hosts = [], ttlMs = 60000, now = Date.now } = {}) {
     Object.assign(this, { ttlMs, now });
     this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
     this.alerted = new Map();   // account key -> what was last alerted (view.mjs quotaAlertsFor)
+    this.events = [];           // the alerts as a history for the dashboard, newest first
   }
 
   /**
@@ -33,6 +37,7 @@ export class Registry {
       this.alerted.set(key, state);
       alerts.push(...texts);
     }
+    this.events = [...alerts.map((text) => ({ at: new Date(this.now()).toISOString(), text })).reverse(), ...this.events].slice(0, MAX_EVENTS);
     return { accepted: true, alerts };
   }
 
@@ -64,6 +69,6 @@ export class Registry {
 
   snapshot() {
     return { schemaVersion: SCHEMA_VERSION, generatedAt: new Date(this.now()).toISOString(),
-      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts() };
+      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), events: this.events };
   }
 }

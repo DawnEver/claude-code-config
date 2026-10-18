@@ -55,7 +55,7 @@ if (!pluginEntry) {
     process.exit(1);
 }
 
-// Tee the statusLine payload: its rate_limits feed the dashboard's quota (quota.mjs).
+// Tee the statusLine payload: its rate_limits feed the dashboard's quota (quota.mjs), when on.
 // claude-hud then reads the same bytes from a replayed stdin.
 // Never let the tee break the status line: any failure here leaves claude-hud to decide.
 if (!process.stdin.isTTY) {
@@ -64,8 +64,9 @@ if (!process.stdin.isTTY) {
         for await (const c of process.stdin) chunks.push(c);
         const raw = Buffer.concat(chunks).toString('utf8');
         try {
-            const [{ teeClaudeUsage }, { configDir, usageFile }] = await Promise.all([import('../bridge/quota.mjs'), import('../shared/seats.mjs')]);
-            teeClaudeUsage(JSON.parse(raw), { file: usageFile(configDir()) });
+            const [{ recordsQuota, teeClaudeUsage }, { configDir, usageFile }] = await Promise.all([import('../bridge/quota.mjs'), import('../shared/seats.mjs')]);
+            // Off unless this host runs the dashboard: nothing else reads the series.
+            if (recordsQuota()) teeClaudeUsage(JSON.parse(raw), { file: usageFile(configDir()) });
         } catch { /* not JSON / no quota.mjs */ }
         const replay = new PassThrough();
         replay.end(raw);
