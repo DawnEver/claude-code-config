@@ -23,22 +23,29 @@ description: Dashboard off because shared bridge.dashboard was missing; read quo
   `sharp-review.md`.
 
 ## Codex liveness (`scripts/bridge/codex-adapter.mjs`)
-- Cause: Codex keeps a thread loaded while ANY client subscribes and exposes no subscriber info;
-  the bridge's own `thread/resume` subscription pinned old VS Code threads loaded forever, so
-  dashboard showed Topic-less idle/Unknown Codex rows. `ThreadStatus` = notLoaded|idle|systemError|active.
-- Live probe (thread/loaded/list + thread/read): `01a13545` systemError, `01a13a10` idle for
-  hours, both vscode source in one project.
-- Fix: `systemError` -> `#abandon` (unsubscribe, down, add to `errored`; re-subscribed only when
-  `thread/read` shows recovery). Idle >= 10 min -> `thread/unsubscribe`, keep the session; if still
-  loaded 60 s later another client holds it -> re-resume silently (no `up`), replay
-  `backlogSince(turns, releasedAt)`. Unloaded -> normal `down`.
-- After restart 01a13545 no longer registers; 01a13a10 release unconfirmed at time of writing.
+- Codex keeps a thread loaded while ANY client subscribes, exposes no subscriber info, and
+  keeps an unsubscribed thread loaded for an undocumented while (measured: still loaded 350 s
+  after the last unsubscribe). `ThreadStatus` = notLoaded|idle|systemError|active.
+- The bridge's own subscription pinned closed windows' threads forever. A first fix re-held
+  released threads after a 60 s grace: a guess shorter than Codex's delay, so it pinned them again.
+- Fix: `systemError` -> abandon (unsubscribe, down, `errored` until thread/read shows recovery).
+  Idle >= 10 min -> unsubscribe, keep the session, watch with `thread/read` (no subscription);
+  take it back only when active or `updatedAt` advanced (replay `backlogSince(turns, releasedAt)`);
+  down when Codex unloads it. No timer guesses.
+- Probing: `thread/resume` on a thread a TUI holds fails "already has an active writer"; a probe
+  that resumes an old thread loads it and it shows on the dashboard until Codex unloads it.
 
-## Onboarding other hosts
-pull repo; `machine.json` name must match `hosts`; if no local `hostToken`, run
-`npm run dashboard -- host-token`, put the printed hash into shared `hosts`, then
-`npm run dashboard -- deploy` (Worker reads hosts only from deploy-time `DASHBOARD_CONFIG`);
-restart daemon via `ensure.mjs`. `botToken`/`set-menu` is per bot, done once anywhere.
+## Daemon applies changes itself
+Every minute the daemon compares its startup config and source revisions; on a change it spawns
+`ensure.mjs`, which replaces it. Replaced the partial live reload (a few keys, dashboard-on only)
+and `DashboardPush.every`. Hosts no longer wait for a session start after a sync or pull.
 
-## Open
-- All changes uncommitted; Worker not redeployed with read-alerts.
+## Worker state
+`events` and `alerted` persist in the Durable Object's `ctx.storage.kv` (Registry `store`);
+memory-only state wiped the history and re-alerted standing conditions on every deploy.
+Telegram quota alerts and `bridge.alerts` are removed: events live only in the dashboard.
+
+## Onboarding hosts
+`npm run dashboard -- host-token` (after `npx wrangler login`) writes the local token, the shared
+`hosts` hash and deploys. doctor `dashboard-host` FAILs on token/hash mismatch or a missing shared
+block. Code deploys from CI (`.github/workflows/dashboard-deploy.yml`, tests gate it).
