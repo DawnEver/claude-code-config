@@ -463,6 +463,8 @@ async function fetchSnapshot() {
   if (!tg?.initData) return stop('Open this from the Dashboard button of the dashboard bot in Telegram');
   try {
     const res = await fetch('api/dashboard', { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
+    // Expired sign-in (Telegram only signs initData at open): keep the last data, ask for a reopen.
+    if (res.status === 401 && snapshot) { $('banner').textContent = `Sign-in expired · close and reopen the app to refresh (data from ${ago(new Date(lastOk).toISOString())})`; return render(); }
     if (res.status === 401) return stop('Sign-in expired: close and reopen the app');
     if (res.status === 403) return stop('This Telegram account is not allowed');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

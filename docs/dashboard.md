@@ -45,7 +45,8 @@ no API, no authentication.
   validation): it needs only the dashboard bot's numeric id and Telegram's public key, never the
   bot token. The token lives only in the local settings of the machine that sets the menu button.
 - **Viewer**: allowlisted by `bridge.allowedUserIds` (the bridge's own allowlist), freshness by
-  `auth_date` within `initDataMaxAgeSeconds` (default 1 h; past it the app asks to be
+  `auth_date` within `initDataMaxAgeSeconds` (default 24 h — Telegram signs initData once, at
+  open, and a Topic link can reload the app with it; past it the app keeps the last data and asks to be
   reopened). `initDataUnsafe` and any client-sent id are never trusted.
 - **Host**: a bearer token per machine, minted on that machine; the Worker holds only its
   SHA-256. Read from the machine-local settings layer only: one written into the synced file

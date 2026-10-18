@@ -25,7 +25,7 @@ export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
     hosts,
     publicKey,
     ttlSeconds: c.ttlSeconds > 0 ? c.ttlSeconds : 60,
-    initDataMaxAgeSeconds: c.initDataMaxAgeSeconds > 0 ? c.initDataMaxAgeSeconds : 3600,
+    initDataMaxAgeSeconds: c.initDataMaxAgeSeconds > 0 ? c.initDataMaxAgeSeconds : 86400,
     ratePerMinute: c.ratePerMinute > 0 ? c.ratePerMinute : 120,
   };
 }
