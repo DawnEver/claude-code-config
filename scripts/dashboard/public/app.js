@@ -52,7 +52,10 @@ function renderSummary() {
   const head = el('div', 'summary-head', waiting.length ? `${waiting.length} need${waiting.length === 1 ? 's' : ''} you` : 'All clear');
   box.append(head, el('div', 'summary-sub',
     `${st.working} working · ${st.hostsOnline}/${st.hosts} host${st.hosts === 1 ? '' : 's'} online`));
-  for (const s of waiting) box.append(sessionRow(s, { withHost: true }));
+  if (!waiting.length) return;
+  const list = el('div', 'waiting');
+  for (const s of waiting) list.append(sessionRow(s, { withHost: true }));
+  box.append(list);
 }
 
 function renderChips() {

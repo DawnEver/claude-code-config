@@ -71,15 +71,34 @@
   .s-idle .dot { background: var(--idle); }
   .s-stale .dot, .s-unknown .dot, .s-ended .dot { background: transparent; border: 2px solid var(--idle); }
   .on-dot { background: var(--ok); } .off-dot { background: transparent; border: 2px solid var(--idle); }
+
+  /* Responsive: one column on a phone; on a wider window (Telegram Desktop, a tablet) the page
+     is bounded and centred, and hosts sit side by side instead of stretching one long row. */
+  .page { max-width: 1240px; margin: 0 auto; }
+  #hosts { display: grid; grid-template-columns: 1fr; gap: 0 14px; align-items: start; }
+  .waiting { display: grid; grid-template-columns: 1fr; gap: 0 14px; }
+  @media (min-width: 720px) {
+    body { padding: 20px 24px 24px; }
+    h1 { font-size: 22px; }
+    #hosts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .waiting { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .selects { max-width: 640px; }
+  }
+  @media (min-width: 1200px) {
+    #hosts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .waiting { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
 </style>
 </head>
 <body>
+<div class="page">
   <header class="top"><h1>Agents Dashboard</h1><span id="updated" class="muted"></span></header>
   <section id="summary" class="summary"><div class="summary-head">Loading…</div></section>
   <nav id="chips" class="chips" aria-label="Status"></nav>
   <div id="selects" class="selects"></div>
   <div id="banner" class="banner"></div>
   <main id="hosts"></main>
+</div>
   <script type="module" src="app.js"></script>
 </body>
 </html>
