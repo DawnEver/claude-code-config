@@ -96,6 +96,11 @@ app-server); the Worker never recomputes it.
 - **Events**: every alert is also kept in the Worker (last 50, memory only) and shown in the
   Events tab, newest first, with an unread count since this device last opened it — the
   history of what happened while nobody looked. Independent of `bridge.alerts`.
+- **Layout**: by host — what each machine has left on each account. One compact row per
+  account (both windows' bars against even pace, what is left, where else that budget runs);
+  a tap opens it in place to the detail: org and plan, each window's trend on a local-time axis
+  (hours for 5h, weekday and date for 7d, a line at the present), reset and forecast. A shared
+  account appears under every host that runs it, marked as one budget.
 - **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
   the trend (spend per slice against an even spend; hatched = never observed), reset time and
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most

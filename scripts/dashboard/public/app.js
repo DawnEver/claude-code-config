@@ -19,14 +19,12 @@ const store = { get: (k) => { try { return localStorage.getItem(k); } catch { re
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 // A #quota / #events link opens that tab; otherwise the last one used. 
 const TABS = ['sessions', 'quota', 'events', 'config'];
-// #quota:account also picks the quota grouping.
-const [hashTab, hashBy] = location.hash.slice(1).split(':');
+const hashTab = location.hash.slice(1);
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
 // Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
 let seenAt = store.get('dashboard.eventsSeenAt');
-// Quota grouping: by host (what each machine has left on each account, the default) or by
-// account (one card per budget).
-let quotaBy = (hashBy ?? store.get('dashboard.quotaBy')) === 'account' ? 'account' : 'host';
+// Quota rows opened to their detail (host|account), kept across polls.
+const openRows = new Set();
 let accounts = new Map();
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // an edit typed but not saved
@@ -124,14 +122,10 @@ function trend(w) {
   return wrap;
 }
 
-function quotaCard(q) {
-  const card = el('section', `quota-card v-${q.verdict}${q.stale ? ' stale' : ''}`);
-  const head = el('div', 'quota-head');
-  head.append(el('span', `agent ${q.agent}`, accountName(q)),
-    el('span', 'left', q.left === null ? 'no data' : `${q.stale && q.bind.used < 100 ? '≤' : ''}${q.left}% left`));
-  card.append(head, el('div', 'sub', [q.email ?? 'not logged in', q.detail].filter(Boolean).join(' · ')));
-  if (q.verdict === 'short' || q.verdict === 'exhausted') card.append(el('div', 'warn', verdictText(q)));
-  for (const p of q.problems) card.append(el('div', 'warn', p));
+/** The expanded part of a quota row: each window with its trend on a time axis, then resets to act on. */
+function quotaDetail(q) {
+  const box = el('div', 'qdetail');
+  if (q.detail) box.append(el('div', 'sub', q.detail));
   for (const w of q.windows) {
     const row = el('div', 'win');
     const used = w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`;
@@ -139,19 +133,18 @@ function quotaCard(q) {
     const sub = el('div', 'win-sub');
     const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${Math.round(w.forecast.atReset)}% at reset`);
     sub.append(trend(w), el('span', null, w.renewed ? 'new window, not started' : [`resets in ${countdown(w.resetsAt)}`, forecast].filter(Boolean).join(' · ')));
-    card.append(row, sub);
+    box.append(row, sub);
   }
   if (q.resetCredits) {
     const first = q.resetCredits.expiries.filter(Boolean).sort((x, y) => x - y)[0];
-    card.append(el('div', 'note', `${q.resetCredits.count} reset credit${q.resetCredits.count === 1 ? '' : 's'}${first ? ` · first expires in ${countdown(first)}` : ''}`));
+    box.append(el('div', 'note', `${q.resetCredits.count} reset credit${q.resetCredits.count === 1 ? '' : 's'}${first ? ` · first expires in ${countdown(first)}` : ''}`));
   }
   if (q.extraReset) {
     const note = el(q.extraReset.url ? 'button' : 'div', 'note link', `extra reset announced${q.extraReset.at ? ` · in ${countdown(q.extraReset.at)}` : ''}`);
-    if (q.extraReset.url) note.addEventListener('click', () => (tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener')));
-    card.append(note);
+    if (q.extraReset.url) note.addEventListener('click', (e) => { e.stopPropagation(); tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener'); });
+    box.append(note);
   }
-  card.append(el('div', 'muted foot', `${(q.hosts ?? []).join(', ')}${q.at ? ` · reading ${ago(new Date(q.at).toISOString())}` : ''}`));
-  return card;
+  return box;
 }
 
 /** An account as a compact tag: who and how much is left, coloured by its verdict. */
@@ -162,50 +155,52 @@ function acctTag(q, withAgent = false) {
   return tag;
 }
 
-/** One account on one host, at a glance: who, each window's use against even pace, what is left. */
-function quotaRow(q) {
-  const row = el('div', `qrow v-${q.verdict}${q.stale ? ' stale' : ''}`);
+/**
+ * One account on one host: at a glance who, each window's use against even pace and what is
+ * left; tapped, it opens in place to the detail (trend with time ticks, reset, forecast).
+ */
+function quotaRow(q, hostId) {
+  const id = `${hostId}|${q.key}`;
+  const open = openRows.has(id);
+  const row = el('div', `qrow v-${q.verdict}${q.stale ? ' stale' : ''}${open ? ' open' : ''}`);
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-expanded', String(open));
+  row.tabIndex = 0;
   const top = el('div', 'qrow-top');
   top.append(el('span', `agent ${q.agent}`, accountName(q)),
-    el('span', 'left', q.left === null ? 'no data' : `${q.stale && q.bind.used < 100 ? '≤' : ''}${q.left}% left`));
-  const mini = el('div', 'qmini');
-  for (const w of q.windows) {
-    const cell = el('div');
-    cell.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`));
-    mini.append(cell);
+    el('span', 'left', q.left === null ? 'no data' : `${q.stale && q.bind.used < 100 ? '≤' : ''}${q.left}% left`), el('span', 'chev', open ? '⌄' : '›'));
+  row.append(top);
+  if (open) row.append(quotaDetail(q));
+  else {
+    const mini = el('div', 'qmini');
+    for (const w of q.windows) {
+      const cell = el('div');
+      cell.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`));
+      mini.append(cell);
+    }
+    row.append(mini);
   }
-  row.append(top, mini, el('div', 'sub', [q.email, q.sharedWith.length && `also on ${q.sharedWith.join(', ')}`,
+  row.append(el('div', 'sub', [q.email, q.sharedWith.length && `one budget, also on ${q.sharedWith.join(', ')}`,
     q.at && `reading ${ago(new Date(q.at).toISOString())}`].filter(Boolean).join(' · ')));
   if (q.verdict === 'short' || q.verdict === 'exhausted') row.append(el('div', 'warn', verdictText(q)));
   for (const p of q.problems) row.append(el('div', 'warn', p));
+  const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
+  row.addEventListener('click', toggle);
+  row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
   return row;
 }
 
+/** Quota by host: what each machine has left on each account. A shared account is one budget. */
 function renderQuota() {
   const box = $('quota-view');
   box.replaceChildren();
-  const list = [...accounts.values()];
-  if (!list.length) return;
-  const toggle = el('div', 'seg');
-  for (const [mode, label] of [['host', 'By host'], ['account', 'By account']]) {
-    const b = el('button', mode === quotaBy ? 'on' : null, label);
-    b.addEventListener('click', () => { quotaBy = mode; store.set('dashboard.quotaBy', mode); tg?.HapticFeedback?.selectionChanged?.(); render(); });
-    toggle.append(b);
-  }
-  box.append(toggle);
-  if (quotaBy === 'account') {
-    const grid = el('div', 'quota-grid');
-    for (const q of list) grid.append(quotaCard(q));
-    box.append(grid);
-    return;
-  }
   const hosts = el('div', 'quota-hosts');
   for (const h of quotaByHost(snapshot)) {
     const section = el('section', `host${h.online ? '' : ' off'}`);
     const head = el('div', 'host-head');
     head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id));
     const rows = el('div', 'qrows');
-    for (const q of h.accounts) rows.append(quotaRow(q));
+    for (const q of h.accounts) rows.append(quotaRow(q, h.id));
     section.append(head, rows);
     hosts.append(section);
   }

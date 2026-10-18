@@ -89,14 +89,14 @@
   .acct.v-short { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
   .acct.v-exhausted { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
   .acct-tags { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
-  .seg { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px; border-radius: 9px; background: var(--card); }
-  .seg button { border: 0; border-radius: 7px; padding: 4px 10px; font: inherit; font-size: 12px; font-weight: 600; background: none; color: var(--hint); cursor: pointer; }
-  .seg button.on { background: var(--bg); color: var(--fg); }
   .shared { margin-top: 4px; }
   /* Quota by host: one compact row per account, the glance "what is left where". */
   .qrows { background: var(--card); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
-  .qrow { padding: 10px 12px; } .qrow + .qrow { border-top: 1px solid var(--sep); }
-  .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
+  .qrow { padding: 10px 12px; cursor: pointer; } .qrow:active { background: var(--sep); }
+  .qrow.stale { opacity: .75; }
+  .qrow-top .chev { color: var(--hint); width: 12px; text-align: center; }
+  .qdetail { margin-top: 2px; } .qrow + .qrow { border-top: 1px solid var(--sep); }
+  .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; }
   .qrow-top .left { font-weight: 700; }
   .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left { color: var(--bad); }
   .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 4px 12px; margin-top: 6px; }
@@ -116,12 +116,6 @@
   .facts dt { color: var(--hint); } .facts dd { margin: 0; }
   .section-h { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--hint); margin: 4px 4px 8px; }
   .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
-  .quota-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-bottom: 16px; }
-  .quota-card { background: var(--card); border-radius: 14px; padding: 12px 14px; }
-  .quota-card.stale { opacity: .75; }
-  .quota-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-  .quota-head .left { font-weight: 700; font-size: 17px; }
-  .v-short .quota-head .left { color: var(--warn); } .v-exhausted .quota-head .left { color: var(--bad); }
   .warn { color: var(--warn); font-size: 13px; font-weight: 600; margin-top: 6px; }
   .v-exhausted .warn { color: var(--bad); }
   .win { display: grid; grid-template-columns: 26px 1fr 44px; align-items: center; gap: 8px; margin-top: 10px; }
