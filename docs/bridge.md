@@ -415,7 +415,7 @@ Configuration ownership is defined by `sync-architecture.md`, not a second bridg
 configuration manager. Existing compose/provider/setup fixtures cover idempotence and
 local-state preservation; doctor is read-only. `bridge-revision` compares a live daemon's
 startup SHA-256 fingerprint against current non-test bridge/shared source. It warns when
-the revision is unknown or changed and never restarts the process; `ensure.mjs` does that at the next session start. This is a conservative
+the revision is unknown or changed and never restarts the process; the daemon itself does that within a minute (it compares its startup source and config revisions every minute and hands over through `ensure.mjs`, the same check a session start makes). This is a conservative
 source fingerprint, not CLI version or Claude channel-process identity; channel updates
 still need separate verification. A pre-reporting daemon is revision-unknown until
 an approved restart. Live provider switching and cross-platform service behavior

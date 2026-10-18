@@ -21,6 +21,8 @@
 // are equally honoured only for allowlisted ids.
 
 import fs from 'fs';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
 import path from 'path';
 import { randomBytes, createHash } from 'crypto';
 import { acquireDaemonLock } from './ensure.mjs';
@@ -801,36 +803,37 @@ export async function main() {
   process.on('SIGTERM', stop);
   log(`up: machine=${machine} ipc=127.0.0.1:${port} idleCloseMinutes=${config.idleCloseMinutes} deleteClosedAfterHours=${config.deleteClosedAfterHours}`);
   codexLoop(codex, log, ac.signal);
-  // Both read the live config each run (a dashboard edit may change them; 0 = never).
   setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)), 60000).unref();
+  // One rule for every change: this daemon read its config and code once, so a change to either
+  // (a cloud sync, a pull, a dashboard edit) hands over to a fresh daemon — the same check
+  // ensure.mjs makes at session start, so a host never waits for a session to apply it.
+  const startConfig = bridgeConfigRevision(config);
+  let handedOver = false;
+  setInterval(() => {
+    if (handedOver) return;
+    try {
+      // A cloud client may have detached the shared settings: re-link first, so this reads what the other hosts read.
+      for (const d of healSyncLinks().repaired) log(`config: re-linked ${path.basename(d)} to the sync dir`);
+      if (bridgeSourceRevision() === sourceRevision && bridgeConfigRevision() === startConfig) return;
+      handedOver = true;
+      log('config or source changed: handing over to a fresh daemon');
+      spawn(process.execPath, [fileURLToPath(new URL('./ensure.mjs', import.meta.url))], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    } catch (e) { log(`change check: ${e.message}`); }
+  }, 60000).unref();
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
   if (config.dashboard) {
     const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
       codexSeriesFile: path.join(BRIDGE_RUNTIME_DIR, 'codex-usage.jsonl') });
-    // Dashboard-editable keys (dashboard-schema.mjs CONFIG_KEYS) are reloaded live, so an edit
-    // made here or synced in from another host applies within a minute, without a restart.
-    const reload = () => {
-      // A cloud client may have detached the shared settings since the last read: re-link
-      // first, so this reads what the other hosts read.
-      const healed = healSyncLinks();
-      for (const d of healed.repaired) log(`config: re-linked ${path.basename(d)} to the sync dir`);
-      const fresh = readBridgeConfig();
-      config.idleCloseMinutes = fresh.idleCloseMinutes;
-      config.deleteClosedAfterHours = fresh.deleteClosedAfterHours;
-      for (const [name, p] of Object.entries(fresh.projects)) if (config.projects[name]) config.projects[name].projectInTitle = p.projectInTitle;
-      if (fresh.dashboard) push.every(fresh.dashboard.everySeconds);
-    };
+    // A dashboard edit is written to the settings file; the change check above then hands over.
     const onConfigChanges = (changes) => {
       const results = changes.map((c) => ({ id: c.id, ...applyConfigChange(c) }));
       for (const r of results) log(`dashboard: config ${changes.find((c) => c.id === r.id).key} ${r.ok ? 'applied' : `refused (${r.error})`}`);
-      reload();
       return results;
     };
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSnapshot().map((s) => ({ ...s, account: accountFor(s, list) })),
       accounts: () => accounts.read(), onConfigChanges });
     push.start();
-    setInterval(() => { try { reload(); } catch (e) { log(`config reload: ${e.message}`); } }, 60000).unref();
   }
   const sweep = (orphans) => (config.deleteClosedAfterHours > 0 ? bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`)) : null);
   sweep(false);

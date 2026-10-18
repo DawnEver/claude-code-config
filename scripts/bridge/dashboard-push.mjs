@@ -26,17 +26,9 @@ export class DashboardPush {
 
   /** Off the message path: an unref'd timer, never awaited by Telegram routing. */
   start() {
-    clearInterval(this.timer);
     this.timer = setInterval(() => this.tick(), this.everySeconds * 1000);
     this.timer.unref?.();
     return this.timer;
-  }
-
-  /** A new push interval takes effect at once (a dashboard edit, reloaded live). */
-  every(seconds) {
-    if (seconds === this.everySeconds) return;
-    this.everySeconds = seconds;
-    if (this.timer) this.start();
   }
 
   async tick() {
