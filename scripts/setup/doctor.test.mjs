@@ -10,7 +10,7 @@ import {
   checkPlugins, checkBridgeRevision,
   checkMachineName,
   checkCodexShellEnv,
-  scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost, checkDashboardHost,
+  scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost, checkDashboardHost, checkChannelServer,
 } from './doctor.js';
 import { CLAUDE_LINKS } from './setup.js';
 
@@ -462,4 +462,19 @@ test('checkBridgeHost: WARN when the fleet runs a bridge and this host has no bo
 test('checkPublicHygiene: the real tracked tree is clean', () => {
   const fails = checkPublicHygiene().filter((f) => f.level === 'FAIL');
   assert.deepEqual(fails.map((f) => f.title), []);
+});
+
+test('checkChannelServer: FAIL per bridged config dir that lost the session-bridge registration', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-channel-'));
+  const server = path.join(home, 'server.mjs');
+  const base = path.join(home, '.claude');
+  const seat = path.join(home, '.claude-a');
+  fs.mkdirSync(seat);
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { 'session-bridge': { args: [server] } } }));
+  fs.writeFileSync(path.join(seat, '.claude.json'), JSON.stringify({}));
+  const dirs = [{ alias: null, dir: base }, { alias: 'a', dir: seat }, { alias: 'b', dir: path.join(home, '.claude-b') }];
+  assert.deepEqual(checkChannelServer({ bridged: false, dirs, server, home }), []);
+  const out = checkChannelServer({ bridged: true, dirs, server, home });
+  assert.deepEqual(out.map((f) => [f.level, f.id]), [['FAIL', 'channel-server']]);   // base ok, b has no config yet
+  assert.match(out[0].title, /^seat a: .*not registered/);
 });

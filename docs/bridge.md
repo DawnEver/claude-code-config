@@ -191,10 +191,12 @@ token in `runtime.json`):
   are mirrored like prompts: anything typed into the session reaches its Topic.
 - No `/interrupt` (use Esc locally).
 
-Nothing to do by hand once this machine has a `bridge.botToken`: `npm run setup` registers
-the user-scope MCP server (`claude mcp add -s user session-bridge -- node
-<repo>/claude_plugins/session-bridge/server.mjs`; the absolute path lives in this machine's
-`~/.claude.json`, never in synced config), and `ccc` (any official-provider `cc.js` launch)
+Nothing to do by hand once this machine has a `bridge.botToken`: the user-scope MCP server
+`session-bridge` (`node <repo>/claude_plugins/session-bridge/server.mjs`; the absolute path
+lives in each config dir's `.claude.json` — base and every seat — never in synced config) is
+written by `scripts/shared/channel-server.mjs`, which `npm run setup` and every `cc.js` launch
+run (the CLI can recreate `.claude.json` and drop it; doctor's `channel-server` check FAILs
+on a gap), and `ccc` (any official-provider `cc.js` launch)
 adds `--dangerously-load-development-channels server:session-bridge`, because custom
 channels are not on the research-preview allowlist. A plain `claude` still starts the MCP
 server, so a Topic appears, but Claude Code drops channel messages without the flag.

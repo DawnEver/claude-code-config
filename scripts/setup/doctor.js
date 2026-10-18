@@ -30,8 +30,10 @@ import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machin
 import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
-  CLAUDE_LINKS, getCodexLinks, linkSourceRoot, isHardLinked, sameVolume,
+  CLAUDE_LINKS, getCodexLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
 } from './setup.js';
+import { accountFile } from '../shared/seats.mjs';
+import { channelServerPath, channelServerState } from '../shared/channel-server.mjs';
 
 const HOME = os.homedir();
 
@@ -536,6 +538,21 @@ export function checkBridgeRevision({ runtimeFile = RUNTIME_FILE, repoRoot = sou
 
 // ── runner ──
 
+// A config dir that lost its session-bridge registration (the CLI recreated .claude.json)
+// starts sessions that are silently absent from Telegram and the dashboard.
+export function checkChannelServer({ bridged = Boolean(readBridgeConfig().botToken), dirs = [{ alias: null, dir: claudeDir }, ...localSeats()],
+  server = channelServerPath(sourceDir), home = HOME } = {}) {
+  if (!bridged) return [];
+  const out = [];
+  for (const { alias, dir } of dirs) {
+    const state = channelServerState(accountFile(dir, home), server);
+    if (state === 'ok' || state === 'no-config') continue;
+    out.push(finding('FAIL', 'channel-server', `${alias ? `seat ${alias}` : 'base'}: session-bridge MCP server is ${state === 'stale' ? 'registered at another path' : 'not registered'}; ccc sessions there are not bridged`,
+      'the next ccc launch re-registers it, or run node ~/.claude/scripts/setup/setup.js'));
+  }
+  return out;
+}
+
 export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME } = {}) {
   const settingsPath = path.join(syncDir, 'claude_settings.json');
   let settings = null;
@@ -557,6 +574,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
       localPath: path.join(home, '.claude', 'claude_env_settings.local.json') }),
     ...checkDashboardHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
       localPath: path.join(home, '.claude', 'claude_env_settings.local.json'), machine: readMachineName(path.join(home, '.claude', 'machine.json')) }),
+    ...checkChannelServer({ home }),
     ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),
       configPath: path.join(home, '.codex', 'config.toml') }),
   ];

@@ -2,8 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync, spawnSync } from 'child_process';
-import { prepareSpawn } from '../runtime/win-spawn.mjs';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { checkMacNotify } from './check-mac-notify.js';
 import { installCliWrappers } from './install-cli-wrappers.js';
@@ -16,6 +15,7 @@ import { planService, runAction, SERVICE_NAME } from '../bridge/install-service.
 import { isValidMachineName, readMachineName, writeMachineName, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import { accountFile, baseSeat, readSeats, seatDir, seatsFor } from '../shared/seats.mjs';
 import { applyGlobalDefaults } from '../shared/claude-defaults.mjs';
+import { channelServerPath, channelServerState, ensureChannelServer } from '../shared/channel-server.mjs';
 import {
   resolveSyncDir,
   syncDirSource,
@@ -739,21 +739,15 @@ export function setup(options = {}) {
     console.log('\n--- Session bridge ---');
     if (runAction('install', planService())) console.log(`OK    ${SERVICE_NAME} service installed`);
     else { console.log(`ERR   ${SERVICE_NAME} service install failed - see docs/bridge.md`); counters.errors++; }
-    // ccc loads `server:session-bridge` as a channel; the user-scope MCP server it names
-    // lives in each config dir's own .claude.json (the base dir's and every seat's), so the
-    // absolute repo path never syncs.
-    const server = path.join(sourceDir, 'claude_plugins', 'session-bridge', 'server.mjs');
+    // ccc loads `server:session-bridge` as a channel; its registration lives in each config
+    // dir's own .claude.json (scripts/shared/channel-server.mjs), so the repo path never syncs.
+    const server = channelServerPath(sourceDir);
     for (const { alias, dir } of [{ alias: null, dir: claudeDir }, ...localSeats()]) {
-      const env = { ...process.env };
-      if (alias) env.CLAUDE_CONFIG_DIR = dir; else delete env.CLAUDE_CONFIG_DIR;
-      const claude = (args) => {
-        const s = prepareSpawn('claude', args, { env });
-        return spawnSync(s.command, s.args, { ...s.options, env, encoding: 'utf8', windowsHide: true });
-      };
       const where = alias ? `seat ${alias}` : 'base';
-      if (claude(['mcp', 'get', 'session-bridge']).status === 0) console.log(`OK    session-bridge MCP server already registered (${where})`);
-      else if (claude(['mcp', 'add', '-s', 'user', 'session-bridge', '--', 'node', server]).status === 0) console.log(`OK    session-bridge MCP server registered (${where}, user scope)`);
-      else { console.log(`ERR   could not register the session-bridge MCP server (${where}) - see docs/bridge.md`); counters.errors++; }
+      const file = accountFile(dir);
+      if (ensureChannelServer(file, server)) console.log(`OK    session-bridge MCP server registered (${where})`);
+      else if (channelServerState(file, server) === 'ok') console.log(`OK    session-bridge MCP server already registered (${where})`);
+      else console.log(`SKIP  session-bridge MCP server (${where}): no .claude.json yet - the next ccc launch registers it`);
     }
   }
 

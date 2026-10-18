@@ -84,7 +84,7 @@ Telegram + remote control on the same live session, per-machine bridge in
   in `claude_settings.json` — otherwise the CLI downloads them into `~/.claude/skills/synced`,
   i.e. straight into this repo. `.gitignore` carries `skills/synced/` as a backstop.
 - `output-styles/`: Output styles (`<name>.md`, `keep-coding-instructions: false`) — symlinked to `~/.claude/output-styles`. Non-coding personas (e.g. `academic`) for terminal use; toggle via `/config` → Output style. Strips coding guidance, keeps the harness/tools. A full system-prompt replacement was rejected (degrades CC to a chatbox) — see `.claude/memory/2026/06/20/persona-vs-output-style.md`.
-- `claude_plugins/`: Custom plugins (e.g., `claude-hud` config; `session-bridge` — the bridge's Claude channel MCP server, plain Node, registered by setup as user-scope MCP server `session-bridge` and loaded by `ccc` via `--dangerously-load-development-channels server:session-bridge`, see `docs/bridge.md`)
+- `claude_plugins/`: Custom plugins (e.g., `claude-hud` config; `session-bridge` — the bridge's Claude channel MCP server, plain Node, registered as user-scope MCP server `session-bridge` by setup and re-ensured on every `ccc` launch (`scripts/shared/channel-server.mjs`), and loaded by `ccc` via `--dangerously-load-development-channels server:session-bridge`, see `docs/bridge.md`)
 - `cc-market/`: Community plugin marketplace (gitignored, cloned by setup) — see `cc-market/AGENTS.md`
 - `claude_settings.json`: Env vars, permissions, hooks (gitignored). **Sync payload** — lives in the sync dir, not the repo
 - `claude_settings.template.json`: Template for new clones -> auto-copied to `claude_settings.json` by setup

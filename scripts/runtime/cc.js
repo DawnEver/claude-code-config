@@ -19,11 +19,14 @@ import { syncBeforeLaunch } from './startup-sync.mjs';
 const sync = syncBeforeLaunch();
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
-const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { accountFile, configDir }] = await Promise.all([
+const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { accountFile, configDir },
+  { channelServerPath, ensureChannelServer }, { readBridgeConfig }] = await Promise.all([
   import('./cc-launcher.mjs'),
   import('./win-spawn.mjs'),
   import('../shared/claude-defaults.mjs'),
   import('../shared/seats.mjs'),
+  import('../shared/channel-server.mjs'),
+  import('../bridge/context.mjs'),
 ]);
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -69,6 +72,13 @@ console.log(provider ? `[cc] Using provider: ${provider}` : `[cc] Using Claude (
 
 // Best-effort: a UI preference must never block a launch.
 try { applyGlobalDefaults(accountFile(configDir(env))); } catch { /* ignore */ }
+// The bridge channel's MCP registration can vanish with a recreated `.claude.json`, and the
+// session would then run unbridged without a word. Best-effort, like the line above.
+try {
+  if (readBridgeConfig().botToken && ensureChannelServer(accountFile(configDir(env)), channelServerPath(REPO_ROOT))) {
+    console.log('[cc] Registered the session-bridge channel server for this config dir');
+  }
+} catch { /* ignore */ }
 
 // Not `shell: true`: that concatenates args unescaped, so any argument containing a space
 // or a cmd metacharacter is mangled. `prepareSpawn` resolves the npm shim and quotes for us.
