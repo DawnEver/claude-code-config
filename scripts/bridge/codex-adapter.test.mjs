@@ -28,7 +28,8 @@ function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
         initialize: { userAgent: 'fake' },
         'thread/loaded/list': { data: loaded, nextCursor: null },
         'thread/resume': { thread: threads[m.params?.threadId] ? { source: 'cli', ...threads[m.params?.threadId] } : { id: m.params?.threadId, source: 'cli', cwd: '/w', ephemeral: false, gitInfo: { branch: 'feat/x' }, turns: [] } },
-        'thread/read': { thread: { id: m.params?.threadId, ephemeral: spec?.ephemeral ?? false } },
+        'thread/read': { thread: { id: m.params?.threadId, ephemeral: spec?.ephemeral ?? false, status: spec?.status ?? { type: 'idle' } } },
+        'thread/unsubscribe': { status: 'unsubscribed' },
         'turn/start': { turn: { id: 'turnA' } },
         'turn/steer': { turnId: 'turnA' },
         'turn/interrupt': {},
@@ -98,9 +99,7 @@ test('status follows Codex\'s own thread status, not the adapter\'s turn bookkee
   assert.equal(a.statusSnapshot('t1').state, 'waiting-approval');
   srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: [] } });
   assert.equal(a.statusSnapshot('t1').state, 'running');
-  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'systemError' } });
-  assert.equal(a.statusSnapshot('t1').state, 'unknown');
-  assert.ok(statuses.length >= 4);
+  assert.ok(statuses.length >= 3);
 });
 
 test('ephemeral threads are skipped; unloaded threads go down on refresh', async () => {
@@ -111,6 +110,57 @@ test('ephemeral threads are skipped; unloaded threads go down on refresh', async
   srv.setLoaded([]);
   await a.refresh();
   assert.deepEqual(downs, ['t1']);
+});
+
+/** An adapter on a settable clock, attached and refreshed once. */
+async function clocked(opts) {
+  const srv = fakeAppServer(opts);
+  const clock = { t: 1_000_000 };
+  const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({ status: 'running' }), now: () => clock.t });
+  const ev = [];
+  for (const k of ['up', 'down', 'final', 'prompt']) a.on(k, (e) => ev.push([k, e.id, e.text ?? null]));
+  await a.start();
+  await a.refresh();
+  return { a, srv, clock, ev };
+}
+
+test('a thread in systemError goes down and stays out until Codex reports it recovered', async () => {
+  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' } } };
+  const { a, srv, ev } = await clocked({ threads });
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'systemError' } });
+  await tick();
+  assert.deepEqual(ev, [['up', 't1', null], ['down', 't1', null]]);
+  assert.ok(srv.calls.some((c) => c.method === 'thread/unsubscribe' && c.params.threadId === 't1'), 'the bridge lets go of it');
+  threads.t1.status = { type: 'systemError' };
+  await a.refresh();
+  assert.equal(ev.length, 2, 'still errored: not resubscribed');
+  threads.t1.status = { type: 'idle' };
+  await a.refresh();
+  assert.deepEqual(ev.at(-1), ['up', 't1', null], 'recovered: tracked again');
+});
+
+test('an idle thread is released after 10 min: closed if the bridge alone held it, silently re-held otherwise', async () => {
+  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' } } };
+  const { a, srv, clock, ev } = await clocked({ threads });
+  clock.t += 9 * 60000;
+  await a.refresh();
+  assert.ok(!srv.calls.some((c) => c.method === 'thread/unsubscribe'), 'not before 10 min idle');
+  clock.t += 60000;
+  await a.refresh();
+  assert.equal(srv.calls.filter((c) => c.method === 'thread/unsubscribe').length, 1);
+  assert.deepEqual(ev, [['up', 't1', null]], 'released, not down: another client may still hold it');
+  // Still loaded a minute later: someone else holds it. Re-held without a new up; what ran meanwhile replays.
+  threads.t1.turns = [{ id: 'T9', startedAt: (clock.t + 1000) / 1000, status: 'completed', items: [{ type: 'agentMessage', id: 'm', text: 'done' }] }];
+  clock.t += 60000;
+  await a.refresh();
+  assert.deepEqual(ev, [['up', 't1', null], ['final', 't1', 'done']]);
+  assert.equal(a.statusSnapshot('t1').state, 'idle');
+  // Released again later, and this time Codex unloads it: down.
+  clock.t += 10 * 60000;
+  await a.refresh();
+  srv.setLoaded([]);
+  await a.refresh();
+  assert.deepEqual(ev.at(-1), ['down', 't1', null]);
 });
 
 test('deltas aggregate; final message is emitted on turn/completed; progress per item', async () => {

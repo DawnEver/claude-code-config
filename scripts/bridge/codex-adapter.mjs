@@ -19,6 +19,12 @@ import { JsonRpcPeer } from './jsonrpc.mjs';
 import { BRIDGE_DEFAULTS } from './context.mjs';
 
 const QUOTA_REFRESH_MS = 5 * 60000;
+// Codex keeps a thread loaded while any client subscribes, and says nothing about who does,
+// so the bridge's own subscription would keep a closed window's thread alive forever. After
+// this long idle it lets go; if the thread is still loaded RELEASE_GRACE_MS later, another
+// client holds it and the bridge takes it back without a new `up`.
+const IDLE_RELEASE_MS = 10 * 60000;
+const RELEASE_GRACE_MS = 60000;
 const isCodexBucket = (l) => Boolean(l) && (l.limitId ?? 'codex') === 'codex';
 const dropNulls = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null));
 const IS_WIN = process.platform === 'win32';
@@ -148,6 +154,7 @@ export class CodexAdapter extends EventEmitter {
     this.clientName = clientName;
     this.rpc = null;
     this.connection = 0;
+    this.errored = new Set();     // threads in systemError: let go until Codex reports them recovered
     this.threads = new Map();     // threadId -> { cwd, branch, status, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
     this.questions = new Map();   // key -> { rpcId, threadId, answerable, submitted? } (item/tool/requestUserInput)
@@ -175,6 +182,7 @@ export class CodexAdapter extends EventEmitter {
       for (const id of [...this.threads.keys()]) this.#drop(id);
       this.pending.clear();
       this.skipped.clear();
+      this.errored.clear();
     });
     await new Promise((resolve) => t.onOpen(resolve));
     await rpc.request('initialize', { clientInfo: { name: this.clientName, version: '1' } });
@@ -206,7 +214,33 @@ export class CodexAdapter extends EventEmitter {
       cursor = r.nextCursor;
     } while (cursor);
     for (const id of [...this.threads.keys()]) if (!ids.has(id)) this.#drop(id);
-    for (const id of ids) if (!this.threads.has(id)) await this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+    for (const id of [...this.errored]) if (!ids.has(id)) this.errored.delete(id);
+    const now = this.now();
+    for (const [id, th] of [...this.threads]) {
+      if (th.released !== null) {
+        if (now - th.released >= RELEASE_GRACE_MS) await this.#resume(id, th.released).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+      } else if (th.idleSince !== null && now - th.idleSince >= IDLE_RELEASE_MS) {
+        th.released = now;
+        await this.rpc?.request('thread/unsubscribe', { threadId: id }).catch(() => {});
+      }
+    }
+    for (const id of ids) {
+      if (this.threads.has(id)) continue;
+      // A thread in systemError is not a session; it is taken back only once Codex says it recovered.
+      if (this.errored.has(id)) {
+        const st = (await this.rpc?.request('thread/read', { threadId: id }).catch(() => null))?.thread?.status;
+        if (!st || st.type === 'systemError') continue;
+        this.errored.delete(id);
+      }
+      await this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+    }
+  }
+
+  /** Let go of a thread for good: unsubscribed, down, not resubscribed while it stays errored. */
+  #abandon(threadId) {
+    this.errored.add(threadId);
+    this.rpc?.request('thread/unsubscribe', { threadId }).catch(() => {});
+    this.#drop(threadId);
   }
 
   async #subscribe(threadId) {
@@ -233,7 +267,8 @@ export class CodexAdapter extends EventEmitter {
     } finally { if (connection === this.connection) this.pending.delete(threadId); }
   }
 
-  async #resume(threadId) {
+  /** Subscribe to a thread; `releasedAt` re-holds a released one: no new `up`, missed turns replayed. */
+  async #resume(threadId, releasedAt = null) {
     const rpc = this.rpc;
     if (!rpc) return;
     const r = await rpc.request('thread/resume', { threadId });
@@ -241,6 +276,7 @@ export class CodexAdapter extends EventEmitter {
     const th = r.thread ?? {};
     if (th.ephemeral) return;
     if (!isMainSession(th, this.sources)) { this.#dismiss(threadId); return; }
+    if (th.status?.type === 'systemError') { this.#abandon(threadId); return; }
     const running = (th.turns ?? []).findLast?.((t) => t.status === 'inProgress');
     const info = {
       cwd: th.cwd ?? r.cwd,
@@ -250,7 +286,16 @@ export class CodexAdapter extends EventEmitter {
       status: th.status ?? null,
       activeTurnId: running?.id ?? null,
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
+      idleSince: th.status?.type === 'idle' ? this.now() : null,
+      released: null,
     };
+    if (releasedAt !== null) {
+      if (!this.threads.has(threadId)) return;   // closed meanwhile
+      this.threads.set(threadId, info);
+      for (const b of backlogSince(th.turns, releasedAt)) this.emit(b.kind, { id: threadId, ...b });
+      this.emit('status', { id: threadId });
+      return;
+    }
     this.threads.set(threadId, info);
     this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, backlog: backlogSince(th.turns, this.connectedAt) });
   }
@@ -285,7 +330,12 @@ export class CodexAdapter extends EventEmitter {
         if (isCodexBucket(p.rateLimits)) this.quota = { limits: { ...this.quota?.limits, ...dropNulls(p.rateLimits) }, at: this.now(), resetCredits: this.quota?.resetCredits ?? null };
         break;
       case 'thread/status/changed':
-        if (th) { th.status = p.status ?? null; this.emit('status', { id: p.threadId }); }
+        if (!th) break;
+        if (p.status?.type === 'systemError') { this.#abandon(p.threadId); break; }
+        if (p.status?.type !== 'idle') th.idleSince = null;
+        else if (th.status?.type !== 'idle') th.idleSince = this.now();
+        th.status = p.status ?? null;
+        this.emit('status', { id: p.threadId });
         break;
       case 'turn/started':
         if (th) {
