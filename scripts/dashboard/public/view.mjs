@@ -69,7 +69,7 @@ export function ago(iso, now = Date.now()) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-// ── Quota (per account; computed by the host, scripts/bridge/fleet.mjs accountModels) ──
+// ── Quota (per account; computed by the host, scripts/bridge/quota.mjs accountModels) ──
 
 /** A reading older than this is a floor on use (`≥`) and is never projected from. */
 export const QUOTA_STALE_MS = 15 * 60000;
@@ -99,6 +99,33 @@ export function quotaView(a, now = Date.now()) {
     ?? [...live].sort((x, y) => y.used - x.used)[0] ?? null;
   const verdict = !bind ? 'none' : bind.used >= 100 ? 'exhausted' : bind.forecast?.short ? 'short' : 'ok';
   return { ...a, stale, windows, bind, verdict, left: bind ? Math.round(100 - bind.used) : null };
+}
+
+export const accountName = (q) => `${q.agent === 'claude' ? 'Claude' : 'Codex'}${q.label ? ` · ${q.label}` : ''}`;
+
+/** Why an account needs the human, in one line; '' when it does not. */
+export function verdictText(q, now = Date.now()) {
+  if (q.verdict === 'exhausted') return `${q.bind.k} exhausted · resets in ${countdown(q.bind.resetsAt, now)}`;
+  if (q.verdict === 'short') return `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta, now)} · resets in ${countdown(q.bind.resetsAt, now)}`;
+  return '';
+}
+
+/**
+ * The quota alerts a change of `q` warrants against what was last alerted for its account
+ * (`prev`): the verdict turning short or exhausted, a new seat problem, a newly announced
+ * extra reset. Returns the alert texts and the state to remember. Events, not state: an
+ * unchanged condition alerts once; recovering clears it, so a relapse alerts again.
+ */
+export function quotaAlertsFor(prev, q, now = Date.now()) {
+  const who = `${accountName(q)}${q.email ? ` (${q.email})` : ''}`;
+  const texts = [];
+  if ((q.verdict === 'short' || q.verdict === 'exhausted') && prev?.verdict !== q.verdict) texts.push(`${who}: ${verdictText(q, now)}`);
+  for (const p of q.problems) if (!prev?.problems?.includes(p)) texts.push(`${who}: ${p}`);
+  const extraAt = q.extraReset ? q.extraReset.at ?? 0 : null;
+  if (extraAt !== null && prev?.extraAt !== extraAt) {
+    texts.push(`${who}: extra reset announced${q.extraReset.at ? ` · in ${countdown(q.extraReset.at, now)}` : ''}${q.extraReset.url ? ` · ${q.extraReset.url}` : ''}`);
+  }
+  return { texts, state: { verdict: q.verdict, problems: [...q.problems], extraAt } };
 }
 
 /** Accounts that need the human: a window exhausted, or projected to run out before its reset. */

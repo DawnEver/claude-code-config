@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs, accountName, verdictText } from './view.mjs';
 
 const POLL_MS = 8000;
 const tg = window.Telegram?.WebApp;
@@ -61,10 +61,6 @@ function renderSummary() {
   for (const q of quota) list.append(quotaAlertRow(q));
   box.append(list);
 }
-
-const accountName = (q) => `${q.agent === 'claude' ? 'Claude' : 'Codex'}${q.label ? ` · ${q.label}` : ''}`;
-const verdictText = (q) => (q.verdict === 'exhausted' ? `${q.bind.k} exhausted · resets in ${countdown(q.bind.resetsAt)}`
-  : q.verdict === 'short' ? `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta)} · resets in ${countdown(q.bind.resetsAt)}` : '');
 
 /** A quota alert in the needs-you card: the account and why. */
 function quotaAlertRow(q) {

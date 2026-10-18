@@ -151,7 +151,7 @@ export class CodexAdapter extends EventEmitter {
     this.threads = new Map();     // threadId -> { cwd, branch, status, activeTurnId, agentMessages }
     this.approvals = new Map();   // key -> { rpcId, method, threadId }
     this.questions = new Map();   // key -> { rpcId, threadId, answerable, submitted? } (item/tool/requestUserInput)
-    this.quota = null;            // { limits: RateLimitSnapshot, at, resetCredits } for the fleet report (fleet.mjs)
+    this.quota = null;            // { limits: RateLimitSnapshot, at, resetCredits } for the dashboard's quota (quota.mjs)
     this.account = null;          // { email, plan } of the ChatGPT login, for the same report
   }
 

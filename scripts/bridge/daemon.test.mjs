@@ -669,22 +669,22 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
 });
 
 
-test('fleetSessions lists every registered session with its status', async () => {
+test('dashboardSnapshot lists every registered session with its status', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'running' });
   await up(r, 'codex', 'quiet');
   await live(r, 'codex', 'busy');
-  assert.equal(r.bridge.fleetSessions().length, 2, 'a session without a Topic is still running here');
-  assert.ok(r.bridge.fleetSessions().every((x) => x.status === 'Working'));
+  assert.equal(r.bridge.dashboardSnapshot().length, 2, 'a session without a Topic is still running here');
+  assert.ok(r.bridge.dashboardSnapshot().every((x) => x.status === 'working'));
 });
 
-test('a Claude session seat names its Topic and its fleet entry', async () => {
+test('a Claude session seat names its Topic and its dashboard entry', async () => {
   const r = make();
   const s = await up(r, 'claude', 'seated', { seat: 'team-b' });
   assert.match(s.title, / \| claude:team-b$/);
-  assert.equal(r.bridge.fleetSessions()[0].seat, 'team-b');
+  assert.equal(r.bridge.dashboardSnapshot()[0].seat, 'team-b');
   await up(r, 'claude', 'base');
-  assert.equal(r.bridge.fleetSessions()[1].seat, null);
+  assert.equal(r.bridge.dashboardSnapshot()[1].seat, null);
 });
 
 test('a failed Topic rename keeps the cached title and session, and is logged', async () => {
@@ -765,7 +765,7 @@ test('waiting-input reads Needs input', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-input' });
   await up(r, 'codex', 'q');
-  assert.equal(r.bridge.fleetSessions()[0].status, 'Needs input');
+  assert.equal(r.bridge.dashboardSnapshot()[0].status, 'needs_input');
 });
 
 test('sweep: an open Topic no registered session holds is closed as an orphan, then ages out', async () => {
@@ -817,7 +817,6 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   assert.equal(snap.busy.status, 'unknown', 'a host without a snapshot is not guessed');
   assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.telegram.sent[0].threadId, closed: false });
   assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
-  assert.deepEqual(r.bridge.fleetSessions().find((s) => s.agent === 'codex'), { agent: 'codex', project: 'proj', branch: 'main', seat: null, status: 'Needs approval' });
   r.hosts.codex.statusSnapshot = () => null;
   assert.equal(r.bridge.dashboardSnapshot().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
   r.bridge.sessionDown('codex:quiet');

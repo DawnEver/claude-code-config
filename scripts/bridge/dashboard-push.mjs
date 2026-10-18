@@ -8,8 +8,8 @@
 import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 
 export class DashboardPush {
-  constructor({ url, hostToken, machine, sessions, accounts = () => [], everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
-    Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, machine, sessions, accounts, everySeconds, log, fetch, timeoutMs });
+  constructor({ url, hostToken, machine, sessions, accounts = () => [], onAlerts = () => {}, everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
+    Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, machine, sessions, accounts, onAlerts, everySeconds, log, fetch, timeoutMs });
     this.bootAt = now();
     this.seq = 0;
     this.inFlight = false;
@@ -35,7 +35,11 @@ export class DashboardPush {
         headers: { 'content-type': 'application/json', authorization: `Bearer ${this.hostToken}` }, body: JSON.stringify(this.body()) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       // Refused: the gateway holds a push it ranks newer (this host's clock went backwards or ahead).
-      if ((await res.json().catch(() => ({}))).accepted !== true) throw new Error('refused as not newer than the one held');
+      const reply = await res.json().catch(() => ({}));
+      if (reply.accepted !== true) throw new Error('refused as not newer than the one held');
+      // The gateway judged these on the merged view; this host posts them (its bot, its token).
+      const alerts = (Array.isArray(reply.alerts) ? reply.alerts : []).filter((t) => typeof t === 'string' && t).map((t) => t.slice(0, 1000));
+      if (alerts.length) Promise.resolve().then(() => this.onAlerts(alerts)).catch((e) => this.log(`dashboard: alert not posted (${e.message})`));
       if (this.lastError) this.log('dashboard: push restored');
       this.lastError = null;
       return true;

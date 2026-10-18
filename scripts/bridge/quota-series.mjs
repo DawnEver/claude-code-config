@@ -5,7 +5,7 @@
 // seen at `from` and last seen at `at`. An unchanged reading only moves `at`, so the file grows
 // with change, not with time, and a rise between two samples is known to have happened between
 // the last sight of the old value and the first sight of the new one. The last sample is the
-// current quota (fleet.mjs reads nothing else). A sample whose every window has reset is
+// current quota (quota.mjs reads nothing else). A sample whose every window has reset is
 // history and is dropped on the next write: retention is the windows' own length.
 
 import fs from 'fs';

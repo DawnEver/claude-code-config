@@ -95,7 +95,7 @@ export function resolveSeat(input, aliases) {
   return { error: `unknown seat ${JSON.stringify(input ?? '')}; seats on this machine: ${choices}` };
 }
 
-/** Where hud-hook.js tees a dir's statusLine `rate_limits` for the fleet report. */
+/** Where hud-hook.js tees a dir's statusLine `rate_limits` for the dashboard's quota. */
 export const usageFile = (dir) => path.join(dir, 'bridge', 'claude-usage.jsonl');
 
 const norm = (s) => ({ alias: isValidAlias(s.alias) ? s.alias : null, email: s.email ?? null, org: s.org ?? null,

@@ -30,7 +30,7 @@ import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
-import { AccountReader, FleetReport } from './fleet.mjs';
+import { AccountReader } from './quota.mjs';
 import { DashboardPush } from './dashboard-push.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
@@ -45,7 +45,7 @@ const TOPIC_UNCHANGED = /TOPIC_NOT_MODIFIED/i;
 export const sessionKey = (agent, id) => `${agent}:${id}`;
 /** Native adapter state -> status code, the one vocabulary (STATUSES in scripts/shared/dashboard-schema.mjs). */
 export const STATUS_CODES = { running: 'working', idle: 'idle', 'waiting-approval': 'needs_approval', 'waiting-input': 'needs_input', unknown: 'unknown', disconnected: 'ended' };
-/** Status code -> the text of the status card and the fleet report. */
+/** Status code -> the text of the status card. */
 export const STATUS_LABELS = { working: 'Working', idle: 'Idle', needs_approval: 'Needs approval', needs_input: 'Needs input', unknown: 'Unknown', ended: 'Ended' };
 const statusCode = (state) => STATUS_CODES[state] ?? 'unknown';
 const clock = t => new Date(t).toTimeString().slice(0, 5);
@@ -190,11 +190,6 @@ export class Bridge {
       for (const { kind, e } of q) if (!(e.turnId && seen.has(`${kind}:${e.turnId}`))) await this.#event(key, kind, e).catch(() => {});
     }
     return this.sessions.get(key);
-  }
-
-  /** What the fleet report lists: every registered session with its status. */
-  fleetSessions() {
-    return this.dashboardSnapshot().map(({ agent, project, branch, seat, status }) => ({ agent, project, branch, seat, status: STATUS_LABELS[status] }));
   }
 
   /**
@@ -809,20 +804,16 @@ export async function main() {
     setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)),
       Math.min(60000, config.idleCloseMinutes * 60000)).unref();
   }
-  if (config.fleet) {
-    const report = new FleetReport({ telegram, ...config.fleet, machine, log,
-      stateFile: path.join(BRIDGE_RUNTIME_DIR, 'fleet-report.json'), codexSeriesFile: path.join(BRIDGE_RUNTIME_DIR, 'codex-usage.jsonl'),
-      sessions: () => bridge.fleetSessions(), codexQuota: () => codex.quota, codexAccount: () => codex.account });
-    // No tick at startup: sessions re-register over the first seconds, and a report taken
-    // before that would say nothing is running.
-    const tick = () => report.tick().catch((e) => log(`fleet report: ${e.message}`));
-    setInterval(tick, 60000).unref();
-  }
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
   if (config.dashboard) {
     const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
       codexSeriesFile: path.join(BRIDGE_RUNTIME_DIR, 'codex-usage.jsonl') });
-    new DashboardPush({ ...config.dashboard, machine, log, sessions: () => bridge.dashboardSnapshot(), accounts: () => accounts.read() }).start();
+    // Quota alerts: judged by the dashboard on the merged view, posted here, events only.
+    const onAlerts = async (texts) => {
+      if (!config.alerts) return;
+      for (const text of texts) await telegram.sendMessage(config.alerts.chatId, text, { threadId: config.alerts.topicId ?? undefined });
+    };
+    new DashboardPush({ ...config.dashboard, machine, log, sessions: () => bridge.dashboardSnapshot(), accounts: () => accounts.read(), onAlerts }).start();
   }
   if (config.deleteClosedAfterHours > 0) {
     const sweep = (orphans) => bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`));

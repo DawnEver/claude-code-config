@@ -5,21 +5,35 @@
 // and every session it last reported is `stale`.
 
 import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
+import { quotaAlertsFor, quotaView } from './public/view.mjs';
 
 export class Registry {
   constructor({ hosts = [], ttlMs = 60000, now = Date.now } = {}) {
     Object.assign(this, { ttlMs, now });
     this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
+    this.alerted = new Map();   // account key -> what was last alerted (view.mjs quotaAlertsFor)
   }
 
-  /** Accept a parsed push unless it is not newer than the one held: an older boot, or the same boot's earlier tick. */
+  /**
+   * Accept a parsed push unless it is not newer than the one held: an older boot, or the same
+   * boot's earlier tick. Returns {accepted, alerts}: the quota alerts this push's accounts now
+   * warrant, judged once here on the merged view (so an account several hosts report alerts
+   * once) and handed to this host to post with its own bot — the Worker holds no bot token.
+   */
   accept(hostId, push) {
     const prev = this.hosts.get(hostId);
     // A boot dated ahead of this clock would outrank every later boot: refused (5 min skew).
-    if (push.bootAt > this.now() + 300000) return false;
-    if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return false;
+    if (push.bootAt > this.now() + 300000) return { accepted: false, alerts: [] };
+    if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false, alerts: [] };
     this.hosts.set(hostId, { ...push, receivedAt: this.now() });
-    return true;
+    const merged = new Map(this.accounts().map((a) => [a.key, a]));
+    const alerts = [];
+    for (const key of new Set(push.accounts.map((a) => a.key))) {
+      const { texts, state } = quotaAlertsFor(this.alerted.get(key), quotaView(merged.get(key), this.now()), this.now());
+      this.alerted.set(key, state);
+      alerts.push(...texts);
+    }
+    return { accepted: true, alerts };
   }
 
   host(id) {

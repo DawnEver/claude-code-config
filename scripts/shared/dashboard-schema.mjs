@@ -40,7 +40,7 @@ export const MAX_ACCOUNTS = 20;
 const num = (v, lo = -Infinity, hi = Infinity) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null);
 const epoch = (v) => num(v, 1e12, 1e14);   // ms, 2001..5138
 
-/** One quota window (scripts/bridge/fleet.mjs accountModels): numbers only, bounded. */
+/** One quota window (scripts/bridge/quota.mjs accountModels): numbers only, bounded. */
 function parseWindow(w) {
   const k = typeof w?.k === 'string' && /^\d{1,3}[hd]$/.test(w.k) ? w.k : null;
   const windowMs = num(w?.windowMs, 60000, 400 * 86400000);

@@ -1,5 +1,5 @@
-// scripts/bridge/extra-resets.mjs — announced extra resets for Codex and Claude, as fleet
-// report STATE (docs/bridge.md "Fleet report"). Not the rolling 5h/weekly windows: the
+// scripts/bridge/extra-resets.mjs — announced extra resets for Codex and Claude, as
+// dashboard state (docs/dashboard.md "Quota"). Not the rolling 5h/weekly windows: the
 // one-off resets vendor staff announce, tracked by community sites with public JSON APIs
 // (not official):
 //   Codex  codex-resets.com/api/v1/{resets,status}

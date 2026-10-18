@@ -50,8 +50,7 @@ const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
  * Normalised bridge config.
  * shared:  bridge.projects.<repo>.{chatId, projectInTitle?: 'always'|'main'|'never'}, bridge.fallbackChatId,
  *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.codexSources,
- *          bridge.fleet.{chatId, topicId?, everyMinutes?, timeFormat?, order?, always?} (the fleet
- *          report; off without chatId. Its seats are the top-level `seats`, scripts/shared/seats.mjs)
+ *          bridge.alerts.{chatId, topicId?} (where quota alerts from the dashboard are posted; off without chatId)
  *          bridge.dashboard.{url, everySeconds?} (push to the dashboard; off without url + hostToken)
  * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram, bridge.dashboard.hostToken
  * Either layer may set any key; local wins — except dashboard.hostToken, local only.
@@ -70,11 +69,7 @@ export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localP
     idleCloseMinutes: nonNegative(b.idleCloseMinutes, BRIDGE_DEFAULTS.idleCloseMinutes),
     deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
     codexSources: Array.isArray(b.codexSources) ? b.codexSources.filter((s) => typeof s === 'string') : BRIDGE_DEFAULTS.codexSources,
-    fleet: b.fleet?.chatId ? { chatId: b.fleet.chatId, topicId: b.fleet.topicId ?? null,
-      everyMinutes: b.fleet.everyMinutes > 0 ? b.fleet.everyMinutes : 60,
-      timeFormat: ['date', 'countdown'].includes(b.fleet.timeFormat) ? b.fleet.timeFormat : 'both',
-      order: Array.isArray(b.fleet.order) ? b.fleet.order : [],
-      always: b.fleet.always && typeof b.fleet.always === 'object' ? b.fleet.always : {} } : null,
+    alerts: b.alerts?.chatId ? { chatId: b.alerts.chatId, topicId: b.alerts.topicId ?? null } : null,
     ...dashboardConfig(b.dashboard, localBridge(localPath).dashboard?.hostToken),
     projects,
   };

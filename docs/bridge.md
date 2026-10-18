@@ -340,8 +340,7 @@ Transport exception URLs are not logged because they can contain bot tokens.
 | `offset.json` | last `update_id` (cache) |
 | `topics.json` | session -> Topic (cache; drives re-attach and the delete sweep) |
 | `daemon.log` | Windows service log: `up`, `post`, `closed/reopened/deleted topic` lines |
-| `codex-usage.jsonl` | the Codex account's quota series, recorded every fleet tick (`quota-series.mjs`) |
-| `fleet-report.json` | this machine's last fleet report id and round (cache) |
+| `codex-usage.jsonl` | the Codex account's quota series, recorded on every dashboard push (`quota-series.mjs`) |
 | `channel-<pid>.log` | one per Claude channel process: start (session id and its source), ancestry, decision, connect, exit; pruned after 7 days |
 
 These files are **machine-local and contain local paths** (cwds, which include the user
@@ -463,101 +462,20 @@ to 50 MiB and preserve original bytes. Captions are plain text, at most 1024 cha
 Uncertain upload outcomes are not retried; check the Topic before another attempt.
 No directory scanning or automatic artifact publication is performed.
 
-## Fleet report (`scripts/bridge/fleet.mjs`)
-
-Every machine reports into one shared chat/Topic, in a fixed order, at a low rate: which
-seats it is on, how much quota is left, when it resets, whether it runs out first, and what
-is running there. Enable it in the shared config (`seats` is top-level: see Claude seats):
-
-```json
-"bridge": { "fleet": {
-  "chatId": -1001111111111, "topicId": 42, "everyMinutes": 60, "timeFormat": "both", "always": { "claude": true, "codex": false },
-  "order": ["host-a", "host-b"]
-} },
-"seats": [{ "alias": "team-a", "email": "alice@example.com", "org": "Team A", "machines": ["host-a"] }]
-```
-
-`topicId` is optional (absent = General); `everyMinutes` defaults to 60. Every machine's
-bot must be a member of that chat. Every `everyMinutes`, each machine posts a fresh report
-at its slot — one minute apart, in the order of `order` (unlisted machines last) — and deletes its previous one, so the chat holds the latest round, top to bottom.
-Nothing is reported in the first minute after a daemon start, while sessions re-register.
-
-| Line | Source |
-| --- | --- |
-| Claude seat | top-level `seats` (`{alias, email, org?, orgUuid?, machines}`): the Claude account x Team each machine should run as, one block per seat. The shared config is never in git, so naming accounts there is fine. Codex accounts are not registered |
-| Codex account | app-server `account/read` (email, plan) |
-| Codex reset credits | `account/rateLimits/read` `rateLimitResetCredits`: count, and each credit's expiry |
-| extra resets | community APIs `codex-resets.com/api/v1` and `clauderesets.com/api/v1` (`resets` + `status`), read once per report (`extra-resets.mjs`): per host, one announced but not applied. Whether an account holds a reset to spend is account state: Codex reads it from the account (reset credits); Claude exposes none, so the report claims none. Past resets are history and not shown. Not official data |
-| Claude account | each config dir's `.claude.json` `oauthAccount` (email, organization), shown in full |
-| Claude 5h / 7d | statusLine `rate_limits`, teed by `hud-hook.js` into the series `<config dir>/bridge/claude-usage.jsonl`; fresh only while a session in that dir renders |
-| Codex windows | shared app-server `account/rateLimits/read` (5-minute backstop) + `account/rateLimits/updated` |
-| running | every registered session, with its state unless Working (Idle and Unknown included); a Claude session under its seat |
-
-A report answers first what a reader acts on: will the quota last until it resets, and is
-there a reset to use. It is a Telegram rich Markdown message (`sendRichMessage`), every value
-Markdown-escaped. The posting bot names the machine, so there is no machine title. A host
-block appears only when that host runs something on this machine, has a reset to act on (an
-announced one, Codex reset credits) or has a seat problem; a
-machine with none of these posts nothing that round. `always` overrides that per host:
-a host it is on for shows whenever it has quota data, idle or not, so each round is a steady
-heartbeat. Default `{ "claude": true, "codex": false }`. Each block:
-
-```
-## Claude · team-a · 55% left                    heading: seat alias, the binding window's headroom
-**(!) 7d runs out 05/Oct 19:00 (1d 23h) · resets 09/Oct 04:20 (5d 9h)**
-`alice@example.com` · _Uni Team A_               account as code (not a link), org italic
-| | position · trend | resets · runs out |      two rows per window
-| 5h | `███░░░░░░┃░` 26% / 92% | 19:44 (24m) |      position: ┃ = even pace, fill past it = ahead
-| | `▂▃▅▇█▆▃▂ ⣀` → 27% | |                          trend: since reset, then the current speed
-| 7d | `████┃█░░░░░` 45% / 44% | 09/Oct 04:20 (5d 9h) |
-| | `▃▂▅▆▃▄▅⣶⣶⣶⣶⣶⣶⣶` **→ 118%** | **05/Oct 19:00 (1d 23h)** |
-- **claude-code-config** · main                  what runs here
-```
-
-Each window answers three questions, each in one way. **Position** (quota axis): ten cells of
-use with `┃` inserted where an even spend would be now, then `used / pace`. **Trend** (time
-axis, opening to reset; 5h: 10 cells of 30 min, 7d: 14 of 12h): a past cell is the quota spent
-in that slice against an even spend in solid blocks (`▄` on pace, `█` twice it or more,
-blank nothing, `░` never observed); the future is the current speed on the same scale in
-braille (`⣤` on pace), a dotted continuation; `·` when there is no forecast. **Outcome**:
-`→ N%` is the use at the reset at the current speed; past 100% it is
-bold, with the run-out time in the third column under the reset. No legend: the header and
-the one-glyph-one-meaning rule carry it.
-
-That forecast (`project()` in fleet.mjs) is the only one in the report: the headline's
-`runs out` warning reads it too. Its speed is the last observed trend cell's (30 min for 5h, 12h for 7d), else the average
-since the window opened; there is none from a stale snapshot, in the first tenth of a window,
-or for an exhausted one. A passed reset is a new window not yet started (Claude starts the
-next one at first use): `░░░░░░░░░░ 0%`, an empty trend, no reset time.
-
-The rows come from each account's quota series (`quota-series.mjs`): a JSONL sample
-`{from, at, windows}` per change (an unchanged reading only moves `at`), the last one being
-the quota now. A rise between two samples is spread over the time it could have happened
-in, and the first sample's use from the window's opening, so a fresh series reads as a flat
-average. Samples whose windows have all reset are dropped on the next write. Quota is per
-account, so the curve includes what other machines on that account spent.
-
-The binding window is the one projected to run out soonest, else the fullest. Codex blocks
-add `reset credits: N` with each credit's expiry when credits remain.
-
-`timeFormat` picks how times read: `both` (default: `08/Oct 23:00 (4d 7h)`; `HH:MM` for
-today), `date` (`08/Oct 23:00` only) or `countdown` (time left only: `4d 7h`, `3h 15m`, `12m`).
-Pace is read at render time (it depends only on the clock). The report never states
-a data age, only what is still true now: use only grows until a reset, so a snapshot over 15
-minutes old shows its use as a floor (`≥60%`, heading `≤40% left`) and is never projected
-from; 100% stays `exhausted` until the reset; a passed reset reads `0%`. Nothing is posted
-between rounds: every warning is a bold `(!)` line of the report — a window exhausted or running out before reset,
-a seat logged into another account/org than registered (`org` = case-insensitive substring
-of organizationName, or exact `orgUuid`), no subscription login in a seat, a seat dir not
-registered for this machine, machine absent from a non-empty `seats`. Seats and order are
-re-read every round; no restart needed.
-
-## Agents Dashboard
+## Agents Dashboard and quota alerts
 
 Optional: with `bridge.dashboard.url` (shared) and `bridge.dashboard.hostToken` (local)
-set, the daemon pushes a read-only snapshot of its sessions every `everySeconds` (default 15)
-to the dashboard behind the Telegram Mini App. Off the message path; a failing gateway
-only logs. See [`dashboard.md`](dashboard.md).
+set, the daemon pushes a read-only snapshot of its sessions and its accounts' quota
+(`scripts/bridge/quota.mjs`) every `everySeconds` (default 15) to the dashboard behind the
+Telegram Mini App. Off the message path; a failing gateway only logs. See
+[`dashboard.md`](dashboard.md).
+
+Quota is state, read on demand in the dashboard; Telegram carries only **events**. The
+dashboard judges them on the merged view of every host (so an account two hosts report alerts
+once) and hands each to the host whose push raised it, which posts one plain message with its
+own bot to `bridge.alerts` (shared: `{ "chatId": -100…, "topicId": 42 }`, absent = no alerts):
+a window turning exhausted or projected to run out before its reset, a new seat problem, a
+newly announced extra reset. An unchanged condition alerts once; recovering clears it.
 
 ## Claude seats (`scripts/shared/seats.mjs`)
 
@@ -578,7 +496,7 @@ same account in two Teams. Each seat is declared once, in the top-level `seats` 
   seat it is a prefix of or within two edits of (and says so); otherwise the launcher lists the seats. Log a seat in once: `ccc --seat <alias>`, then
   `/login` and pick its Team.
 - The channel reports the seat (from `CLAUDE_CONFIG_DIR`): the Topic title shows
-  `claude:<alias>`, and the fleet report lists the session under its seat. The base dir counts
+  `claude:<alias>`, and the dashboard lists the session under its seat. The base dir counts
   as the seat its login matches.
 
 ## Session status

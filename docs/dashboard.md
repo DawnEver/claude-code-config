@@ -71,10 +71,9 @@ no API, no authentication.
 
 ## Quota
 
-The same quota the fleet report reads, as data: each host's `AccountReader`
-(`scripts/bridge/fleet.mjs`) runs the report's own seat grouping, window views, trend and
-forecast (`accountModels()`), and the push carries the result as `accounts[]` — numbers only,
-no rendering. One algorithm, on the host, where the inputs live (statusLine series, the Codex
+Each host's `AccountReader` (`scripts/bridge/quota.mjs`) groups its Claude config dirs by
+seat, checks each login against `seats`, and computes every window's use, trend and forecast
+(`accountModels()`); the push carries the result as `accounts[]` — numbers only, no rendering. One algorithm, on the host, where the inputs live (statusLine series, the Codex
 app-server); the Worker never recomputes it.
 
 - **Per account, not per host**: the Worker merges an account reported by several hosts
@@ -85,6 +84,9 @@ app-server); the Worker never recomputes it.
   `≤` left) and forecasts nothing; a passed reset is a new window not yet started.
 - **Verdict**: the binding window is the one that runs out soonest, else the fullest. An
   exhausted window, or one projected to run out before its reset, joins the needs-you card.
+- **Alerts**: the Worker turns verdict changes into events (`quotaAlertsFor` in `view.mjs`)
+  and returns them in the push reply; the host posts them with its own bot to
+  `bridge.alerts`. See `docs/bridge.md` "Agents Dashboard and quota alerts".
 - **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
   the trend (spend per slice against an even spend; hatched = never observed), reset time and
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most

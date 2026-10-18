@@ -6,7 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, quotaView, stats, tabs } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -71,11 +71,11 @@ test('registry: ordering per boot, offline after TTL, configured hosts listed be
   let t = NOW;
   const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => t });
   assert.deepEqual(r.host('host-b'), { id: 'host-b', online: false, lastSeen: null, sessions: [] });
-  assert.equal(r.accept('host-a', parseHostPush(push({ seq: 5 }))), true);
-  assert.equal(r.accept('host-a', parseHostPush(push({ seq: 4, sessions: [] }))), false, 'delayed older push');
+  assert.equal(r.accept('host-a', parseHostPush(push({ seq: 5 }))).accepted, true);
+  assert.equal(r.accept('host-a', parseHostPush(push({ seq: 4, sessions: [] }))).accepted, false, 'delayed older push');
   assert.equal(r.host('host-a').sessions.length, 1);
-  assert.equal(r.accept('host-a', parseHostPush(push({ bootAt: 2000, seq: 1, sessions: [] }))), true, 'a restarted daemon');
-  assert.equal(r.accept('host-a', parseHostPush(push({ bootAt: 1000, seq: 9 }))), false, 'late push of the replaced daemon');
+  assert.equal(r.accept('host-a', parseHostPush(push({ bootAt: 2000, seq: 1, sessions: [] }))).accepted, true, 'a restarted daemon');
+  assert.equal(r.accept('host-a', parseHostPush(push({ bootAt: 1000, seq: 9 }))).accepted, false, 'late push of the replaced daemon');
   assert.equal(r.host('host-a').sessions.length, 0);
   r.accept('host-a', parseHostPush(push({ bootAt: 2000, seq: 2 })));
   assert.equal(r.host('host-a').online, true);
@@ -84,7 +84,7 @@ test('registry: ordering per boot, offline after TTL, configured hosts listed be
   assert.equal(r.host('host-a').online, false);
   assert.equal(r.host('host-a').sessions[0].stale, true, 'state of an offline host is not live');
   assert.equal(r.host('host-z'), null);
-  assert.equal(r.accept('host-b', parseHostPush(push({ bootAt: t + 3600000 }))), false, 'a boot dated ahead of the gateway clock');
+  assert.equal(r.accept('host-b', parseHostPush(push({ bootAt: t + 3600000 }))).accepted, false, 'a boot dated ahead of the gateway clock');
 });
 
 async function gateway(over = {}) {
@@ -106,7 +106,7 @@ test('api: host push and viewer read, each authenticated', async () => {
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, '{nope'))).status, 400);
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, { schemaVersion: 1 }))).status, 400);
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, 'x'.repeat(300 * 1024)))).status, 413);
-  assert.deepEqual(await (await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()))).json(), { accepted: true });
+  assert.deepEqual(await (await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()))).json(), { accepted: true, alerts: [] });
 
   assert.equal((await g.req('/api/dashboard')).status, 401);
   assert.equal((await g.req('/api/dashboard', { headers: { authorization: 'tma user=%7B%22id%22%3A42%7D' } })).status, 401, 'unsigned client claim');
@@ -268,4 +268,27 @@ test('view: quota verdict on the reader\'s clock; stale readings are floors that
 test('view: tabs count each view and flag quota that needs the human; no accounts, no tabs', () => {
   assert.deepEqual(tabs(mockDashboard(NOW), NOW), { sessions: 5, quota: 2, alert: true, show: true });
   assert.deepEqual(tabs({ hosts: [] }, NOW), { sessions: 0, quota: 0, alert: false, show: false });
+});
+
+test('alerts are events: a change once, judged on the merged account, so two hosts on one seat alert once', () => {
+  let t = NOW;
+  const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => t });
+  const first = r.accept('host-a', parseHostPush(push({ seq: 1, accounts: [account()] })));
+  assert.equal(first.alerts.length, 1);
+  assert.match(first.alerts[0], /^Claude · team-a \(a@example\.com\): 5h runs out in 1h 18m · resets in 3h 0m$/);
+  assert.deepEqual(r.accept('host-b', parseHostPush(push({ seq: 1, accounts: [account()] }))).alerts, [], 'the same condition from another host');
+  assert.deepEqual(r.accept('host-a', parseHostPush(push({ seq: 2, accounts: [account()] }))).alerts, [], 'an unchanged condition alerts once');
+  const fine = { ...account().windows[0], forecast: { atReset: 80, eta: null, short: false } };
+  assert.deepEqual(r.accept('host-a', parseHostPush(push({ seq: 3, accounts: [account({ windows: [fine] })] }))).alerts, [], 'recovering is quiet');
+  assert.equal(r.accept('host-a', parseHostPush(push({ seq: 4, accounts: [account()] }))).alerts.length, 1, 'a relapse alerts again');
+  const extra = r.accept('host-a', parseHostPush(push({ seq: 5, accounts: [account({ problems: ['wrong team, expected a@example.com · Team A'], extraReset: { at: NOW + HR, url: 'https://x.test/r' } })] })));
+  assert.deepEqual(extra.alerts, ['Claude · team-a (a@example.com): wrong team, expected a@example.com · Team A',
+    'Claude · team-a (a@example.com): extra reset announced · in 1h 0m · https://x.test/r']);
+});
+
+test('alert texts: exhausted, run-out, and nothing for a healthy account', () => {
+  const q = (over) => quotaView(account(over), NOW);
+  assert.deepEqual(quotaAlertsFor(undefined, q({ windows: [{ ...account().windows[0], used: 100, forecast: null }] }), NOW).texts,
+    ['Claude · team-a (a@example.com): 5h exhausted · resets in 3h 0m']);
+  assert.deepEqual(quotaAlertsFor(undefined, q({ windows: [{ ...account().windows[0], forecast: { atReset: 70, eta: null, short: false } }] }), NOW).texts, []);
 });

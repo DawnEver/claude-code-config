@@ -54,3 +54,18 @@ test('config: dashboard needs url + hostToken, https unless loopback', () => {
   assert.match(read({ dashboard: { url: 'https://gw.example', everySeconds: 1e9 } }, local), /5\.\.3600/);
   assert.equal(read({ dashboard: { url: 'http://127.0.0.1:8787', everySeconds: 30 } }, local).everySeconds, 30);
 });
+
+test('push: alerts from the gateway go to onAlerts; a failing post never fails the push', async () => {
+  const posted = [], logs = [];
+  let throwOnPost = false;
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', log: (m) => logs.push(m), sessions: () => [],
+    onAlerts: async (texts) => { if (throwOnPost) throw new Error('telegram down'); posted.push(...texts); },
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ accepted: true, alerts: ['a', 7, 'b'] }) }) });
+  assert.equal(await push.tick(), true);
+  await new Promise((done) => setTimeout(done, 5));
+  assert.deepEqual(posted, ['a', 'b'], 'only strings');
+  throwOnPost = true;
+  assert.equal(await push.tick(), true);
+  await new Promise((done) => setTimeout(done, 5));
+  assert.match(logs.at(-1), /alert not posted \(telegram down\)/);
+});

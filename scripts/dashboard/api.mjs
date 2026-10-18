@@ -66,7 +66,7 @@ export function createApi(config, { now = Date.now, log = () => {} } = {}) {
       let parsed;
       try { parsed = parseHostPush(JSON.parse(text)); } catch { return error(400, 'invalid_body'); }
       if (!parsed) return error(400, 'invalid_snapshot');
-      return json(200, { accepted: registry.accept(hostId, parsed) });
+      return json(200, registry.accept(hostId, parsed));
     }
     if (request.method !== 'GET') return error(404, 'not_found');
     const who = await verifyInitData(/^tma (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1],
