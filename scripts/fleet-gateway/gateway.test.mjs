@@ -198,3 +198,11 @@ test('end to end: bridge registry -> push -> gateway -> viewer', async () => {
   assert.equal(s.topic.url, `https://t.me/c/1234567890/${thread}`);
   assert.ok(!JSON.stringify(fleet).includes('/secret/home'));
 });
+
+test('static app: every script parses (a syntax error only shows as a stuck page)', async () => {
+  const { spawnSync } = await import('child_process');
+  for (const f of ['app.js', 'view.mjs']) {
+    const r = spawnSync(process.execPath, ['--check', new URL(`./public/${f}`, import.meta.url).pathname.replace(/^\/(\w:)/, '$1')], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${f}: ${r.stderr}`);
+  }
+});

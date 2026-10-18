@@ -88,7 +88,7 @@ async function load() {
 
 async function fetchFleet() {
   if (mock) { fleet = mockFleet(); $('banner').textContent = 'Mock data: not connected to the gateway'; render(); return; }
-  if (!tg?.initData) { $('banner').textContent = 'Open this page from the bridge bot's Fleet button in Telegram'; $('hosts').replaceChildren(); return; }
+  if (!tg?.initData) { $('banner').textContent = 'Open this page from the fleet bot in Telegram (menu button Fleet)'; $('hosts').replaceChildren(); return; }
   try {
     const res = await fetch('api/fleet', { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
     if (res.status === 401 || res.status === 403) {
