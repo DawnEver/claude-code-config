@@ -28,7 +28,7 @@ function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
         initialize: { userAgent: 'fake' },
         'thread/loaded/list': { data: loaded, nextCursor: null },
         'thread/resume': { thread: threads[m.params?.threadId] ? { source: 'cli', ...threads[m.params?.threadId] } : { id: m.params?.threadId, source: 'cli', cwd: '/w', ephemeral: false, gitInfo: { branch: 'feat/x' }, turns: [] } },
-        'thread/read': { thread: { id: m.params?.threadId, ephemeral: spec?.ephemeral ?? false, status: spec?.status ?? { type: 'idle' } } },
+        'thread/read': { thread: { id: m.params?.threadId, ephemeral: spec?.ephemeral ?? false, status: spec?.status ?? { type: 'idle' }, updatedAt: spec?.updatedAt ?? 0 } },
         'thread/unsubscribe': { status: 'unsubscribed' },
         'turn/start': { turn: { id: 'turnA' } },
         'turn/steer': { turnId: 'turnA' },
@@ -139,23 +139,27 @@ test('a thread in systemError goes down and stays out until Codex reports it rec
   assert.deepEqual(ev.at(-1), ['up', 't1', null], 'recovered: tracked again');
 });
 
-test('an idle thread is released after 10 min: closed if the bridge alone held it, silently re-held otherwise', async () => {
-  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' } } };
+test('an idle thread is released after 10 min and taken back only on evidence of activity, never on a timer', async () => {
+  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' }, updatedAt: 100 } };
   const { a, srv, clock, ev } = await clocked({ threads });
+  const resumes = () => srv.calls.filter((c) => c.method === 'thread/resume').length;
   clock.t += 9 * 60000;
   await a.refresh();
   assert.ok(!srv.calls.some((c) => c.method === 'thread/unsubscribe'), 'not before 10 min idle');
   clock.t += 60000;
   await a.refresh();
   assert.equal(srv.calls.filter((c) => c.method === 'thread/unsubscribe').length, 1);
-  assert.deepEqual(ev, [['up', 't1', null]], 'released, not down: another client may still hold it');
-  // Still loaded a minute later: someone else holds it. Re-held without a new up; what ran meanwhile replays.
-  threads.t1.turns = [{ id: 'T9', startedAt: (clock.t + 1000) / 1000, status: 'completed', items: [{ type: 'agentMessage', id: 'm', text: 'done' }] }];
-  clock.t += 60000;
+  assert.deepEqual(ev, [['up', 't1', null]], 'released, not down: Codex decides when it is gone');
+  // Still loaded and quiet for an hour: Codex has not unloaded it yet. Not taken back.
+  for (let i = 0; i < 4; i++) { clock.t += 15 * 60000; await a.refresh(); }
+  assert.equal(resumes(), 1, 'no timer re-holds a quiet thread');
+  // Someone works in it: updated since the release. Taken back without a new up; what ran replays.
+  threads.t1.updatedAt = 200;
+  threads.t1.turns = [{ id: 'T9', startedAt: (clock.t - 1000) / 1000, status: 'completed', items: [{ type: 'agentMessage', id: 'm', text: 'done' }] }];
   await a.refresh();
+  assert.equal(resumes(), 2);
   assert.deepEqual(ev, [['up', 't1', null], ['final', 't1', 'done']]);
-  assert.equal(a.statusSnapshot('t1').state, 'idle');
-  // Released again later, and this time Codex unloads it: down.
+  // Released again, then Codex unloads it: down.
   clock.t += 10 * 60000;
   await a.refresh();
   srv.setLoaded([]);

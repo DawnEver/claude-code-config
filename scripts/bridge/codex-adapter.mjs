@@ -19,12 +19,12 @@ import { JsonRpcPeer } from './jsonrpc.mjs';
 import { BRIDGE_DEFAULTS } from './context.mjs';
 
 const QUOTA_REFRESH_MS = 5 * 60000;
-// Codex keeps a thread loaded while any client subscribes, and says nothing about who does,
-// so the bridge's own subscription would keep a closed window's thread alive forever. After
-// this long idle it lets go; if the thread is still loaded RELEASE_GRACE_MS later, another
-// client holds it and the bridge takes it back without a new `up`.
+// Codex keeps a thread loaded while any client subscribes (and for an undocumented while
+// after), and says nothing about who does, so the bridge's own subscription would keep a closed
+// window's thread loaded forever. After this long idle the bridge lets go and watches it with
+// `thread/read` (no subscription): updated since, or active, means someone works in it, and it
+// is taken back; unloaded means it is gone. Codex alone decides; no timer guesses.
 const IDLE_RELEASE_MS = 10 * 60000;
-const RELEASE_GRACE_MS = 60000;
 const isCodexBucket = (l) => Boolean(l) && (l.limitId ?? 'codex') === 'codex';
 const dropNulls = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null));
 const IS_WIN = process.platform === 'win32';
@@ -218,7 +218,12 @@ export class CodexAdapter extends EventEmitter {
     const now = this.now();
     for (const [id, th] of [...this.threads]) {
       if (th.released !== null) {
-        if (now - th.released >= RELEASE_GRACE_MS) await this.#resume(id, th.released).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+        const read = (await this.rpc?.request('thread/read', { threadId: id }).catch(() => null))?.thread;
+        if (!read) continue;
+        if (read.status?.type === 'systemError') { this.#abandon(id); continue; }
+        if (read.status?.type === 'active' || (read.updatedAt ?? 0) > th.updatedAt) {
+          await this.#resume(id, th.released).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+        }
       } else if (th.idleSince !== null && now - th.idleSince >= IDLE_RELEASE_MS) {
         th.released = now;
         await this.rpc?.request('thread/unsubscribe', { threadId: id }).catch(() => {});
@@ -288,6 +293,7 @@ export class CodexAdapter extends EventEmitter {
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
       idleSince: th.status?.type === 'idle' ? this.now() : null,
       released: null,
+      updatedAt: th.updatedAt ?? 0,   // Codex's own clock: compared only with itself
     };
     if (releasedAt !== null) {
       if (!this.threads.has(threadId)) return;   // closed meanwhile
