@@ -66,7 +66,8 @@ export function createApi(config, { now = Date.now, log = () => {} } = {}) {
       let parsed;
       try { parsed = parseHostPush(JSON.parse(text)); } catch { return error(400, 'invalid_body'); }
       if (!parsed) return error(400, 'invalid_snapshot');
-      return json(200, registry.accept(hostId, parsed));
+      const { accepted, configChanges = [] } = registry.accept(hostId, parsed);
+      return json(200, { accepted, configChanges });
     }
     if (request.method !== 'GET' && !(request.method === 'POST' && url.pathname === '/api/config')) return error(404, 'not_found');
     const who = await verifyInitData(/^tma (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1],

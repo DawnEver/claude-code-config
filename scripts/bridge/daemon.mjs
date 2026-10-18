@@ -807,11 +807,6 @@ export async function main() {
   if (config.dashboard) {
     const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
       codexSeriesFile: path.join(BRIDGE_RUNTIME_DIR, 'codex-usage.jsonl') });
-    // Quota alerts: judged by the dashboard on the merged view, posted here, events only.
-    const onAlerts = async (texts) => {
-      if (!config.alerts) return;
-      for (const text of texts) await telegram.sendMessage(config.alerts.chatId, text, { threadId: config.alerts.topicId ?? undefined });
-    };
     // Dashboard-editable keys (dashboard-schema.mjs CONFIG_KEYS) are reloaded live, so an edit
     // made here or synced in from another host applies within a minute, without a restart.
     const reload = () => {
@@ -833,7 +828,7 @@ export async function main() {
     };
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSnapshot().map((s) => ({ ...s, account: accountFor(s, list) })),
-      accounts: () => accounts.read(), onAlerts, onConfigChanges });
+      accounts: () => accounts.read(), onConfigChanges });
     push.start();
     setInterval(() => { try { reload(); } catch (e) { log(`config reload: ${e.message}`); } }, 60000).unref();
   }

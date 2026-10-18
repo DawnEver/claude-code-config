@@ -358,7 +358,7 @@ function renderConfig() {
     const dl = el('dl', 'facts cfg');
     const on = (b) => (b ? 'on' : 'off');
     for (const [k, val] of [['Telegram bridge', on(h.facts.bridge)], ['Allowed users', String(h.facts.allowedUsers)],
-      ['Approvals from Telegram', on(h.facts.approvalsFromTelegram)], ['Quota alerts', on(h.facts.alerts)],
+      ['Approvals from Telegram', on(h.facts.approvalsFromTelegram)],
       ['Codex sources', h.facts.codexSources.join(', ') || '—'], h.facts.dashboardError && ['Dashboard', h.facts.dashboardError]].filter(Boolean)) {
       dl.append(el('dt', null, k), el('dd', null, val));
     }

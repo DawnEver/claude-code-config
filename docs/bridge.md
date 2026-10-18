@@ -462,7 +462,7 @@ to 50 MiB and preserve original bytes. Captions are plain text, at most 1024 cha
 Uncertain upload outcomes are not retried; check the Topic before another attempt.
 No directory scanning or automatic artifact publication is performed.
 
-## Agents Dashboard and quota alerts
+## Agents Dashboard
 
 Optional: with `bridge.dashboard.url` (shared) and `bridge.dashboard.hostToken` (local)
 set, the daemon pushes a read-only snapshot of its sessions and its accounts' quota
@@ -470,12 +470,9 @@ set, the daemon pushes a read-only snapshot of its sessions and its accounts' qu
 Telegram Mini App. Off the message path; a failing gateway only logs. See
 [`dashboard.md`](dashboard.md).
 
-Quota is state, read on demand in the dashboard; Telegram carries only **events**. The
-dashboard judges them on the merged view of every host (so an account two hosts report alerts
-once) and hands each to the host whose push raised it, which posts one plain message with its
-own bot to `bridge.alerts` (shared: `{ "chatId": -100…, "topicId": 42 }`, absent = no alerts):
-a window turning exhausted (a projected run-out is never alerted), a new seat problem, a
-newly announced extra reset. An unchanged condition alerts once; recovering clears it.
+Quota is state, read on demand in the dashboard. Its events (a window hitting its limit, a
+seat problem, an announced extra reset) live only in the dashboard's Events tab: the bridge
+posts nothing about quota to Telegram, and nothing to any group's General topic.
 
 ## Claude seats (`scripts/shared/seats.mjs`)
 

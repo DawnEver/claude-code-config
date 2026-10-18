@@ -37,7 +37,7 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
   fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '1:abc', allowedUserIds: ['42', 'x'], approvalsFromTelegram: true } }));
   try {
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }), {
-      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli'], alerts: null, dashboard: null, dashboardError: null, projects: { a: { chatId: -100, projectInTitle: 'always' } },
+      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli'], dashboard: null, dashboardError: null, projects: { a: { chatId: -100, projectInTitle: 'always' } },
     });
     fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { codexSources: ['cli', 'vscode', 7] } }));
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }).codexSources, ['cli', 'vscode']);
@@ -48,15 +48,13 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('readBridgeConfig: quota alerts are off without a chat id', () => {
+test('readBridgeConfig: a leftover bridge.alerts is ignored (Telegram quota alerts are gone)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-'));
   try {
     const sharedPath = path.join(dir, 's.json'), localPath = path.join(dir, 'l.json');
     fs.writeFileSync(localPath, '{}');
-    fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { alerts: { topicId: 5 } } }));
-    assert.equal(readBridgeConfig({ sharedPath, localPath }).alerts, null);
-    fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { alerts: { chatId: -1, everyMinutes: 60 } } }));
-    assert.deepEqual(readBridgeConfig({ sharedPath, localPath }).alerts, { chatId: -1, topicId: null }, 'only where to post: alerts are events, not a schedule');
+    fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { alerts: { chatId: -1 } } }));
+    assert.equal('alerts' in readBridgeConfig({ sharedPath, localPath }), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

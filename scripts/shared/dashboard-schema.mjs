@@ -73,7 +73,7 @@ function parseConfigSummary(c) {
   const f = c.facts ?? {};
   return { editable, localOverrides: (Array.isArray(c.localOverrides) ? c.localOverrides : []).filter((k) => k in editable),
     facts: { bridge: f.bridge === true, allowedUsers: num(f.allowedUsers, 0, 1000) ?? 0, approvalsFromTelegram: f.approvalsFromTelegram === true,
-      alerts: f.alerts === true, codexSources: (Array.isArray(f.codexSources) ? f.codexSources : []).map((x) => text(x, 32)).filter(Boolean).slice(0, 8),
+      codexSources: (Array.isArray(f.codexSources) ? f.codexSources : []).map((x) => text(x, 32)).filter(Boolean).slice(0, 8),
       dashboardError: text(f.dashboardError, 200) } };
 }
 

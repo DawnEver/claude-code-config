@@ -23,9 +23,9 @@ export class Registry {
 
   /**
    * Accept a parsed push unless it is not newer than the one held: an older boot, or the same
-   * boot's earlier tick. Returns {accepted, alerts}: the quota alerts this push's accounts now
-   * warrant, judged once here on the merged view (so an account several hosts report alerts
-   * once) and handed to this host to post with its own bot — the Worker holds no bot token.
+   * boot's earlier tick. Returns {accepted, alerts, configChanges}: `alerts` are the quota
+   * events this push's accounts now warrant, judged once here on the merged view (so an account
+   * several hosts report alerts once) and kept as dashboard events; nothing is posted anywhere.
    */
   accept(hostId, push) {
     const prev = this.hosts.get(hostId);

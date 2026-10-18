@@ -55,19 +55,11 @@ test('config: dashboard needs url + hostToken, https unless loopback', () => {
   assert.equal(read({ dashboard: { url: 'http://127.0.0.1:8787', everySeconds: 30 } }, local).everySeconds, 30);
 });
 
-test('push: alerts from the gateway go to onAlerts; a failing post never fails the push', async () => {
-  const posted = [], logs = [];
-  let throwOnPost = false;
-  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', log: (m) => logs.push(m), sessions: () => [],
-    onAlerts: async (texts) => { if (throwOnPost) throw new Error('telegram down'); posted.push(...texts); },
-    fetch: async () => ({ ok: true, status: 200, json: async () => ({ accepted: true, alerts: ['a', 7, 'b'] }) }) });
+test('push: the gateway reply carries no alerts and the host posts nothing', async () => {
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', sessions: () => [],
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ accepted: true, alerts: ['ignored'] }) }) });
   assert.equal(await push.tick(), true);
-  await new Promise((done) => setTimeout(done, 5));
-  assert.deepEqual(posted, ['a', 'b'], 'only strings');
-  throwOnPost = true;
-  assert.equal(await push.tick(), true);
-  await new Promise((done) => setTimeout(done, 5));
-  assert.match(logs.at(-1), /alert not posted \(telegram down\)/);
+  assert.equal('onAlerts' in push, false);
 });
 
 test('config summary: editable values and facts only — no token, no user id, no chat id', async () => {
@@ -77,13 +69,13 @@ test('config summary: editable values and facts only — no token, no user id, n
     const localPath = path.join(dir, 'l.json');
     fs.writeFileSync(localPath, JSON.stringify({ bridge: { idleCloseMinutes: 5 } }));
     const config = { botToken: '123456:SECRET-token-SECRET-token-SECRET', allowedUserIds: [424242], approvalsFromTelegram: false,
-      idleCloseMinutes: 5, deleteClosedAfterHours: 24, codexSources: ['cli'], alerts: { chatId: -1001234567890, topicId: null },
+      idleCloseMinutes: 5, deleteClosedAfterHours: 24, codexSources: ['cli'],
       dashboard: { url: 'https://dashboard.example.com', hostToken: 'host-secret-value', everySeconds: 15 }, dashboardError: null,
       projects: { repo: { chatId: -1001234567890, projectInTitle: 'always' } } };
     const s = configSummary(config, { localPath });
     assert.deepEqual(s.editable, { 'bridge.idleCloseMinutes': 5, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.repo.projectInTitle': 'always' });
     assert.deepEqual(s.localOverrides, ['bridge.idleCloseMinutes'], 'a shared edit would not reach this host');
-    assert.deepEqual(s.facts, { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, alerts: true, codexSources: ['cli'], dashboardError: null });
+    assert.deepEqual(s.facts, { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null });
     assert.doesNotMatch(JSON.stringify(s), /SECRET|424242|1234567890|host-secret|dashboard\.example/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

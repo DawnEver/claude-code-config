@@ -16,7 +16,7 @@ Telegram ─ dashboard bot ─ Mini App (public/) ─ GET /api/dashboard, Author
 
 **Optional, off by default.** Nothing here runs until a host is configured for it: the bridge
 needs `bridge.botToken`, the push needs the shared `bridge.dashboard.url` and this host's local
-`bridge.dashboard.hostToken`, Telegram alerts need `bridge.alerts`, and the statusLine records
+`bridge.dashboard.hostToken`, and the statusLine records
 quota only on a host that pushes (`recordsQuota` in `quota.mjs`). An unconfigured clone starts
 no daemon, loads no channel and writes no series.
 
@@ -91,13 +91,12 @@ app-server); the Worker never recomputes it.
 - **Verdict**: the binding window is the one that runs out soonest, else the fullest. Only an
   exhausted window joins the needs-you card (tap it to mark it read on this device; it returns
   with the next window period). A projected run-out is shown on the account row, never alerted.
-- **Alerts**: the Worker turns a window hitting its limit, a seat problem, or an announced extra
-  reset into events (`quotaAlertsFor` in `view.mjs`) and returns them in the push reply; the host posts them with its own bot to
-  `bridge.alerts`. See `docs/bridge.md` "Agents Dashboard and quota alerts".
-- **Events**: every alert is also kept in the Worker (last 50, memory only) and shown in the
+- **Events**: the Worker turns a window hitting its limit, a seat problem, or an announced extra
+  reset into events (`quotaAlertsFor` in `view.mjs`), kept in the Worker (last 50, memory only)
+  and shown only here — nothing is posted to Telegram. Shown in the
   Events tab, newest first, with an unread count since this device last opened it. The tab
   lists only what was unread when it was opened: events read on one visit are cleared from
-  the next (per device). Independent of `bridge.alerts`.
+  the next (per device).
 - **Layout**: by host — what each machine has left on each account. One compact row per
   account (both windows' bars against even pace, what is left, where else that budget runs);
   a tap opens it in place to the detail: org and plan, each window's trend on a local-time axis
