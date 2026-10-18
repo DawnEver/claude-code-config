@@ -1,41 +1,43 @@
 ---
 name: fleet-gateway-v01
-description: Telegram Fleet Mini App V0.1 (read-only) — design decisions, verification, open items
+description: Agents Dashboard V0.1 (read-only Telegram Mini App) — current design, deployment, lessons, open items
 ---
 
-# Fleet gateway + Mini App V0.1 (2026-10-18, commit d6d46dd, not pushed)
+# Agents Dashboard V0.1 (2026-10-18)
 
-Usage/authority: `docs/fleet-gateway.md`.
+Usage/authority: `docs/dashboard.md`. Code: `scripts/dashboard/`.
 
-## Design decisions
-- Zero dependencies, no build: `node:http` gateway, vanilla ES-module Mini App
-  (`scripts/fleet-gateway/public/`; pure logic in `view.mjs`, DOM in `app.js`, textContent only).
-  Rejected the plan's React/Vite/Tailwind/Fastify: the repo has no npm deps.
-- Export = `Bridge.fleetSnapshot()`: read-only projection of the existing registry + adapter
-  `statusSnapshot`. No new state, no log parsing. `fleetSessions()` (fleet report) now derives from it.
-- One status vocabulary: `STATUS_CODES` (native -> code) -> `STATUS_LABELS` (code -> text), used by
-  status card, fleet report and wire; test cross-checks against `STATUSES`.
-- Wire contract + trust boundary: `scripts/shared/fleet-schema.mjs` (`parseHostPush` whitelists
-  fields; Topic link `t.me/c/<id>/<topicId>` derived there; raw chat id never served). Lives in
-  shared so `bridgeSourceRevision` needs no gateway dir.
-- `fleet-push.mjs`: own unref'd timer, one in flight, 5 s timeout, never on the Telegram path;
-  `accepted:false` counts as failure; failures logged once.
-- Ordering: `bootAt` (daemon start) + `seq`; gateway refuses older boot / earlier tick and a boot
-  > 5 min ahead of its clock. Freshness (`stale`, gateway clock) separate from status.
-- `bridge.fleetGateway.hostToken` read from the local layer only; config errors surface as
-  `fleetGatewayError` logged by the daemon. URL must be an origin.
-- Per user: NO new bot. Gateway runs on one bridge workstation and reuses that machine's
-  `botToken` + `allowedUserIds` via `readBridgeConfig` (initData is signed by the bot that opens
-  the app). `~/.claude/fleet-gateway.json` holds only host token hashes + listener.
+## Current design
+- Gateway = Cloudflare Worker + one `DashboardHub` Durable Object (registry in memory),
+  deployed as `agents-dashboard` on the user's own domain via `scripts/dashboard/deploy.mjs`
+  (`npm run dashboard -- host-token | deploy | set-menu`). The earlier Node `server.mjs` and the
+  HMAC initData path are removed; the first Worker (`agent-fleet`) was deleted.
+- Own dashboard bot (control plane belongs to no workstation). initData verified by Telegram's
+  Ed25519 third-party signature: needs only `botId` + Telegram's public key (checked verbatim
+  against core.telegram.org/bots/webapps.md), never a bot token in the cloud.
+- `api.mjs` = routes on Web-standard Request/Response, so Node tests drive it directly.
+- Config single home: shared `bridge.dashboard` {url (origin), botId, everySeconds, hosts:
+  {machine: sha256}}. Secrets local-only: `hostToken` (push), `botToken` (read by `set-menu`,
+  which also reads the button back). Neither reaches the Worker's `DASHBOARD_CONFIG`.
+- Bridge side unchanged in shape: `Bridge.dashboardSnapshot()` (read-only projection),
+  `dashboard-push.mjs` off the message path, `scripts/shared/dashboard-schema.mjs` wire contract.
+- Rename: everything of the Mini App is "dashboard". The Telegram fleet REPORT (`fleet.mjs`,
+  `bridge.fleet`, `fleetSessions`) keeps its name — a different feature.
+- UI: needs-you summary card first, status chips with counts, one section per host (online
+  first, offline dimmed), sessions sorted by urgency, chevron only when a Topic opens.
 
-## Verification
-- Real host: this workstation's daemon pushed its 2 real sessions to a loopback gateway (config temporarily
-  edited, restored byte-identical). After restart Claude sessions read Unknown until next hook edge.
-- 219 bridge+gateway tests pass. Full suite: 12 failures identical to baseline (symlink EPERM, pre-existing).
-- Two reviews (diff reviewer + sharp-review 32 findings) fixed; see sharp-review.md same day.
+## Lessons
+- An apostrophe inside a single-quoted string made `app.js` a syntax error: the page only showed
+  "Loading..." forever. A test now runs `node --check` on every public script.
+- A zombie `wrangler dev` (workerd) from an earlier run held the port and faked later failures:
+  check the port owner before trusting a local result.
+- `.dev.vars` values must be unquoted JSON (quoted values keep the escapes).
+- Campus DNS cached NXDOMAIN for 30 min (SOA minimum) after the first lookup of a new
+  subdomain; `ipconfig /flushdns` needs elevation. Probe via `--resolve` against 1.1.1.1's answer.
+- Headless Chrome on Windows clips screenshots below ~500 px width: not a layout overflow.
 
-## Open (need user)
-- HTTPS tunnel: none installed (tailscale/cloudflared/ngrok/caddy absent); choose method.
-- Choose gateway workstation; Telegram client acceptance (open app, tap Topic links per client).
-- Multi-host verification; no gateway service installer; `daemon.mjs` >600 lines split deferred
-  (plan forbids core daemon rework in this phase).
+## Open
+- User must save `bridge.dashboard.botToken` locally, then `set-menu` (menu still points at the
+  deleted first Worker's address).
+- Telegram client acceptance (open Dashboard, tap a Topic link); second host onboarding.
+- Commits 41aa4f7, 9a0602f, c1baa8c unpushed.
