@@ -11,6 +11,6 @@
     "bridge:install": "node scripts/bridge/install-service.mjs install",
     "bridge:uninstall": "node scripts/bridge/install-service.mjs uninstall",
     "bridge:status": "node scripts/bridge/install-service.mjs status",
-    "fleet-gateway": "node scripts/fleet-gateway/server.mjs"
+    "fleet-gateway": "node scripts/fleet-gateway/deploy.mjs"
   }
 }

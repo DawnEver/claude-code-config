@@ -1,43 +1,65 @@
-// scripts/fleet-gateway/auth.mjs — the two identities the gateway accepts.
-//   Viewer: a Telegram Mini App user. The raw `initData` string is verified server-side
-//     (https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app):
-//     HMAC-SHA256 with key HMAC-SHA256("WebAppData", botToken), freshness by auth_date, then
-//     the user id against the allowlist. initDataUnsafe and any client-sent id are never trusted.
-//   Host: a bridge daemon, by its own bearer token; the gateway stores only its SHA-256.
+// scripts/fleet-gateway/auth.mjs — the two identities the gateway accepts (WebCrypto only: runs
+// in the Worker and in Node tests alike).
+//   Viewer: a Telegram Mini App user, opened from the fleet bot. The raw `initData` is verified
+//     by its Ed25519 `signature` (https://core.telegram.org/bots/webapps#validating-data-for-third-party-use):
+//     only the fleet bot's id and Telegram's public key are needed, never a bot token. Then
+//     freshness by auth_date and the user id against the allowlist. initDataUnsafe and any
+//     client-sent id are never trusted.
+//   Host: a bridge daemon, by its own bearer token; the gateway holds only its SHA-256.
 
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
+/** Telegram's Ed25519 key for production bots (same source). */
+export const TELEGRAM_PUBLIC_KEY = 'e7bf03a2fa4602af4580703d88dda5bb59f32ed8b02a56c187fe7d34caed242d';
 
-const sameHex = (a, b) => a.length === b.length && timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
-export const sha256 = (s) => createHash('sha256').update(s).digest('hex');
+const enc = new TextEncoder();
+const hexBytes = (hex) => Uint8Array.from(hex.match(/../g), (b) => parseInt(b, 16));
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+const base64url = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
+
+export async function sha256(s) {
+  return hex(await crypto.subtle.digest('SHA-256', enc.encode(s)));
+}
+
+/** Constant-time over equal-length strings. */
+function same(a, b) {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
 
 /** -> {ok: true, userId} | {ok: false, status: 401|403} */
-export function verifyInitData(initData, { botToken, allowedUserIds, maxAgeSeconds, now = Date.now() }) {
+export async function verifyInitData(initData, { botId, allowedUserIds, maxAgeSeconds, now = Date.now(), publicKey = TELEGRAM_PUBLIC_KEY }) {
   const fail = { ok: false, status: 401 };
   if (typeof initData !== 'string' || !initData || initData.length > 8192) return fail;
   const params = new URLSearchParams(initData);
-  const hash = params.get('hash');
-  if (!/^[a-f0-9]{64}$/.test(hash ?? '')) return fail;
+  const signature = params.get('signature');
+  if (!/^[A-Za-z0-9_-]{80,90}$/.test(signature ?? '')) return fail;
   params.delete('hash');
-  const check = [...params].map(([k, v]) => `${k}=${v}`).sort().join('\n');
-  const secret = createHmac('sha256', 'WebAppData').update(botToken).digest();
-  if (!sameHex(createHmac('sha256', secret).update(check).digest('hex'), hash)) return fail;
-  const authDate = Number(params.get('auth_date'));
-  const age = now / 1000 - authDate;
-  if (!Number.isFinite(authDate) || age > maxAgeSeconds || age < -60) return fail;   // 60 s clock skew
+  params.delete('signature');
+  const check = `${botId}:WebAppData\n${[...params].map(([k, v]) => `${k}=${v}`).sort().join('\n')}`;
+  let valid = false;
+  try {
+    const key = await crypto.subtle.importKey('raw', hexBytes(publicKey), { name: 'Ed25519' }, false, ['verify']);
+    valid = await crypto.subtle.verify({ name: 'Ed25519' }, key, base64url(signature), enc.encode(check));
+  } catch { return fail; }
+  if (!valid) return fail;
+  const age = now / 1000 - Number(params.get('auth_date'));
+  if (!Number.isFinite(age) || age > maxAgeSeconds || age < -60) return fail;   // 60 s clock skew
   let userId;
   try { userId = Number(JSON.parse(params.get('user')).id); } catch { return fail; }
   if (!Number.isSafeInteger(userId)) return fail;
   return allowedUserIds.includes(userId) ? { ok: true, userId } : { ok: false, status: 403 };
 }
 
-/** The host whose token this is, by its stored hash. */
-export function verifyHostToken(hostId, header, hostTokenHashes) {
+/** Whether `header` carries the token of `hostId`, by its stored hash. */
+export async function verifyHostToken(hostId, header, hostTokenHashes) {
   const token = /^Bearer (\S{16,256})$/.exec(header ?? '')?.[1];
   const want = hostTokenHashes[hostId];
-  return !!(token && typeof want === 'string' && /^[a-f0-9]{64}$/.test(want) && sameHex(sha256(token), want));
+  return !!(token && typeof want === 'string' && /^[a-f0-9]{64}$/.test(want) && same(await sha256(token), want));
 }
 
-export function newHostToken() {
-  const token = randomBytes(32).toString('base64url');
-  return { token, hash: sha256(token) };
+export async function newHostToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return { token, hash: await sha256(token) };
 }

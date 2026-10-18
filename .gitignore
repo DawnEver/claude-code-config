@@ -49,3 +49,7 @@ skills/synced/
 # and breaks that link. The tracked template is config.template.json; setup copies it here
 # when absent.
 claude_plugins/claude-hud/config.json
+
+# wrangler dev secrets (scripts/fleet-gateway)
+.dev.vars
+.wrangler/

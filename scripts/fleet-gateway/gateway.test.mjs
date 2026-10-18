@@ -1,43 +1,51 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'crypto';
+import fs from 'fs';
 import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
 import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/fleet-schema.mjs';
 import { Registry } from './registry.mjs';
-import { createGateway } from './server.mjs';
+import { createApi, parseFleetConfig } from './api.mjs';
+import { fleetConfigFrom } from './deploy.mjs';
 import { ago, applyFilters, displayStatus, filterOptions, mockFleet, stats } from './public/view.mjs';
 
-const BOT = '123456:TEST-token';
+const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
 const NOW = 1_800_000_000_000;
 
-function initData({ user = ALICE, authDate = NOW / 1000, bot = BOT } = {}) {
+// A stand-in for Telegram's signing key: the gateway is given its public half.
+const telegram = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+const PUBLIC_KEY = Buffer.from(await crypto.subtle.exportKey('raw', telegram.publicKey)).toString('hex');
+const other = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+
+async function initData({ user = ALICE, authDate = NOW / 1000, botId = BOT_ID, key = telegram.privateKey } = {}) {
   const params = new URLSearchParams({ auth_date: String(Math.floor(authDate)), query_id: 'q1', user: JSON.stringify({ id: user, first_name: 'A' }) });
-  const check = [...params].map(([k, v]) => `${k}=${v}`).sort().join('\n');
-  const secret = createHmac('sha256', 'WebAppData').update(bot).digest();
-  params.set('hash', createHmac('sha256', secret).update(check).digest('hex'));
+  const check = `${botId}:WebAppData\n${[...params].map(([k, v]) => `${k}=${v}`).sort().join('\n')}`;
+  const sig = await crypto.subtle.sign({ name: 'Ed25519' }, key, new TextEncoder().encode(check));
+  params.set('signature', Buffer.from(sig).toString('base64url'));
+  params.set('hash', '0'.repeat(64));   // the first-party HMAC, which a third party cannot and need not check
   return params.toString();
 }
-const opts = { botToken: BOT, allowedUserIds: [ALICE], maxAgeSeconds: 3600, now: NOW };
+const opts = { botId: BOT_ID, allowedUserIds: [ALICE], maxAgeSeconds: 3600, now: NOW, publicKey: PUBLIC_KEY };
 
-test('initData: signed, fresh and allowlisted only', () => {
-  assert.deepEqual(verifyInitData(initData(), opts), { ok: true, userId: ALICE });
-  assert.equal(verifyInitData(initData({ user: MALLORY }), opts).status, 403);
-  assert.equal(verifyInitData(initData({ bot: '999:other' }), opts).status, 401, 'signed by another bot');
-  assert.equal(verifyInitData(initData({ authDate: NOW / 1000 - 7200 }), opts).status, 401, 'expired');
-  assert.equal(verifyInitData(initData({ authDate: NOW / 1000 + 600 }), opts).status, 401, 'from the future');
-  const forged = initData().replace(encodeURIComponent(`"id":${ALICE}`), encodeURIComponent('"id":43'));
-  assert.equal(verifyInitData(forged, opts).status, 401, 'tampered user');
-  for (const bad of [undefined, '', 'hash=zz', 'user=%7B%22id%22%3A42%7D']) assert.equal(verifyInitData(bad, opts).status, 401);
+test('initData: Ed25519-signed for the fleet bot, fresh and allowlisted only', async () => {
+  assert.deepEqual(await verifyInitData(await initData(), opts), { ok: true, userId: ALICE });
+  assert.equal((await verifyInitData(await initData({ user: MALLORY }), opts)).status, 403);
+  assert.equal((await verifyInitData(await initData({ botId: 999 }), opts)).status, 401, 'opened from another bot');
+  assert.equal((await verifyInitData(await initData({ key: other.privateKey }), opts)).status, 401, 'not Telegram\'s key');
+  assert.equal((await verifyInitData(await initData({ authDate: NOW / 1000 - 7200 }), opts)).status, 401, 'expired');
+  assert.equal((await verifyInitData(await initData({ authDate: NOW / 1000 + 600 }), opts)).status, 401, 'from the future');
+  const forged = (await initData()).replace(encodeURIComponent(`"id":${ALICE}`), encodeURIComponent('"id":43'));
+  assert.equal((await verifyInitData(forged, opts)).status, 401, 'tampered user');
+  for (const bad of [undefined, '', 'signature=zz', 'user=%7B%22id%22%3A42%7D']) assert.equal((await verifyInitData(bad, opts)).status, 401);
 });
 
-test('host token: only its own host, by stored hash', () => {
-  const { token, hash } = newHostToken();
+test('host token: only its own host, by stored hash', async () => {
+  const { token, hash } = await newHostToken();
   const hosts = { 'host-a': hash };
-  assert.equal(verifyHostToken('host-a', `Bearer ${token}`, hosts), true);
-  assert.equal(verifyHostToken('host-b', `Bearer ${token}`, hosts), false);
-  assert.equal(verifyHostToken('host-a', `Bearer ${token}x`, hosts), false);
-  assert.equal(verifyHostToken('host-a', token, hosts), false);
+  assert.equal(await verifyHostToken('host-a', `Bearer ${token}`, hosts), true);
+  assert.equal(await verifyHostToken('host-b', `Bearer ${token}`, hosts), false);
+  assert.equal(await verifyHostToken('host-a', `Bearer ${token}x`, hosts), false);
+  assert.equal(await verifyHostToken('host-a', token, hosts), false);
 });
 
 const session = (over = {}) => ({ id: 's1', agent: 'claude', project: 'proj', branch: 'main', seat: null, status: 'working',
@@ -79,35 +87,31 @@ test('registry: ordering per boot, offline after TTL, configured hosts listed be
   assert.equal(r.accept('host-b', parseHostPush(push({ bootAt: t + 3600000 }))), false, 'a boot dated ahead of the gateway clock');
 });
 
-async function gateway(t, config = {}) {
-  const { token, hash } = newHostToken();
+async function gateway(over = {}) {
+  const { token, hash } = await newHostToken();
   let now = NOW;
-  const g = createGateway({ botToken: BOT, allowedUserIds: [ALICE], hosts: { 'host-a': hash }, ttlSeconds: 60,
-    initDataMaxAgeSeconds: 3600, trustProxy: false, ratePerMinute: 1000, ...config }, { now: () => now });
-  await new Promise((r) => g.server.listen(0, '127.0.0.1', r));
-  t.after(() => g.server.close());
-  const base = `http://127.0.0.1:${g.server.address().port}`;
-  const req = (p, init = {}) => fetch(base + p, init);
-  return { ...g, token, req, tick: (ms) => { now += ms; } };
+  const api = createApi(parseFleetConfig({ botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash }, ratePerMinute: 1000, ...over }, PUBLIC_KEY),
+    { now: () => now });
+  const req = (p, init = {}) => api(new Request(`https://fleet.example${p}`, init));
+  return { api, token, req, tick: (ms) => { now += ms; } };
 }
-const asViewer = (user) => ({ headers: { authorization: `tma ${initData({ user })}` } });
+const asViewer = async (user) => ({ headers: { authorization: `tma ${await initData({ user })}` } });
 const hostPost = (token, body) => ({ method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
   body: typeof body === 'string' ? body : JSON.stringify(body) });
 
-test('gateway: host push and viewer read, each authenticated', async (t) => {
-  const g = await gateway(t);
+test('api: host push and viewer read, each authenticated', async () => {
+  const g = await gateway();
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost('wrong-token-wrong-token', push()))).status, 401);
   assert.equal((await g.req('/api/hosts/host-b/snapshot', hostPost(g.token, push()))).status, 401, 'token of another host');
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, '{nope'))).status, 400);
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, { schemaVersion: 1 }))).status, 400);
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, 'x'.repeat(300 * 1024)))).status, 413);
-  const ok = await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()));
-  assert.deepEqual(await ok.json(), { accepted: true });
+  assert.deepEqual(await (await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()))).json(), { accepted: true });
 
   assert.equal((await g.req('/api/fleet')).status, 401);
   assert.equal((await g.req('/api/fleet', { headers: { authorization: 'tma user=%7B%22id%22%3A42%7D' } })).status, 401, 'unsigned client claim');
-  assert.equal((await g.req('/api/fleet', asViewer(MALLORY))).status, 403);
-  const res = await g.req('/api/fleet', asViewer(ALICE));
+  assert.equal((await g.req('/api/fleet', await asViewer(MALLORY))).status, 403);
+  const res = await g.req('/api/fleet', await asViewer(ALICE));
   assert.equal(res.status, 200);
   const body = await res.text();
   assert.doesNotMatch(body, /-100\d+/, 'raw chat id never served');
@@ -115,25 +119,43 @@ test('gateway: host push and viewer read, each authenticated', async (t) => {
   assert.equal(fleet.schemaVersion, 1);
   assert.equal(fleet.hosts[0].online, true);
   assert.equal(fleet.hosts[0].sessions[0].hostId, 'host-a');
-  assert.equal((await (await g.req('/api/hosts/host-a/sessions', asViewer(ALICE))).json()).sessions.length, 1);
-  assert.equal((await g.req('/api/hosts/host-x/sessions', asViewer(ALICE))).status, 404);
-  assert.equal((await g.req('/api/hosts/%E0%A4%A/sessions', asViewer(ALICE))).status, 404, 'malformed escape is no 500');
+  assert.equal((await (await g.req('/api/hosts/host-a/sessions', await asViewer(ALICE))).json()).sessions.length, 1);
+  assert.equal((await g.req('/api/hosts/host-x/sessions', await asViewer(ALICE))).status, 404);
+  assert.equal((await g.req('/api/hosts/%E0%A4%A/sessions', await asViewer(ALICE))).status, 404, 'malformed escape is no 500');
   assert.equal((await g.req('/api/hosts/%E0%A4%A/snapshot', hostPost(g.token, push()))).status, 401);
   assert.equal((await g.req('/api/hosts/host-a/sessions')).status, 401);
   g.tick(61000);
-  assert.equal((await (await g.req('/api/fleet', asViewer(ALICE))).json()).hosts[0].online, false);
+  assert.equal((await (await g.req('/api/fleet', await asViewer(ALICE))).json()).hosts[0].online, false);
 });
 
-test('gateway: health, static app, unknown routes, rate limit', async (t) => {
-  const g = await gateway(t, { ratePerMinute: 6 });
-  assert.deepEqual(await (await g.req('/api/health')).json(), { ok: true, schemaVersion: 1 });
-  const page = await g.req('/');
-  assert.match(page.headers.get('content-security-policy'), /frame-ancestors/);
-  assert.doesNotMatch(await page.text(), new RegExp(BOT), 'no bot token in the page');
-  for (const js of ['/app.js', '/view.mjs']) assert.match((await g.req(js)).headers.get('content-type'), /^text\/javascript/);
-  assert.equal((await g.req('/nope')).status, 404);
-  assert.equal((await g.req('/api/fleet', { method: 'DELETE' })).status, 404);
-  assert.equal((await g.req('/api/health')).status, 429);
+test('api: health, unknown routes, rate limit by CF-Connecting-IP', async () => {
+  const g = await gateway({ ratePerMinute: 3 });
+  const from = (ip) => ({ headers: { 'cf-connecting-ip': ip } });
+  assert.deepEqual(await (await g.req('/api/health', from('1.1.1.1'))).json(), { ok: true, schemaVersion: 1 });
+  assert.equal((await g.req('/api/nope', from('1.1.1.1'))).status, 401, 'unknown viewer route needs auth first');
+  assert.equal((await g.req('/api/fleet', { method: 'DELETE', ...from('1.1.1.1') })).status, 404);
+  assert.equal((await g.req('/api/health', from('1.1.1.1'))).status, 429);
+  assert.equal((await g.req('/api/health', from('2.2.2.2'))).status, 200, 'per client');
+  g.tick(60000);
+  assert.equal((await g.req('/api/health', from('1.1.1.1'))).status, 200, 'a new minute');
+});
+
+test('static app: CSP for Telegram framing, no secret in any asset', () => {
+  const dir = new URL('./public/', import.meta.url);
+  assert.match(fs.readFileSync(new URL('_headers', dir), 'utf8'), /frame-ancestors https:\/\/web\.telegram\.org/);
+  for (const f of ['index.html', 'app.js', 'view.mjs']) assert.doesNotMatch(fs.readFileSync(new URL(f, dir), 'utf8'), /\d{6,}:[A-Za-z0-9_-]{30,}/, `${f}: no bot token`);
+});
+
+test('config: FLEET_CONFIG fails loudly, and is derived from the shared bridge config', async () => {
+  assert.throws(() => parseFleetConfig({ hosts: {} }), /botId/);
+  assert.throws(() => parseFleetConfig({ botId: BOT_ID, hosts: { 'host-a': 'not-a-hash' } }), /sha256/);
+  const { hash } = await newHostToken();
+  const bridge = { allowedUserIds: [ALICE], fleetGateway: { url: 'https://fleet.example.com', botId: BOT_ID, hosts: { 'host-a': hash }, hostToken: 'local-secret' } };
+  const derived = fleetConfigFrom(bridge);
+  assert.deepEqual(derived, { domain: 'fleet.example.com', config: { botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash } } });
+  assert.ok(!JSON.stringify(derived).includes('local-secret'), 'a host token never reaches the Worker');
+  assert.throws(() => fleetConfigFrom({ ...bridge, fleetGateway: { ...bridge.fleetGateway, url: 'https://fleet.example.com/x' } }), /origin/);
+  assert.throws(() => fleetConfigFrom({ ...bridge, allowedUserIds: [] }), /allowedUserIds/);
 });
 
 test('one status vocabulary from native state to the wire', async () => {
@@ -141,14 +163,6 @@ test('one status vocabulary from native state to the wire', async () => {
   const { STATUSES } = await import('../shared/fleet-schema.mjs');
   assert.deepEqual([...new Set(Object.values(STATUS_CODES))].sort(), [...STATUSES].sort());
   assert.deepEqual(Object.keys(STATUS_LABELS).sort(), [...STATUSES].sort());
-});
-
-test('config: a malformed hosts entry fails loudly', async () => {
-  const fs = await import('fs'); const os = await import('os'); const path = await import('path');
-  const { readGatewayConfig } = await import('./server.mjs');
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fgwc-')), 'c.json');
-  fs.writeFileSync(file, JSON.stringify({ hosts: { 'host-a': 'not-a-hash' } }));
-  assert.throws(() => readGatewayConfig(file, { botToken: BOT, allowedUserIds: [ALICE] }), /host-token/);
 });
 
 test('view: stale is freshness, filters narrow, stats count live state only', () => {
@@ -162,23 +176,23 @@ test('view: stale is freshness, filters narrow, stats count live state only', ()
   assert.equal(ago('garbage'), 'never');
 });
 
-test('end to end: bridge registry -> push -> gateway -> viewer', async (t) => {
+test('end to end: bridge registry -> push -> gateway -> viewer', async () => {
   const { EventEmitter } = await import('events');
   const { Bridge } = await import('../bridge/daemon.mjs');
   const { FleetPush } = await import('../bridge/fleet-push.mjs');
-  const g = await gateway(t);
+  const g = await gateway();
   const codex = Object.assign(new EventEmitter(), { agent: 'codex', statusSnapshot: () => ({ state: 'running' }), inject: async () => ({}) });
   let thread = 500;
-  const telegram = { createForumTopic: async () => ({ message_thread_id: ++thread }), sendMessage: async () => [{ message_id: 1 }],
+  const tg = { createForumTopic: async () => ({ message_thread_id: ++thread }), sendMessage: async () => [{ message_id: 1 }],
     editMessageText: async () => {}, editForumTopic: async () => {} };
-  const bridge = new Bridge({ telegram, adapters: [codex], machine: 'host-a', resolveContext: () => ({ project: 'proj', branch: 'main' }),
+  const bridge = new Bridge({ telegram: tg, adapters: [codex], machine: 'host-a', resolveContext: () => ({ project: 'proj', branch: 'main' }),
     config: { projects: { proj: { chatId: -1001234567890 } }, allowedUserIds: [ALICE], idleCloseMinutes: 30, deleteClosedAfterHours: 24 } });
   await bridge.sessionUp('codex', { id: 'thread-1', cwd: '/secret/home/proj' });
   await bridge.prompt('codex:thread-1', 'go');
-  const push = new FleetPush({ url: `http://127.0.0.1:${g.server.address().port}`, hostToken: g.token, machine: 'host-a',
-    sessions: () => bridge.fleetSnapshot() });
+  const push = new FleetPush({ url: 'https://fleet.example', hostToken: g.token, machine: 'host-a',
+    sessions: () => bridge.fleetSnapshot(), fetch: (url, init) => g.api(new Request(url, init)) });
   assert.equal(await push.tick(), true);
-  const fleet = await (await g.req('/api/fleet', asViewer(ALICE))).json();
+  const fleet = await (await g.req('/api/fleet', await asViewer(ALICE))).json();
   const [s] = fleet.hosts[0].sessions;
   assert.deepEqual([s.id, s.agent, s.project, s.status, s.stale], ['thread-1', 'codex', 'proj', 'working', false]);
   assert.equal(s.topic.url, `https://t.me/c/1234567890/${thread}`);
