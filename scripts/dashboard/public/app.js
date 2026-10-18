@@ -370,7 +370,7 @@ function renderConfig() {
 
 function renderTabs() {
   // Looking at the events marks them seen (after this render still shows which were new).
-  const t = tabs(snapshot, Date.now(), seenAt, readAlerts);
+  const t = tabs(snapshot, Date.now(), seenAt, readAlerts, shownFrom);
   $('tabs').hidden = !t.show;
   if (!t.show) tab = 'sessions';
   $('n-sessions').textContent = String(t.sessions);

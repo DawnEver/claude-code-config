@@ -210,13 +210,14 @@ export function quotaByHost(snapshot, now = Date.now()) {
 /**
  * The tabs below the needs-you card, each answering one question: what runs (sessions), will
  * the quota last (quota), what happened (events: the alerts, as history). `alert` marks the
- * quota tab while an unread quota alert stands; `unseen` counts events newer than `seenAt`.
+ * quota tab while an unread quota alert stands; `unseen` counts events newer than `seenAt`;
+ * `events` counts what the Events tab lists (unread when it was opened, `shownFrom`).
  */
-export function tabs(snapshot, now = Date.now(), seenAt = null, read = []) {
+export function tabs(snapshot, now = Date.now(), seenAt = null, read = [], shownFrom = seenAt) {
   const accounts = snapshot.accounts ?? [];
   const events = snapshot.events ?? [];
   return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now, read).length > 0,
-    events: events.length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length,
+    events: unreadEvents(events, shownFrom).length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length,
     show: accounts.length > 0 || events.length > 0 };
 }
 

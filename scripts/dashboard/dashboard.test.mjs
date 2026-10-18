@@ -280,6 +280,7 @@ test('view: tabs count each view and flag quota that needs the human; no account
   assert.deepEqual(unreadEvents(m.events, m.events[1].at), [m.events[0]], 'events read on an earlier visit are cleared');
   assert.deepEqual(unreadEvents(m.events, null), m.events, 'first visit: everything');
   assert.deepEqual(unreadEvents(m.events, m.events[0].at), []);
+  assert.equal(tabs(m, NOW, m.events[0].at, [], m.events[0].at).events, 0, 'the tab counts what it lists, never a cleared event');
 });
 
 test('alerts are events: a change once, judged on the merged account, so two hosts on one seat alert once', () => {
