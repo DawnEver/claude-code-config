@@ -195,7 +195,7 @@ export function accountModels({ machine, seats, codexAccount, claude = [], codex
     if (!g.quota && !g.problems.length) continue;
     const email = g.account?.email ?? null;
     out.push({ key: `claude:${(email ?? `${machine}/${g.label ?? 'base'}`).toLowerCase()}|${g.account?.orgUuid ?? g.account?.org ?? ''}`,
-      agent: 'claude', label: g.label ?? null, email,
+      agent: 'claude', label: g.label ?? null, email, aliases: g.aliases,
       detail: [g.account?.org, g.account?.tier && planName(g.account.tier)].filter(Boolean).join(' · ') || null,
       problems: g.problems, at: g.quota?.at ?? null, windows: windowModels(g.quota, now), resetCredits: null,
       extraReset: scheduled(extra?.Claude?.scheduled) });
@@ -210,6 +210,17 @@ export function accountModels({ machine, seats, codexAccount, claude = [], codex
       extraReset: scheduled(extra?.Codex?.scheduled) });
   }
   return out;
+}
+
+/**
+ * The account a session of this machine spends: a Claude session by the config dir it runs in
+ * (`seat`: its alias, null for the base dir), a Codex session by the shared app-server's one
+ * account. `aliases` is local knowledge only: the dashboard schema never forwards it.
+ */
+export function accountFor(session, accounts) {
+  const a = session.agent === 'claude' ? accounts.find((x) => x.agent === 'claude' && x.aliases?.includes(session.seat ?? null))
+    : accounts.find((x) => x.agent === session.agent);
+  return a?.key ?? null;
 }
 
 /**

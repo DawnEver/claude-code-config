@@ -30,7 +30,7 @@ import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
-import { AccountReader } from './quota.mjs';
+import { AccountReader, accountFor } from './quota.mjs';
 import { DashboardPush } from './dashboard-push.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
@@ -813,7 +813,8 @@ export async function main() {
       if (!config.alerts) return;
       for (const text of texts) await telegram.sendMessage(config.alerts.chatId, text, { threadId: config.alerts.topicId ?? undefined });
     };
-    new DashboardPush({ ...config.dashboard, machine, log, sessions: () => bridge.dashboardSnapshot(), accounts: () => accounts.read(), onAlerts }).start();
+    new DashboardPush({ ...config.dashboard, machine, log, sessions: (list) => bridge.dashboardSnapshot().map((s) => ({ ...s, account: accountFor(s, list) })),
+      accounts: () => accounts.read(), onAlerts }).start();
   }
   if (config.deleteClosedAfterHours > 0) {
     const sweep = (orphans) => bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`));

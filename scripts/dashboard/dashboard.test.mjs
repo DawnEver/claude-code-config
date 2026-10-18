@@ -6,7 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, quotaView, stats, tabs } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -56,7 +56,7 @@ test('schema: whitelists fields, derives a Topic link, never forwards the chat i
   const p = parseHostPush(push({ sessions: [session({ cwd: '/home/u/x', token: 'secret' }), session({ id: 's2', topic: null, status: 'bogus' }),
     session({ agent: 'gpt' }), session()] }));
   assert.equal(p.sessions.length, 2, 'unknown agent and duplicate dropped');
-  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['agent', 'branch', 'id', 'lastActivityAt', 'project', 'seat', 'status', 'topic']);
+  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'project', 'seat', 'status', 'topic']);
   assert.deepEqual(p.sessions[0].topic, { url: 'https://t.me/c/1234567890/77', closed: false });
   assert.equal(p.sessions[1].status, 'unknown');
   assert.equal(p.sessions[1].topic, null);
@@ -233,6 +233,7 @@ test('schema: accounts are whitelisted and bounded like sessions', () => {
     { agent: 'gpt', key: 'z' }] }));
   assert.equal(p.accounts.length, 2, 'unknown agent dropped');
   assert.ok(!('token' in p.accounts[0]));
+  assert.ok(!('aliases' in parseHostPush(push({ accounts: [account({ aliases: [null, 'team-a'] })] })).accounts[0]), 'local config-dir knowledge stays local');
   assert.deepEqual(p.accounts[0].windows, [], 'a malformed window key is dropped');
   assert.equal(p.accounts[1].extraReset.url, null, 'only https links');
   assert.deepEqual(p.accounts[1].resetCredits, { count: 2, expiries: [NOW, null] });
@@ -313,4 +314,31 @@ test('events: every alert is kept as history for the dashboard, newest first, bo
     r.accept('host-a', parseHostPush(push({ seq: 5 + 2 * i, accounts: [account()] })));
   }
   assert.equal(r.snapshot().events.length, MAX_EVENTS);
+});
+
+test('view: quota by host — each host with the accounts it runs; a shared account says where else it runs', () => {
+  const by = quotaByHost(mockDashboard(NOW), NOW);
+  assert.deepEqual(by.map((h) => [h.id, h.accounts.map((q) => `${q.key}+${q.sharedWith.join(',')}`)]),
+    [['host-a', ['claude:a+host-c', 'codex:b+host-b']], ['host-b', ['codex:b+host-a']], ['host-c', ['claude:a+host-a']]],
+    'online hosts first; one budget, never a second card without saying so');
+  assert.deepEqual(by[0].accounts.map(accountTag), ['team-a', 'bob'], 'seat alias, else the email name');
+});
+
+test('view: trend ticks in local time — hours for a 5h window, weekday and date for 7d', () => {
+  const reset = new Date(2026, 9, 18, 16, 30).getTime();   // local 16:30
+  const five = timeTicks({ resetsAt: reset, windowMs: 5 * HR }, reset - 2 * HR);
+  assert.deepEqual(five.ticks.map((t) => t.label), ['12', '13', '14', '15', '16'], 'every full hour from the 11:30 opening');
+  assert.equal(five.ticks[0].pos, 0.1);
+  assert.equal(five.now, 0.6, 'the present sits 3h into 5h');
+  const week = timeTicks({ resetsAt: reset, windowMs: 168 * HR }, reset);
+  assert.deepEqual(week.ticks.map((t) => t.label), ['Mon 12', 'Tue 13', 'Wed 14', 'Thu 15', 'Fri 16', 'Sat 17', 'Sun 18'], 'every local midnight');
+  assert.ok(week.ticks.every((t, i, a) => t.pos > 0 && t.pos < 1 && (!i || t.pos > a[i - 1].pos)));
+  assert.equal(timeTicks({ resetsAt: null, windowMs: 5 * HR }).ticks.length, 0, 'a new window has no axis yet');
+  assert.equal(timeTicks({ resetsAt: reset, windowMs: 5 * HR }, reset + 1).now, null);
+});
+
+test('view: a quota window keeps its length, so the page can draw its time axis', () => {
+  const [w] = quotaView(account(), NOW).windows;
+  assert.equal(w.windowMs, 5 * HR);
+  assert.ok(timeTicks(w, NOW).ticks.length > 0);
 });

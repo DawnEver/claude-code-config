@@ -17,7 +17,9 @@ export class DashboardPush {
   }
 
   body() {
-    return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(), accounts: this.accounts() };
+    // Accounts first: a session is labelled with the account it spends (sessions(accounts)).
+    const accounts = this.accounts();
+    return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(accounts), accounts };
   }
 
   /** Off the message path: an unref'd timer, never awaited by Telegram routing. */

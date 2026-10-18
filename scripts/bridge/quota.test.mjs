@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { AccountReader, accountModels, recordsQuota, planName, teeClaudeUsage, windowView, project, claudeWindows, codexWindows, quotaOf, readClaudeDirs } from './quota.mjs';
+import { AccountReader, accountFor, accountModels, recordsQuota, planName, teeClaudeUsage, windowView, project, claudeWindows, codexWindows, quotaOf, readClaudeDirs } from './quota.mjs';
 import { readSeries } from './quota-series.mjs';
 
 // One observation as a series: what a host knows the moment it first sees its quota.
@@ -163,4 +163,15 @@ test('recordsQuota: a host without a configured dashboard records nothing', () =
     assert.equal(recordsQuota({ sharedPath, localPath }), true);
     assert.equal(recordsQuota({ sharedPath: path.join(dir, 'missing.json'), localPath }), false, 'no settings at all');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('accountFor: a Claude session by its config dir, a Codex session by the Codex account of its host', () => {
+  const seats = [{ alias: 'team-a', email: 'a@example.com', org: 'Team A', machines: ['m1'] }, { alias: 'team-b', email: 'b@example.com', machines: ['m1'] }];
+  const accounts = [...models({ seats, dirs: [{ alias: null, account: { ...ME, org: 'Team A' }, quota: short5h() },
+    { alias: 'team-b', account: { email: 'b@example.com' }, quota: short5h() }] }),
+    { key: 'codex:c@example.com', agent: 'codex' }];
+  assert.equal(accountFor({ agent: 'claude', seat: null }, accounts), 'claude:a@example.com|u1', 'the base dir holds team-a');
+  assert.equal(accountFor({ agent: 'claude', seat: 'team-b' }, accounts), 'claude:b@example.com|');
+  assert.equal(accountFor({ agent: 'claude', seat: 'gone' }, accounts), null);
+  assert.equal(accountFor({ agent: 'codex' }, accounts), 'codex:c@example.com');
 });

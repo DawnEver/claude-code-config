@@ -90,7 +90,7 @@ export function quotaView(a, now = Date.now()) {
   const stale = !a.at || now - a.at > QUOTA_STALE_MS;
   const windows = a.windows.map((w) => {
     const renewed = !w.resetsAt || w.resetsAt <= now;
-    return { k: w.k, renewed, used: renewed ? 0 : w.used, resetsAt: renewed ? null : w.resetsAt,
+    return { k: w.k, renewed, used: renewed ? 0 : w.used, resetsAt: renewed ? null : w.resetsAt, windowMs: w.windowMs,
       pace: renewed ? 0 : Math.min(100, Math.max(0, (1 - (w.resetsAt - now) / w.windowMs) * 100)),
       cells: renewed ? [] : w.cells, forecast: renewed || stale ? null : w.forecast };
   });
@@ -132,6 +132,47 @@ export function quotaAlertsFor(prev, q, now = Date.now()) {
 export const quotaAlerts = (snapshot, now = Date.now()) =>
   (snapshot.accounts ?? []).map((a) => quotaView(a, now)).filter((q) => q.verdict === 'exhausted' || q.verdict === 'short');
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Time ticks for a window's trend, whose axis runs from the window's opening to its reset, in
+ * the reader's local time: a short window (≤ 1 day) ticks at every full hour labelled by the
+ * hour of the day, a long one at every local midnight labelled by weekday and date. `pos` is
+ * 0..1 along the axis; `now` is where the present sits on it (null once past the reset).
+ */
+export function timeTicks(w, now = Date.now()) {
+  if (!w.resetsAt || !w.windowMs) return { ticks: [], now: null };
+  const start = w.resetsAt - w.windowMs;
+  const daily = w.windowMs > 86400000;
+  const first = new Date(start);
+  if (daily) first.setHours(24, 0, 0, 0); else first.setMinutes(60, 0, 0);
+  const ticks = [];
+  for (const t = first; t.getTime() < w.resetsAt; daily ? t.setDate(t.getDate() + 1) : t.setHours(t.getHours() + 1)) {
+    ticks.push({ at: t.getTime(), pos: (t.getTime() - start) / w.windowMs,
+      label: daily ? `${WEEKDAYS[t.getDay()]} ${t.getDate()}` : String(t.getHours()).padStart(2, '0') });
+  }
+  return { ticks, now: now >= start && now <= w.resetsAt ? (now - start) / w.windowMs : null };
+}
+
+/** Every account as the reader sees it, by key: what a session (its `account`) or a host refers to. */
+export const accountIndex = (snapshot, now = Date.now()) => new Map((snapshot.accounts ?? []).map((a) => [a.key, quotaView(a, now)]));
+
+/** An account in a few characters: the seat alias, else the email's name, else the agent. */
+export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? (q.agent === 'claude' ? 'Claude' : 'Codex');
+
+/**
+ * Quota by host: each host with the accounts it runs. An account is one budget however many
+ * hosts spend it, so a shared one says where else it runs (`sharedWith`) rather than reading as
+ * a second budget. Online hosts first; a host without accounts is left out.
+ */
+export function quotaByHost(snapshot, now = Date.now()) {
+  const accounts = [...accountIndex(snapshot, now).values()];
+  return [...snapshot.hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id))
+    .map((h) => ({ id: h.id, online: h.online, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
+      .map((q) => ({ ...q, sharedWith: q.hosts.filter((x) => x !== h.id) })) }))
+    .filter((h) => h.accounts.length);
+}
+
 /**
  * The tabs below the needs-you card, each answering one question: what runs (sessions), will
  * the quota last (quota), what happened (events: the alerts, as history). `alert` marks the
@@ -149,8 +190,9 @@ export function tabs(snapshot, now = Date.now(), seenAt = null) {
 export function mockDashboard(now = Date.now()) {
   const H = 3600000;
   const t = (sec) => new Date(now - sec * 1000).toISOString();
+  const acct = { claude: 'claude:a', codex: 'codex:b' };
   const s = (hostId, stale, id, agent, project, branch, status, sec, topic, seat = null) =>
-    ({ id, hostId, agent, project, branch, seat, status, lastActivityAt: t(sec), stale, topic });
+    ({ id, hostId, agent, project, branch, seat, status, lastActivityAt: t(sec), stale, topic, account: acct[agent] });
   return { schemaVersion: 1, generatedAt: t(0), mock: true, hosts: [
     { id: 'host-a', online: true, lastSeen: t(4), sessions: [
       s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a'),
@@ -168,7 +210,7 @@ export function mockDashboard(now = Date.now()) {
       at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null, windows: [
         { k: '5h', used: 26, resetsAt: now + 24 * 60000, windowMs: 5 * H, cells: [0.4, 0.8, 1.2, 0.9, 1.6, 2, 1.1, 0.7, 0.9, null], forecast: { atReset: 31, eta: null, short: false } },
         { k: '7d', used: 45, resetsAt: now + 129 * H, windowMs: 168 * H, cells: [0.6, 1.4, 1.8, 0.9, 1.1, 2.2, 2.6, 2.4, 2.5, null, null, null, null, null], forecast: { atReset: 118, eta: now + 47 * H, short: true } }] },
-    { key: 'codex:b', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-b'],
+    { key: 'codex:b', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-a', 'host-b'],
       resetCredits: { count: 1, expiries: [now + 3 * 24 * H] }, extraReset: null, windows: [
         { k: '5h', used: 8, resetsAt: now + 3 * H, windowMs: 5 * H, cells: [-1, -1, 0.3, 0.5, null, null, null, null, null, null], forecast: { atReset: 14, eta: null, short: false } },
         { k: '7d', used: 12, resetsAt: now + 100 * H, windowMs: 168 * H, cells: [0.4, 0.7, 0.6, 0.9, 0.5, null, null, null, null, null, null, null, null, null], forecast: { atReset: 30, eta: null, short: false } }] },

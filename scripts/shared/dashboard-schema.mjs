@@ -29,7 +29,7 @@ function parseSession(s) {
   const t = s.topic;
   const url = t && topicUrl(t.chatId, t.topicId);
   return {
-    id, agent: s.agent, project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64),
+    id, agent: s.agent, project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
     lastActivityAt: Number.isFinite(at) ? new Date(at).toISOString() : null,
     topic: url ? { url, closed: t.closed === true } : null,

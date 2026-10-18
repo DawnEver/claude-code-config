@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs, accountName, verdictText } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks } from './view.mjs';
 
 const POLL_MS = 8000;
 const tg = window.Telegram?.WebApp;
@@ -17,11 +17,17 @@ let selectsKey = null;
 // The open tab survives a reopen; sessions is the default view.
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
-// A #quota / #events link opens that tab; otherwise the last one used.
+// A #quota / #events link opens that tab; otherwise the last one used. 
 const TABS = ['sessions', 'quota', 'events'];
-let tab = [location.hash.slice(1), store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
+// #quota:account also picks the quota grouping.
+const [hashTab, hashBy] = location.hash.slice(1).split(':');
+let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
 // Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
 let seenAt = store.get('dashboard.eventsSeenAt');
+// Quota grouping: by host (what each machine has left on each account, the default) or by
+// account (one card per budget).
+let quotaBy = (hashBy ?? store.get('dashboard.quotaBy')) === 'account' ? 'account' : 'host';
+let accounts = new Map();
 
 tg?.ready();
 tg?.expand();
@@ -39,8 +45,11 @@ function sessionRow(s, { withHost = false } = {}) {
   main.append(el('div', 'title', s.project ?? 'unknown project'));
   const sub = el('div', 'sub');
   sub.append(el('span', `agent ${s.agent}`, s.agent === 'claude' ? 'Claude' : 'Codex'));
-  const rest = [withHost && s.hostId, s.branch, s.seat, ago(s.lastActivityAt), s.topic?.closed && 'Topic closed'].filter(Boolean);
+  const rest = [withHost && s.hostId, s.branch, ago(s.lastActivityAt), s.topic?.closed && 'Topic closed'].filter(Boolean);
   sub.append(document.createTextNode(` · ${rest.join(' · ')}`));
+  const q = s.account && accounts.get(s.account);
+  if (q) sub.append(document.createTextNode(' · '), acctTag(q));
+  else if (s.seat) sub.append(document.createTextNode(` · ${s.seat}`));
   main.append(sub);
   row.append(el('span', 'dot'), main, el('span', 'pill', STATUS_LABELS[status] ?? status));
   if (s.topic) {
@@ -89,15 +98,28 @@ function bar(w, stale) {
   return track;
 }
 
-/** Trend: spend per slice of the window against an even spend (half height); hatched = never observed. */
-function trend(cells) {
+/**
+ * Trend on the window's time axis, opening to reset: spend per slice against an even spend
+ * (half height; hatched = never observed), the present as a line, and local-time ticks under it.
+ */
+function trend(w) {
+  const wrap = el('div', 'trend-wrap');
   const box = el('div', 'trend');
-  for (const c of cells) {
+  for (const c of w.cells) {
     const cell = el('span', c === null ? 'ahead' : c < 0 ? 'unseen' : 'seen');
     if (c !== null && c >= 0) cell.style.height = `${Math.max(4, Math.min(100, c * 50))}%`;
     box.append(cell);
   }
-  return box;
+  const t = timeTicks(w);
+  if (t.now !== null) { const now = el('i', 'now'); now.style.left = `${t.now * 100}%`; box.append(now); }
+  const axis = el('div', 'axis');
+  for (const tick of t.ticks) {
+    const mark = el('span', null, tick.label);
+    mark.style.left = `${tick.pos * 100}%`;
+    axis.append(mark);
+  }
+  wrap.append(box, axis);
+  return wrap;
 }
 
 function quotaCard(q) {
@@ -114,7 +136,7 @@ function quotaCard(q) {
     row.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', used));
     const sub = el('div', 'win-sub');
     const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${Math.round(w.forecast.atReset)}% at reset`);
-    sub.append(trend(w.cells), el('span', null, w.renewed ? 'new window, not started' : [`resets in ${countdown(w.resetsAt)}`, forecast].filter(Boolean).join(' · ')));
+    sub.append(trend(w), el('span', null, w.renewed ? 'new window, not started' : [`resets in ${countdown(w.resetsAt)}`, forecast].filter(Boolean).join(' · ')));
     card.append(row, sub);
   }
   if (q.resetCredits) {
@@ -130,14 +152,62 @@ function quotaCard(q) {
   return card;
 }
 
+/** An account as a compact tag: who and how much is left, coloured by its verdict. */
+function acctTag(q, withAgent = false) {
+  const left = q.left === null ? '' : ` ${q.stale && q.bind.used < 100 ? '≤' : ''}${q.left}%`;
+  const tag = el('span', `acct v-${q.verdict}`, `${withAgent ? `${q.agent === 'claude' ? 'Claude' : 'Codex'} ` : ''}${accountTag(q)}${left}`);
+  tag.title = `${accountName(q)}${q.email ? ` · ${q.email}` : ''}${q.left === null ? '' : ` · ${q.left}% left`}`;
+  return tag;
+}
+
+/** One account on one host, at a glance: who, each window's use against even pace, what is left. */
+function quotaRow(q) {
+  const row = el('div', `qrow v-${q.verdict}${q.stale ? ' stale' : ''}`);
+  const top = el('div', 'qrow-top');
+  top.append(el('span', `agent ${q.agent}`, accountName(q)),
+    el('span', 'left', q.left === null ? 'no data' : `${q.stale && q.bind.used < 100 ? '≤' : ''}${q.left}% left`));
+  const mini = el('div', 'qmini');
+  for (const w of q.windows) {
+    const cell = el('div');
+    cell.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`));
+    mini.append(cell);
+  }
+  row.append(top, mini, el('div', 'sub', [q.email, q.sharedWith.length && `also on ${q.sharedWith.join(', ')}`,
+    q.at && `reading ${ago(new Date(q.at).toISOString())}`].filter(Boolean).join(' · ')));
+  if (q.verdict === 'short' || q.verdict === 'exhausted') row.append(el('div', 'warn', verdictText(q)));
+  for (const p of q.problems) row.append(el('div', 'warn', p));
+  return row;
+}
+
 function renderQuota() {
-  const box = $('quota');
+  const box = $('quota-view');
   box.replaceChildren();
-  const accounts = (snapshot.accounts ?? []).map((a) => quotaView(a));
-  if (!accounts.length) return;
-  const grid = el('div', 'quota-grid');
-  for (const q of accounts) grid.append(quotaCard(q));
-  box.append(grid);
+  const list = [...accounts.values()];
+  if (!list.length) return;
+  const toggle = el('div', 'seg');
+  for (const [mode, label] of [['host', 'By host'], ['account', 'By account']]) {
+    const b = el('button', mode === quotaBy ? 'on' : null, label);
+    b.addEventListener('click', () => { quotaBy = mode; store.set('dashboard.quotaBy', mode); tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    toggle.append(b);
+  }
+  box.append(toggle);
+  if (quotaBy === 'account') {
+    const grid = el('div', 'quota-grid');
+    for (const q of list) grid.append(quotaCard(q));
+    box.append(grid);
+    return;
+  }
+  const hosts = el('div', 'quota-hosts');
+  for (const h of quotaByHost(snapshot)) {
+    const section = el('section', `host${h.online ? '' : ' off'}`);
+    const head = el('div', 'host-head');
+    head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id));
+    const rows = el('div', 'qrows');
+    for (const q of h.accounts) rows.append(quotaRow(q));
+    section.append(head, rows);
+    hosts.append(section);
+  }
+  box.append(hosts);
 }
 
 function renderChips() {
@@ -186,7 +256,10 @@ function renderHosts() {
   for (const h of hosts) {
     const section = el('section', `host${h.online ? '' : ' off'}`);
     const head = el('div', 'host-head');
-    head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id),
+    const runs = [...accounts.values()].filter((q) => q.hosts?.includes(h.id));
+    const tagsBox = el('span', 'acct-tags');
+    for (const q of runs) tagsBox.append(acctTag(q, true));
+    head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id), tagsBox,
       el('span', 'muted meta', h.online ? `${h.sessions.length} session${h.sessions.length === 1 ? '' : 's'}` : `offline · seen ${ago(h.lastSeen)}`));
     const list = el('div', 'list');
     if (!h.sessions.length) list.append(el('div', 'empty', h.online ? 'No sessions' : 'No data'));
@@ -197,7 +270,7 @@ function renderHosts() {
 }
 
 function renderEvents() {
-  const box = $('events');
+  const box = $('events-view');
   box.replaceChildren();
   const events = snapshot.events ?? [];
   if (!events.length) { box.append(el('div', 'empty', 'No events yet')); return; }
@@ -236,6 +309,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
 
 function render() {
   if (!snapshot) return;
+  accounts = accountIndex(snapshot);
   $('updated').textContent = snapshot.mock ? 'example data' : lastOk ? `updated ${ago(new Date(lastOk).toISOString())}` : '';
   renderSummary();
   renderTabs();
@@ -251,8 +325,8 @@ function stop(message) {
   $('summary').replaceChildren(el('div', 'summary-head', message));
   $('hosts').replaceChildren();
   $('chips').replaceChildren();
-  $('quota').replaceChildren();
-  $('events').replaceChildren();
+  $('quota-view').replaceChildren();
+  $('events-view').replaceChildren();
   $('tabs').hidden = true;
 }
 

@@ -85,6 +85,23 @@
   .event { padding: 10px 12px; } .event + .event { border-top: 1px solid var(--sep); }
   .event.new { border-left: 3px solid var(--warn); }
   .event .text { font-size: 14px; overflow-wrap: anywhere; }
+  .acct { display: inline-block; padding: 0 6px; border-radius: 6px; font-weight: 600; background: var(--sep); color: var(--fg); }
+  .acct.v-short { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .acct.v-exhausted { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+  .acct-tags { display: flex; flex-wrap: wrap; gap: 4px; font-size: 11px; }
+  .seg { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 10px; border-radius: 9px; background: var(--card); }
+  .seg button { border: 0; border-radius: 7px; padding: 4px 10px; font: inherit; font-size: 12px; font-weight: 600; background: none; color: var(--hint); cursor: pointer; }
+  .seg button.on { background: var(--bg); color: var(--fg); }
+  .shared { margin-top: 4px; }
+  /* Quota by host: one compact row per account, the glance "what is left where". */
+  .qrows { background: var(--card); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
+  .qrow { padding: 10px 12px; } .qrow + .qrow { border-top: 1px solid var(--sep); }
+  .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
+  .qrow-top .left { font-weight: 700; }
+  .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left { color: var(--bad); }
+  .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 4px 12px; margin-top: 6px; }
+  .qmini > div { display: grid; grid-template-columns: 22px 1fr 34px; gap: 6px; align-items: center; font-size: 12px; }
+  .qmini .k { color: var(--hint); font-weight: 600; } .qmini .used { text-align: right; font-weight: 600; }
   .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
   .quota-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-bottom: 16px; }
   .quota-card { background: var(--card); border-radius: 14px; padding: 12px 14px; }
@@ -103,7 +120,12 @@
   .bar .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--fg); opacity: .55; border-radius: 1px; }
   .win-sub { display: grid; grid-template-columns: 26px 1fr 44px; gap: 2px 8px; color: var(--hint); font-size: 12px; margin-top: 4px; }
   .win-sub > span { grid-column: 2 / 4; }
-  .trend { grid-column: 2; display: flex; align-items: flex-end; gap: 2px; height: 18px; border-bottom: 1px dashed var(--sep); }
+  .trend-wrap { grid-column: 2; }
+  .trend .now { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1.5px solid var(--fg); opacity: .6; }
+  .axis { position: relative; height: 13px; margin-top: 2px; font-size: 10px; color: var(--hint); }
+  .axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .axis span::before { content: ''; position: absolute; left: 50%; top: -4px; height: 3px; border-left: 1px solid var(--sep); }
+  .trend { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 18px; border-bottom: 1px dashed var(--sep); }
   .trend span { flex: 1; border-radius: 2px 2px 0 0; }
   .trend .seen { background: color-mix(in srgb, var(--run) 55%, transparent); }
   .trend .unseen { height: 100%; background: repeating-linear-gradient(45deg, var(--sep) 0 2px, transparent 2px 4px); }
@@ -118,6 +140,7 @@
      scale with the viewport. No cap. */
   body { padding: clamp(12px, 2vw, 32px) clamp(12px, 2.5vw, 40px) calc(clamp(16px, 2vw, 32px) + env(safe-area-inset-bottom)); }
   h1 { font-size: clamp(20px, 1.2vw + 14px, 28px); }
+  .quota-hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
   #hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
   /* auto-fill here: a lone waiting session keeps card width instead of spanning the window. */
   .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 0 14px; }
@@ -133,8 +156,8 @@
     <button role="tab" data-tab="events">Events <b id="n-events"></b><i class="tab-badge" id="events-badge" hidden></i></button>
   </nav>
   <div id="banner" class="banner"></div>
-  <section id="quota" class="view" data-view="quota" hidden></section>
-  <section id="events" class="view" data-view="events" hidden></section>
+  <section id="quota-view" class="view" data-view="quota" hidden></section>
+  <section id="events-view" class="view" data-view="events" hidden></section>
   <div class="view" data-view="sessions">
   <nav id="chips" class="chips" aria-label="Status"></nav>
   <div id="selects" class="selects"></div>
