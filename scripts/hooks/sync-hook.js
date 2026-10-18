@@ -13,9 +13,10 @@
 //     The repo root comes from this module's own location: setup links
 //     ~/.claude/scripts at the repo, and Node resolves a module through the
 //     link to its real path on every platform.
-//   * Git is never allowed to prompt (GIT_TERMINAL_PROMPT=0) and every network
-//     step is bounded, so an offline host or a credential prompt cannot stall
-//     startup.
+//   * Git is never allowed to prompt (GIT_TERMINAL_PROMPT=0; GCM_INTERACTIVE=never,
+//     or Git Credential Manager opens a sign-in window on every session start) and
+//     every network step is bounded, so an offline host or a credential prompt
+//     cannot stall startup.
 //   * Only plumbing output is parsed (porcelain, rev-list). Git's human-facing
 //     text is localised and is never matched against.
 //   * Nothing here is fatal. Every failure degrades to a silent no-op, and a
@@ -57,7 +58,7 @@ function git(args, { timeout = LOCAL_TIMEOUT_MS, allowFail = false } = {}) {
       timeout,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
     }).trim();
   } catch (err) {
     if (allowFail) return null;
