@@ -10,7 +10,7 @@ import {
   checkPlugins, checkBridgeRevision,
   checkMachineName,
   checkCodexShellEnv,
-  scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost,
+  scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost, checkDashboardHost,
 } from './doctor.js';
 import { CLAUDE_LINKS } from './setup.js';
 
@@ -282,6 +282,15 @@ test('project-scoped plugin installs are not reported as globally dormant', () =
   assert.match(out[0].title, /rem@cc-market/);
 });
 
+test('a @builtin plugin ships with the CLI: enabled without an install record is fine', () => {
+  const home = tmp();
+  const dir = path.join(home, '.claude', 'plugins');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'installed_plugins.json'), JSON.stringify({ plugins: {} }));
+  const out = checkPlugins({ enabledPlugins: { 'x@builtin': true, 'y@market': true } }, home);
+  assert.deepEqual(out.map((f) => f.title), ['y@market is enabled but not installed']);
+});
+
 // A NUL byte makes git call the file binary: its diffs become unreviewable and
 // ripgrep skips it. That is why loop-guard-hook.js was invisible to search.
 test('a NUL byte in a script is a FAIL', () => {
@@ -414,6 +423,27 @@ test('private-markers rides the sync payload as an optional ~/.claude link', () 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-optional-'));
   const out = checkLinks({ repoRoot: dir, syncDir: dir });
   assert.equal(out.some((f) => f.title.includes('private-markers')), false);
+});
+
+test('checkDashboardHost: this host token must match its shared hosts entry; a token with no shared block FAILs', async () => {
+  const { createHash } = await import('crypto');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-dash-'));
+  const sharedPath = path.join(dir, 'shared.json'), localPath = path.join(dir, 'local.json');
+  const write = (shared, local) => { fs.writeFileSync(sharedPath, JSON.stringify(shared)); fs.writeFileSync(localPath, JSON.stringify(local)); };
+  const hash = createHash('sha256').update('tok').digest('hex');
+  const ids = () => checkDashboardHost({ sharedPath, localPath, machine: 'host-a' }).map((f) => `${f.level} ${f.title}`);
+  write({}, {});
+  assert.deepEqual(ids(), [], 'no dashboard anywhere');
+  write({}, { bridge: { dashboard: { hostToken: 'tok' } } });
+  assert.match(ids()[0], /^FAIL .*shared bridge\.dashboard is missing/);
+  write({ bridge: { dashboard: { url: 'https://d.example', hosts: { 'host-a': hash } } } }, {});
+  assert.match(ids()[0], /^WARN .*no local hostToken/);
+  write({ bridge: { dashboard: { url: 'https://d.example', hosts: { 'host-a': 'f'.repeat(64) } } } }, { bridge: { dashboard: { hostToken: 'tok' } } });
+  assert.match(ids()[0], /^FAIL .*does not match/);
+  write({ bridge: { dashboard: { url: 'https://d.example', hosts: {} } } }, { bridge: { dashboard: { hostToken: 'tok' } } });
+  assert.match(ids()[0], /^FAIL .*not in the shared hosts/);
+  write({ bridge: { dashboard: { url: 'https://d.example', hosts: { 'host-a': hash } } } }, { bridge: { dashboard: { hostToken: 'tok' } } });
+  assert.deepEqual(ids(), []);
 });
 
 test('checkBridgeHost: WARN when the fleet runs a bridge and this host has no bot', () => {

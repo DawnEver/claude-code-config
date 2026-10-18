@@ -5,10 +5,11 @@
 // knows is derived from it here; the only secrets (host tokens, the dashboard bot token) never
 // leave the machine that owns them.
 //
-//   node scripts/dashboard/deploy.mjs host-token   mint this host's push token: the token goes
-//                                                      into this machine's local settings, the
-//                                                      printed hash into the shared hosts map
+//   node scripts/dashboard/deploy.mjs host-token   join this host: mint its push token into this machine's
+//                                                      local settings and its hash into the shared hosts
+//                                                      map, then deploy (the Worker learns hosts only then)
 //   node scripts/dashboard/deploy.mjs deploy       upload DASHBOARD_CONFIG and deploy to the url's domain
+//                                                      (code alone also deploys from CI on push)
 //   node scripts/dashboard/deploy.mjs set-menu     point the dashboard bot's menu button at the url and
 //                                                      read it back; the bot token is this machine's local
 //                                                      bridge.dashboard.botToken, never synced or printed
@@ -45,10 +46,14 @@ async function hostToken() {
   const local = fs.existsSync(LOCAL_ENV_SETTINGS_PATH) ? JSON.parse(fs.readFileSync(LOCAL_ENV_SETTINGS_PATH, 'utf8')) : {};
   local.bridge ??= {};
   local.bridge.dashboard = { ...local.bridge.dashboard, hostToken: token };
+  const shared = JSON.parse(fs.readFileSync(SHARED_ENV_SETTINGS_PATH, 'utf8'));
+  if (!shared.bridge?.dashboard?.url) throw new Error('no shared bridge.dashboard.url: set up the dashboard first (docs/dashboard.md § Setup)');
+  shared.bridge.dashboard.hosts = { ...shared.bridge.dashboard.hosts, [machine]: hash };
+  fs.writeFileSync(SHARED_ENV_SETTINGS_PATH, JSON.stringify(shared, null, 2) + '\n');
   writePrivateFile(LOCAL_ENV_SETTINGS_PATH, JSON.stringify(local, null, 2) + '\n');
-  console.log(`token written to ${LOCAL_ENV_SETTINGS_PATH}`);
-  console.log(`add to the shared claude_env_settings.json, bridge.dashboard.hosts:\n  "${machine}": "${hash}"`);
-  console.log('then run deploy, and restart this daemon (the next session start does it)');
+  console.log(`${machine}: token in ${LOCAL_ENV_SETTINGS_PATH}, hash in the shared hosts`);
+  deploy();
+  console.log('the daemon picks the new token up within a minute');
 }
 
 function deploy() {

@@ -125,8 +125,9 @@ sessions go.
   writes it into the shared `claude_env_settings.json` in place (the file may be a link into
   the sync dir), and reports the outcome on its next push. Requested, applied and refused are
   Events. No new channel into a host: the change rides the reply to the host's own push.
-- **Live**: every daemon reloads the editable keys each minute, so an edit applied here or
-  synced in from another host takes effect without a restart. A key set in a host's local
+- **Live**: a daemon checks its config and code each minute and hands over to a fresh daemon
+  when either changed, so an edit applied here or synced in from another host takes effect
+  within a minute on every host. A key set in a host's local
   layer overrides the shared value there; the Config tab says so.
 
 ## Setup
@@ -146,17 +147,18 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    ```
    `url` is an origin (the gateway serves at its root, no path) on a domain whose DNS is on
    Cloudflare; `everySeconds` is 5..3600.
-3. **On each host**: `npm run dashboard -- host-token`. It writes the token into this
-   machine's `~/.claude/claude_env_settings.local.json` (`bridge.dashboard.hostToken`) and
-   prints the line to add under `hosts` in the shared config. The host id is the machine's
-   `machine.json` name.
+3. **On each host**: `npm run dashboard -- host-token` (after `npx wrangler login` once). It
+   writes the token into this machine's `~/.claude/claude_env_settings.local.json`
+   (`bridge.dashboard.hostToken`), its hash under `hosts` in the shared config, and runs the
+   membership deploy. The host id is the machine's `machine.json` name. `npm run doctor`
+   FAILs when a host's token and its shared entry disagree.
 4. **Code deploys are automatic**: a push to `main` touching `scripts/dashboard/**` runs
    `.github/workflows/dashboard-deploy.yml` (dashboard tests, then `wrangler deploy`). It needs
    the repo secret `CLOUDFLARE_API_TOKEN` (Workers edit, scoped to the account and the zone) and
    the variables `CLOUDFLARE_ACCOUNT_ID` and `DASHBOARD_DOMAIN` (the url's host). It never
    touches `DASHBOARD_CONFIG`, which persists across deploys.
-   **Membership deploy** (any one host, once per membership change): `npx wrangler login` once, then
-   `npm run dashboard -- deploy`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`,
+   **Membership deploy**: `host-token` runs it; by hand (`npm run dashboard -- deploy`) only
+   after changing `botId` or `allowedUserIds`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`,
    `allowedUserIds`, `hosts`) from the merged config — never a host token — and deploys to
    the url's domain (Cloudflare creates the DNS record and certificate).
 5. **Menu button**: put the dashboard bot token into this machine's local
@@ -164,8 +166,9 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    like `bridge.botToken`; never synced, never sent to the Worker), then
    `npm run dashboard -- set-menu`. It checks the token belongs to `botId`, sets the button and
    reads it back. Open the dashboard bot -> **Dashboard**.
-6. **Daemons** pick the config up at their next restart (`ensure.mjs` restarts a daemon whose
-   config changed at the next session start). A configured but unusable block logs
+6. **Daemons** pick the config up within a minute: each checks its config and code revision
+   every minute and hands over to a fresh daemon on a change (as `ensure.mjs` does at session
+   start). A configured but unusable block logs
    `dashboard: off (<reason>)`.
 
 ## API

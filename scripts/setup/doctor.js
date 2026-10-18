@@ -23,6 +23,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
+import { createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
@@ -284,7 +285,8 @@ export function checkPlugins(settings, home = HOME) {
   const marketsDir = path.join(home, '.claude', 'plugins', 'marketplaces');
 
   for (const [id, on] of Object.entries(enabled)) {
-    if (on && !installed.has(id)) {
+    // `@builtin` plugins ship inside the CLI: never in the install registry, never missing.
+    if (on && !installed.has(id) && !id.endsWith('@builtin')) {
       out.push(finding('FAIL', 'plugin-enabled-not-installed', `${id} is enabled but not installed`,
         'the session will not get it'));
     }
@@ -498,6 +500,23 @@ export function checkBridgeHost({ sharedPath = path.join(HOME, '.claude', 'claud
     'create a bot for this machine and set bridge.botToken in ~/.claude/claude_env_settings.local.json, then run setup (docs/bridge.md § Setup)')];
 }
 
+// Dashboard membership: this host pushes with its local token, the Worker knows only the
+// shared hash. A token whose hash is not this host's shared entry is refused (401) forever,
+// and a token with no shared block at all means the payload lost it (it happened once).
+export function checkDashboardHost({ sharedPath = path.join(HOME, '.claude', 'claude_env_settings.json'),
+  localPath = path.join(HOME, '.claude', 'claude_env_settings.local.json'), machine = readMachineName() } = {}) {
+  const read = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return {}; } };
+  const shared = read(sharedPath).bridge?.dashboard;
+  const token = read(localPath).bridge?.dashboard?.hostToken;
+  const fix = 'fix: npm run dashboard -- host-token (registers this host and redeploys; docs/dashboard.md § Setup)';
+  if (!shared) return token ? [finding('FAIL', 'dashboard-host', 'this host has a dashboard hostToken but the shared bridge.dashboard is missing', 'restore bridge.dashboard in the shared claude_env_settings.json')] : [];
+  const want = shared.hosts?.[machine];
+  if (!token) return want ? [finding('WARN', 'dashboard-host', `${machine} is a dashboard host but has no local hostToken; it does not push`, fix)] : [];
+  if (!want) return [finding('FAIL', 'dashboard-host', `${machine} has a hostToken but is not in the shared hosts`, fix)];
+  if (createHash('sha256').update(token).digest('hex') !== want) return [finding('FAIL', 'dashboard-host', `${machine}'s hostToken does not match its shared hosts entry; every push is refused`, fix)];
+  return [];
+}
+
 /** Compare only a live daemon's startup fingerprint; never restart or rewrite it. */
 export function checkBridgeRevision({ runtimeFile = RUNTIME_FILE, repoRoot = sourceDir,
   isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } },
@@ -505,7 +524,7 @@ export function checkBridgeRevision({ runtimeFile = RUNTIME_FILE, repoRoot = sou
   let runtime;
   try { runtime = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { return []; }
   if (!Number.isInteger(runtime.pid) || runtime.pid <= 0 || !isAlive(runtime.pid)) return [];
-  const fix = 'the next session start replaces it (scripts/bridge/ensure.mjs); this check never restarts it (docs/bridge.md)';
+  const fix = 'the daemon replaces itself within a minute of a change (docs/bridge.md); this check never restarts it';
   if (!runtime.sourceRevision) return [finding('WARN', 'bridge-revision', 'live bridge source revision is unknown (started before revision reporting)', fix)];
   try {
     if (runtime.sourceRevision === revision(repoRoot)) return [];
@@ -536,6 +555,8 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkBridgeRevision({ runtimeFile: path.join(home, '.claude', 'bridge', 'runtime.json'), repoRoot }),
     ...checkBridgeHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
       localPath: path.join(home, '.claude', 'claude_env_settings.local.json') }),
+    ...checkDashboardHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
+      localPath: path.join(home, '.claude', 'claude_env_settings.local.json'), machine: readMachineName(path.join(home, '.claude', 'machine.json')) }),
     ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),
       configPath: path.join(home, '.codex', 'config.toml') }),
   ];
