@@ -804,3 +804,22 @@ test('sweep: an idle-closed Topic of a still-registered session is deleted too; 
   assert.equal(r.telegram.sent.at(-1).threadId, 101);
   assert.deepEqual(r.telegram.reopened, []);
 });
+
+test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended sessions gone', async () => {
+  const r = make();
+  r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-approval' });
+  await up(r, 'codex', 'quiet');
+  await live(r, 'claude', 'busy', { seat: 'team-a' });
+  const snap = Object.fromEntries(r.bridge.fleetSnapshot().map((s) => [s.id, s]));
+  assert.equal(snap.quiet.status, 'needs_approval');
+  assert.equal(snap.quiet.topic, null, 'lazy Topic: none before activity');
+  assert.equal(snap.busy.seat, 'team-a');
+  assert.equal(snap.busy.status, 'unknown', 'a host without a snapshot is not guessed');
+  assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.telegram.sent[0].threadId, closed: false });
+  assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
+  assert.deepEqual(r.bridge.fleetSessions().find((s) => s.agent === 'codex'), { agent: 'codex', project: 'proj', branch: 'main', seat: null, status: 'Needs approval' });
+  r.hosts.codex.statusSnapshot = () => null;
+  assert.equal(r.bridge.fleetSnapshot().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
+  r.bridge.sessionDown('codex:quiet');
+  assert.deepEqual(r.bridge.fleetSnapshot().map((s) => s.id), ['busy']);
+});

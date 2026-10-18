@@ -552,6 +552,13 @@ of organizationName, or exact `orgUuid`), no subscription login in a seat, a sea
 registered for this machine, machine absent from a non-empty `seats`. Seats and order are
 re-read every round; no restart needed.
 
+## Fleet gateway
+
+Optional: with `bridge.fleetGateway.url` (shared) and `bridge.fleetGateway.hostToken` (local)
+set, the daemon pushes a read-only snapshot of its sessions every `everySeconds` (default 15)
+to the fleet gateway behind the Telegram Mini App. Off the message path; a failing gateway
+only logs. See [`fleet-gateway.md`](fleet-gateway.md).
+
 ## Claude seats (`scripts/shared/seats.mjs`)
 
 A seat is one Claude login: an account in one Team. One machine can hold several, e.g. the
