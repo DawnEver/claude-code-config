@@ -154,6 +154,33 @@ export function timeTicks(w, now = Date.now()) {
   return { ticks, now: now >= start && now <= w.resetsAt ? (now - start) / w.windowMs : null };
 }
 
+/**
+ * The config tab: one row per editable key any host reports. The shared value is the freshest
+ * online host's; a host reading another value is still syncing (`differs`), or overrides it
+ * locally (`overrides`: a shared edit will not reach it). `meta` is the key's CONFIG_KEYS entry
+ * (label, bounds or options), matching a project key to its `*` pattern.
+ */
+export function configView(snapshot) {
+  const metas = snapshot.configKeys ?? [];
+  // A `*` segment matches any one segment of the dotted key.
+  const fits = (pattern, key) => { const p = pattern.split('.'), k = key.split('.'); return p.length === k.length && p.every((x, i) => x === '*' || x === k[i]); };
+  const metaOf = (key) => metas.find((m) => m.key === key) ?? metas.find((m) => fits(m.key, key)) ?? null;
+  const hosts = [...snapshot.hosts].filter((h) => h.config).sort((a, b) => Number(b.online) - Number(a.online)
+    || String(b.lastSeen).localeCompare(String(a.lastSeen)));
+  const keys = [...new Set(hosts.flatMap((h) => Object.keys(h.config.editable)))].sort();
+  return {
+    rows: keys.map((key) => {
+      const reporting = hosts.filter((h) => key in h.config.editable);
+      const value = reporting[0].config.editable[key];
+      return { key, meta: metaOf(key), value,
+        differs: reporting.filter((h) => h.config.editable[key] !== value && !h.config.localOverrides.includes(key)).map((h) => ({ host: h.id, value: h.config.editable[key] })),
+        overrides: reporting.filter((h) => h.config.localOverrides.includes(key)).map((h) => h.id),
+        pending: (snapshot.configPending ?? []).find((c) => c.key === key) ?? null };
+    }).filter((r) => r.meta),
+    hosts: hosts.map((h) => ({ id: h.id, online: h.online, facts: h.config.facts })),
+  };
+}
+
 /** Every account as the reader sees it, by key: what a session (its `account`) or a host refers to. */
 export const accountIndex = (snapshot, now = Date.now()) => new Map((snapshot.accounts ?? []).map((a) => [a.key, quotaView(a, now)]));
 
@@ -194,15 +221,20 @@ export function mockDashboard(now = Date.now()) {
   const s = (hostId, stale, id, agent, project, branch, status, sec, topic, seat = null) =>
     ({ id, hostId, agent, project, branch, seat, status, lastActivityAt: t(sec), stale, topic, account: acct[agent] });
   return { schemaVersion: 1, generatedAt: t(0), mock: true, hosts: [
-    { id: 'host-a', online: true, lastSeen: t(4), sessions: [
+    { id: 'host-a', online: true, lastSeen: t(4), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: [], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, alerts: true, codexSources: ['cli'], dashboardError: null } }, sessions: [
       s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a'),
       s('host-a', false, '019a7f20-2222', 'codex', 'frontend', 'main', 'needs_approval', 40, { url: 'https://t.me/c/1000000001/13', closed: false })] },
-    { id: 'host-b', online: true, lastSeen: t(9), sessions: [
+    { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, alerts: true, codexSources: ['cli'], dashboardError: null } }, sessions: [
       s('host-b', false, '7d1e9b3c-3333', 'claude', 'refactor', 'refactor/core', 'idle', 900, { url: 'https://t.me/c/1000000002/7', closed: true }),
       s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null)] },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
-  ], events: [
+  ], configKeys: [
+    { key: 'bridge.idleCloseMinutes', label: 'Close an idle Topic after (minutes, 0 = never)', min: 0, max: 1440 },
+    { key: 'bridge.deleteClosedAfterHours', label: 'Delete a closed Topic after (hours, 0 = never)', min: 0, max: 720 },
+    { key: 'bridge.dashboard.everySeconds', label: 'Push to the dashboard every (seconds)', min: 5, max: 3600 },
+    { key: 'bridge.projects.*.projectInTitle', label: 'Project name in Topic titles', options: ['always', 'main', 'never'] },
+  ], configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }], events: [
     { at: t(40), text: 'Claude · team-a (alice@example.com): 7d runs out in 1d 23h · resets in 5d 9h' },
     { at: t(7200), text: 'Codex (bob@example.com): extra reset announced · in 2h 0m' },
   ], accounts: [

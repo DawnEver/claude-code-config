@@ -33,7 +33,7 @@ import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
 import { DashboardPush } from './dashboard-push.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
-import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
+import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
 const PROGRESS_MIN_INTERVAL_MS = 3000;
 const PROGRESS_LINES = 12;
@@ -800,10 +800,8 @@ export async function main() {
   process.on('SIGTERM', stop);
   log(`up: machine=${machine} ipc=127.0.0.1:${port} idleCloseMinutes=${config.idleCloseMinutes} deleteClosedAfterHours=${config.deleteClosedAfterHours}`);
   codexLoop(codex, log, ac.signal);
-  if (config.idleCloseMinutes > 0) {
-    setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)),
-      Math.min(60000, config.idleCloseMinutes * 60000)).unref();
-  }
+  // Both read the live config each run (a dashboard edit may change them; 0 = never).
+  setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)), 60000).unref();
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
   if (config.dashboard) {
     const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
@@ -813,14 +811,30 @@ export async function main() {
       if (!config.alerts) return;
       for (const text of texts) await telegram.sendMessage(config.alerts.chatId, text, { threadId: config.alerts.topicId ?? undefined });
     };
-    new DashboardPush({ ...config.dashboard, machine, log, sessions: (list) => bridge.dashboardSnapshot().map((s) => ({ ...s, account: accountFor(s, list) })),
-      accounts: () => accounts.read(), onAlerts }).start();
+    // Dashboard-editable keys (dashboard-schema.mjs CONFIG_KEYS) are reloaded live, so an edit
+    // made here or synced in from another host applies within a minute, without a restart.
+    const reload = () => {
+      const fresh = readBridgeConfig();
+      config.idleCloseMinutes = fresh.idleCloseMinutes;
+      config.deleteClosedAfterHours = fresh.deleteClosedAfterHours;
+      for (const [name, p] of Object.entries(fresh.projects)) if (config.projects[name]) config.projects[name].projectInTitle = p.projectInTitle;
+      if (fresh.dashboard) push.every(fresh.dashboard.everySeconds);
+    };
+    const onConfigChanges = (changes) => {
+      const results = changes.map((c) => ({ id: c.id, ...applyConfigChange(c) }));
+      for (const r of results) log(`dashboard: config ${changes.find((c) => c.id === r.id).key} ${r.ok ? 'applied' : `refused (${r.error})`}`);
+      reload();
+      return results;
+    };
+    const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
+      sessions: (list) => bridge.dashboardSnapshot().map((s) => ({ ...s, account: accountFor(s, list) })),
+      accounts: () => accounts.read(), onAlerts, onConfigChanges });
+    push.start();
+    setInterval(() => { try { reload(); } catch (e) { log(`config reload: ${e.message}`); } }, 60000).unref();
   }
-  if (config.deleteClosedAfterHours > 0) {
-    const sweep = (orphans) => bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`));
-    sweep(false);
-    setInterval(() => sweep(true), 3600000).unref();
-  }
+  const sweep = (orphans) => (config.deleteClosedAfterHours > 0 ? bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`)) : null);
+  sweep(false);
+  setInterval(() => sweep(true), 3600000).unref();
   await bridge.pollLoop(ac.signal);
 }
 

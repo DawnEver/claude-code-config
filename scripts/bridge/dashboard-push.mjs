@@ -8,25 +8,35 @@
 import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 
 export class DashboardPush {
-  constructor({ url, hostToken, machine, sessions, accounts = () => [], onAlerts = () => {}, everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
-    Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, machine, sessions, accounts, onAlerts, everySeconds, log, fetch, timeoutMs });
+  constructor({ url, hostToken, machine, sessions, accounts = () => [], config = () => null, onAlerts = () => {}, onConfigChanges = () => [], everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
+    Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, machine, sessions, accounts, config, onAlerts, onConfigChanges, everySeconds, log, fetch, timeoutMs });
     this.bootAt = now();
     this.seq = 0;
     this.inFlight = false;
     this.lastError = null;
+    this.results = [];   // outcomes of config changes applied here, reported on the next push
   }
 
   body() {
     // Accounts first: a session is labelled with the account it spends (sessions(accounts)).
     const accounts = this.accounts();
-    return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(accounts), accounts };
+    return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(accounts), accounts,
+      config: this.config(), configResults: this.results };
   }
 
   /** Off the message path: an unref'd timer, never awaited by Telegram routing. */
   start() {
-    const timer = setInterval(() => this.tick(), this.everySeconds * 1000);
-    timer.unref?.();
-    return timer;
+    clearInterval(this.timer);
+    this.timer = setInterval(() => this.tick(), this.everySeconds * 1000);
+    this.timer.unref?.();
+    return this.timer;
+  }
+
+  /** A new push interval takes effect at once (a dashboard edit, reloaded live). */
+  every(seconds) {
+    if (seconds === this.everySeconds) return;
+    this.everySeconds = seconds;
+    if (this.timer) this.start();
   }
 
   async tick() {
@@ -39,6 +49,10 @@ export class DashboardPush {
       // Refused: the gateway holds a push it ranks newer (this host's clock went backwards or ahead).
       const reply = await res.json().catch(() => ({}));
       if (reply.accepted !== true) throw new Error('refused as not newer than the one held');
+      this.results = [];   // delivered with this push
+      // Changes the gateway hands this host: applied (and validated again) by the daemon.
+      const changes = (Array.isArray(reply.configChanges) ? reply.configChanges : []).filter((c) => typeof c?.id === 'string');
+      if (changes.length) this.results = await Promise.resolve(this.onConfigChanges(changes)).catch(() => changes.map((c) => ({ id: c.id, ok: false, error: 'not applied' })));
       // The gateway judged these on the merged view; this host posts them (its bot, its token).
       const alerts = (Array.isArray(reply.alerts) ? reply.alerts : []).filter((t) => typeof t === 'string' && t).map((t) => t.slice(0, 1000));
       if (alerts.length) Promise.resolve().then(() => this.onAlerts(alerts)).catch((e) => this.log(`dashboard: alert not posted (${e.message})`));

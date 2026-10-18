@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'child_process';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
+import { parseConfigChange } from '../shared/dashboard-schema.mjs';
 
 export const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 export const SHARED_ENV_SETTINGS_PATH = path.join(CLAUDE_DIR, 'claude_env_settings.json');
@@ -130,4 +131,42 @@ export function writePrivateFile(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, content, { mode: 0o600 });
   if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+}
+
+const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+const getPath = (obj, key) => key.split('.').reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), obj);
+
+/**
+ * What this host tells the dashboard about its config: the effective value of every editable
+ * key (dashboard-schema.mjs CONFIG_KEYS), which of them a machine-local value overrides (a
+ * shared edit does not reach this host then), and the rest only as facts — on or off, a count —
+ * never a token, an id or a chat.
+ */
+export function configSummary(config, { localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
+  const editable = { 'bridge.idleCloseMinutes': config.idleCloseMinutes, 'bridge.deleteClosedAfterHours': config.deleteClosedAfterHours };
+  if (config.dashboard) editable['bridge.dashboard.everySeconds'] = config.dashboard.everySeconds;
+  for (const [name, p] of Object.entries(config.projects)) editable[`bridge.projects.${name}.projectInTitle`] = p.projectInTitle;
+  const local = readJson(localPath) ?? {};
+  return { editable, localOverrides: Object.keys(editable).filter((k) => getPath(local, k) !== undefined),
+    facts: { bridge: Boolean(config.botToken), allowedUsers: config.allowedUserIds.length, approvalsFromTelegram: config.approvalsFromTelegram,
+      alerts: Boolean(config.alerts), codexSources: config.codexSources, dashboardError: config.dashboardError ?? null } };
+}
+
+/**
+ * Apply one dashboard-requested change to the shared settings, after validating it again here
+ * (the host does not trust the gateway). Written in place: the shared file may be a link into
+ * the sync dir, which a rename would replace. -> {ok: true} | {ok: false, error}
+ */
+export function applyConfigChange(change, { sharedPath = SHARED_ENV_SETTINGS_PATH } = {}) {
+  const c = parseConfigChange(change);
+  if (!c) return { ok: false, error: 'not an editable key or not a valid value' };
+  const settings = readJson(sharedPath);
+  if (!settings) return { ok: false, error: 'shared settings unreadable' };
+  const parts = c.key.split('.');
+  if (parts[1] === 'projects' && !settings.bridge?.projects?.[parts[2]]) return { ok: false, error: `no project ${parts[2]}` };
+  let o = settings;
+  for (const k of parts.slice(0, -1)) o = (o[k] && typeof o[k] === 'object') ? o[k] : (o[k] = {});
+  o[parts.at(-1)] = c.value;
+  try { fs.writeFileSync(sharedPath, JSON.stringify(settings, null, 2) + '\n'); } catch (e) { return { ok: false, error: e.code ?? 'write failed' }; }
+  return { ok: true };
 }

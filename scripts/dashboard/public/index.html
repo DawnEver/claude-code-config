@@ -102,6 +102,19 @@
   .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 4px 12px; margin-top: 6px; }
   .qmini > div { display: grid; grid-template-columns: 22px 1fr 34px; gap: 6px; align-items: center; font-size: 12px; }
   .qmini .k { color: var(--hint); font-weight: 600; } .qmini .used { text-align: right; font-weight: 600; }
+  /* Config: shared settings first (the editable few), then each host's facts. */
+  .cfg { background: var(--card); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
+  .cfg-row { padding: 10px 12px; } .cfg-row + .cfg-row { border-top: 1px solid var(--sep); }
+  .cfg-top { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .cfg-top label { font-size: 14px; flex: 1 1 200px; }
+  .cfg-edit { display: flex; gap: 6px; align-items: center; }
+  .cfg-edit input, .cfg-edit select { width: 96px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--sep); background: var(--bg); color: var(--fg); font: inherit; font-size: 14px; }
+  .cfg-edit button { border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+  .cfg-edit button:disabled { opacity: .4; cursor: default; }
+  .cfg .note { color: var(--hint); }
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 10px 12px; font-size: 13px; }
+  .facts dt { color: var(--hint); } .facts dd { margin: 0; }
+  .section-h { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--hint); margin: 4px 4px 8px; }
   .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
   .quota-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; margin-bottom: 16px; }
   .quota-card { background: var(--card); border-radius: 14px; padding: 12px 14px; }
@@ -154,10 +167,12 @@
     <button role="tab" data-tab="sessions">Sessions <b id="n-sessions"></b></button>
     <button role="tab" data-tab="quota">Quota <b id="n-quota"></b><i class="tab-dot" id="quota-dot" hidden></i></button>
     <button role="tab" data-tab="events">Events <b id="n-events"></b><i class="tab-badge" id="events-badge" hidden></i></button>
+    <button role="tab" data-tab="config">Config</button>
   </nav>
   <div id="banner" class="banner"></div>
   <section id="quota-view" class="view" data-view="quota" hidden></section>
   <section id="events-view" class="view" data-view="events" hidden></section>
+  <section id="config-view" class="view" data-view="config" hidden></section>
   <div class="view" data-view="sessions">
   <nav id="chips" class="chips" aria-label="Status"></nav>
   <div id="selects" class="selects"></div>

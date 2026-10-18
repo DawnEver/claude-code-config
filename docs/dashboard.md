@@ -101,6 +101,28 @@ app-server); the Worker never recomputes it.
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most
   every 30 min).
 
+## Config
+
+The dashboard shows each host's config and may change a fixed few keys — behaviour that grants
+nothing. `CONFIG_KEYS` in `scripts/shared/dashboard-schema.mjs` is the whole list:
+`bridge.idleCloseMinutes` (0–1440), `bridge.deleteClosedAfterHours` (0–720),
+`bridge.dashboard.everySeconds` (5–3600), `bridge.projects.<repo>.projectInTitle`
+(`always`/`main`/`never`). Permissions (`allowedUserIds`, `approvalsFromTelegram`), routing
+(chat ids) and secrets are never editable and never shown — only as facts (on/off, a count) —
+so a compromised Cloudflare or Telegram account cannot widen who controls a host or where its
+sessions go.
+
+- **Flow**: the Mini App posts `{key, value}` to `/api/config` (signed viewer, validated
+  against `CONFIG_KEYS`); the Worker queues it (one pending change per key, a newer request
+  replaces an older), hands it to the next host that pushes, and to another if that host does
+  not report within 2 min. The host validates it again (`applyConfigChange` in `context.mjs`),
+  writes it into the shared `claude_env_settings.json` in place (the file may be a link into
+  the sync dir), and reports the outcome on its next push. Requested, applied and refused are
+  Events. No new channel into a host: the change rides the reply to the host's own push.
+- **Live**: every daemon reloads the editable keys each minute, so an edit applied here or
+  synced in from another host takes effect without a restart. A key set in a host's local
+  layer overrides the shared value there; the Config tab says so.
+
 ## Setup
 
 Dashboard membership has one home: the shared `bridge.dashboard` block of
@@ -142,6 +164,7 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 | `GET /api/health` | none | `{ok, schemaVersion}` |
 | `GET /api/dashboard` | `Authorization: tma <raw initData>` | `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[]}]}` |
 | `GET /api/hosts/:hostId/sessions` | same | one host of the above |
+| `POST /api/config` | `Authorization: tma <raw initData>` | `202 {id}`: a `CONFIG_KEYS` change queued; `400` for any other key or value |
 | `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted}` (false = not newer than held) |
 
 Every route shares the per-client `ratePerMinute` (120), keyed by `CF-Connecting-IP`, which

@@ -6,7 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -70,7 +70,7 @@ test('schema: whitelists fields, derives a Topic link, never forwards the chat i
 test('registry: ordering per boot, offline after TTL, configured hosts listed before their first push', () => {
   let t = NOW;
   const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => t });
-  assert.deepEqual(r.host('host-b'), { id: 'host-b', online: false, lastSeen: null, sessions: [] });
+  assert.deepEqual(r.host('host-b'), { id: 'host-b', online: false, lastSeen: null, sessions: [], config: null });
   assert.equal(r.accept('host-a', parseHostPush(push({ seq: 5 }))).accepted, true);
   assert.equal(r.accept('host-a', parseHostPush(push({ seq: 4, sessions: [] }))).accepted, false, 'delayed older push');
   assert.equal(r.host('host-a').sessions.length, 1);
@@ -106,7 +106,7 @@ test('api: host push and viewer read, each authenticated', async () => {
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, '{nope'))).status, 400);
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, { schemaVersion: 1 }))).status, 400);
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, 'x'.repeat(300 * 1024)))).status, 413);
-  assert.deepEqual(await (await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()))).json(), { accepted: true, alerts: [] });
+  assert.deepEqual(await (await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()))).json(), { accepted: true, alerts: [], configChanges: [] });
 
   assert.equal((await g.req('/api/dashboard')).status, 401);
   assert.equal((await g.req('/api/dashboard', { headers: { authorization: 'tma user=%7B%22id%22%3A42%7D' } })).status, 401, 'unsigned client claim');
@@ -341,4 +341,88 @@ test('view: a quota window keeps its length, so the page can draw its time axis'
   const [w] = quotaView(account(), NOW).windows;
   assert.equal(w.windowMs, 5 * HR);
   assert.ok(timeTicks(w, NOW).ticks.length > 0);
+});
+
+test('config: only CONFIG_KEYS are editable — never permissions, routing or secrets', async () => {
+  const { parseConfigChange } = await import('../shared/dashboard-schema.mjs');
+  assert.deepEqual(parseConfigChange({ key: 'bridge.idleCloseMinutes', value: 45 }), { key: 'bridge.idleCloseMinutes', value: 45 });
+  assert.deepEqual(parseConfigChange({ key: 'bridge.projects.my-repo.projectInTitle', value: 'main' }), { key: 'bridge.projects.my-repo.projectInTitle', value: 'main' });
+  for (const bad of [{ key: 'bridge.allowedUserIds', value: [1] }, { key: 'bridge.approvalsFromTelegram', value: true },
+    { key: 'bridge.projects.r.chatId', value: -100 }, { key: 'bridge.botToken', value: 'x' }, { key: 'bridge.dashboard.url', value: 'https://evil' },
+    { key: 'bridge.idleCloseMinutes', value: -1 }, { key: 'bridge.idleCloseMinutes', value: '30' }, { key: 'bridge.dashboard.everySeconds', value: 1 },
+    { key: 'bridge.projects.*.projectInTitle', value: 'main' }, { key: 'bridge.projects.a.b.projectInTitle', value: 'main' }, { key: '__proto__.x', value: 1 }]) {
+    assert.equal(parseConfigChange(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('config: a change is queued, handed to one host, retried elsewhere if unreported, and its outcome is an event', () => {
+  let t = NOW;
+  const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => t });
+  const id = r.requestChange({ key: 'bridge.idleCloseMinutes', value: 45 }, ALICE);
+  assert.equal(r.snapshot().configPending[0].host, null);
+  const a = r.accept('host-a', parseHostPush(push({ seq: 1 })));
+  assert.deepEqual(a.configChanges, [{ id, key: 'bridge.idleCloseMinutes', value: 45 }]);
+  assert.deepEqual(r.accept('host-b', parseHostPush(push({ seq: 1 }))).configChanges, [], 'one host at a time');
+  assert.deepEqual(r.accept('host-a', parseHostPush(push({ seq: 2 }))).configChanges, [], 'not handed twice while awaited');
+  t += 121000;
+  assert.equal(r.accept('host-b', parseHostPush(push({ seq: 2 }))).configChanges.length, 1, 'unreported: the next host takes it');
+  r.accept('host-a', parseHostPush(push({ seq: 3, configResults: [{ id, ok: true }] })));
+  assert.equal(r.snapshot().configPending.length, 1, 'a report from a host no longer holding it is ignored');
+  r.accept('host-b', parseHostPush(push({ seq: 3, configResults: [{ id, ok: true }] })));
+  assert.deepEqual(r.snapshot().configPending, []);
+  assert.match(r.snapshot().events[0].text, /^config bridge\.idleCloseMinutes = 45 applied by host-b$/);
+  r.requestChange({ key: 'bridge.idleCloseMinutes', value: 10 }, ALICE);
+  r.requestChange({ key: 'bridge.idleCloseMinutes', value: 20 }, ALICE);
+  assert.deepEqual(r.snapshot().configPending.map((c) => c.value), [20], 'a newer request for a key replaces the older');
+});
+
+test('config api: the one write needs a signed allowlisted viewer and an editable key', async () => {
+  const g = await gateway();
+  const post = async (body, user = ALICE) => g.req('/api/config', { method: 'POST', headers: { ...(await asViewer(user)).headers, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await g.req('/api/config', { method: 'POST', body: '{}' })).status, 401);
+  assert.equal((await post({ key: 'bridge.idleCloseMinutes', value: 45 }, MALLORY)).status, 403);
+  assert.equal((await post({ key: 'bridge.allowedUserIds', value: [MALLORY] })).status, 400);
+  const ok = await post({ key: 'bridge.idleCloseMinutes', value: 45 });
+  assert.equal(ok.status, 202);
+  assert.ok((await ok.json()).id);
+  assert.equal((await g.req('/api/dashboard', { method: 'POST', headers: (await asViewer(ALICE)).headers })).status, 404, 'no other write');
+});
+
+test('view: config rows — the freshest value, hosts still syncing or overriding locally, and pending edits', async () => {
+  const { configKeysMeta } = await import('../shared/dashboard-schema.mjs');
+  const m = mockDashboard(NOW);
+  assert.deepEqual(m.configKeys, configKeysMeta(), 'the mock carries the real table');
+  const v = configView(m);
+  const row = (k) => v.rows.find((r) => r.key === k);
+  assert.equal(row('bridge.projects.backend-api.projectInTitle').meta.options.length, 3, 'a project key finds its * entry');
+  assert.deepEqual(row('bridge.dashboard.everySeconds').overrides, ['host-b']);
+  assert.equal(row('bridge.deleteClosedAfterHours').pending.value, 48);
+  assert.deepEqual(v.hosts.map((h) => h.id), ['host-a', 'host-b'], 'hosts that reported a config, online first');
+  const syncing = configView({ ...m, hosts: m.hosts.map((h) => (h.id === 'host-b' ? { ...h, config: { ...h.config, editable: { ...h.config.editable, 'bridge.idleCloseMinutes': 10 } } } : h)) });
+  assert.deepEqual(syncing.rows.find((r) => r.key === 'bridge.idleCloseMinutes').differs, [{ host: 'host-b', value: 10 }]);
+});
+
+test('end to end: a dashboard edit reaches the shared settings through a host push, and comes back as an event', async () => {
+  const fs2 = await import('fs'); const os2 = await import('os'); const path2 = await import('path');
+  const { DashboardPush } = await import('../bridge/dashboard-push.mjs');
+  const { applyConfigChange } = await import('../bridge/context.mjs');
+  const dir = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'dash-e2e-'));
+  try {
+    const sharedPath = path2.join(dir, 's.json');
+    fs2.writeFileSync(sharedPath, JSON.stringify({ bridge: { idleCloseMinutes: 30, allowedUserIds: [1] } }));
+    const g = await gateway();
+    const res = await g.req('/api/config', { method: 'POST', headers: { ...(await asViewer(ALICE)).headers, 'content-type': 'application/json' },
+      body: JSON.stringify({ key: 'bridge.idleCloseMinutes', value: 45 }) });
+    assert.equal(res.status, 202);
+    const push = new DashboardPush({ url: 'https://dashboard.example', hostToken: g.token, machine: 'host-a', sessions: () => [], config: () => null,
+      onConfigChanges: (changes) => changes.map((c) => ({ id: c.id, ...applyConfigChange(c, { sharedPath }) })),
+      fetch: (url, init) => g.api(new Request(url, init)) });
+    assert.equal(await push.tick(), true);
+    assert.equal(JSON.parse(fs2.readFileSync(sharedPath, 'utf8')).bridge.idleCloseMinutes, 45, 'written by the host');
+    assert.equal(await push.tick(), true);
+    const snap = await (await g.req('/api/dashboard', await asViewer(ALICE))).json();
+    assert.deepEqual(snap.configPending, []);
+    assert.match(snap.events[0].text, /^config bridge\.idleCloseMinutes = 45 applied by host-a$/);
+    assert.deepEqual(JSON.parse(fs2.readFileSync(sharedPath, 'utf8')).bridge.allowedUserIds, [1], 'nothing else touched');
+  } finally { fs2.rmSync(dir, { recursive: true, force: true }); }
 });

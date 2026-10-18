@@ -4,18 +4,21 @@
 // may disagree): `lastSeen` is when a push arrived, and a host silent for `ttlMs` is offline
 // and every session it last reported is `stale`.
 
-import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
+import { SCHEMA_VERSION, configKeysMeta } from '../shared/dashboard-schema.mjs';
 import { quotaAlertsFor, quotaView } from './public/view.mjs';
 
 /** How many past alerts the dashboard keeps (memory only: a Worker restart starts afresh). */
 export const MAX_EVENTS = 50;
+/** A change handed to a host that does not report it within this goes to the next host. */
+export const CHANGE_RETRY_MS = 120000;
 
 export class Registry {
   constructor({ hosts = [], ttlMs = 60000, now = Date.now } = {}) {
     Object.assign(this, { ttlMs, now });
     this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
     this.alerted = new Map();   // account key -> what was last alerted (view.mjs quotaAlertsFor)
-    this.events = [];           // the alerts as a history for the dashboard, newest first
+    this.events = [];           // alerts and config changes as a history for the dashboard, newest first
+    this.changes = new Map();   // pending config change id -> {id, key, value, by, at, host?, sentAt?}
   }
 
   /**
@@ -30,6 +33,7 @@ export class Registry {
     if (push.bootAt > this.now() + 300000) return { accepted: false, alerts: [] };
     if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false, alerts: [] };
     this.hosts.set(hostId, { ...push, receivedAt: this.now() });
+    const configChanges = this.#settle(hostId, push.configResults);
     const merged = new Map(this.accounts().map((a) => [a.key, a]));
     const alerts = [];
     for (const key of new Set(push.accounts.map((a) => a.key))) {
@@ -37,8 +41,45 @@ export class Registry {
       this.alerted.set(key, state);
       alerts.push(...texts);
     }
-    this.events = [...alerts.map((text) => ({ at: new Date(this.now()).toISOString(), text })).reverse(), ...this.events].slice(0, MAX_EVENTS);
-    return { accepted: true, alerts };
+    for (const text of alerts) this.#event(text);
+    return { accepted: true, alerts, configChanges };
+  }
+
+  #event(text) {
+    this.events = [{ at: new Date(this.now()).toISOString(), text }, ...this.events].slice(0, MAX_EVENTS);
+  }
+
+  /**
+   * A dashboard edit (validated by the caller against CONFIG_KEYS): queued until a host applies
+   * it to the shared settings. One pending change per key: a newer request replaces an older one.
+   */
+  requestChange({ key, value }, by) {
+    for (const [id, c] of this.changes) if (c.key === key) this.changes.delete(id);
+    const id = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    this.changes.set(id, { id, key, value, by, at: this.now() });
+    this.#event(`config ${key} = ${JSON.stringify(value)} requested`);
+    return id;
+  }
+
+  /**
+   * Record what `hostId` reports about the changes it was handed, then hand it every change no
+   * host holds (one host applies a change: the shared file syncs it to the rest). A change
+   * handed out but not reported within CHANGE_RETRY_MS goes to the next host that pushes.
+   */
+  #settle(hostId, results = []) {
+    for (const r of results) {
+      const c = this.changes.get(r.id);
+      if (!c || c.host !== hostId) continue;
+      this.changes.delete(r.id);
+      this.#event(`config ${c.key} = ${JSON.stringify(c.value)} ${r.ok ? `applied by ${hostId}` : `refused by ${hostId}: ${r.error}`}`);
+    }
+    const out = [];
+    for (const c of this.changes.values()) {
+      if (c.host && this.now() - c.sentAt < CHANGE_RETRY_MS) continue;   // handed out, still awaiting its report
+      Object.assign(c, { host: hostId, sentAt: this.now() });
+      out.push({ id: c.id, key: c.key, value: c.value });
+    }
+    return out;
   }
 
   host(id) {
@@ -46,7 +87,7 @@ export class Registry {
     const p = this.hosts.get(id);
     const online = !!p && this.now() - p.receivedAt < this.ttlMs;
     return { id, online, lastSeen: p ? new Date(p.receivedAt).toISOString() : null,
-      sessions: (p?.sessions ?? []).map((s) => ({ ...s, hostId: id, stale: !online })) };
+      sessions: (p?.sessions ?? []).map((s) => ({ ...s, hostId: id, stale: !online })), config: p?.config ?? null };
   }
 
   /**
@@ -69,6 +110,8 @@ export class Registry {
 
   snapshot() {
     return { schemaVersion: SCHEMA_VERSION, generatedAt: new Date(this.now()).toISOString(),
-      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), events: this.events };
+      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), events: this.events,
+      configKeys: configKeysMeta(),
+      configPending: [...this.changes.values()].map(({ id, key, value, at, host }) => ({ id, key, value, at: new Date(at).toISOString(), host: host ?? null })) };
   }
 }

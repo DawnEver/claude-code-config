@@ -65,7 +65,23 @@ function parseAccount(a) {
     extraReset: ex && typeof ex === 'object' ? { at: epoch(ex.at), url } : null };
 }
 
-/** A host's POST body -> {bootAt, seq, sessions, accounts} or null. Unknown session entries are dropped, not fatal. */
+/** A host's config summary (scripts/bridge/context.mjs configSummary): editable values and facts only. */
+function parseConfigSummary(c) {
+  if (!c || typeof c !== 'object') return null;
+  const editable = {};
+  for (const [k, v] of Object.entries(c.editable ?? {}).slice(0, 60)) if (configKey(k) && configKey(k).parse(v) !== undefined) editable[k] = v;
+  const f = c.facts ?? {};
+  return { editable, localOverrides: (Array.isArray(c.localOverrides) ? c.localOverrides : []).filter((k) => k in editable),
+    facts: { bridge: f.bridge === true, allowedUsers: num(f.allowedUsers, 0, 1000) ?? 0, approvalsFromTelegram: f.approvalsFromTelegram === true,
+      alerts: f.alerts === true, codexSources: (Array.isArray(f.codexSources) ? f.codexSources : []).map((x) => text(x, 32)).filter(Boolean).slice(0, 8),
+      dashboardError: text(f.dashboardError, 200) } };
+}
+
+const CHANGE_ID = /^[a-f0-9]{16,32}$/;
+const parseResult = (r) => (r && CHANGE_ID.test(r.id) ? { id: r.id, ok: r.ok === true, error: r.ok === true ? null : text(r.error, 200) ?? 'failed' } : null);
+export const isChangeId = (id) => CHANGE_ID.test(id ?? '');
+
+/** A host's POST body -> {bootAt, seq, sessions, accounts, config, configResults} or null. Unknown session entries are dropped, not fatal. */
 export function parseHostPush(body) {
   if (!body || body.schemaVersion !== SCHEMA_VERSION || !Array.isArray(body.sessions)) return null;
   if (!Number.isSafeInteger(body.bootAt) || body.bootAt < 1 || !Number.isSafeInteger(body.seq) || body.seq < 1) return null;
@@ -76,5 +92,40 @@ export function parseHostPush(body) {
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
-  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts };
+  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, config: parseConfigSummary(body.config),
+    configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean) };
+}
+
+// ── Config the dashboard may change ──
+// The only keys a remote request can touch: behaviour that grants nothing. Permissions
+// (allowedUserIds, approvalsFromTelegram), routing (chat ids) and secrets are never here, so a
+// compromised dashboard or Telegram account cannot widen who controls a host or where its
+// sessions go. Both the Worker and the host validate against this one table.
+const int = (lo, hi) => Object.assign((v) => (Number.isInteger(v) && v >= lo && v <= hi ? v : undefined), { min: lo, max: hi });
+// No dots in the name: the key is a dotted path, and a dot would address another object.
+const PROJECT = /^bridge\.projects\.([A-Za-z0-9_-]{1,100})\.projectInTitle$/;
+export const CONFIG_KEYS = {
+  'bridge.idleCloseMinutes': { label: 'Close an idle Topic after (minutes, 0 = never)', parse: int(0, 1440) },
+  'bridge.deleteClosedAfterHours': { label: 'Delete a closed Topic after (hours, 0 = never)', parse: int(0, 720) },
+  'bridge.dashboard.everySeconds': { label: 'Push to the dashboard every (seconds)', parse: int(5, 3600) },
+  'bridge.projects.*.projectInTitle': { label: 'Project name in Topic titles', options: ['always', 'main', 'never'],
+    parse: (v) => (['always', 'main', 'never'].includes(v) ? v : undefined) },
+};
+
+/** CONFIG_KEYS as plain data for the page (it cannot import this module): label and bounds. */
+export const configKeysMeta = () => Object.entries(CONFIG_KEYS).map(([key, s]) => ({ key, label: s.label,
+  ...(s.options ? { options: s.options } : { min: s.parse.min, max: s.parse.max }) }));
+
+/** The table entry for a concrete key (a project key matches its `*` pattern), or null. */
+export function configKey(key) {
+  if (typeof key !== 'string') return null;
+  if (CONFIG_KEYS[key] && !key.includes('*')) return CONFIG_KEYS[key];
+  return PROJECT.test(key) ? CONFIG_KEYS['bridge.projects.*.projectInTitle'] : null;
+}
+
+/** A requested change -> {key, value} when the key is editable and the value valid, else null. */
+export function parseConfigChange(c) {
+  const spec = configKey(c?.key);
+  const value = spec?.parse(c.value);
+  return value === undefined || !spec ? null : { key: c.key, value };
 }

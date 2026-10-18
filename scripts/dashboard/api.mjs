@@ -1,7 +1,7 @@
 // scripts/dashboard/api.mjs — the gateway's HTTP API on Web-standard Request/Response, so the
 // same code runs in the Worker's Durable Object and in Node tests.
 
-import { SCHEMA_VERSION, isHostId, parseHostPush } from '../shared/dashboard-schema.mjs';
+import { SCHEMA_VERSION, isHostId, parseConfigChange, parseHostPush } from '../shared/dashboard-schema.mjs';
 import { Registry } from './registry.mjs';
 import { TELEGRAM_PUBLIC_KEY, verifyHostToken, verifyInitData } from './auth.mjs';
 
@@ -68,12 +68,22 @@ export function createApi(config, { now = Date.now, log = () => {} } = {}) {
       if (!parsed) return error(400, 'invalid_snapshot');
       return json(200, registry.accept(hostId, parsed));
     }
-    if (request.method !== 'GET') return error(404, 'not_found');
+    if (request.method !== 'GET' && !(request.method === 'POST' && url.pathname === '/api/config')) return error(404, 'not_found');
     const who = await verifyInitData(/^tma (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1],
       { botId: config.botId, allowedUserIds: config.allowedUserIds, maxAgeSeconds: config.initDataMaxAgeSeconds, now: now(), publicKey: config.publicKey });
     if (!who.ok) {
       log(`viewer refused: ${who.status === 403 ? 'user not allowlisted' : 'initData missing, invalid or expired'}`);
       return error(who.status, who.status === 403 ? 'forbidden' : 'unauthorized');
+    }
+    if (url.pathname === '/api/config') {
+      // The one write: a change to a CONFIG_KEYS key, queued for a host to apply.
+      const text = await request.text();
+      if (text.length > 4096) return error(413, 'too_large');
+      let change;
+      try { change = parseConfigChange(JSON.parse(text)); } catch { change = null; }
+      if (!change) return error(400, 'not_editable');
+      log(`config change requested by ${who.userId}: ${change.key}`);
+      return json(202, { id: registry.requestChange(change, who.userId) });
     }
     if (url.pathname === '/api/dashboard') return json(200, registry.snapshot());
     const sessions = /^\/api\/hosts\/([^/]+)\/sessions$/.exec(url.pathname);

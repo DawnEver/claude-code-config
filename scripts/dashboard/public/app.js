@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView } from './view.mjs';
 
 const POLL_MS = 8000;
 const tg = window.Telegram?.WebApp;
@@ -18,7 +18,7 @@ let selectsKey = null;
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 // A #quota / #events link opens that tab; otherwise the last one used. 
-const TABS = ['sessions', 'quota', 'events'];
+const TABS = ['sessions', 'quota', 'events', 'config'];
 // #quota:account also picks the quota grouping.
 const [hashTab, hashBy] = location.hash.slice(1).split(':');
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
@@ -28,6 +28,8 @@ let seenAt = store.get('dashboard.eventsSeenAt');
 // account (one card per budget).
 let quotaBy = (hashBy ?? store.get('dashboard.quotaBy')) === 'account' ? 'account' : 'host';
 let accounts = new Map();
+let configShown = null;   // the config view last rendered (JSON)
+let configDirty = false;  // an edit typed but not saved
 
 tg?.ready();
 tg?.expand();
@@ -283,6 +285,82 @@ function renderEvents() {
   box.append(list);
 }
 
+// Edits are a request to the gateway, applied by a host: the row shows it pending until then.
+async function saveConfig(key, value, button) {
+  button.disabled = true;
+  configDirty = false;
+  configShown = null;
+  try {
+    const res = await fetch('api/config', { method: 'POST', headers: { authorization: `tma ${tg.initData}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ key, value }) });
+    if (!res.ok) throw new Error(res.status === 400 ? 'not an allowed value' : `HTTP ${res.status}`);
+    tg?.HapticFeedback?.notificationOccurred?.('success');
+    await load();
+  } catch (e) {
+    button.disabled = false;
+    tg?.showAlert ? tg.showAlert(`Not saved: ${e.message}`) : alert(`Not saved: ${e.message}`);
+  }
+}
+
+function configRow(r) {
+  const row = el('div', 'cfg-row');
+  const top = el('div', 'cfg-top');
+  const name = r.key.split('.')[2] && r.key.includes('.projects.') ? `${r.meta.label} · ${r.key.split('.')[2]}` : r.meta.label;
+  top.append(el('label', null, name));
+  const edit = el('div', 'cfg-edit');
+  let input;
+  if (r.meta.options) {
+    input = el('select');
+    for (const o of r.meta.options) input.append(Object.assign(el('option', null, o), { value: o }));
+  } else {
+    input = Object.assign(el('input'), { type: 'number', min: r.meta.min, max: r.meta.max, step: 1 });
+  }
+  input.value = String(r.pending?.value ?? r.value);
+  const save = el('button', null, 'Save');
+  save.disabled = true;
+  const parse = () => (r.meta.options ? input.value : Number(input.value));
+  input.addEventListener('input', () => {
+    configDirty = true; save.disabled = parse() === r.value || (!r.meta.options && !(Number.isInteger(parse()) && parse() >= r.meta.min && parse() <= r.meta.max)); });
+  save.addEventListener('click', () => saveConfig(r.key, parse(), save));
+  if (mock || !tg?.initData) input.disabled = true;
+  edit.append(input, save);
+  top.append(edit);
+  row.append(top);
+  const notes = [r.pending && `pending: ${JSON.stringify(r.pending.value)}${r.pending.host ? `, handed to ${r.pending.host}` : ', waiting for a host'}`,
+    ...r.differs.map((d) => `${d.host} still reads ${JSON.stringify(d.value)} (syncing)`),
+    r.overrides.length && `overridden locally on ${r.overrides.join(', ')}: a shared edit does not reach ${r.overrides.length === 1 ? 'it' : 'them'}`,
+    !r.meta.options && `${r.meta.min}–${r.meta.max}`].filter(Boolean);
+  for (const n of notes) row.append(el('div', 'sub note', n));
+  return row;
+}
+
+function renderConfig() {
+  const box = $('config-view');
+  box.replaceChildren();
+  const v = configView(snapshot);
+  if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }
+  box.append(el('div', 'section-h', 'Shared settings'));
+  const shared = el('div', 'cfg');
+  for (const r of v.rows) shared.append(configRow(r));
+  box.append(shared, el('div', 'muted', 'Only these can change here. Who may control a host, where sessions are mirrored and every secret stay in the files.'));
+  const grid = el('div', 'quota-hosts');
+  for (const h of v.hosts) {
+    const section = el('section', `host${h.online ? '' : ' off'}`);
+    const head = el('div', 'host-head');
+    head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id));
+    const dl = el('dl', 'facts cfg');
+    const on = (b) => (b ? 'on' : 'off');
+    for (const [k, val] of [['Telegram bridge', on(h.facts.bridge)], ['Allowed users', String(h.facts.allowedUsers)],
+      ['Approvals from Telegram', on(h.facts.approvalsFromTelegram)], ['Quota alerts', on(h.facts.alerts)],
+      ['Codex sources', h.facts.codexSources.join(', ') || '—'], h.facts.dashboardError && ['Dashboard', h.facts.dashboardError]].filter(Boolean)) {
+      dl.append(el('dt', null, k), el('dd', null, val));
+    }
+    section.append(head, dl);
+    grid.append(section);
+  }
+  box.append(el('div', 'section-h', 'Hosts'), grid);
+}
+
 function renderTabs() {
   // Looking at the events marks them seen (after this render still shows which were new).
   const t = tabs(snapshot, Date.now(), seenAt);
@@ -301,6 +379,8 @@ function renderTabs() {
 for (const b of document.querySelectorAll('#tabs [data-tab]')) {
   b.addEventListener('click', () => {
     tab = b.dataset.tab;
+    configShown = null;
+    configDirty = false;
     store.set('dashboard.tab', tab);
     tg?.HapticFeedback?.selectionChanged?.();
     render();
@@ -315,6 +395,13 @@ function render() {
   renderTabs();
   renderQuota();
   renderEvents();
+  // The config form is rebuilt only when its data changed and nobody is editing it: a poll must
+  // not wipe a value being typed.
+  if (tab === 'config') {
+    const key = JSON.stringify(configView(snapshot));
+    const editing = configDirty || $('config-view').contains(document.activeElement);
+    if (key !== configShown && !editing) { configShown = key; renderConfig(); }
+  }
   if (tab === 'events' && snapshot.events?.length) { seenAt = snapshot.events[0].at; store.set('dashboard.eventsSeenAt', seenAt); }
   renderChips();
   renderSelects();
@@ -327,6 +414,7 @@ function stop(message) {
   $('chips').replaceChildren();
   $('quota-view').replaceChildren();
   $('events-view').replaceChildren();
+  $('config-view').replaceChildren();
   $('tabs').hidden = true;
 }
 
