@@ -356,3 +356,13 @@ rolling back before step 7.
   first read can block on a network fetch or fail offline, and the launchers read
   `claude_env_settings.json` on the critical path of every `ccc`/`cods` invocation. Pin
   the sync folder to "Always keep on this device". Offline launch behaviour is untested.
+- **Payload hard links on Windows without symlink rights.** Without Developer Mode, setup
+  links the three payload files into `~/.claude/` as hard links, and the cloud client
+  *replaces* a file on every download — so each incoming edit silently detaches the host's
+  copy (one host read a private copy for 11 days, 2026-10). Defences, in order:
+  enable Developer Mode and re-run `setup.js --replace` so the links become symlinks;
+  `healSyncLinks()` (`scripts/setup/check-links.js`) re-links a detached copy to the sync
+  copy at SessionStart, in the launchers and every minute in the bridge daemon, but only
+  when the sync copy is at least as new — a copy edited here since is reported as a
+  conflict, never overwritten; doctor FAILs `link-detached`; and writers
+  (`applyConfigChange`) write the sync dir's copy, never the `~/.claude` link.

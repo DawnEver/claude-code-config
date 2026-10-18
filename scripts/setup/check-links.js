@@ -6,8 +6,9 @@
 // the launcher is its checkpoint).
 //
 // Auto-repairs the lossless cases (missing dest -> re-link; claude-hud config
-// symlink -> hard link). A drifted plain file is reported, never touched —
-// it may hold edits the repo never saw. See setup-check-hook.js header.
+// symlink -> hard link; a sync payload file whose link a cloud client broke, see
+// healSyncLinks). A drifted plain file that may hold edits of its own is reported,
+// never touched. See setup-check-hook.js header.
 import fs from 'fs';
 import path from 'path';
 import {
@@ -24,11 +25,41 @@ import {
   getSyncDir,
   linkSourceRoot,
   composeCodexConfigFile,
+  isHardLinked,
+  sameVolume,
 } from './setup.js';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 
 // Works from any cwd because ~/.claude/scripts is itself a link into the repo.
 export const SETUP_FIX_CMD = 'node ~/.claude/scripts/setup/setup.js --replace';
+
+/**
+ * Re-link the sync payload files a cloud client detached (2026-10-18). Without symlink rights
+ * setup hard-links them, and OneDrive replaces the synced file on every download, which breaks
+ * the link: the host then reads a private copy and never sees another host's edit.
+ *   - sync copy at least as new as the private one: the change came from the cloud and nothing
+ *     was edited here since the break, so re-linking loses nothing (the copy is kept as
+ *     .setup-bak when it differs).
+ *   - private copy newer: edited here after the break, on top of a stale base. Both sides hold
+ *     something; merging is a human's call, so it is reported (doctor: link-detached) and left.
+ * -> {repaired: [dest], conflicts: [dest]}
+ */
+export function healSyncLinks({ syncDir = getSyncDir(), tables = [{ links: CLAUDE_LINKS, dir: claudeDir },
+  ...localSeats().filter((x) => fs.existsSync(x.dir)).map((x) => ({ links: SEAT_LINKS, dir: x.dir }))] } = {}) {
+  const repaired = [], conflicts = [];
+  for (const { links, dir } of tables) {
+    for (const link of links.filter((l) => l.base === 'sync' && l.type === 'file')) {
+      const src = path.join(syncDir, link.src), dest = path.join(dir, link.dest);
+      let st;
+      try { st = fs.lstatSync(dest); } catch { continue; }   // missing: checkLinks re-links it
+      if (!fs.existsSync(src) || st.isSymbolicLink() || !st.isFile() || isHardLinked(src, dest) || !sameVolume(src, dir)) continue;
+      if (fs.statSync(src).mtimeMs >= st.mtimeMs) {
+        try { if (linkEntry(src, dest, link, true).status === 'link') repaired.push(dest); } catch { conflicts.push(dest); }
+      } else conflicts.push(dest);
+    }
+  }
+  return { repaired, conflicts };
+}
 
 export function checkLinks() {
   const repaired = [];
@@ -82,6 +113,16 @@ export function checkLinks() {
     // 'empty' are also intentionally silent.
   } catch (err) {
     warnings.push(`codex artifact regeneration: ${err.message}`);
+  }
+
+  // Before the link pass: a detached payload file is a plain file the pass below would only
+  // report as drifted.
+  try {
+    const healed = healSyncLinks();
+    for (const d of healed.repaired) repaired.push(`${d} (re-linked to the sync dir after a cloud client broke the link)`);
+    for (const d of healed.conflicts) warnings.push(`${d}: detached from the sync dir and edited here since — reconcile it with the sync copy`);
+  } catch (err) {
+    warnings.push(`sync link heal: ${err.message}`);
   }
 
   const check = (links, baseDir, label = '') => {

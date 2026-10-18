@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'child_process';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { parseConfigChange } from '../shared/dashboard-schema.mjs';
+import { resolveSyncDir } from '../shared/sync-dir.mjs';
 
 export const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 export const SHARED_ENV_SETTINGS_PATH = path.join(CLAUDE_DIR, 'claude_env_settings.json');
@@ -154,10 +155,12 @@ export function configSummary(config, { localPath = LOCAL_ENV_SETTINGS_PATH } = 
 
 /**
  * Apply one dashboard-requested change to the shared settings, after validating it again here
- * (the host does not trust the gateway). Written in place: the shared file may be a link into
- * the sync dir, which a rename would replace. -> {ok: true} | {ok: false, error}
+ * (the host does not trust the gateway). Written to the sync dir's own copy, not through the
+ * ~/.claude link: a cloud client can have detached that link (check-links.js healSyncLinks),
+ * and an edit to a detached copy would never leave this host. In place, never a rename.
+ * -> {ok: true} | {ok: false, error}
  */
-export function applyConfigChange(change, { sharedPath = SHARED_ENV_SETTINGS_PATH } = {}) {
+export function applyConfigChange(change, { sharedPath = path.join(resolveSyncDir({ repoRoot: fileURLToPath(new URL('../../', import.meta.url)) }), 'claude_env_settings.json') } = {}) {
   const c = parseConfigChange(change);
   if (!c) return { ok: false, error: 'not an editable key or not a valid value' };
   const settings = readJson(sharedPath);

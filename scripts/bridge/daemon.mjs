@@ -31,6 +31,7 @@ import { CodexAdapter } from './codex-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
+import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
@@ -814,6 +815,10 @@ export async function main() {
     // Dashboard-editable keys (dashboard-schema.mjs CONFIG_KEYS) are reloaded live, so an edit
     // made here or synced in from another host applies within a minute, without a restart.
     const reload = () => {
+      // A cloud client may have detached the shared settings since the last read: re-link
+      // first, so this reads what the other hosts read.
+      const healed = healSyncLinks();
+      for (const d of healed.repaired) log(`config: re-linked ${path.basename(d)} to the sync dir`);
       const fresh = readBridgeConfig();
       config.idleCloseMinutes = fresh.idleCloseMinutes;
       config.deleteClosedAfterHours = fresh.deleteClosedAfterHours;

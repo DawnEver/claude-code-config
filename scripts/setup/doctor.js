@@ -29,7 +29,7 @@ import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machin
 import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
-  CLAUDE_LINKS, getCodexLinks, linkSourceRoot,
+  CLAUDE_LINKS, getCodexLinks, linkSourceRoot, isHardLinked, sameVolume,
 } from './setup.js';
 
 const HOME = os.homedir();
@@ -223,8 +223,25 @@ export function checkPayloadShape(syncDir, repoRoot = sourceDir, files = SYNC_PA
   return out;
 }
 
+/**
+ * Whether `dest` still IS `src`: a symlink resolving to it, or a hard link to the same file.
+ * Across volumes a hard link is impossible, so an identical copy is the best there is and
+ * counts. A plain file anywhere else is a private copy that has stopped seeing `src`.
+ */
+export function linkedTo(src, dest) {
+  try {
+    if (fs.lstatSync(dest).isSymbolicLink()) return fs.realpathSync(dest) === fs.realpathSync(src);
+    if (isHardLinked(src, dest)) return true;
+    return !sameVolume(src, path.dirname(dest)) && fs.readFileSync(src).equals(fs.readFileSync(dest));
+  } catch { return false; }
+}
+
 // A link entry whose source or destination is gone is a silent absence: the file the
-// hook or launcher expects simply is not there.
+// hook or launcher expects simply is not there. A sync payload file that exists but is no
+// longer linked is worse (2026-10-18): on Windows without symlink rights setup hard-links it,
+// a cloud client that replaces the synced file breaks that link, and from then on this host
+// reads and writes a private copy — every edit made here or synced in from another host is
+// silently lost to the other side.
 export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}) {
   const out = [];
   const tables = [
@@ -242,6 +259,9 @@ export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}
       } else if (!fs.existsSync(dest)) {
         out.push(finding('FAIL', 'link-dest-missing', `${label}: ${link.dest} is not linked`,
           `${dest} does not exist — run ${'node ~/.claude/scripts/setup/setup.js --replace'}`));
+      } else if (link.base === 'sync' && link.type === 'file' && !linkedTo(src, dest)) {
+        out.push(finding('FAIL', 'link-detached', `${label}: ${link.dest} is a private copy, no longer the sync dir's`,
+          `edits here and from other hosts no longer meet — reconcile ${dest} with ${src}, then run node ~/.claude/scripts/setup/setup.js --replace`));
       }
     }
   }

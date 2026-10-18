@@ -188,8 +188,16 @@ function filesMatch(a, b) {
 // Hard links cannot cross volumes. Knowing that up front is what lets a hardlink-required
 // entry fall back to a copy instead of failing (see createLink), and lets an up-to-date copy
 // be recognised as satisfied rather than re-reported as unlinked on every run.
-export function sameVolume(srcPath, destDir) {
+// On Windows the volume is the drive: `dev` is not reliable there — a OneDrive-managed file
+// (a cloud-files reparse point) reports another dev than its folder's even when it is
+// hard-linked to a file beside it (2026-10-18), which made a detached payload look like a
+// cross-volume copy that cannot be linked.
+export function sameVolume(srcPath, destDir, platform = process.platform) {
   try {
+    if (platform === 'win32') {
+      const drive = (p) => path.parse(fs.realpathSync(p)).root.toLowerCase();
+      return drive(srcPath) === drive(destDir);
+    }
     return fs.statSync(srcPath).dev === fs.statSync(destDir).dev;
   } catch {
     return false;

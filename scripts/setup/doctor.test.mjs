@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, comparePermissionRules, parseHookCommands,
-  checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks,
+  checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks, linkedTo,
   checkCodexPluginCache,
   checkPlugins, checkBridgeRevision,
   checkMachineName,
@@ -300,6 +300,23 @@ test('generated trees (.wrangler) are not scanned', () => {
   fs.mkdirSync(bundle, { recursive: true });
   fs.writeFileSync(path.join(bundle, 'facade.js'), Buffer.from('import x from "C:\\\\a\\\\b.mjs";\u0000'));
   assert.deepEqual(checkHygiene(root), []);
+});
+
+// 2026-10-18: OneDrive replaced the synced file, breaking this host's hard link; the host kept
+// reading a private copy for 11 days and doctor said nothing.
+test('linkedTo: a hard link or symlink is linked; a detached copy is not', () => {
+  const root = tmp();
+  const src = path.join(root, 'sync.json'), dest = path.join(root, 'claude.json');
+  fs.writeFileSync(src, '{"a":1}');
+  fs.linkSync(src, dest);
+  assert.equal(linkedTo(src, dest), true, 'hard link');
+  // What a cloud client does on download: write a new file and rename it over the old one.
+  fs.writeFileSync(src + '.tmp', '{"a":2}');
+  fs.renameSync(src + '.tmp', src);
+  assert.equal(linkedTo(src, dest), false, 'the replace broke the link: dest is a private copy now');
+  fs.writeFileSync(dest, '{"a":2}');
+  assert.equal(linkedTo(src, dest), false, 'same content on the same volume is still detached');
+  assert.equal(linkedTo(src, path.join(root, 'missing.json')), false);
 });
 
 // ── the real repo ──
