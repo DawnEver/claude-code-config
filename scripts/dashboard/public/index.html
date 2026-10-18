@@ -72,33 +72,24 @@
   .s-stale .dot, .s-unknown .dot, .s-ended .dot { background: transparent; border: 2px solid var(--idle); }
   .on-dot { background: var(--ok); } .off-dot { background: transparent; border: 2px solid var(--idle); }
 
-  /* Responsive: one column on a phone; on a wider window (Telegram Desktop, a tablet) the page
-     is bounded and centred, and hosts sit side by side instead of stretching one long row. */
-  .page { max-width: 1240px; margin: 0 auto; }
-  #hosts { display: grid; grid-template-columns: 1fr; gap: 0 14px; align-items: start; }
-  .waiting { display: grid; grid-template-columns: 1fr; gap: 0 14px; }
-  @media (min-width: 720px) {
-    body { padding: 20px 24px 24px; }
-    h1 { font-size: 22px; }
-    #hosts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .waiting { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .selects { max-width: 640px; }
-  }
-  @media (min-width: 1200px) {
-    #hosts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .waiting { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  }
+  /* Responsive, continuously: columns appear as the width allows (one per ~340 px); auto-fit
+     collapses unused tracks, so the cards always share the full row. Spacing and the title
+     scale with the viewport. No cap. */
+  body { padding: clamp(12px, 2vw, 32px) clamp(12px, 2.5vw, 40px) calc(clamp(16px, 2vw, 32px) + env(safe-area-inset-bottom)); }
+  h1 { font-size: clamp(20px, 1.2vw + 14px, 28px); }
+  #hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
+  /* auto-fill here: a lone waiting session keeps card width instead of spanning the window. */
+  .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 0 14px; }
+  .selects select { max-width: 320px; }
 </style>
 </head>
 <body>
-<div class="page">
   <header class="top"><h1>Agents Dashboard</h1><span id="updated" class="muted"></span></header>
   <section id="summary" class="summary"><div class="summary-head">Loading…</div></section>
   <nav id="chips" class="chips" aria-label="Status"></nav>
   <div id="selects" class="selects"></div>
   <div id="banner" class="banner"></div>
   <main id="hosts"></main>
-</div>
   <script type="module" src="app.js"></script>
 </body>
 </html>

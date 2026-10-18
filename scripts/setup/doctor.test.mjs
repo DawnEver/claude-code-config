@@ -293,6 +293,15 @@ test('a NUL byte in a script is a FAIL', () => {
   assert.equal(out[0].id, 'hygiene-nul');
 });
 
+// wrangler writes per-deploy bundles with absolute paths into .wrangler/: generated, not source.
+test('generated trees (.wrangler) are not scanned', () => {
+  const root = tmp();
+  const bundle = path.join(root, 'scripts', 'dashboard', '.wrangler', 'tmp');
+  fs.mkdirSync(bundle, { recursive: true });
+  fs.writeFileSync(path.join(bundle, 'facade.js'), Buffer.from('import x from "C:\\\\a\\\\b.mjs";\u0000'));
+  assert.deepEqual(checkHygiene(root), []);
+});
+
 // ── the real repo ──
 
 test('runChecks returns a well-formed finding list for this checkout', () => {

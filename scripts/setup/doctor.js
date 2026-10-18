@@ -316,7 +316,8 @@ export function checkHygiene(root = sourceDir) {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
-      if (e.name === 'node_modules' || e.name === '.git') continue;
+      // Generated trees are not source: dependencies, git, and wrangler's per-deploy bundles.
+      if (e.name === 'node_modules' || e.name === '.git' || e.name === '.wrangler') continue;
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { walk(p); continue; }
       if (!/\.(mjs|js|cjs)$/.test(e.name)) continue;
