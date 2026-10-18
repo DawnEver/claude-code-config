@@ -37,7 +37,7 @@ no API, no authentication.
   control plane belongs to no workstation, so it does not borrow a workstation's bridge bot.
   The Worker verifies `initData` by its **Ed25519 `signature`** (Telegram's third-party
   validation): it needs only the dashboard bot's numeric id and Telegram's public key, never the
-  bot token. The token is used once, locally, to set the menu button, and stored nowhere.
+  bot token. The token lives only in the local settings of the machine that sets the menu button.
 - **Viewer**: allowlisted by `bridge.allowedUserIds` (the bridge's own allowlist), freshness by
   `auth_date` within `initDataMaxAgeSeconds` (default 1 h; past it the app asks to be
   reopened). `initDataUnsafe` and any client-sent id are never trusted.
@@ -94,8 +94,11 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    `npm run dashboard -- deploy`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`,
    `allowedUserIds`, `hosts`) from the merged config — never a host token — and deploys to
    the url's domain (Cloudflare creates the DNS record and certificate).
-5. **Menu button**: `DASHBOARD_BOT_TOKEN=<token> npm run dashboard -- set-menu`. The token is
-   checked against `botId` and used for this one call. Open the dashboard bot -> **Dashboard**.
+5. **Menu button**: put the dashboard bot token into this machine's local
+   `~/.claude/claude_env_settings.local.json` as `bridge.dashboard.botToken` (machine-local,
+   like `bridge.botToken`; never synced, never sent to the Worker), then
+   `npm run dashboard -- set-menu`. It checks the token belongs to `botId`, sets the button and
+   reads it back. Open the dashboard bot -> **Dashboard**.
 6. **Daemons** pick the config up at their next restart (`ensure.mjs` restarts a daemon whose
    config changed at the next session start). A configured but unusable block logs
    `dashboard: off (<reason>)`.

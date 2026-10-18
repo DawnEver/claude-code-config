@@ -5,7 +5,7 @@ import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
 import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schema.mjs';
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
-import { dashboardConfigFrom } from './deploy.mjs';
+import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, stats } from './public/view.mjs';
 
 const BOT_ID = 123456;
@@ -156,6 +156,16 @@ test('config: DASHBOARD_CONFIG fails loudly, and is derived from the shared brid
   assert.ok(!JSON.stringify(derived).includes('local-secret'), 'a host token never reaches the Worker');
   assert.throws(() => dashboardConfigFrom({ ...bridge, dashboard: { ...bridge.dashboard, url: 'https://dashboard.example.com/x' } }), /origin/);
   assert.throws(() => dashboardConfigFrom({ ...bridge, allowedUserIds: [] }), /allowedUserIds/);
+  const withBot = { ...bridge, dashboard: { ...bridge.dashboard, botToken: `${BOT_ID}:${'x'.repeat(35)}` } };
+  assert.ok(!JSON.stringify(dashboardConfigFrom(withBot)).includes('x'.repeat(35)), 'the bot token never reaches the Worker');
+});
+
+test('set-menu: the local bot token must be the configured bot', () => {
+  const g = { url: 'https://dashboard.example.com', botId: BOT_ID };
+  assert.deepEqual(menuRequest(g, `${BOT_ID}:${'a'.repeat(35)}`).menu_button, { type: 'web_app', text: 'Dashboard', web_app: { url: g.url } });
+  assert.throws(() => menuRequest(g, null), /local settings/);
+  assert.throws(() => menuRequest(g, `999:${'a'.repeat(35)}`), /not the bot/);
+  assert.throws(() => menuRequest({ ...g, url: 'http://dashboard.example.com' }, `${BOT_ID}:${'a'.repeat(35)}`), /https/);
 });
 
 test('one status vocabulary from native state to the wire', async () => {

@@ -9,9 +9,9 @@
 //                                                      into this machine's local settings, the
 //                                                      printed hash into the shared hosts map
 //   node scripts/dashboard/deploy.mjs deploy       upload DASHBOARD_CONFIG and deploy to the url's domain
-//   DASHBOARD_BOT_TOKEN=... node scripts/dashboard/deploy.mjs set-menu
-//                                                      point the dashboard bot's menu button at the url
-//                                                      (token read from the environment, never stored)
+//   node scripts/dashboard/deploy.mjs set-menu     point the dashboard bot's menu button at the url and
+//                                                      read it back; the bot token is this machine's local
+//                                                      bridge.dashboard.botToken, never synced or printed
 
 import fs from 'fs';
 import os from 'os';
@@ -64,17 +64,33 @@ function deploy() {
   console.log(`deployed to https://${domain}/ (hosts: ${Object.keys(config.hosts).join(', ') || 'none'})`);
 }
 
+/** The dashboard bot token: machine-local layer only, like every other secret here. */
+function localBotToken() {
+  try { return JSON.parse(fs.readFileSync(LOCAL_ENV_SETTINGS_PATH, 'utf8')).bridge?.dashboard?.botToken ?? null; } catch { return null; }
+}
+
+/** The setChatMenuButton call for `g` (shared bridge.dashboard) with `token`; throws when they do not belong together. */
+export function menuRequest(g, token) {
+  if (typeof token !== 'string' || !/^\d+:[\w-]{30,}$/.test(token)) throw new Error('no bridge.dashboard.botToken in the local settings (the dashboard bot token from @BotFather)');
+  if (String(g.botId) !== token.split(':')[0]) throw new Error('the local bridge.dashboard.botToken is not the bot of the shared bridge.dashboard.botId');
+  if (!/^https:\/\/[^/]+$/.test(String(g.url).replace(/\/$/, ''))) throw new Error('bridge.dashboard.url must be an https origin');
+  return { menu_button: { type: 'web_app', text: 'Dashboard', web_app: { url: g.url } } };
+}
+
 async function setMenu() {
   const g = readMergedEnvSettings({ sharedPath: SHARED_ENV_SETTINGS_PATH })?.bridge?.dashboard ?? {};
-  const token = process.env.DASHBOARD_BOT_TOKEN;
-  if (!token) throw new Error('set DASHBOARD_BOT_TOKEN to the dashboard bot token (from @BotFather) for this one call');
-  if (String(g.botId) !== token.split(':')[0]) throw new Error('DASHBOARD_BOT_TOKEN is not the bot of bridge.dashboard.botId');
-  const res = await fetch(`https://api.telegram.org/bot${token}/setChatMenuButton`, { method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ menu_button: { type: 'web_app', text: 'Dashboard', web_app: { url: g.url } } }) });
-  const body = await res.json();
-  if (!body.ok) throw new Error(`setChatMenuButton: ${body.description}`);
-  console.log(`menu button -> ${g.url}`);
+  const token = localBotToken();
+  const call = async (method, body) => {
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
+    const out = await res.json();
+    if (!out.ok) throw new Error(`${method}: ${out.description}`);   // Telegram's description never echoes the token
+    return out.result;
+  };
+  await call('setChatMenuButton', menuRequest(g, token));
+  const now = await call('getChatMenuButton');
+  if (now?.web_app?.url !== g.url) throw new Error(`menu button reads back ${now?.web_app?.url ?? now?.type}, not ${g.url}`);
+  console.log(`menu button "${now.text}" -> ${now.web_app.url} (read back)`);
 }
 
 export async function main([cmd] = process.argv.slice(2)) {
