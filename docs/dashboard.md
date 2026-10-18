@@ -95,8 +95,9 @@ app-server); the Worker never recomputes it.
   reset into events (`quotaAlertsFor` in `view.mjs`) and returns them in the push reply; the host posts them with its own bot to
   `bridge.alerts`. See `docs/bridge.md` "Agents Dashboard and quota alerts".
 - **Events**: every alert is also kept in the Worker (last 50, memory only) and shown in the
-  Events tab, newest first, with an unread count since this device last opened it — the
-  history of what happened while nobody looked. Independent of `bridge.alerts`.
+  Events tab, newest first, with an unread count since this device last opened it. The tab
+  lists only what was unread when it was opened: events read on one visit are cleared from
+  the next (per device). Independent of `bridge.alerts`.
 - **Layout**: by host — what each machine has left on each account. One compact row per
   account (both windows' bars against even pace, what is left, where else that budget runs);
   a tap opens it in place to the detail: org and plan, each window's trend on a local-time axis

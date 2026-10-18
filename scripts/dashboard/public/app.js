@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView } from './view.mjs';
 
 const POLL_MS = 8000;
 const tg = window.Telegram?.WebApp;
@@ -23,6 +23,8 @@ const hashTab = location.hash.slice(1);
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
 // Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
 let seenAt = store.get('dashboard.eventsSeenAt');
+// The Events tab lists what was unread when it was opened: read events are cleared on the next visit.
+let shownFrom = seenAt;
 // Quota alerts read on this device (tapped in the needs-you card); only keys still standing are kept.
 let readAlerts = (() => { try { const v = JSON.parse(store.get('dashboard.readAlerts')); return Array.isArray(v) ? v : []; } catch { return []; } })();
 // Quota rows opened to their detail (host|account), kept across polls.
@@ -279,11 +281,11 @@ function renderHosts() {
 function renderEvents() {
   const box = $('events-view');
   box.replaceChildren();
-  const events = snapshot.events ?? [];
-  if (!events.length) { box.append(el('div', 'empty', 'No events yet')); return; }
+  const events = unreadEvents(snapshot.events, shownFrom);
+  if (!events.length) { box.append(el('div', 'empty', 'No new events')); return; }
   const list = el('div', 'event-list');
   for (const e of events) {
-    const row = el('div', `event${!seenAt || e.at > seenAt ? ' new' : ''}`);
+    const row = el('div', 'event new');
     row.append(el('div', 'text', e.text), el('div', 'muted', ago(e.at)));
     list.append(row);
   }
@@ -384,6 +386,7 @@ function renderTabs() {
 for (const b of document.querySelectorAll('#tabs [data-tab]')) {
   b.addEventListener('click', () => {
     tab = b.dataset.tab;
+    if (tab === 'events') shownFrom = seenAt;
     configShown = null;
     configDirty = false;
     store.set('dashboard.tab', tab);

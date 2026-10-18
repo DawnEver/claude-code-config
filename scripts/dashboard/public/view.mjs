@@ -220,6 +220,9 @@ export function tabs(snapshot, now = Date.now(), seenAt = null, read = []) {
     show: accounts.length > 0 || events.length > 0 };
 }
 
+/** The events the Events tab lists: those newer than the last visit (`seenAt`); read ones are cleared. */
+export const unreadEvents = (events = [], seenAt = null) => events.filter((e) => !seenAt || e.at > seenAt);
+
 /** Example data for `?mock`: rendering only, no gateway involved. */
 export function mockDashboard(now = Date.now()) {
   const H = 3600000;

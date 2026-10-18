@@ -6,7 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -277,6 +277,9 @@ test('view: tabs count each view and flag quota that needs the human; no account
   assert.equal(tabs(m, NOW, m.events[0].at).unseen, 0);
   assert.equal(tabs(m, NOW, null, quotaAlerts(m, NOW).map(alertKey)).alert, false, 'read alerts do not flag the quota tab');
   assert.deepEqual(tabs({ hosts: [] }, NOW), { sessions: 0, quota: 0, alert: false, events: 0, unseen: 0, show: false });
+  assert.deepEqual(unreadEvents(m.events, m.events[1].at), [m.events[0]], 'events read on an earlier visit are cleared');
+  assert.deepEqual(unreadEvents(m.events, null), m.events, 'first visit: everything');
+  assert.deepEqual(unreadEvents(m.events, m.events[0].at), []);
 });
 
 test('alerts are events: a change once, judged on the merged account, so two hosts on one seat alert once', () => {
