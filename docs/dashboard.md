@@ -151,7 +151,12 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    machine's `~/.claude/claude_env_settings.local.json` (`bridge.dashboard.hostToken`) and
    prints the line to add under `hosts` in the shared config. The host id is the machine's
    `machine.json` name.
-4. **Deploy** (any one host, once per membership change): `npx wrangler login` once, then
+4. **Code deploys are automatic**: a push to `main` touching `scripts/dashboard/**` runs
+   `.github/workflows/dashboard-deploy.yml` (dashboard tests, then `wrangler deploy`). It needs
+   the repo secret `CLOUDFLARE_API_TOKEN` (Workers edit, scoped to the account and the zone) and
+   the variables `CLOUDFLARE_ACCOUNT_ID` and `DASHBOARD_DOMAIN` (the url's host). It never
+   touches `DASHBOARD_CONFIG`, which persists across deploys.
+   **Membership deploy** (any one host, once per membership change): `npx wrangler login` once, then
    `npm run dashboard -- deploy`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`,
    `allowedUserIds`, `hosts`) from the merged config — never a host token — and deploys to
    the url's domain (Cloudflare creates the DNS record and certificate).

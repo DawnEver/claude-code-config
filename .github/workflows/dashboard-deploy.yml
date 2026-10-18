@@ -1,0 +1,30 @@
+name: Deploy dashboard
+
+# Code only: the Worker's DASHBOARD_CONFIG secret persists across deploys and changes only
+# with dashboard membership (`npm run dashboard -- deploy`, docs/dashboard.md).
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/dashboard/**', 'scripts/shared/dashboard-schema.mjs']
+  workflow_dispatch:
+
+concurrency:
+  group: dashboard-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Test the dashboard
+        run: node --test scripts/dashboard/*.test.mjs scripts/bridge/dashboard-push.test.mjs
+      - name: Deploy the Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          DASHBOARD_DOMAIN: ${{ vars.DASHBOARD_DOMAIN }}
+        run: npx -y wrangler@4 deploy --config scripts/dashboard/wrangler.jsonc --domain "$DASHBOARD_DOMAIN"
