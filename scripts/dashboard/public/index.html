@@ -99,8 +99,25 @@
   .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; }
   .qrow-top .left { font-weight: 700; }
   .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left { color: var(--bad); }
-  .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 4px 12px; margin-top: 6px; }
-  .qmini > div { display: grid; grid-template-columns: 22px 1fr 34px auto; gap: 6px; align-items: center; font-size: 12px; }
+  /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
+  .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 4px 12px; margin-top: 6px; }
+  .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) 34px auto; gap: 6px; align-items: center; font-size: 12px; }
+  .bar { min-width: 36px; }
+  .k.bind { color: var(--fg); font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
+  .stale-v, .clock { opacity: .6; } .clock { font-size: 11px; }
+  .qbest { font-size: 12px; color: var(--hint); margin: 0 4px 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .qref { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; cursor: default; font-size: 13px; }
+  .qref .see { color: var(--hint); font-size: 12px; }
+  .qhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+  .qhead .section-h { margin: 4px; }
+  .qlegend { font-size: 12px; color: var(--hint); }
+  .qlegend > summary { list-style: none; cursor: pointer; width: 26px; height: 26px; border-radius: 50%; background: var(--card); color: var(--fg);
+    font-weight: 700; text-align: center; line-height: 26px; margin-left: auto; }
+  .qlegend > summary::-webkit-details-marker { display: none; }
+  .qlegend[open] { flex-basis: 100%; }
+  .qhead:has(.qlegend[open]) { flex-wrap: wrap; }
+  .qlegend-body { background: var(--card); border-radius: 10px; padding: 6px 10px; margin-top: 6px; }
+  .qlegend-body p { margin: 4px 0; }
   .qmini .used, .qmini .reset { font-size: 13px; font-weight: 600; }
   .reset { text-align: right; white-space: nowrap; }
   .reset:empty { display: none; }

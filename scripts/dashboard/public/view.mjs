@@ -104,11 +104,35 @@ export function quotaView(a, now = Date.now()) {
 export const accountName = (q) => `${q.agent === 'claude' ? 'Claude' : 'Codex'}${q.label ? ` · ${q.label}` : ''}`;
 
 /** Why an account needs the human, in one line; '' when it does not. `withReset: false` where the row already shows it. */
-export function verdictText(q, now = Date.now(), withReset = true) {
-  const reset = withReset ? ` · resets in ${countdown(q.bind.resetsAt, now)}` : '';
+export function verdictText(q, { now = Date.now(), withReset = true } = {}) {
+  const reset = withReset && q.bind?.resetsAt > now ? ` · resets in ${countdown(q.bind.resetsAt, now)}` : '';
   if (q.verdict === 'exhausted') return `${q.bind.k} exhausted${reset}`;
   if (q.verdict === 'short') return `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta, now)}${reset}`;
   return '';
+}
+
+/** A window's reset countdown; '' once the reset is past or unknown (a new window has none to show). */
+export const resetText = (w, now = Date.now()) => (!w.renewed && w.resetsAt > now ? `↻ ${countdown(w.resetsAt, now)}` : '');
+
+/** A window's label in the page's one unit, % left; a stale reading is a ceiling (`≤`) unless already exhausted. */
+export function windowLabel(w, stale) {
+  if (w.renewed) return { text: 'unused', title: 'new window, nothing spent yet', stale: false };
+  const left = Math.max(0, Math.round(100 - w.used));
+  const ceiling = stale && left > 0;
+  return { text: `${ceiling ? '≤' : ''}${left}%`, title: ceiling ? `at most ${left}% left (stale reading)` : `${left}% left`, stale: ceiling };
+}
+
+/** An email's local part, for a meta line with the full address in its title. */
+export const emailName = (email) => email?.split('@')[0] ?? null;
+
+/** Per agent, the account with most left on its binding window right now; exhausted and unread ones never win. */
+export function bestAccounts(accounts) {
+  const best = new Map();
+  for (const q of accounts) {
+    if (q.left === null || q.verdict === 'exhausted' || q.verdict === 'none') continue;
+    if (!best.has(q.agent) || q.left > best.get(q.agent).left) best.set(q.agent, q);
+  }
+  return [...best].map(([agent, q]) => ({ agent, q }));
 }
 
 /**
@@ -120,7 +144,7 @@ export function verdictText(q, now = Date.now(), withReset = true) {
 export function quotaAlertsFor(prev, q, now = Date.now()) {
   const who = `${accountName(q)}${q.email ? ` (${q.email})` : ''}`;
   const texts = [];
-  if (q.verdict === 'exhausted' && prev?.verdict !== 'exhausted') texts.push(`${who}: ${verdictText(q, now)}`);
+  if (q.verdict === 'exhausted' && prev?.verdict !== 'exhausted') texts.push(`${who}: ${verdictText(q, { now })}`);
   for (const p of q.problems) if (!prev?.problems?.includes(p)) texts.push(`${who}: ${p}`);
   const extraAt = q.extraReset ? q.extraReset.at ?? 0 : null;
   if (extraAt !== null && prev?.extraAt !== extraAt) {
@@ -198,13 +222,16 @@ export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? (q.agent =
 /**
  * Quota by host: each host with the accounts it runs. An account is one budget however many
  * hosts spend it, so a shared one says where else it runs (`sharedWith`) rather than reading as
- * a second budget. Online hosts first; a host without accounts is left out.
+ * a second budget: its full card sits on the first host in order (online first), elsewhere
+ * `refTo` names that host. Online hosts first; a host without accounts is left out.
  */
 export function quotaByHost(snapshot, now = Date.now()) {
   const accounts = [...accountIndex(snapshot, now).values()];
-  return [...snapshot.hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id))
-    .map((h) => ({ id: h.id, online: h.online, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
-      .map((q) => ({ ...q, sharedWith: q.hosts.filter((x) => x !== h.id) })) }))
+  const hosts = [...snapshot.hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
+  const owner = new Map();
+  for (const h of hosts) for (const q of accounts) if (q.hosts?.includes(h.id) && !owner.has(q.key)) owner.set(q.key, h.id);
+  return hosts.map((h) => ({ id: h.id, online: h.online, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
+      .map((q) => ({ ...q, sharedWith: q.hosts.filter((x) => x !== h.id), refTo: owner.get(q.key) === h.id ? null : owner.get(q.key) })) }))
     .filter((h) => h.accounts.length);
 }
 

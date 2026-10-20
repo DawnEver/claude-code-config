@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, resetText, windowLabel, emailName, bestAccounts } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 
 const POLL_MS = 8000;
@@ -41,6 +41,7 @@ const loadRead = () => { try { const v = JSON.parse(store.get(readKey())); retur
 let readAlerts = loadRead();
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
+let legendOpen = false;   // the quota legend, kept across polls
 let accounts = new Map();
 let packed = store.get('dashboard.packed') === '1';   // hosts in packed columns, not aligned rows
 document.body.classList.toggle('packed', packed);
@@ -113,16 +114,24 @@ function quotaAlertRow(q) {
   return row;
 }
 
-/** Position bar: fill = use, the line = where an even spend would be by now. */
+/** Position bar: fill = what is left, the line = what an even spend would leave by now. */
 function bar(w, stale) {
   const track = el('div', `bar${w.forecast?.short || w.used >= 100 ? ' hot' : ''}`);
   const fill = el('div', 'fill');
-  fill.style.width = `${w.used}%`;
+  fill.style.width = `${Math.max(0, 100 - w.used)}%`;
   const pace = el('div', 'pace');
-  pace.style.left = `${w.pace}%`;
+  pace.style.left = `${100 - w.pace}%`;
   track.append(fill, pace);
-  track.title = `${stale ? '≥' : ''}${Math.round(w.used)}% used · even pace ${Math.round(w.pace)}%`;
+  track.title = `${windowLabel(w, stale).title} · even pace leaves ${Math.round(100 - w.pace)}%`;
   return track;
+}
+
+/** A window's % left, dimmed with a clock when the reading is stale. */
+function leftCell(w, stale, cls = 'used') {
+  const l = windowLabel(w, stale);
+  const span = el('span', `${cls}${l.stale ? ' stale-v' : ''}`, l.text);
+  span.title = l.title;
+  return span;
 }
 
 /**
@@ -150,7 +159,10 @@ function trend(w) {
 }
 
 /** A window's reset, as weighty as its use: the one place the countdown is shown on a quota row. */
-const resetCell = (w) => el('span', 'reset', w.renewed ? '' : `↻ ${countdown(w.resetsAt)}`);
+const resetCell = (w) => { const s = el('span', 'reset', resetText(w)); if (s.textContent) s.title = 'resets in'; return s; };
+
+/** A window's name; the binding one (what the account's % left is read from) is marked. */
+const kCell = (w, q) => { const k = el('span', `k${q.bind?.k === w.k ? ' bind' : ''}`, w.k); if (q.bind?.k === w.k) k.title = 'binding window: the account\'s % left'; return k; };
 
 /** The expanded part of a quota row: each window with its trend on a time axis, then resets to act on. */
 function quotaDetail(q) {
@@ -158,11 +170,10 @@ function quotaDetail(q) {
   if (q.detail) box.append(el('div', 'sub', q.detail));
   for (const w of q.windows) {
     const row = el('div', 'win');
-    const used = w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`;
-    row.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', used), resetCell(w));
+    row.append(kCell(w, q), bar(w, q.stale), leftCell(w, q.stale), resetCell(w));
     const sub = el('div', 'win-sub');
-    const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${Math.round(w.forecast.atReset)}% at reset`);
-    sub.append(trend(w), el('span', null, w.renewed ? 'new window, not started' : forecast || ''));
+    const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${Math.max(0, Math.round(100 - w.forecast.atReset))}% left at reset`);
+    sub.append(trend(w), el('span', null, w.renewed ? 'unused: new window, not started' : forecast || ''));
     box.append(row, sub);
   }
   if (q.resetCredits) {
@@ -197,22 +208,27 @@ function quotaRow(q, hostId) {
   row.setAttribute('aria-expanded', String(open));
   row.tabIndex = 0;
   const top = el('div', 'qrow-top');
-  top.append(el('span', `agent ${q.agent}`, accountName(q)),
-    el('span', 'left', q.left === null ? 'no data' : `${q.stale && q.bind.used < 100 ? '≤' : ''}${q.left}% left`), el('span', 'chev', open ? '⌄' : '›'));
+  let left;
+  if (q.bind) { left = leftCell(q.bind, q.stale, 'left'); left.textContent += ' left'; }
+  else { left = el('span', 'left', 'no reading'); left.title = 'no window reported for this account yet'; }
+  top.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'chev', open ? '⌄' : '›'));
   row.append(top);
   if (open) row.append(quotaDetail(q));
   else {
     const mini = el('div', 'qmini');
     for (const w of q.windows) {
       const cell = el('div');
-      cell.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`), resetCell(w));
+      cell.append(kCell(w, q), bar(w, q.stale), leftCell(w, q.stale), resetCell(w));
       mini.append(cell);
     }
     row.append(mini);
   }
-  row.append(el('div', 'sub', [q.email, q.sharedWith.length && `one budget, also on ${q.sharedWith.join(', ')}`,
-    q.at && `reading ${ago(new Date(q.at).toISOString())}`].filter(Boolean).join(' · ')));
-  if (q.verdict === 'short' || q.verdict === 'exhausted') row.append(el('div', 'warn', verdictText(q, Date.now(), false)));
+  const meta = el('div', 'sub');
+  if (q.email) { const e = el('span', null, emailName(q.email)); e.title = q.email; meta.append(e); }
+  if (q.sharedWith.length) meta.append(`${meta.childNodes.length ? ' · ' : ''}one budget, also on ${q.sharedWith.join(', ')}`);
+  if (q.stale && q.at) { const c = el('span', 'clock', ' ◷'); c.title = `reading ${ago(new Date(q.at).toISOString())}`; meta.append(c); }
+  if (meta.childNodes.length) row.append(meta);
+  if (q.verdict === 'short' || q.verdict === 'exhausted') row.append(el('div', 'warn', verdictText(q, { withReset: false })));
   for (const p of q.problems) row.append(el('div', 'warn', p));
   const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
   row.addEventListener('click', toggle);
@@ -229,12 +245,45 @@ function renderQuota() {
     const section = el('section', `host${h.online ? '' : ' off'}`);
     const head = el('div', 'host-head');
     head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id));
+    const best = bestAccounts(h.accounts);
+    const bestLine = el('div', 'qbest', best.length ? 'Best now: ' : 'Best now: none with quota left');
+    best.forEach(({ q }, i) => bestLine.append(i ? ' · ' : '', acctTag(q, true)));
     const rows = el('div', 'qrows');
-    for (const q of h.accounts) rows.append(quotaRow(q, h.id));
-    section.append(head, rows);
+    for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q) : quotaRow(q, h.id));
+    section.append(head, bestLine, rows);
     hosts.append(section);
   }
-  box.append(hosts);
+  box.append(quotaHeader(), hosts);
+}
+
+/** A shared account already carded on another host: one line pointing there. */
+function quotaRef(q) {
+  const row = el('div', `qrow qref v-${q.verdict}${q.stale ? ' stale' : ''}`);
+  const left = q.bind ? leftCell(q.bind, q.stale, 'left') : el('span', 'left', 'no reading');
+  if (q.bind) left.textContent += ' left';
+  row.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'see', `→ see ${q.refTo}`));
+  row.title = `one budget: its full card is on ${q.refTo}`;
+  return row;
+}
+
+/** The quota view's header: a '?' that opens a legend (a tap, not a hover, so it works on touch). */
+function quotaHeader() {
+  const legend = el('details', 'qlegend');
+  legend.open = legendOpen;
+  legend.addEventListener('toggle', () => { legendOpen = legend.open; });
+  const summary = el('summary', null, '?');
+  summary.title = 'What the bars mean';
+  const body = el('div', 'qlegend-body');
+  for (const line of ['Every number is % left. The bold, underlined window (5h / 7d) is the binding one: the account\'s % left.',
+    'Bar fill = what is left; the thin line = what an even spend would leave by now. Fill short of the line: spending faster than even.',
+    'Orange bar: runs out before reset, or exhausted. ↻ = time to reset.',
+    '≤ and a dim ◷: the reading is stale, so at most that much is left.',
+    'Trend (tap a row): spend per slice of the window, half height = even spend; grey hatched = not observed, flat grey = still ahead; the vertical line = now.',
+    'unused = a new window, nothing spent yet. → see <host> = a shared account, carded on that host.']) body.append(el('p', null, line));
+  legend.append(summary, body);
+  const head = el('div', 'qhead');
+  head.append(el('span', 'section-h', 'Quota left'), legend);
+  return head;
 }
 
 function renderChips() {

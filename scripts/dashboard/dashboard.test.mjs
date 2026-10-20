@@ -7,7 +7,7 @@ import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView, verdictText, resetText, windowLabel, bestAccounts, emailName } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -516,4 +516,48 @@ test('demo masking: free text by template — names only in text are masked, sho
   assert.equal(d.events[2].text, 'config bridge.projects.project-a.projectInTitle = "main" applied by Workstation 2', 'a host only in text');
   assert.equal(d.events[3].text, 'config bridge.idleCloseMinutes = 10 refused by Workstation 1: Workstation 1 said team-a is busy');
   assert.equal(d.events[4].text, 'config bridge.idleCloseMinutes = 10 requested');
+});
+
+test('view: verdictText takes options — the reset is appended unless `withReset: false`', () => {
+  const q = quotaView({ key: 'k', agent: 'codex', problems: [], at: NOW, windows: [{ k: '5h', used: 100, resetsAt: NOW + 3 * HR, windowMs: 5 * HR, cells: [] }] }, NOW);
+  assert.equal(verdictText(q, { now: NOW }), '5h exhausted · resets in 3h 0m');
+  assert.equal(verdictText(q, { now: NOW, withReset: false }), '5h exhausted');
+  assert.equal(verdictText({ ...q, verdict: 'ok' }, { now: NOW }), '');
+});
+
+test('view: resetText — a countdown only while the reset is ahead, never `0m`', () => {
+  assert.equal(resetText({ resetsAt: NOW + 90 * 60000 }, NOW), '↻ 1h 30m');
+  assert.equal(resetText({ resetsAt: NOW - 1000 }, NOW), '');
+  assert.equal(resetText({ resetsAt: null }, NOW), '');
+  assert.equal(resetText({ renewed: true, resetsAt: null }, NOW), '');
+});
+
+test('view: windowLabel — every number is % left; unused and stale read plainly', () => {
+  assert.deepEqual(windowLabel({ used: 26, renewed: false }, false), { text: '74%', title: '74% left', stale: false });
+  assert.deepEqual(windowLabel({ used: 26, renewed: false }, true), { text: '≤74%', title: 'at most 74% left (stale reading)', stale: true });
+  assert.deepEqual(windowLabel({ used: 100, renewed: false }, true), { text: '0%', title: '0% left', stale: false }, 'exhausted stays exhausted');
+  assert.deepEqual(windowLabel({ used: 0, renewed: true }, false), { text: 'unused', title: 'new window, nothing spent yet', stale: false });
+  assert.equal(emailName('alice@example.com'), 'alice');
+  assert.equal(emailName(null), null);
+});
+
+test('view: best account now — per agent the most left on its binding window, exhausted ignored', () => {
+  const by = quotaByHost(mockDashboard(NOW), NOW);
+  assert.deepEqual(bestAccounts(by[0].accounts).map((b) => [b.agent, b.q.key, b.q.left]), [['claude', 'claude:a', 55]],
+    'codex:b is exhausted on 5h, so Codex has no best account');
+  const a = (key, agent, left, verdict = 'ok') => ({ key, agent, left, verdict });
+  assert.deepEqual(bestAccounts([a('x', 'codex', 20), a('y', 'codex', 70), a('z', 'claude', null, 'none'), a('w', 'claude', 0, 'exhausted')])
+    .map((b) => b.q.key), ['y']);
+});
+
+test('view: a shared account renders fully once — on its first online host — and as a reference elsewhere', () => {
+  const by = quotaByHost(mockDashboard(NOW), NOW);
+  assert.deepEqual(by.map((h) => [h.id, h.accounts.map((q) => `${q.key}${q.refTo ? `>${q.refTo}` : ''}`)]),
+    [['host-a', ['claude:a', 'codex:b']], ['host-b', ['codex:b>host-a']], ['host-c', ['claude:a>host-a']]]);
+  const off = mockDashboard(NOW);
+  off.hosts[0].online = false;
+  const by2 = quotaByHost(off, NOW);
+  assert.equal(by2.find((h) => h.id === 'host-b').accounts[0].refTo, null, 'the first online host owns the card');
+  assert.equal(by2.find((h) => h.id === 'host-a').accounts.find((q) => q.key === 'codex:b').refTo, 'host-b');
+  assert.equal(by2.find((h) => h.id === 'host-a').accounts.find((q) => q.key === 'claude:a').refTo, null, 'no online host: the first in order');
 });
