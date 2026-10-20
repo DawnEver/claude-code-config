@@ -43,6 +43,18 @@ function writeWrapper(filePath, content, label) {
   }
 }
 
+// A wrapper launches a Node script, so a host without Node refuses by name instead of the
+// shell's bare "node: not found".
+const noNode = (name) => `${name} needs Node: install Node.js and put node on PATH`;
+
+export function cmdWrapper(name, script, args) {
+  return `@echo off\n${CMD_MARKER}\n"%SystemRoot%\\System32\\where.exe" node >nul 2>nul || (echo ${noNode(name)} 1>&2 & exit /b 127)\nnode "${script}" ${args}\n`;
+}
+
+export function shWrapper(name, script, args) {
+  return `#!/usr/bin/env sh\n${MARKER}\ncommand -v node >/dev/null 2>&1 || { echo "${noNode(name)}" >&2; exit 127; }\nexec node "${script}" ${args}\n`;
+}
+
 // Locate the bin directory of a command on PATH, or null if not found.
 export function locateBinDir(cmd, run = (c) => execFileSync(isWindows ? 'where' : 'which', [c], { stdio: 'pipe' }).toString()) {
   try {
@@ -125,11 +137,11 @@ export function installCliWrappers(claudeDir) {
 
     for (const { name, provider } of ALIASES) {
       if (isWindows) {
-        const cmdContent = `@echo off\nrem claude-code-alias\nnode "${ccJsPath}" ${provider} %*\n`;
+        const cmdContent = cmdWrapper(name, ccJsPath, `${provider} %*`);
         writeIfChanged(path.join(binDir, `${name}.cmd`), cmdContent, `${name}.cmd`);
       }
 
-      const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${ccJsPath}" ${provider} "$@"\n`;
+      const shContent = shWrapper(name, ccJsPath, `${provider} "$@"`);
       const shPath = path.join(binDir, name);
       writeIfChanged(shPath, shContent, name, 0o755);
     }
@@ -151,11 +163,11 @@ export function installCliWrappers(claudeDir) {
 
     for (const { name, provider } of CODEX_ALIASES) {
       if (isWindows) {
-        const cmdContent = `@echo off\nrem claude-code-alias\nnode "${codexJsPath}" ${provider} %*\n`;
+        const cmdContent = cmdWrapper(name, codexJsPath, `${provider} %*`);
         writeIfChanged(path.join(binDir, `${name}.cmd`), cmdContent, `${name}.cmd`);
       }
 
-      const shContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${codexJsPath}" ${provider} "$@"\n`;
+      const shContent = shWrapper(name, codexJsPath, `${provider} "$@"`);
       const shPath = path.join(binDir, name);
       writeIfChanged(shPath, shContent, name, 0o755);
     }
@@ -169,10 +181,10 @@ export function installCliWrappers(claudeDir) {
   // Todo CLI wrapper — task management
   const todoLauncher = resolveScript('runtime/todo-launcher.mjs');
   if (isWindows) {
-    const cmdContent = `@echo off\nrem claude-code-alias\nnode "${todoLauncher}" %*\n`;
+    const cmdContent = cmdWrapper('todo', todoLauncher, '%*');
     writeIfChanged(path.join(binDir, 'todo.cmd'), cmdContent, 'todo.cmd');
   }
-  const todoShContent = `#!/usr/bin/env sh\n${MARKER}\nexec node "${todoLauncher}" "$@"\n`;
+  const todoShContent = shWrapper('todo', todoLauncher, '"$@"');
   const todoShPath = path.join(binDir, 'todo');
   writeIfChanged(todoShPath, todoShContent, 'todo', 0o755);
 
