@@ -22,6 +22,7 @@
     background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
   h1 { font-size: 20px; margin: 0; }
+  #version { font-weight: 400; margin-left: 6px; }
   .muted { color: var(--hint); font-size: var(--t3); }
 
   /* 1. Does anything need me? */
@@ -176,14 +177,14 @@
   .quota-hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
     #hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
   /* auto-fill here: a lone waiting session keeps card width instead of spanning the window. */
-  .packed #hosts, .packed #quota-view .quota-hosts { display: block; columns: auto min(340px, 100%); column-gap: 14px; }
+  .packed #hosts, .packed #quota-view .quota-hosts { display: block; column-width: 340px; column-gap: 14px; }
   .packed #hosts > .host, .packed #quota-view .host { break-inside: avoid; }
   .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 0 14px; }
   .selects select { max-width: 320px; }
 </style>
 </head>
 <body>
-  <header class="top"><h1>Agents Dashboard</h1><span id="updated" class="muted"></span></header>
+  <header class="top"><h1>Agents Dashboard <span id="version" class="muted"></span></h1><span id="updated" class="muted"></span></header>
   <section id="summary" class="summary"><div class="summary-head">Loading…</div></section>
   <nav id="tabs" class="tabs" role="tablist" hidden>
     <button role="tab" data-tab="sessions">Sessions <b id="n-sessions"></b></button>

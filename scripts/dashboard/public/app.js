@@ -591,5 +591,15 @@ async function load() {
   try { await fetchSnapshot(); } finally { loading = false; }
 }
 
+/** The deployed version beside the title, for a human to check what is live: commit and upload time. */
+async function showVersion() {
+  try {
+    const { version: v } = await (await fetch('api/health', { cache: 'no-store' })).json();
+    if (!v) return;
+    $('version').textContent = [v.commit || v.id?.slice(0, 8), v.at && new Date(v.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })].filter(Boolean).join(' · ');
+    $('version').title = `deployed version ${v.id}`;
+  } catch { /* no version shown */ }
+}
+
 load();
-if (!mock) setInterval(load, POLL_MS);
+if (!mock) { setInterval(load, POLL_MS); showVersion(); }

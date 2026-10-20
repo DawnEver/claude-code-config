@@ -132,7 +132,7 @@ test('api: host push and viewer read, each authenticated', async () => {
 test('api: health, unknown routes, rate limit by CF-Connecting-IP', async () => {
   const g = await gateway({ ratePerMinute: 3 });
   const from = (ip) => ({ headers: { 'cf-connecting-ip': ip } });
-  assert.deepEqual(await (await g.req('/api/health', from('1.1.1.1'))).json(), { ok: true, schemaVersion: 1 });
+  assert.deepEqual(await (await g.req('/api/health', from('1.1.1.1'))).json(), { ok: true, schemaVersion: 1, version: null });
   assert.equal((await g.req('/api/nope', from('1.1.1.1'))).status, 401, 'unknown viewer route needs auth first');
   assert.equal((await g.req('/api/dashboard', { method: 'DELETE', ...from('1.1.1.1') })).status, 404);
   assert.equal((await g.req('/api/health', from('1.1.1.1'))).status, 429);
@@ -585,4 +585,11 @@ test('view: a shared account renders fully once — on its first online host —
   assert.equal(by2.find((h) => h.id === 'host-b').accounts[0].refTo, null, 'the first online host owns the card');
   assert.equal(by2.find((h) => h.id === 'host-a').accounts.find((q) => q.key === 'codex:b').refTo, 'host-b');
   assert.equal(by2.find((h) => h.id === 'host-a').accounts.find((q) => q.key === 'claude:a').refTo, null, 'no online host: the first in order');
+});
+
+test('api: health reports the deployed version from Cloudflare version metadata', async () => {
+  const api = createApi(parseDashboardConfig({ botId: BOT_ID, allowedUserIds: [ALICE], hosts: {} }, PUBLIC_KEY),
+    { version: { id: 'abcd1234-0000', tag: 'f06a9b3', timestamp: '2026-10-20T21:00:00Z' } });
+  assert.deepEqual((await (await api(new Request('https://x/api/health'))).json()).version,
+    { commit: 'f06a9b3', id: 'abcd1234-0000', at: '2026-10-20T21:00:00Z' });
 });

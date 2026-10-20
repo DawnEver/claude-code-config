@@ -63,10 +63,16 @@ function deploy() {
   try {
     writePrivateFile(secrets, JSON.stringify({ DASHBOARD_CONFIG: JSON.stringify(config) }));
     execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      ['-y', 'wrangler@4', 'deploy', '--config', path.join(HERE, 'wrangler.jsonc'), '--domain', domain, '--secrets-file', secrets],
+      ['-y', 'wrangler@4', 'deploy', '--config', path.join(HERE, 'wrangler.jsonc'), '--domain', domain, '--secrets-file', secrets, '--tag', commitTag()],
       { stdio: 'inherit', shell: process.platform === 'win32' });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log(`deployed to https://${domain}/ (hosts: ${Object.keys(config.hosts).join(', ') || 'none'})`);
+}
+
+/** The deployed version's tag: the git commit, `+` when the tree has uncommitted changes. */
+function commitTag() {
+  const git = (...a) => execFileSync('git', ['-C', HERE, ...a], { encoding: 'utf8' }).trim();
+  try { return `${git('rev-parse', '--short', 'HEAD')}${git('status', '--porcelain', '--', '.') ? '+' : ''}`; } catch { return ''; }
 }
 
 /** The dashboard bot token: machine-local layer only, like every other secret here. */

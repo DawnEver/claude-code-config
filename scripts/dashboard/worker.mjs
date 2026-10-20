@@ -10,7 +10,7 @@ import { createApi, parseDashboardConfig } from './api.mjs';
 export class DashboardHub extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    this.api = createApi(parseDashboardConfig(env.DASHBOARD_CONFIG, env.TELEGRAM_PUBLIC_KEY), { log: (m) => console.log(m), store: ctx.storage.kv });
+    this.api = createApi(parseDashboardConfig(env.DASHBOARD_CONFIG, env.TELEGRAM_PUBLIC_KEY), { log: (m) => console.log(m), store: ctx.storage.kv, version: env.CF_VERSION_METADATA });
   }
 
   fetch(request) {
