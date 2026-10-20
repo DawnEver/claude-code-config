@@ -604,6 +604,16 @@ export function setup(options = {}) {
     console.log(`GEN   ~/.claude/provider-cache.json - ${cache.providers} provider(s) from ${cache.python} -m ai_lab.providers`);
   }
 
+  // Plaintext keys in the local file move into the git credential store (the launchers read
+  // only the store); the file is backed up first. A key ai-lab refuses stays, by name.
+  const keys = migrateApiKeysToStore({ localPath: localEnvSettingsPath, python: cache.python ?? options.aiLabPython });
+  for (const p of keys.stored ?? []) console.log(`MIGR  providers.${p}.apiKey -> git credential store (task session); backup: ${path.basename(keys.backupPath)}`);
+  for (const { provider, why } of keys.failed ?? []) {
+    console.log(`ERR   providers.${provider}.apiKey not migrated: ${why}`);
+    counters.errors++;
+  }
+  if (keys.status === 'malformed') console.log(`NOTE  could not read the local file for key migration: ${keys.error}`);
+
   // Regenerate the derivable codex artifacts from the provider cache + projection rules:
   // the [model_providers.*] section of codex_config.toml (only when that file
   // exists) AND the gitignored repo models.json (unconditionally — models.json
