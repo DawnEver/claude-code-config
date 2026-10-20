@@ -16,6 +16,7 @@ import {
   injectModelsJson,
   codexModelFrom,
   regenerateCodexArtifacts,
+  codexView,
   codexSuffixIsEmpty,
   CODEX_TOML_START_MARKER,
   CODEX_TOML_END_MARKER,
@@ -33,9 +34,8 @@ function fixture() {
 const SHARED_DEEPSEEK_ONLY = {
   providers: {
     deepseek: {
-      url: 'https://api.deepseek.com',
+      baseUrl: 'https://api.deepseek.com/v1',
       codexApiKeyEnv: 'DEEPSEEK_API_KEY',
-      codexPath: '/v1',
       models: { base: 'deepseek-v4-flash[1m]' },
     },
   },
@@ -44,21 +44,40 @@ const SHARED_DEEPSEEK_ONLY = {
 const SHARED_DEEPSEEK_AND_GMI = {
   providers: {
     deepseek: {
-      url: 'https://api.deepseek.com',
+      baseUrl: 'https://api.deepseek.com/v1',
       codexApiKeyEnv: 'DEEPSEEK_API_KEY',
-      codexPath: '/v1',
       models: { base: 'deepseek-v4-flash[1m]' },
     },
     gmi: {
-      url: 'https://api.gmi-serving.com',
+      baseUrl: 'https://api.gmi-serving.com/v1',
       codexApiKeyEnv: 'GMI_API_KEY',
-      codexPath: '/v1',
       models: { base: 'MiniMaxAI/MiniMax-M3[1m]' },
     },
   },
 };
 
-test('generate: emits a [model_providers.*] block per provider with codexPath', () => {
+// The codex view splits into its two sources: ai-lab's catalogue (the provider cache) and the
+// projection rules in claude_env_settings.json; codexView() joins them back.
+const rulesOf = (view) => ({ providers: Object.fromEntries(Object.entries(view.providers)
+  .map(([n, v]) => [n, { codexApiKeyEnv: v.codexApiKeyEnv }])) });
+const cacheOf = (view) => ({ providers: Object.fromEntries(Object.entries(view.providers)
+  .map(([n, v]) => [n, { endpoints: v.baseUrl ? { openai: v.baseUrl } : {}, models: v.models ?? {} }])) });
+const readCache = () => ({ cache: cacheOf(SHARED_DEEPSEEK_AND_GMI) });
+
+test('codexView joins the projection rules with the catalogue rows; the rules gate which providers appear', () => {
+  assert.deepEqual(codexView(rulesOf(SHARED_DEEPSEEK_ONLY), cacheOf(SHARED_DEEPSEEK_AND_GMI)), SHARED_DEEPSEEK_ONLY);
+});
+
+test('regenerate: a stale cache writes nothing and reports the cache error', () => {
+  const { path, modelsPath, settingsPath } = fixture();
+  writeFileSync(settingsPath, JSON.stringify(rulesOf(SHARED_DEEPSEEK_ONLY)));
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache: () => ({ error: 'stale' }) });
+  assert.equal(r.cache, 'stale');
+  assert.equal(r.models.status, 'empty');
+  assert.equal(existsSync(modelsPath), false);
+});
+
+test('generate: emits a [model_providers.*] block per provider with an openai endpoint', () => {
   const out = generateModelProvidersBlock(SHARED_DEEPSEEK_ONLY);
   assert.match(out, /\[model_providers\.deepseek\]/);
   assert.match(out, /name = "deepseek"/);
@@ -72,28 +91,28 @@ test('generate: emits a [model_providers.*] block per provider with codexPath', 
   assert.match(out, new RegExp(CODEX_TOML_END_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });
 
-test('generate: composes url + codexPath into base_url', () => {
+test('generate: the openai endpoint is the base_url', () => {
   const out = generateModelProvidersBlock({
     providers: {
-      kimi: { url: 'https://api.kimi.com', codexApiKeyEnv: 'KIMI_API_KEY', codexPath: '/coding/v1' },
+      kimi: { baseUrl: 'https://api.kimi.com/coding/v1', codexApiKeyEnv: 'KIMI_API_KEY' },
     },
   });
   assert.match(out, /base_url = "https:\/\/api\.kimi\.com\/coding\/v1"/);
 });
 
-test('generate: skips providers without codexPath (claude-only providers)', () => {
+test('generate: skips providers without an openai endpoint (claude-only providers)', () => {
   const out = generateModelProvidersBlock({
     providers: {
-      deepseek: { url: 'https://x.com', codexApiKeyEnv: 'D', codexPath: '/v1' },
-      claudeOnly: { url: 'https://y.com', claudeApiKeyEnv: 'Y' /* no codexPath */ },
+      deepseek: { baseUrl: 'https://x.com/v1', codexApiKeyEnv: 'D' },
+      claudeOnly: { claudeApiKeyEnv: 'Y' /* no openai endpoint */ },
     },
   });
   assert.match(out, /\[model_providers\.deepseek\]/);
   assert.doesNotMatch(out, /\[model_providers\.claudeOnly\]/);
 });
 
-test('generate: returns empty string when no provider has codexPath', () => {
-  const out = generateModelProvidersBlock({ providers: { only: { url: 'https://x.com' } } });
+test('generate: returns empty string when no provider has an openai endpoint', () => {
+  const out = generateModelProvidersBlock({ providers: { only: {} } });
   assert.equal(out, '');
 });
 
@@ -146,7 +165,7 @@ test('inject: returns no-config when the file does not exist', () => {
 test('inject: returns empty when no provider has a codex-side declaration', () => {
   const { path } = fixture();
   writeFileSync(path, 'model = "gpt-5.6-sol"\n');
-  const generated = generateModelProvidersBlock({ providers: { claudeOnly: { url: 'https://x.com' } } });
+  const generated = generateModelProvidersBlock({ providers: { claudeOnly: {} } });
   const result = injectModelProviders(path, generated);
   assert.equal(result.status, 'empty');
   // The user's file is not modified
@@ -251,7 +270,7 @@ test('generateModelsJson: dedupes models shared across providers', () => {
 });
 
 test('generateModelsJson: returns empty when no provider has a codex model', () => {
-  assert.equal(generateModelsJson({ providers: { claudeOnly: { url: 'https://x.com' } } }), '');
+  assert.equal(generateModelsJson({ providers: { claudeOnly: {} } }), '');
 });
 
 test('injectModelsJson: writes, then no-ops on re-injection (idempotent)', () => {
@@ -275,8 +294,8 @@ test('injectModelsJson: returns empty when there is nothing to catalog', () => {
 
 test('regenerate: writes models.json even when codex_config.toml is absent', () => {
   const { path, modelsPath, settingsPath } = fixture();
-  writeFileSync(settingsPath, JSON.stringify(SHARED_DEEPSEEK_ONLY));
-  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  writeFileSync(settingsPath, JSON.stringify(rulesOf(SHARED_DEEPSEEK_ONLY)));
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache });
   assert.equal(r.settings, 'ok');
   assert.equal(r.providers.status, 'no-config');
   assert.equal(r.models.status, 'updated');
@@ -287,9 +306,9 @@ test('regenerate: writes models.json even when codex_config.toml is absent', () 
 
 test('regenerate: injects providers when codex_config.toml is present and also writes models.json', () => {
   const { path, modelsPath, settingsPath } = fixture();
-  writeFileSync(settingsPath, JSON.stringify(SHARED_DEEPSEEK_ONLY));
+  writeFileSync(settingsPath, JSON.stringify(rulesOf(SHARED_DEEPSEEK_ONLY)));
   writeFileSync(path, 'model = "gpt-5.6-sol"\n');
-  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache });
   assert.equal(r.settings, 'ok');
   assert.equal(r.providers.status, 'updated');
   assert.equal(r.providers.providers, 1);
@@ -300,14 +319,14 @@ test('regenerate: injects providers when codex_config.toml is present and also w
 
 test('regenerate: idempotent — second call is a no-change and rewrites nothing', () => {
   const { path, modelsPath, settingsPath } = fixture();
-  writeFileSync(settingsPath, JSON.stringify(SHARED_DEEPSEEK_AND_GMI));
+  writeFileSync(settingsPath, JSON.stringify(rulesOf(SHARED_DEEPSEEK_AND_GMI)));
   writeFileSync(path, 'model = "gpt-5.6-sol"\n');
-  const first = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  const first = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache });
   assert.equal(first.providers.status, 'updated');
   assert.equal(first.models.status, 'updated');
   const cfgBefore = readFileSync(path, 'utf8');
   const modelsBefore = readFileSync(modelsPath, 'utf8');
-  const second = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  const second = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache });
   assert.equal(second.providers.status, 'no-change');
   assert.equal(second.models.status, 'no-change');
   assert.equal(readFileSync(path, 'utf8'), cfgBefore);
@@ -318,7 +337,7 @@ test('regenerate: missing settings returns missing and writes nothing', () => {
   const { path, modelsPath, settingsPath } = fixture();
   writeFileSync(path, 'model = "gpt-5.6-sol"\n');
   const cfgBefore = readFileSync(path, 'utf8');
-  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache });
   assert.equal(r.settings, 'missing');
   assert.equal(r.models.status, 'empty');
   assert.equal(r.providers.status, 'empty');
@@ -331,7 +350,7 @@ test('regenerate: unparseable settings returns unparseable with an error and wri
   writeFileSync(settingsPath, '{ this is not json');
   writeFileSync(path, 'model = "gpt-5.6-sol"\n');
   const cfgBefore = readFileSync(path, 'utf8');
-  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath });
+  const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache });
   assert.equal(r.settings, 'unparseable');
   assert.ok(r.error instanceof Error);
   assert.equal(existsSync(modelsPath), false);

@@ -8,6 +8,7 @@ import { checkMacNotify } from './check-mac-notify.js';
 import { installCliWrappers } from './install-cli-wrappers.js';
 import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
+import { migrateApiKeysToStore, refreshProviderCache } from './provider-setup.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { isMain } from '../shared/is-main.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
@@ -432,6 +433,7 @@ function expandHome(p, home) {
 export function parseSetupArgs(argv = []) {
   const idx = argv.indexOf('--sync-dir');
   const mIdx = argv.indexOf('--machine');
+  const pIdx = argv.indexOf('--ai-lab-python');
   return {
     replace: argv.includes('--replace') || argv.includes('-r'),
     initSyncDir: argv.includes('--init-sync-dir'),
@@ -439,6 +441,7 @@ export function parseSetupArgs(argv = []) {
     syncDirFlagPresent: idx !== -1,
     machine: mIdx !== -1 ? argv[mIdx + 1] : undefined,
     machineFlagPresent: mIdx !== -1,
+    aiLabPython: pIdx !== -1 ? argv[pIdx + 1] : undefined,
   };
 }
 
@@ -590,7 +593,28 @@ export function setup(options = {}) {
 
   const counters = { created: 0, skipped: 0, errors: earlyErrors, replace };
 
-  // Regenerate the derivable codex artifacts from the shared providers registry:
+  // The provider catalogue is ai-lab's: copy it into ~/.claude/provider-cache.json, the only
+  // thing a launcher reads (scripts/shared/provider-cache.mjs). Before the codex artifacts,
+  // which derive from it.
+  const cache = refreshProviderCache({ aiLabPython: options.aiLabPython });
+  if (cache.error) {
+    console.log(`ERR   provider-cache.json - ${cache.error}`);
+    counters.errors++;
+  } else {
+    console.log(`GEN   ~/.claude/provider-cache.json - ${cache.providers} provider(s) from ${cache.python} -m ai_lab.providers`);
+  }
+
+  // Plaintext keys in the local file move into the git credential store (the launchers read
+  // only the store); the file is backed up first. A key ai-lab refuses stays, by name.
+  const keys = migrateApiKeysToStore({ localPath: localEnvSettingsPath, python: cache.python ?? options.aiLabPython });
+  for (const p of keys.stored ?? []) console.log(`MIGR  providers.${p}.apiKey -> git credential store (task session); backup: ${path.basename(keys.backupPath)}`);
+  for (const { provider, why } of keys.failed ?? []) {
+    console.log(`ERR   providers.${provider}.apiKey not migrated: ${why}`);
+    counters.errors++;
+  }
+  if (keys.status === 'malformed') console.log(`NOTE  could not read the local file for key migration: ${keys.error}`);
+
+  // Regenerate the derivable codex artifacts from the provider cache + projection rules:
   // the [model_providers.*] section of codex_config.toml (only when that file
   // exists) AND the gitignored repo models.json (unconditionally — models.json
   // derives purely from providers.<name>.models and is unrelated to
@@ -616,8 +640,11 @@ export function setup(options = {}) {
       ? `could not parse JSON: ${artifacts.error.message}`
       : 'not found; skipping codex artifact generation'}`);
     counters.errors++;
+  } else if (artifacts.cache !== 'ok') {
+    console.log(`ERR   codex artifacts - ${artifacts.cache}`);
+    counters.errors++;
   } else if (artifacts.models.status === 'updated') {
-    console.log(`INJECT models.json — ${artifacts.models.models} model catalog entr(y/ies) generated from providers.<name>.models`);
+    console.log(`INJECT models.json — ${artifacts.models.models} model catalog entr(y/ies) generated from the provider cache`);
   } else if (artifacts.models.status === 'empty') {
     console.log('NOTE   models.json — no provider declares a codex model; nothing to inject');
   }

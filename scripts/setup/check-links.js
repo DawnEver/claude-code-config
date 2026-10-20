@@ -102,6 +102,7 @@ export function checkLinks() {
     if (codex.status === 'written' && codex.changed) repaired.push('~/.codex/config.toml (recomposed)');
     else if (codex.status === 'unreadable') warnings.push('codex_config.toml: sync payload not readable (cloud placeholder?)');
     else if (codex.status === 'unsafe') warnings.push(`codex_config.toml: ${codex.error.message}`);
+    if (artifacts.cache !== 'ok') warnings.push(artifacts.cache);
     if (artifacts.settings === 'unparseable') {
       warnings.push(`claude_env_settings.json: unparseable JSON (${artifacts.error.message})`);
     } else if (artifacts.settings === 'ok' && artifacts.models.status === 'updated') {

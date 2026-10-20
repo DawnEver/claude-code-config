@@ -55,10 +55,10 @@ repo's layout and wrappers whose name was retired, then re-runs `setup()`. It al
 cc-market plugin's `migrations/migrate.mjs` against the current project. Re-run after any repo
 layout change.
 
-`npm run setup` also auto-converts a legacy `env:<provider>` local secrets file to
-`providers.<name>.apiKey` (one-time, idempotent), backing the old file up to
-`~/.claude/claude_env_settings.local.json.setup-bak`. See [`providers.md`](providers.md)
-§ "Migrating from the legacy `env:<provider>` shape".
+`npm run setup` also writes `~/.claude/provider-cache.json` from ai-lab
+(`--ai-lab-python <interpreter>` on a machine's first run) and moves any plaintext
+`providers.<name>.apiKey` from the local file into the git credential store, backing the file
+up to `~/.claude/claude_env_settings.local.json.setup-bak` first. See [`providers.md`](providers.md).
 
 ## Plugins
 

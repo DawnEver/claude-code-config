@@ -1,9 +1,8 @@
 // Unit tests for scripts/runtime/cc-launcher.mjs — the env + args projection
 // that `cc.js` uses to spawn the `claude` binary.
 //
-// Single source of truth: one `providers.<name>` block per provider holds the
-// URL + API key + per-host details exactly once. Local file paths are injected
-// into a temp dir; the real ~/.claude is never touched.
+// The catalogue (provider cache) and the key (credential store) are injected; local file
+// paths are a temp dir; the real ~/.claude is never touched.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,6 +11,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildClaudeInvocation } from './cc-launcher.mjs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
+import { readProviderCache } from '../shared/provider-cache.mjs';
+import { fakeAiLab, writeCache } from '../shared/provider-cache-fixture.mjs';
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'cc-launcher-'));
@@ -36,148 +37,88 @@ test('default Claude (provider=null) leaves env untouched beyond PROVIDER_KEYS s
   }
 });
 
-test('cc.js deepseek projects url+claudePath → ANTHROPIC_BASE_URL, apiKey → claudeApiKeyEnv, models → per-class env vars', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: {
-      deepseek: {
-        url: 'https://api.deepseek.com',
-        claudeApiKeyEnv: 'ANTHROPIC_API_KEY',
-        claudePath: '/anthropic',
-        models: {
-          base: 'deepseek-v4-flash[1m]',
-          fable: 'deepseek-v4-pro[1m]',
-          opus: 'deepseek-v4-flash-vision-exp[1m]',
-        },
-      },
-    },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'sk-secret' } } }));
-  const { env, error } = buildClaudeInvocation({
-    provider: 'deepseek', envSettingsPath: shared, localPath: local,
-  });
+// The catalogue comes from the provider cache, the key from the credential store: both injected.
+const lab = fakeAiLab();
+const cachePath = writeCache(lab);
+const readCache = () => readProviderCache({ path: cachePath });
+const keys = (store = { 'api.deepseek.com/api-key-session': 'sk-secret' }) =>
+  ({ host, username }) => (store[`${host}/${username}`] ? { key: store[`${host}/${username}`] } : { error: `no key ${username}@${host}` });
+
+function invoke(shared, local, opts = {}) {
+  const f = fixture();
+  writeFileSync(f.shared, JSON.stringify(shared));
+  writeFileSync(f.local, JSON.stringify(local ?? {}));
+  return buildClaudeInvocation({ provider: 'deepseek', envSettingsPath: f.shared, localPath: f.local,
+    readCache, fetchKey: keys(), ...opts });
+}
+
+const RULES = { providers: { deepseek: { claudeApiKeyEnv: 'ANTHROPIC_API_KEY', codexApiKeyEnv: 'DEEPSEEK_API_KEY' } } };
+
+test('deepseek: base URL and role models from the catalogue, key from the store into claudeApiKeyEnv', () => {
+  const { env, error } = invoke(RULES);
   assert.equal(error, null);
   assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
   assert.equal(env.ANTHROPIC_API_KEY, 'sk-secret');
   assert.equal(env.ANTHROPIC_MODEL, 'deepseek-v4-flash[1m]');
   assert.equal(env.ANTHROPIC_DEFAULT_FABLE_MODEL, 'deepseek-v4-pro[1m]');
-  assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-flash-vision-exp[1m]');
-  // sonnet/haiku/subagent fall back to `base` when not declared explicitly
   assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'deepseek-v4-flash[1m]');
-  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'deepseek-v4-flash[1m]');
   assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, 'deepseek-v4-flash[1m]');
 });
 
-test('cc.js gmi uses ANTHROPIC_AUTH_TOKEN (not ANTHROPIC_API_KEY) via claudeApiKeyEnv', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: {
-      gmi: {
-        url: 'https://api.gmi-serving.com',
-        claudeApiKeyEnv: 'ANTHROPIC_AUTH_TOKEN',
-        claudePath: '',
-        models: { base: 'MiniMaxAI/MiniMax-M3[1m]' },
-      },
-    },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { gmi: { apiKey: 'gmi-secret' } } }));
-  const { env, error } = buildClaudeInvocation({
-    provider: 'gmi', envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(error, null);
-  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'gmi-secret');
-  assert.equal(env.ANTHROPIC_API_KEY, undefined, 'gmi must not set ANTHROPIC_API_KEY');
-  assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.gmi-serving.com');
+test('the key is read for the catalogue session username at the catalogue host', () => {
+  let asked;
+  invoke(RULES, {}, { fetchKey: (q) => { asked = q; return { key: 'k' }; } });
+  assert.deepEqual(asked, { host: 'api.deepseek.com', username: 'api-key-session' });
 });
 
-test('cc.js missing shared file returns a clear error', () => {
-  const { shared } = fixture();
-  const { error } = buildClaudeInvocation({ provider: 'deepseek', envSettingsPath: shared });
-  assert.match(error, /^Missing:/);
+test('the env var the key goes into is the projection rule (ANTHROPIC_AUTH_TOKEN works too)', () => {
+  const { env } = invoke({ providers: { deepseek: { claudeApiKeyEnv: 'ANTHROPIC_AUTH_TOKEN' } } });
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'sk-secret');
 });
 
-test('cc.js unknown provider returns an error listing available', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({ providers: { deepseek: {}, kimi: {} } }));
-  const { error, available } = buildClaudeInvocation({
-    provider: 'nope', envSettingsPath: shared, localPath: local,
-  });
-  assert.match(error, /^Unknown provider: nope/);
-  assert.deepEqual(available, ['deepseek', 'kimi']);
-  assert.match(error, /deepseek/);
+test('no key in the store refuses the launch, naming username and host', () => {
+  const { error } = invoke(RULES, {}, { fetchKey: keys({}) });
+  assert.match(error, /no key api-key-session@api\.deepseek\.com/);
 });
 
-test('cc.js local overlay merges apiKey over the shared providers block', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com', claudeApiKeyEnv: 'ANTHROPIC_API_KEY' } },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'sk-only-in-local' } } }));
-  const { env, error } = buildClaudeInvocation({
-    provider: 'deepseek', envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(error, null);
-  assert.equal(env.ANTHROPIC_API_KEY, 'sk-only-in-local');
+test('a stale or absent cache refuses the launch naming the remedy', () => {
+  const { error } = invoke(RULES, {}, { readCache: () => readProviderCache({ path: join(lab.dir, 'absent.json') }) });
+  assert.match(error, /provider-cache|absent/);
+  assert.match(error, /node scripts\/setup\/setup\.js/);
 });
 
-test('cc.js provider with no claudeExtras still works (extras map is optional)', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { minimal: { url: 'https://x.test', claudeApiKeyEnv: 'ANTHROPIC_API_KEY', models: { base: 'm' } } },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { minimal: { apiKey: 'k' } } }));
-  const { env, error } = buildClaudeInvocation({
-    provider: 'minimal', envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(error, null);
-  assert.equal(env.ANTHROPIC_BASE_URL, 'https://x.test');
-  assert.equal(env.ANTHROPIC_MODEL, 'm');
-  assert.equal(env.ANTHROPIC_API_KEY, 'k');
+test('a provider without projection rules is unknown, listing the available ones', () => {
+  const { error, available } = invoke(RULES, {}, { provider: 'kimi' });
+  assert.match(error, /Unknown provider: kimi/);
+  assert.deepEqual(available, ['deepseek']);
 });
 
-test('cc.js returns an error when claudeApiKeyEnv is declared but apiKey is missing', () => {
-  // No apiKey in the local file — the launchers must surface a clear config error
-  // rather than spawning claude without a key and letting the user get a 401.
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com', claudeApiKeyEnv: 'ANTHROPIC_API_KEY' } },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: {} }));
-  const { env, error } = buildClaudeInvocation({
-    provider: 'deepseek', envSettingsPath: shared, localPath: local,
-  });
-  assert.match(error, /no apiKey/);
-  assert.match(error, /providers\.deepseek\.apiKey/);
-  // The error path must NOT leak ANTHROPIC_API_KEY into the env (it was never set)
-  assert.equal(env.ANTHROPIC_API_KEY, undefined);
+test('a provider with rules but no catalogue row refuses', () => {
+  const { error } = invoke({ providers: { gmi: { claudeApiKeyEnv: 'X' } } }, {}, { provider: 'gmi' });
+  assert.match(error, /gmi is not in the ai-lab catalogue/);
 });
 
-test('cc.js provider without claudeApiKeyEnv does not require an apiKey', () => {
-  // A provider that has no API-key env var (e.g. an internal proxy that auths
-  // upstream) shouldn't fail just because apiKey is empty.
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { proxy: { url: 'https://proxy.test', claudePath: '', models: { base: 'm' } } },
-  }));
-  writeFileSync(local, JSON.stringify({}));
-  const { env, error } = buildClaudeInvocation({
-    provider: 'proxy', envSettingsPath: shared, localPath: local,
+for (const [field, value, where] of [
+  ['url', 'https://api.deepseek.com', 'shared'], ['claudePath', '/anthropic', 'shared'],
+  ['codexPath', '/v1', 'shared'], ['models', { base: 'x' }, 'shared'], ['apiKey', 'sk-old', 'local'],
+]) {
+  test(`retired field providers.deepseek.${field} (${where}) is refused by name`, () => {
+    const block = { providers: { deepseek: { [field]: value } } };
+    const { error } = where === 'shared'
+      ? invoke({ providers: { deepseek: { ...RULES.providers.deepseek, [field]: value } } })
+      : invoke(RULES, block);
+    assert.match(error, new RegExp(`retired provider field.*providers\.deepseek\.${field} ->`));
   });
-  assert.equal(error, null);
-  assert.equal(env.ANTHROPIC_MODEL, 'm');
+}
+
+test('missing shared file returns a clear error', () => {
+  const { error } = buildClaudeInvocation({ provider: 'deepseek', envSettingsPath: '/nonexistent/x.json', readCache, fetchKey: keys() });
+  assert.match(error, /Missing: /);
 });
 
-test('cc.js extraArgs pass through unchanged', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com', claudeApiKeyEnv: 'ANTHROPIC_API_KEY' } },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'k' } } }));
-  const { args } = buildClaudeInvocation({
-    provider: 'deepseek', extraArgs: ['-r', 'find . -name "*.ts"'], envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(args[args.length - 2], '-r');
-  assert.equal(args[args.length - 1], 'find . -name "*.ts"');
+test('extraArgs pass through unchanged', () => {
+  const { args } = invoke(RULES, {}, { extraArgs: ['-r', 'find . -name "*.ts"'] });
+  assert.deepEqual(args.slice(-2), ['-r', 'find . -name "*.ts"']);
 });
 
 // ── provenance (docs/harness-architecture.md §8b) ──
@@ -204,7 +145,7 @@ const CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session
 function bridgeFixture(botToken) {
   const f = fixture();
   writeFileSync(f.shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com' } },
+    providers: { deepseek: { claudeApiKeyEnv: 'ANTHROPIC_API_KEY' } },
     bridge: { fallbackChatId: -100, projects: {} },
   }));
   writeFileSync(f.local, JSON.stringify(botToken ? { bridge: { botToken } } : {}));
@@ -225,7 +166,7 @@ test('bridge: no bot token -> no channel flag', () => {
 
 test('bridge: a third-party provider never gets the channel (channels need Anthropic auth)', () => {
   const { shared, local } = bridgeFixture('123:abc');
-  const { args, error } = buildClaudeInvocation({ provider: 'deepseek', envSettingsPath: shared, localPath: local });
+  const { args, error } = buildClaudeInvocation({ provider: 'deepseek', envSettingsPath: shared, localPath: local, readCache, fetchKey: keys() });
   assert.equal(error, null);
   assert.ok(!args.includes('--dangerously-load-development-channels'));
 });
@@ -281,4 +222,11 @@ test('a partial seat name reports what it matched and how', async () => {
   assert.deepEqual([run('t').seat, run('t').seatMatch], ['team-a', 'prefix']);
   assert.deepEqual([run('taem-a').seat, run('taem-a').seatMatch], ['team-a', 'typo']);
   assert.deepEqual([run('team-a').seat, run('team-a').seatMatch], ['team-a', 'exact']);
+});
+
+test('withKey: false projects url and models but never reads or sets the key (setup-vscode)', () => {
+  const { env, error } = invoke(RULES, {}, { withKey: false, fetchKey: () => assert.fail('must not read the key') });
+  assert.equal(error, null);
+  assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+  assert.equal(env.ANTHROPIC_API_KEY, undefined);
 });

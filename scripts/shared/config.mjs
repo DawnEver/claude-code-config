@@ -1,12 +1,11 @@
 // scripts/shared/config.mjs — two-layer provider config read (shared + machine-local).
 //
 // claude_env_settings.json rides the SYNC PAYLOAD (see docs/sync-architecture.md §3), not
-// the repo, so every machine sees the same provider blocks. Secrets (API keys) must NOT
-// live there — each machine keeps its own in
-// `~/.claude/claude_env_settings.local.json`, a REAL machine-local dir (setup.js only
+// the repo, so every machine sees the same blocks. Machine-local values (the bridge bot token)
+// live in `~/.claude/claude_env_settings.local.json`, a REAL machine-local dir (setup.js only
 // junctions specific children into the repo; the directory itself is per-machine and never
 // synced). This helper reads the shared file and deep-merges the local one on top (override
-// wins), so the shared file carries base URLs / model pins while the local file carries keys.
+// wins). API keys are in neither: they live in the git credential store (docs/providers.md).
 //
 // The fabric plugin implements the same convention for its own consumers
 // (cc-market/fabric/engine/providers.mjs `readRegistry`). Keep the two in step.

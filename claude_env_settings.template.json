@@ -1,19 +1,8 @@
 {
   "providers": {
     "deepseek": {
-      "url": "https://api.deepseek.com",
       "claudeApiKeyEnv": "ANTHROPIC_API_KEY",
-      "claudePath": "/anthropic",
-      "codexApiKeyEnv": "DEEPSEEK_API_KEY",
-      "codexPath": "/v1",
-      "models": {
-        "base": "deepseek-v4-flash[1m]",
-        "fable": "deepseek-v4-pro[1m]",
-        "opus": "deepseek-v4-flash[1m]",
-        "sonnet": "deepseek-v4-flash[1m]",
-        "haiku": "deepseek-v4-flash[1m]",
-        "subagent": "deepseek-v4-flash[1m]"
-      }
+      "codexApiKeyEnv": "DEEPSEEK_API_KEY"
     }
   },
   "fabric": {

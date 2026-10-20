@@ -14,9 +14,11 @@ const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `codex-cfg-${p}-`));
 
 const ENV_SETTINGS = JSON.stringify({
   providers: {
-    deepseek: { url: 'https://api.deepseek.com', codexPath: '/v1', codexApiKeyEnv: 'DEEPSEEK_API_KEY' },
+    deepseek: { codexApiKeyEnv: 'DEEPSEEK_API_KEY' },
   },
 });
+// ai-lab's catalogue row, as the provider cache carries it.
+const readCache = () => ({ cache: { providers: { deepseek: { endpoints: { openai: 'https://api.deepseek.com/v1' }, models: {} } } } });
 
 function fixture({ payload, existingCodexConfig, codexIsSymlink = false } = {}) {
   const syncDir = tmp('sync');
@@ -64,7 +66,7 @@ test('composeCodexConfigFile strips machine state from the payload and backs it 
   const payload = `model = "x"\n\n[tui]\na = 1\n\n[projects.'/tmp/whatever']\ntrust_level = "trusted"\n`;
   const { syncDir, codexDir, envSettingsPath } = fixture({ payload });
 
-  const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir });
+  const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, readCache });
   assert.equal(r.status, 'written');
   assert.equal(r.strippedFromPayload, 1);
 
@@ -89,7 +91,7 @@ test('a symlinked pre-split config keeps THIS host\'s trust entries, not the who
     codexIsSymlink: true,
   });
 
-  const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir });
+  const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, readCache });
   assert.equal(r.droppedDeadPaths, 1);
 
   const target = path.join(codexDir, 'config.toml');
@@ -102,18 +104,18 @@ test('a symlinked pre-split config keeps THIS host\'s trust entries, not the who
 test('composeCodexConfigFile is idempotent and reports no change on a second run', () => {
   const { syncDir, codexDir, envSettingsPath } = fixture({ payload: 'model = "x"\n\n[tui]\na = 1\n' });
 
-  const first = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir });
+  const first = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, readCache });
   assert.equal(first.changed, true);
   const afterFirst = fs.readFileSync(path.join(codexDir, 'config.toml'), 'utf8');
 
-  const second = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir });
+  const second = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, readCache });
   assert.equal(second.changed, false, 'a no-op run must not rewrite a file Codex may be reading');
   assert.equal(fs.readFileSync(path.join(codexDir, 'config.toml'), 'utf8'), afterFirst);
 });
 
 test('the generated provider block lands between the markers', () => {
   const { syncDir, codexDir, envSettingsPath } = fixture();
-  const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir });
+  const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, readCache });
   assert.equal(r.providers, 1);
   const out = fs.readFileSync(path.join(codexDir, 'config.toml'), 'utf8');
   assert.match(out, /setup-managed[\s\S]*\[model_providers\.deepseek\][\s\S]*setup-managed/);
@@ -125,7 +127,7 @@ test('an unparseable payload is REFUSED, not rewritten', () => {
   const payload = 'notes = """\n[projects.evil]\n';   // deliberately unbalanced
   const { syncDir, codexDir, envSettingsPath } = fixture({ payload });
 
-  const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir });
+  const r = composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, readCache });
   assert.equal(r.status, 'unsafe');
   assert.equal(fs.readFileSync(path.join(syncDir, 'codex_config.toml'), 'utf8'), payload,
     'the payload must be left byte-identical');
@@ -138,13 +140,14 @@ test('a missing payload yields no-head rather than throwing', () => {
     syncDir,
     envSettingsPath: path.join(syncDir, 'claude_env_settings.json'),
     codexDir,
+    readCache,
   });
   assert.equal(r.status, 'no-head');
 });
 
 test('composeCodexConfigFile writes shellEnv into the host file, never into the payload', () => {
   const { syncDir, codexDir, envSettingsPath } = fixture({ payload: 'model = "x"\n' });
-  composeCodexConfigFile({ syncDir, envSettingsPath, codexDir,
+  composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, readCache,
     shellEnv: { HARNESS_MACHINE: 'WS9', HARNESS_AGENT: 'codex' } });
   const host = fs.readFileSync(path.join(codexDir, 'config.toml'), 'utf8');
   assert.match(host, /\[shell_environment_policy\.set\]\nHARNESS_MACHINE = "WS9"\nHARNESS_AGENT = "codex"/);
