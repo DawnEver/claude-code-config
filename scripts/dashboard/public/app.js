@@ -61,15 +61,19 @@ function openTopic(url) {
   if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
 }
 
-/** One session: status dot, project, the context line, a status pill, `›` when it opens a Topic. */
-function sessionRow(s, { withHost = false } = {}) {
+/**
+ * One session: status dot, a title, the context line, a status pill, `›` when it opens a Topic.
+ * The title is what its group does not already say: in a project group the machine and branch,
+ * elsewhere the project.
+ */
+function sessionRow(s, { withHost = false, inProject = false } = {}) {
   const status = displayStatus(s);
   const row = el(s.topic ? 'button' : 'div', `row s-${status}${s.topic ? ' link' : ''}`);
   const main = el('div', 'main');
-  main.append(el('div', 'title', s.project ?? 'unknown project'));
+  main.append(el('div', 'title', inProject ? [s.hostId, s.branch].filter(Boolean).join(' · ') : s.project ?? 'unknown project'));
   const sub = el('div', 'sub');
   sub.append(el('span', `agent ${s.agent}`, s.agent === 'claude' ? 'Claude' : 'Codex'));
-  const rest = [withHost && s.hostId, s.branch, stateAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
+  const rest = [!inProject && withHost && s.hostId, !inProject && s.branch, stateAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
   sub.append(document.createTextNode(` · ${rest.join(' · ')}`));
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
@@ -343,7 +347,7 @@ function renderHosts() {
       head.append(el('span', `dot ${g.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', g.id),
         el('span', 'muted meta', `${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'}`));
       const list = el('div', 'list');
-      for (const s of g.sessions) list.append(sessionRow(s, { withHost: true }));
+      for (const s of g.sessions) list.append(sessionRow(s, { inProject: true }));
       section.append(head, list);
       main.append(section);
     }
