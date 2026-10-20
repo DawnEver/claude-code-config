@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 
 const POLL_MS = 8000;
@@ -45,6 +45,7 @@ let groupBy = store.get('dashboard.groupBy') === 'project' ? 'project' : 'host';
 const openRows = new Set();
 let legendOpen = false;   // the quota legend, kept across polls
 let accounts = new Map();
+let unit = store.get('dashboard.unit') === 'used' ? 'used' : 'left';   // bars and numbers read as % left or % used
 let packed = store.get('dashboard.packed') === '1';   // hosts in packed columns, not aligned rows
 document.body.classList.toggle('packed', packed);
 let configShown = null;   // the config view last rendered (JSON)
@@ -121,17 +122,17 @@ function quotaAlertRow(q) {
 function bar(w, stale) {
   const track = el('div', `bar${w.forecast?.short || w.used >= 100 ? ' hot' : ''}`);
   const fill = el('div', 'fill');
-  fill.style.width = `${Math.max(0, 100 - w.used)}%`;
+  fill.style.width = `${amount(w.used, unit)}%`;
   const pace = el('div', 'pace');
-  pace.style.left = `${100 - w.pace}%`;
+  pace.style.left = `${amount(w.pace, unit)}%`;
   track.append(fill, pace);
-  track.title = `${windowLabel(w, stale).title} · even pace leaves ${Math.round(100 - w.pace)}%`;
+  track.title = `${windowLabel(w, stale, unit).title} · even pace: ${amount(w.pace, unit)}% ${unit} by now`;
   return track;
 }
 
-/** A window's % left, dimmed with a clock when the reading is stale. */
+/** A window's % left or used, dimmed with a clock when the reading is stale. */
 function leftCell(w, stale, cls = 'used') {
-  const l = windowLabel(w, stale);
+  const l = windowLabel(w, stale, unit);
   const span = el('span', `${cls}${l.stale ? ' stale-v' : ''}`, l.text);
   span.title = l.title;
   return span;
@@ -165,7 +166,7 @@ function trend(w) {
 const resetCell = (w) => { const s = el('span', 'reset', resetText(w)); if (s.textContent) s.title = 'resets in'; return s; };
 
 /** A window's name; the binding one (what the account's % left is read from) is marked. */
-const kCell = (w, q) => { const k = el('span', `k${q.bind?.k === w.k ? ' bind' : ''}`, w.k); if (q.bind?.k === w.k) k.title = 'binding window: the account\'s % left'; return k; };
+const kCell = (w, q) => { const k = el('span', `k${q.bind?.k === w.k ? ' bind' : ''}`, w.k); if (q.bind?.k === w.k) k.title = `binding window: the account's % ${unit}`; return k; };
 
 /** The expanded part of a quota row: each window with its trend on a time axis, then resets to act on. */
 function quotaDetail(q) {
@@ -175,7 +176,7 @@ function quotaDetail(q) {
     const row = el('div', 'win');
     row.append(kCell(w, q), bar(w, q.stale), leftCell(w, q.stale), resetCell(w));
     const sub = el('div', 'win-sub');
-    const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${Math.max(0, Math.round(100 - w.forecast.atReset))}% left at reset`);
+    const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${amount(w.forecast.atReset, unit)}% ${unit} at reset`);
     sub.append(trend(w), el('span', null, w.renewed ? 'unused: new window, not started' : forecast || ''));
     box.append(row, sub);
   }
@@ -193,7 +194,7 @@ function quotaDetail(q) {
 
 /** An account as a compact tag: who and how much is left, coloured by its verdict. */
 function acctTag(q, withAgent = false) {
-  const left = q.left === null ? '' : ` ${q.stale && q.bind.used < 100 ? '≤' : ''}${q.left}%`;
+  const left = q.left === null ? '' : ` ${windowLabel(q.bind, q.stale, unit).text}`;
   const tag = el('span', `acct v-${q.verdict}`, `${withAgent ? `${q.agent === 'claude' ? 'Claude' : 'Codex'} ` : ''}${accountTag(q)}${left}`);
   tag.title = `${accountName(q)}${q.email ? ` · ${q.email}` : ''}${q.left === null ? '' : ` · ${q.left}% left`}`;
   return tag;
@@ -212,7 +213,7 @@ function quotaRow(q, hostId) {
   row.tabIndex = 0;
   const top = el('div', 'qrow-top');
   let left;
-  if (q.bind) { left = leftCell(q.bind, q.stale, 'left'); left.textContent += ' left'; }
+  if (q.bind) { left = leftCell(q.bind, q.stale, 'left'); left.textContent += ` ${unit}`; }
   else { left = el('span', 'left', 'no reading'); left.title = 'no window reported for this account yet'; }
   top.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'chev', open ? '⌄' : '›'));
   row.append(top);
@@ -277,15 +278,16 @@ function quotaHeader() {
   const summary = el('summary', null, '?');
   summary.title = 'What the bars mean';
   const body = el('div', 'qlegend-body');
-  for (const line of ['Every number is % left. The bold, underlined window (5h / 7d) is the binding one: the account\'s % left.',
-    'Bar fill = what is left; the thin line = what an even spend would leave by now. Fill short of the line: spending faster than even.',
+  for (const line of [`Every number is % ${unit} (switch in Config). The bold, underlined window (5h / 7d) is the binding one: the account's % ${unit}.`,
+    unit === 'left' ? 'Bar fill = what is left; the thin line = what an even spend would leave by now. Fill short of the line: spending faster than even.'
+      : 'Bar fill = what is used; the thin line = what an even spend would have used by now. Fill past the line: spending faster than even.',
     'Orange bar: runs out before reset, or exhausted. ↻ = time to reset.',
     '≤ and a dim ◷: the reading is stale, so at most that much is left.',
     'Trend (tap a row): spend per slice of the window, half height = even spend; grey hatched = not observed, flat grey = still ahead; the vertical line = now.',
     'unused = a new window, nothing spent yet. → see <host> = a shared account, carded on that host.']) body.append(el('p', null, line));
   legend.append(summary, body);
   const head = el('div', 'qhead');
-  head.append(el('span', 'section-h', 'Quota left'), legend);
+  head.append(el('span', 'section-h', `Quota ${unit}`), legend);
   return head;
 }
 
@@ -424,6 +426,16 @@ function configRow(r) {
   return row;
 }
 
+function unitToggle() {
+  const row = el('label', 'cfg demo-toggle');
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = unit === 'used';
+  box.addEventListener('change', () => { unit = box.checked ? 'used' : 'left'; store.set('dashboard.unit', unit); render(); });
+  row.append(box, el('span', null, 'Quota bars show % used (fill = spent) instead of % left (fill = remaining)'));
+  return row;
+}
+
 function layoutToggle() {
   const row = el('label', 'cfg demo-toggle');
   const box = el('input');
@@ -466,7 +478,7 @@ function groupToggle() {
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
-  box.append(el('div', 'section-h', 'This device'), layoutToggle(), groupToggle());
+  box.append(el('div', 'section-h', 'This device'), unitToggle(), layoutToggle(), groupToggle());
   if (!mock) box.append(demoToggle());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }

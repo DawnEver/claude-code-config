@@ -144,12 +144,17 @@ export function verdictText(q, { now = Date.now(), withReset = true } = {}) {
 export const resetText = (w, now = Date.now()) => (!w.renewed && w.resetsAt > now ? `↻ ${countdown(w.resetsAt, now)}` : '');
 
 /** A window's label in the page's one unit, % left; a stale reading is a ceiling (`≤`) unless already exhausted. */
-export function windowLabel(w, stale) {
+export function windowLabel(w, stale, unit = 'left') {
   if (w.renewed) return { text: 'unused', title: 'new window, nothing spent yet', stale: false };
   const left = Math.max(0, Math.round(100 - w.used));
   const ceiling = stale && left > 0;
-  return { text: `${ceiling ? '≤' : ''}${left}%`, title: ceiling ? `at most ${left}% left (stale reading)` : `${left}% left`, stale: ceiling };
+  const n = amount(w.used, unit);
+  const bound = ceiling ? (unit === 'left' ? '≤' : '≥') : '';
+  return { text: `${bound}${n}%`, title: `${ceiling ? (unit === 'left' ? 'at most' : 'at least') : ''}${ceiling ? ' ' : ''}${n}% ${unit}${ceiling ? ' (stale reading)' : ''}`, stale: ceiling };
 }
+
+/** A window's use as the reader chose to see it: what is left (default) or what is used. The one place the unit is applied. */
+export const amount = (used, unit = 'left') => Math.round(unit === 'left' ? Math.max(0, 100 - used) : Math.min(100, used));
 
 /** An email's local part, for a meta line with the full address in its title. */
 export const emailName = (email) => email?.split('@')[0] ?? null;
