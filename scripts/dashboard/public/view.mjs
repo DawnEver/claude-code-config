@@ -103,10 +103,11 @@ export function quotaView(a, now = Date.now()) {
 
 export const accountName = (q) => `${q.agent === 'claude' ? 'Claude' : 'Codex'}${q.label ? ` · ${q.label}` : ''}`;
 
-/** Why an account needs the human, in one line; '' when it does not. */
-export function verdictText(q, now = Date.now()) {
-  if (q.verdict === 'exhausted') return `${q.bind.k} exhausted · resets in ${countdown(q.bind.resetsAt, now)}`;
-  if (q.verdict === 'short') return `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta, now)} · resets in ${countdown(q.bind.resetsAt, now)}`;
+/** Why an account needs the human, in one line; '' when it does not. `withReset: false` where the row already shows it. */
+export function verdictText(q, now = Date.now(), withReset = true) {
+  const reset = withReset ? ` · resets in ${countdown(q.bind.resetsAt, now)}` : '';
+  if (q.verdict === 'exhausted') return `${q.bind.k} exhausted${reset}`;
+  if (q.verdict === 'short') return `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta, now)}${reset}`;
   return '';
 }
 

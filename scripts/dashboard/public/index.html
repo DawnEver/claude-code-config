@@ -100,7 +100,10 @@
   .qrow-top .left { font-weight: 700; }
   .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left { color: var(--bad); }
   .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 4px 12px; margin-top: 6px; }
-  .qmini > div { display: grid; grid-template-columns: 22px 1fr 34px; gap: 6px; align-items: center; font-size: 12px; }
+  .qmini > div { display: grid; grid-template-columns: 22px 1fr 34px auto; gap: 6px; align-items: center; font-size: 12px; }
+  .qmini .used, .qmini .reset { font-size: 13px; font-weight: 600; }
+  .reset { text-align: right; white-space: nowrap; }
+  .reset:empty { display: none; }
   .qmini .k { color: var(--hint); font-weight: 600; } .qmini .used { text-align: right; font-weight: 600; }
   /* Config: shared settings first (the editable few), then each host's facts. */
   .cfg { background: var(--card); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
@@ -119,15 +122,17 @@
   .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
   .warn { color: var(--warn); font-size: 13px; font-weight: 600; margin-top: 6px; }
   .v-exhausted .warn { color: var(--bad); }
-  .win { display: grid; grid-template-columns: 26px 1fr 44px; align-items: center; gap: 8px; margin-top: 10px; }
+  .win { display: grid; grid-template-columns: 26px 1fr 44px auto; align-items: center; gap: 8px; margin-top: 10px; }
+  .win .reset { font-size: 13px; font-weight: 600; min-width: 52px; }
   .win .k { color: var(--hint); font-size: 12px; font-weight: 600; }
   .win .used { text-align: right; font-size: 13px; font-weight: 600; }
   .bar { position: relative; height: 8px; border-radius: 4px; background: var(--sep); }
   .bar .fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 4px; background: var(--run); }
   .bar.hot .fill { background: var(--warn); }
   .bar .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--fg); opacity: .55; border-radius: 1px; }
-  .win-sub { display: grid; grid-template-columns: 26px 1fr 44px; gap: 2px 8px; color: var(--hint); font-size: 12px; margin-top: 4px; }
-  .win-sub > span { grid-column: 2 / 4; }
+  .win-sub { display: grid; grid-template-columns: 26px 1fr 44px auto; gap: 2px 8px; color: var(--hint); font-size: 12px; margin-top: 4px; }
+  .win-sub > span { grid-column: 2 / 5; }
+  .win-sub > span:empty { display: none; }
   .trend-wrap { grid-column: 2; }
   .trend .now { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1.5px solid var(--fg); opacity: .6; }
   .axis { position: relative; height: 13px; margin-top: 2px; font-size: 10px; color: var(--hint); }
@@ -149,8 +154,10 @@
   body { padding: clamp(12px, 2vw, 32px) clamp(12px, 2.5vw, 40px) calc(clamp(16px, 2vw, 32px) + env(safe-area-inset-bottom)); }
   h1 { font-size: clamp(20px, 1.2vw + 14px, 28px); }
   .quota-hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
-  #hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
+    #hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
   /* auto-fill here: a lone waiting session keeps card width instead of spanning the window. */
+  .packed #hosts, .packed #quota-view .quota-hosts { display: block; columns: auto min(340px, 100%); column-gap: 14px; }
+  .packed #hosts > .host, .packed #quota-view .host { break-inside: avoid; }
   .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 0 14px; }
   .selects select { max-width: 320px; }
 </style>

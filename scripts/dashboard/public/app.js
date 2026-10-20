@@ -42,6 +42,8 @@ let readAlerts = loadRead();
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
 let accounts = new Map();
+let packed = store.get('dashboard.packed') === '1';   // hosts in packed columns, not aligned rows
+document.body.classList.toggle('packed', packed);
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // an edit typed but not saved
 
@@ -102,7 +104,8 @@ function renderSummary() {
 function quotaAlertRow(q) {
   const row = el('div', `row s-${q.verdict === 'exhausted' ? 'exhausted' : 'needs_input'}`);
   const main = el('div', 'main');
-  main.append(el('div', 'title', accountName(q)), el('div', 'sub', verdictText(q)));
+  main.append(el('div', 'title', accountName(q)), el('div', 'sub', [q.email, q.hosts?.length && `on ${q.hosts.join(', ')}`].filter(Boolean).join(' · ')),
+    el('div', 'sub', verdictText(q)));
   row.append(el('span', 'dot'), main, el('span', 'pill', q.verdict === 'exhausted' ? 'Exhausted' : 'Runs out'));
   // Tapping marks it read: it leaves the card until the verdict or the window period changes.
   row.title = 'Mark read';
@@ -146,6 +149,9 @@ function trend(w) {
   return wrap;
 }
 
+/** A window's reset, as weighty as its use: the one place the countdown is shown on a quota row. */
+const resetCell = (w) => el('span', 'reset', w.renewed ? '' : `↻ ${countdown(w.resetsAt)}`);
+
 /** The expanded part of a quota row: each window with its trend on a time axis, then resets to act on. */
 function quotaDetail(q) {
   const box = el('div', 'qdetail');
@@ -153,10 +159,10 @@ function quotaDetail(q) {
   for (const w of q.windows) {
     const row = el('div', 'win');
     const used = w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`;
-    row.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', used));
+    row.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', used), resetCell(w));
     const sub = el('div', 'win-sub');
     const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${Math.round(w.forecast.atReset)}% at reset`);
-    sub.append(trend(w), el('span', null, w.renewed ? 'new window, not started' : [`resets in ${countdown(w.resetsAt)}`, forecast].filter(Boolean).join(' · ')));
+    sub.append(trend(w), el('span', null, w.renewed ? 'new window, not started' : forecast || ''));
     box.append(row, sub);
   }
   if (q.resetCredits) {
@@ -199,14 +205,14 @@ function quotaRow(q, hostId) {
     const mini = el('div', 'qmini');
     for (const w of q.windows) {
       const cell = el('div');
-      cell.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`));
+      cell.append(el('span', 'k', w.k), bar(w, q.stale), el('span', 'used', w.renewed ? 'new' : `${q.stale && w.used < 100 ? '≥' : ''}${Math.round(w.used)}%`), resetCell(w));
       mini.append(cell);
     }
     row.append(mini);
   }
   row.append(el('div', 'sub', [q.email, q.sharedWith.length && `one budget, also on ${q.sharedWith.join(', ')}`,
     q.at && `reading ${ago(new Date(q.at).toISOString())}`].filter(Boolean).join(' · ')));
-  if (q.verdict === 'short' || q.verdict === 'exhausted') row.append(el('div', 'warn', verdictText(q)));
+  if (q.verdict === 'short' || q.verdict === 'exhausted') row.append(el('div', 'warn', verdictText(q, Date.now(), false)));
   for (const p of q.problems) row.append(el('div', 'warn', p));
   const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
   row.addEventListener('click', toggle);
@@ -353,6 +359,16 @@ function configRow(r) {
   return row;
 }
 
+function layoutToggle() {
+  const row = el('label', 'cfg demo-toggle');
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = packed;
+  box.addEventListener('change', () => { packed = box.checked; store.set('dashboard.packed', packed ? '1' : '0'); document.body.classList.toggle('packed', packed); });
+  row.append(box, el('span', null, 'Packed layout (Sessions and Quota): hosts flow down each column and fill the gaps, instead of aligned rows'));
+  return row;
+}
+
 function demoToggle() {
   const row = el('label', 'cfg demo-toggle');
   const box = el('input');
@@ -375,7 +391,8 @@ function demoToggle() {
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
-  if (!mock) box.append(el('div', 'section-h', 'This device'), demoToggle());
+  box.append(el('div', 'section-h', 'This device'), layoutToggle());
+  if (!mock) box.append(demoToggle());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }
   box.append(el('div', 'section-h', 'Shared settings'));
