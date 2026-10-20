@@ -40,7 +40,7 @@ Providers are declared once in `claude_env_settings.json` and projected to both 
 | Read | When you need |
 |---|---|
 | [`docs/setup.md`](docs/setup.md) | Adding a host, upgrading, plugins, LSPs, VS Code, output styles, notifications, troubleshooting |
-| [`docs/providers.md`](docs/providers.md) | Provider schema, models, secrets, the Codex side |
+| [`docs/providers.md`](docs/providers.md) | Provider projection: the ai-lab catalogue cache, keys in the credential store, the Codex side |
 | [`docs/operations.md`](docs/operations.md) | Hooks, `npm run doctor` checks, repo sync, memory & rules |
 | [`docs/sync-architecture.md`](docs/sync-architecture.md) | Where every file lives and why |
 | [`docs/bridge.md`](docs/bridge.md) | Telegram session bridge |

@@ -2,7 +2,8 @@
 // cc.js — Claude Code provider launcher.
 //
 // Thin spawn wrapper around `cc-launcher.mjs` (the pure env+args projection).
-// Provider config lives in `claude_env_settings.json` under `providers.<name>`.
+// Providers: ai-lab's catalogue via the provider cache, projection rules in
+// `claude_env_settings.json` `providers.<name>`, the key from the git credential store.
 // Run `node scripts/setup/setup.js` to install the `ccc` / `ccds` wrappers;
 // those wrappers exec this script with the provider name.
 

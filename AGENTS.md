@@ -89,10 +89,10 @@ Telegram + remote control on the same live session, per-machine bridge in
 - `claude_settings.json`: Env vars, permissions, hooks (gitignored). **Sync payload** — lives in the sync dir, not the repo
 - `claude_settings.template.json`: Template for new clones -> auto-copied to `claude_settings.json` by setup
 - `claude_env_settings.json`: Non-secret provider config (base URLs, model pins) — **sync payload**, gitignored. NO API keys
-- `claude_env_settings.template.json`: Desensitized provider template -> auto-copied to `claude_env_settings.json` by setup
-- `claude_env_settings.local.template.json`: Desensitized per-machine secrets template -> copied by setup to `~/.claude/claude_env_settings.local.json` (a REAL machine-local dir, never cloud-synced). Each host fills in its own API keys there; all readers deep-merge local over shared
+- `claude_env_settings.template.json`: Desensitized template -> auto-copied to `claude_env_settings.json` by setup. Its `providers.<name>` holds ONLY host projection rules (`claudeApiKeyEnv`, `codexApiKeyEnv`); the provider catalogue (urls, paths, model maps) is ai-lab's, copied by setup into `~/.claude/provider-cache.json` -- see `docs/providers.md`
+- `claude_env_settings.local.template.json`: Desensitized per-machine secrets template -> copied by setup to `~/.claude/claude_env_settings.local.json` (a REAL machine-local dir, never cloud-synced). It holds NO API key: keys live in the git credential store (setup migrates a plaintext `apiKey` there once); all readers deep-merge local over shared
 - `codex_config.toml`: **sync payload, hand-edited HEAD ONLY** (model, sandbox, TUI, plugins). Codex writes `[projects.*]` trust blocks / `[hooks.*]` / `[notice]` into its own config, so those are machine-local and must never sync. `~/.codex/config.toml` is therefore a REAL FILE composed per host by setup = shared head + generated `[model_providers.*]` + this host's own state — NOT a symlink. See `scripts/setup/codex-config-compose.mjs` and `docs/sync-architecture.md` § 3
-- `models.json`: Codex model catalog (context window, reasoning levels, image input) — generated from `providers.<name>.models` on every setup run, linked to `~/.codex/models.json`. A build artifact: machine-local, gitignored, NEVER synced
+- `models.json`: Codex model catalog (context window, reasoning levels, image input) — generated from the provider cache's model maps on every setup run, linked to `~/.codex/models.json`. A build artifact: machine-local, gitignored, NEVER synced
 - `codex_config.template.toml`: Desensitized Codex template -> auto-copied to `codex_config.toml` by setup
 - `keybindings.json`: Claude Code keybindings -> synced to `~/.claude/keybindings.json`
 - `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory. Single source linked to both `~/.claude/CLAUDE.md` (Claude) and `~/.codex/AGENTS.md` (Codex global instructions)
@@ -103,7 +103,7 @@ Telegram + remote control on the same live session, per-machine bridge in
 - `ccc` / `ccds` — Claude Code launchers (official / DeepSeek). `ccc --seat <alias>` (`-s`) runs as one Claude seat
   (an account in one Team) from `~/.claude-<alias>`; seats are the top-level `seats` of the shared
   `claude_env_settings.json`, mapped to dirs only by `scripts/shared/seats.mjs` — see `docs/bridge.md` "Claude seats".
-- `codc` / `cods` — Codex launchers (official / DeepSeek). `claude_env_settings.json` is the single provider source of truth for both hosts — see `docs/providers.md`.
+- `codc` / `cods` — Codex launchers (official / DeepSeek). Both read the provider cache (ai-lab's catalogue) and the key from the git credential store; a stale cache refuses to launch -- see `docs/providers.md`.
 - `todo` — Task management: `todo` (list), `todo <text>` (add), `todo rm <id>` (remove), `todo help`
 - `install-cli-wrappers.js` installs `.cmd` plus Git Bash wrappers on Windows and executable shell wrappers on macOS/Linux. They live beside the matching host binary and never depend on PowerShell profiles, `.zshrc`, `.bashrc`, or `.ps1` scripts.
 

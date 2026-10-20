@@ -60,7 +60,7 @@ Transport: `git pull` / `git push`. Nothing else.
 | File | Why it can't be in git | Why it must be shared |
 | --- | --- | --- |
 | `claude_settings.json` | env vars, permissions, hook wiring — historically secret-bearing | one settings surface across machines |
-| `claude_env_settings.json` | non-secret provider config (base URLs, model pins) | `providers.<name>` is the single source of truth for both the `cc*` and `cods` launchers |
+| `claude_env_settings.json` | non-secret host config (provider projection rules, seats, bridge) | one projection for the `cc*` and `cods` launchers; the catalogue itself is ai-lab's (`docs/providers.md`) |
 | `codex_config.toml` | host-tuned Codex config (model, sandbox, TUI) | same — **but only its hand-edited head**, see below |
 | `private-markers` (optional) | the owner's private names; committing the list would be the leak | every host's public-hygiene guards must see the same names |
 
@@ -113,7 +113,7 @@ cloud payload **or** git.
 
 | File | Generated from | By |
 | --- | --- | --- |
-| `models.json` | `claude_env_settings.json` → `providers.<name>.models` | `regenerateCodexArtifacts()` |
+| `models.json` | `~/.claude/provider-cache.json` (ai-lab's catalogue) joined with `providers.<name>` projection rules | `regenerateCodexArtifacts()` |
 | `codex_config.toml`'s `[model_providers.*]` section (between the two setup-managed markers) | same | same |
 
 Regenerated unconditionally on every `npm run setup`. `models.json` is therefore a

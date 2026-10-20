@@ -1,155 +1,109 @@
 # Provider Configuration
 
-Reference doc for the `providers.<name>` schema in `claude_env_settings.json` (the
-single source of truth shared by the Claude Code and Codex launchers). This content
-lived under `.claude/rules/rem/` — it is reference material, not a rule loaded every
-session, so it now lives here in `docs/`.
+cc-config PROJECTS providers into the Claude Code and Codex hosts; it owns none of their facts.
 
-## Secrets are machine-local (`claude_env_settings.local.json`)
+| fact | single home | how a launcher gets it |
+|---|---|---|
+| url, per-protocol paths (`anthropic_path`, `openai_path`), the Claude-role model map, key usernames | ai-lab's `providers.toml` (packaged + the user's own rows); documented in ai-lab's README | `~/.claude/provider-cache.json`, written by setup |
+| the API key | the git credential store (`python -m ai_lab.auth login <provider> --task session`) | `git credential fill` at launch |
+| which env var each host reads the key from | `claude_env_settings.json` `providers.<name>` (`claudeApiKeyEnv`, `codexApiKeyEnv`) | read directly |
 
-The shared `claude_env_settings.json` rides OneDrive, so it must NOT carry API keys. Each
-machine keeps its own in `~/.claude/claude_env_settings.local.json` — a REAL per-machine dir
-(setup.js only junctions specific children into the repo), so it never syncs. setup.js copies
-it from `claude_env_settings.local.template.json` on first run. Shape mirrors the shared
-registry; every config reader deep-merges local over shared (override wins), so the shared
-file keeps base URLs / model pins and the local file keeps keys:
-
-```json
-{ "providers": { "deepseek": { "apiKey": "sk-..." } } }
+```jsonc
+// claude_env_settings.json (sync payload) -- projection rules ONLY
+{ "providers": { "deepseek": { "claudeApiKeyEnv": "ANTHROPIC_API_KEY", "codexApiKeyEnv": "DEEPSEEK_API_KEY" } } }
 ```
 
-Consumers: root `scripts/shared/config.mjs` `readMergedEnvSettings()` (`cc.js`,
-`codex.js`, `setup-vscode.js`) and fabric `engine/providers.mjs` `readRegistry()` +
-`engine/fabric-config.mjs` `loadFabricConfig()` (`~/.claude/claude_env_settings.local.json`).
-A machine without a local file fails with a clear "no apiKey for provider '<name>'" error
-from the launcher (each host must supply its own key — see `scripts/runtime/cc-launcher.mjs`).
+A provider is launchable when it has projection rules here AND a row in the ai-lab catalogue.
+The retired fields `url`, `claudePath`, `codexPath`, `models` (shared file) and `apiKey` (local
+file) are REFUSED by name at launch, each message naming the field's new home; there is no
+fallback that reads them (`scripts/shared/provider-projection.mjs`).
 
-### Migrating from the legacy `env:<provider>` shape
+## The provider cache (`~/.claude/provider-cache.json`)
 
-`setup.js` (`scripts/setup/migrate-local-env-settings.mjs`) auto-migrates the local
-file in place on the first run after the refactor:
+`node scripts/setup/setup.js [--ai-lab-python <interpreter>]` runs
+`<interpreter> -m ai_lab.providers --json` once and writes its document as the cache
+(`scripts/shared/provider-cache.mjs`). The interpreter is the flag, else the one the previous
+cache recorded; the first setup on a machine needs the flag (the ai-lab venv's python). Setup
+is the only place cc-config runs Python; a launch never does.
 
-- Detects the legacy `env:<provider>` block, extracts the first string value (the API
-  key), writes it as `providers.<provider>.apiKey`
-- Backs up the pre-migration file to `claude_env_settings.local.json.setup-bak` (same
-  convention as `linkEntry()` for drifted plain files)
-- Prints `MIGR  claude_env_settings.local.json — N provider(s) converted…`
-- Idempotent — subsequent runs see the new shape and do nothing
+Every launch checks the cache in Node and REFUSES to launch on any of these, naming the
+remedy (rerun setup) -- there is no silent regeneration:
 
-**Mixed files** (both `env:` and `providers:` blocks present) are left untouched, since
-the auto-migrator can't tell which side is the source of truth. Setup prints a notice
-naming the specific `env:<x>` keys still present; the user resolves by hand. The
-launchers do NOT fall back to reading the legacy `env:<provider>.<*ApiKeyEnv>` slot — a
-mixed file is a manual-recovery case, not a runtime path.
+- absent, unparseable, or a `schema_version` other than 1;
+- (a) `source_sha256` differs from a fresh sha256 over the recorded input files (the packaged
+  `providers.toml`, then the user `providers.toml`; an absent file adds no bytes);
+- (b) the ai-lab version in the `ai_lab-<v>.dist-info` beside the recorded interpreter differs
+  from the recorded `ai_lab_version`;
+- (c) `generated_at` is older than 7 days.
+
+The cache holds no secret: a key is named by its credential USERNAME (`key_usernames`), never
+carried. The codex `[model_providers.*]` blocks and `~/.codex/models.json` are generated from
+the same cache by setup and the SessionStart self-heal; a stale cache leaves the last-known-good
+artifacts untouched and is reported.
+
+## Keys: the git credential store, task `session`
+
+A launcher reads `key_usernames.session` from the catalogue row (ai-lab derives it from
+lab-commons' one naming rule, `api-key-session`; Node never re-derives it) and runs
+`git credential fill` for `https://<username>@<host>` with prompts off
+(`scripts/shared/credential-key.mjs`). The key goes only into the env of the spawned host; it is
+never written to a file and never logged. No key, no launch: the refusal names the username,
+the host and the `ai_lab.auth login` command. Store a key with:
+
+```sh
+<ai-lab python> -m ai_lab.auth login deepseek --task session     # reads the key without echo
+```
+
+Note: the `session` task must be declared in lab-commons' `API_KEY_TASKS` (pending PR); until it
+is, the catalogue carries no `session` username and a provider launch refuses, naming that.
+
+### Migration of plaintext keys (one-shot, in setup)
+
+Each `providers.<p>.apiKey` still in `~/.claude/claude_env_settings.local.json` is stored with
+`<python> -m ai_lab.auth login <p> --task session` (the key on stdin, never argv; ai-lab's
+duplicate-key refusal applies). The file is first backed up to
+`claude_env_settings.local.json.setup-bak` (`.setup-bak.N` when one already exists), then each
+stored field is deleted (`scripts/setup/provider-setup.mjs`). A key ai-lab refuses stays in the
+file, setup reports it by provider name (never the key), and the launcher keeps refusing it.
+
+## Missing tools refuse by name
+
+| role | needs | refusal |
+|---|---|---|
+| setup (cache, migration) | Python + ai-lab, git | `no Python: ...`, `no ai-lab: ...` |
+| launch `ccc`/`ccds`/`codc`/`cods` | Node, git, a current cache | `<name> needs Node`, `no git: ...`, the cache refusal |
 
 ## VS Code: use environmentVariables, NOT claudeProcessWrapper
 
 Use `claudeCode.environmentVariables` (array of `{name, value}`) to pass provider env vars to
 the VS Code chat panel. Do NOT use `claudeCode.claudeProcessWrapper` — Claude Code validates
 the binary is a native Claude Code binary; shell scripts and `.cmd` files are rejected with
-"native binary not found". `environmentVariables` works identically on Windows, macOS, and Linux.
+"native binary not found".
 
-Run `node scripts/setup/setup-vscode.js deepseek` to configure; `setup-vscode.js` (no args)
-to revert to official Claude. Also sets `claudeCode.disableLoginPrompt = true` for non-Claude
-providers.
+`node scripts/setup/setup-vscode.js deepseek` writes the projected base URL and models; it does
+NOT write the key (VS Code's settings.json is a file, and a key lives only in the store). Give
+the panel its key from the environment VS Code starts in, or run `ccds` in its terminal.
+`setup-vscode.js` (no args) reverts to official Claude.
 
-## Model & Effort Strategy
+## Claude Code side (ccds)
 
-The fleet runs `model: "opus[1m]"` with `effortLevel: "low"` — both in
-`claude_settings.json`, and `modelSettings` can pin a different effort per model. For
-critical plan sessions, run `/effort high` before `/plan`.
+`cc.js` projects, from the catalogue row and the rules:
 
-The sharp-review Stop hook is a **wave-gated adaptive trigger**, not a classifier: it
-tracks change accumulation per ref and fires `/sharp-review` when the diff crosses a
-threshold — wave 0 (new territory) at 300 lines / 5 files, wave 1+ (already reviewed once
-at this ref) at 1000 lines / 15 files, resetting to wave 0 when HEAD moves. Thresholds are
-per-project in `.claude/.rem-state.json` → `reviewGate.thresholds`; all review logic lives
-in the skill.
+- `env[<claudeApiKeyEnv>] = <key from the store>`
+- `env['ANTHROPIC_BASE_URL'] = endpoints.anthropic` (a provider without the anthropic protocol is refused)
+- `env['ANTHROPIC_MODEL'] = models.base`, and each of
+  `ANTHROPIC_DEFAULT_{FABLE,OPUS,SONNET,HAIKU}_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL` =
+  `models.<role> ?? models.base`
 
-## Provider schema (`providers.<name>` — single source of truth)
+Claude's `/model` picker may save an optional top-level `model` preference in user settings;
+startup `--model` and the projected `ANTHROPIC_MODEL` take precedence over it.
 
-`claude_env_settings.json` is the **single source of truth** for every provider
-across both hosts (Claude Code + Codex). Each provider is declared **once** under
-`providers.<name>` with the URL, API key, and the per-host details needed by each
-binary:
+## Codex side (cods)
 
-```jsonc
-{
-  "providers": {
-    "deepseek": {
-      "url": "https://api.deepseek.com",        // declared once
-      "claudeApiKeyEnv": "ANTHROPIC_API_KEY",    // claude side
-      "claudePath":       "/anthropic",          //   composes url + path → ANTHROPIC_BASE_URL
-      "codexApiKeyEnv":   "DEEPSEEK_API_KEY",    // codex side
-      "codexPath":        "/v1",                 //   composes url + path → --config openai_base_url=…
-      "models": {                                //   single source of truth for the model set
-        "base":  "deepseek-v4-flash[1m]",        //     → ANTHROPIC_MODEL (+ codex --model, minus [1m])
-        "fable": "deepseek-v4-pro[1m]",          //     → ANTHROPIC_DEFAULT_FABLE_MODEL
-        "opus":  "deepseek-v4-flash[1m]"  // → ANTHROPIC_DEFAULT_OPUS_MODEL
-        // optional per-class keys: sonnet / haiku / subagent / codex — else derived from base
-      }
-    }
-  }
-}
-```
+`codex.js` projects from the cache and the rules:
 
-- `url`, the API key, and the `models` map are declared **once** per provider —
-  both launchers (`cc.js`, `codex.js`) read from the same `providers.<name>`
-  block. There is no `claudeModel` / `codexModel` / `claudeExtras` duplication —
-  the model set lives in `models` and each host projects from it.
-- Per-host fields (`*ApiKeyEnv`, `*Path`) are the only thing that differs —
-  they're explicit because the Anthropic namespace and the OpenAI namespace are
-  genuinely different.
-- `models` is a single object keyed by Claude-class role. `base` is canonical:
-  it maps to `ANTHROPIC_MODEL`, the codex `--model` (with the `[1m]` suffix
-  stripped), and the default for `sonnet`/`haiku`/`subagent`. Optional role keys
-  override a specific class (e.g. `fable`, `opus`, `haiku`, `subagent`); an
-  explicit `codex` key overrides the derived codex model when a provider's codex
-  id differs from its Claude `base`. Both launchers derive their projection, so
-  the two hosts cannot drift.
-
-Claude's `/model` picker may save an optional top-level `model` preference in user
-settings. This is CLI-owned selection state, not another provider catalogue. Startup
-`--model` and projected `ANTHROPIC_MODEL` take precedence over that saved preference.
-Doctor validates a present preference as a non-empty string, but its presence/absence
-is not template drift; other unexpected keys and missing required keys remain checked.
-- The `apiKey` value comes from the machine-local
-  `~/.claude/claude_env_settings.local.json` overlay (see "Secrets are
-  machine-local" above).
-
-> A role may deliberately repeat `base` (`deepseek` sets `opus` to the same slug).
-> The generated Codex catalogue is deduplicated by slug, so this provider yields
-> **6 entries, not 7** — that is intended, not a generator bug.
-
-### Claude Code side (DeepSeek)
-
-DeepSeek (`ccds`) connects through Claude Code's native Anthropic-compatible
-endpoint. `cc.js` reads `providers.deepseek`
-and projects:
-
-- `env[<claudeApiKeyEnv>] = apiKey`
-- `env['ANTHROPIC_BASE_URL'] = <url><claudePath>`
-- `env['ANTHROPIC_MODEL']    = models.base`
-- `env['ANTHROPIC_DEFAULT_FABLE_MODEL']  = models.fable ?? models.base`
-- `env['ANTHROPIC_DEFAULT_OPUS_MODEL']   = models.opus  ?? models.base`
-- `env['ANTHROPIC_DEFAULT_SONNET_MODEL'] = models.sonnet ?? models.base`
-- `env['ANTHROPIC_DEFAULT_HAIKU_MODEL']  = models.haiku ?? models.base`
-- `env['CLAUDE_CODE_SUBAGENT_MODEL']     = models.subagent ?? models.base`
-
-All six Claude model vars project from the single `models` map — there is no
-freeform `claudeExtras` bag to keep in sync.
-
-No Foundry mode, no local proxy — `cc.js` just injects the projected env into
-Claude Code. DeepSeek was migrated off Foundry mode
-(`CLAUDE_CODE_USE_FOUNDRY` / `ANTHROPIC_FOUNDRY_*`) to this simpler direct
-style so both providers share one config shape.
-
-### Codex side (cods)
-
-`codex.js` reads the same `providers.<name>` block and projects:
-
-- `env[<codexApiKeyEnv>] = apiKey` (the literal env-var name configured via
-  `model_providers.<id>.env_key` in `codex_config.toml`)
+- `env[<codexApiKeyEnv>] = <key from the store>` (the literal env-var name the generated
+  `model_providers.<id>.env_key` names)
 - `args += ['--config', 'model_provider=<name>']` — selects the provider's
   `[model_providers.<name>]` block in `codex_config.toml`, which resolves its
   `base_url` + `env_key` + `wire_api = "responses"`. (An earlier design overrode
@@ -158,7 +112,7 @@ style so both providers share one config shape.
   the provider's own auth/wire_api — see `.claude/memory/2026/08/25/…` for the
   DeepSeek setup script's rationale, which deletes any global `openai_base_url`.)
 - `args += ['--model', <codex model>]` — codex has no model env var, only a
-  `--model` CLI flag. The model derives from `models.codex ?? models.base`
+  `--model` CLI flag. The model derives from the catalogue's `models.codex ?? models.base`
   with the `[1m]` suffix stripped (`deepseek-v4-flash[1m]` → `deepseek-v4-flash`),
   so it tracks the same `models` source as the Claude side.
 - `args += ['--config', 'model_catalog_json=<abs ~/.codex/models.json>']` — scoped
@@ -177,7 +131,8 @@ only when a provider is selected.
 
 **The `[model_providers.<id>]` block is generated, not maintained by hand.**
 `scripts/setup/inject-codex-providers.mjs` writes one block per provider from
-`providers.<name>` (base_url, env_key, `wire_api = "responses"`) between the
+the provider cache and the projection rules (base_url = the row's openai endpoint, env_key =
+`codexApiKeyEnv`, `wire_api = "responses"`) between the
 `# === setup-managed: model_providers` markers, and `npm run setup` runs it every time.
 The block is regenerated per host into `~/.codex/config.toml` and never reaches the
 shared `codex_config.toml`, which carries only the hand-edited head — see
@@ -187,10 +142,22 @@ shared `codex_config.toml`, which carries only the hand-edited head — see
 "responses"`), and its `deepseek-v4-*` models need a `~/.codex/models.json`
 catalog (context window, reasoning levels, image input for the vision model) for
 Codex to accept them. The launcher supplies the right env/config/`--model`; the
-`models.json` catalog is generated by `scripts/setup/inject-codex-providers.mjs`
-(see "Auto-rewriting `codex_config.toml`" below).
+`models.json` catalog is generated by `scripts/setup/inject-codex-providers.mjs`.
 
 DeepSeek is intentionally the only third-party provider. `codc` launches the
 official Codex provider without overrides; `cods` launches DeepSeek. Standalone
 wrappers are generated by `scripts/setup/install-cli-wrappers.js` and require no
 shell-profile sourcing.
+
+## Model & Effort Strategy
+
+The fleet runs `model: "opus[1m]"` with `effortLevel: "low"` — both in
+`claude_settings.json`, and `modelSettings` can pin a different effort per model. For
+critical plan sessions, run `/effort high` before `/plan`.
+
+The sharp-review Stop hook is a **wave-gated adaptive trigger**, not a classifier: it
+tracks change accumulation per ref and fires `/sharp-review` when the diff crosses a
+threshold — wave 0 (new territory) at 300 lines / 5 files, wave 1+ (already reviewed once
+at this ref) at 1000 lines / 15 files, resetting to wave 0 when HEAD moves. Thresholds are
+per-project in `.claude/.rem-state.json` → `reviewGate.thresholds`; all review logic lives
+in the skill.

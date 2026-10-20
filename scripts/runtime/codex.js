@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // codex.js — Codex provider launcher.
 //
-// Thin spawn wrapper around `codex-launcher.mjs`. Same single source of truth as
-// the Claude side (`cc.js`): `providers.<name>` in `claude_env_settings.json`.
+// Thin spawn wrapper around `codex-launcher.mjs`: the provider cache (ai-lab's catalogue),
+// the projection rules in `claude_env_settings.json`, the key from the git credential store.
 // Run `node scripts/setup/setup.js` to install the `cods` alias;
 // those wrappers exec this script with the provider name.
 
