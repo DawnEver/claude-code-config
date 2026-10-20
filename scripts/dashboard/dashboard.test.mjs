@@ -7,7 +7,7 @@ import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, configView, verdictText, resetText, windowLabel, bestAccounts, emailName } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -264,11 +264,34 @@ test('view: quota verdict on the reader\'s clock; stale readings are floors that
   assert.equal(renewed.windows[0].renewed, true);
   assert.equal(renewed.verdict, 'none');
   const hit = (over = {}) => account({ key: 'k2', windows: [{ ...account().windows[0], used: 100, forecast: null, ...over }] });
-  assert.deepEqual(quotaAlerts({ accounts: [account(), hit()] }, NOW).map((x) => x.key), ['k2'], 'only a hit limit, not a forecast run-out');
+  assert.deepEqual(quotaAlerts({ accounts: [account(), hit()] }, NOW).map((x) => x.key), ['k2'], 'a hit limit; a run-out 1.3h away is only shown');
+  const soon = account({ key: 'k3', windows: [{ ...account().windows[0], forecast: { atReset: 150, eta: NOW + 0.5 * HR, short: true } }] });
+  assert.deepEqual(quotaAlerts({ accounts: [account(), soon] }, NOW).map((x) => x.key), ['k3'], 'a run-out within the hour is an alert');
+  assert.equal(quotaAlerts({ accounts: [account({ at: NOW + 0.3 * HR })] }, NOW + 0.3 * HR).length, 1, 'the threshold is judged on the reader clock');
   const [read] = quotaAlerts({ accounts: [hit()] }, NOW);
   assert.deepEqual(quotaAlerts({ accounts: [hit()] }, NOW, [alertKey(read)]), [], 'a read alert leaves the card');
   const next = hit({ resetsAt: account().windows[0].resetsAt + 5 * HR });
   assert.equal(quotaAlerts({ accounts: [next] }, NOW, [alertKey(read)]).length, 1, 'a new window period is a new alert');
+});
+
+test('view: a session row says how long it has been in its state', () => {
+  const s = (status, min, stale = false) => ({ status, stale, lastActivityAt: new Date(NOW - min * 60000).toISOString() });
+  assert.equal(stateAge(s('needs_input', 12), NOW), 'waiting 12m');
+  assert.equal(stateAge(s('needs_approval', 0.5), NOW), 'waiting <1m');
+  assert.equal(stateAge(s('idle', 125), NOW), 'idle 2h');
+  assert.equal(stateAge(s('working', 3 * 1440), NOW), 'working 3d');
+  assert.equal(stateAge(s('idle', 125, true), NOW), '2h ago', 'a stale session claims no state');
+  assert.equal(stateAge({ status: 'idle', lastActivityAt: null }, NOW), 'never');
+});
+
+test('view: sessions group by host as filtered, or by project across hosts', () => {
+  const hosts = applyFilters(mockDashboard(NOW), {});
+  assert.equal(groupSessions(hosts, 'host'), hosts);
+  const g = groupSessions(hosts, 'project');
+  assert.deepEqual(g.map((x) => x.id), [...new Set(hosts.flatMap((h) => h.sessions.map((s) => s.project ?? 'unknown project')))].sort());
+  assert.equal(g.reduce((n, x) => n + x.sessions.length, 0), hosts.reduce((n, h) => n + h.sessions.length, 0), 'every session once');
+  assert.equal(groupSessions([{ id: 'h', online: false, sessions: [{ project: 'p', status: 'idle' }] }, { id: 'i', online: true, sessions: [{ project: 'p', status: 'needs_input' }] }], 'project')[0].sessions[0].status,
+    'needs_input', 'merged groups keep urgency order');
 });
 
 test('view: tabs count each view and flag quota that needs the human; no accounts, no tabs', () => {

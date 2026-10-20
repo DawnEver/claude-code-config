@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, resetText, windowLabel, emailName, bestAccounts } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 
 const POLL_MS = 8000;
@@ -39,6 +39,8 @@ const shown = () => (raw && demoOn ? (masker ??= demoMasker())(raw) : raw);
 const readKey = () => (demoOn ? 'dashboard.readAlerts.demo' : 'dashboard.readAlerts');
 const loadRead = () => { try { const v = JSON.parse(store.get(readKey())); return Array.isArray(v) ? v : []; } catch { return []; } };
 let readAlerts = loadRead();
+// Sessions grouped by host (default) or by project: a setting of this device.
+let groupBy = store.get('dashboard.groupBy') === 'project' ? 'project' : 'host';
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
 let legendOpen = false;   // the quota legend, kept across polls
@@ -64,7 +66,7 @@ function sessionRow(s, { withHost = false } = {}) {
   main.append(el('div', 'title', s.project ?? 'unknown project'));
   const sub = el('div', 'sub');
   sub.append(el('span', `agent ${s.agent}`, s.agent === 'claude' ? 'Claude' : 'Codex'));
-  const rest = [withHost && s.hostId, s.branch, ago(s.lastActivityAt), s.topic?.closed && 'Topic closed'].filter(Boolean);
+  const rest = [withHost && s.hostId, s.branch, stateAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
   sub.append(document.createTextNode(` · ${rest.join(' · ')}`));
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
@@ -107,10 +109,11 @@ function quotaAlertRow(q) {
   const main = el('div', 'main');
   main.append(el('div', 'title', accountName(q)), el('div', 'sub', [q.email, q.hosts?.length && `on ${q.hosts.join(', ')}`].filter(Boolean).join(' · ')),
     el('div', 'sub', verdictText(q)));
-  row.append(el('span', 'dot'), main, el('span', 'pill', q.verdict === 'exhausted' ? 'Exhausted' : 'Runs out'));
-  // Tapping marks it read: it leaves the card until the verdict or the window period changes.
-  row.title = 'Mark read';
-  row.addEventListener('click', () => { readAlerts.push(alertKey(q)); store.set(readKey(), JSON.stringify(readAlerts)); render(); });
+  // Dismiss marks it read: it leaves the card until the verdict or the window period changes.
+  const dismiss = el('button', 'dismiss', 'Dismiss');
+  dismiss.title = 'Mark read';
+  dismiss.addEventListener('click', () => { readAlerts.push(alertKey(q)); store.set(readKey(), JSON.stringify(readAlerts)); render(); });
+  row.append(el('span', 'dot'), main, el('span', 'pill', q.verdict === 'exhausted' ? 'Exhausted' : 'Runs out'), dismiss);
   return row;
 }
 
@@ -329,6 +332,19 @@ function renderHosts() {
     main.append(el('div', 'empty', snapshot.hosts.length ? 'Nothing matches' : 'No hosts registered yet'));
     return;
   }
+  if (groupBy === 'project') {
+    for (const g of groupSessions(hosts, 'project')) {
+      const section = el('section', `host${g.online ? '' : ' off'}`);
+      const head = el('div', 'host-head');
+      head.append(el('span', `dot ${g.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', g.id),
+        el('span', 'muted meta', `${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'}`));
+      const list = el('div', 'list');
+      for (const s of g.sessions) list.append(sessionRow(s, { withHost: true }));
+      section.append(head, list);
+      main.append(section);
+    }
+    return;
+  }
   for (const h of hosts) {
     const section = el('section', `host${h.online ? '' : ' off'}`);
     const head = el('div', 'host-head');
@@ -437,10 +453,20 @@ function demoToggle() {
   return row;
 }
 
+function groupToggle() {
+  const row = el('label', 'cfg demo-toggle');
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = groupBy === 'project';
+  box.addEventListener('change', () => { groupBy = box.checked ? 'project' : 'host'; store.set('dashboard.groupBy', groupBy); render(); });
+  row.append(box, el('span', null, 'Group sessions by project instead of by host (this device)'));
+  return row;
+}
+
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
-  box.append(el('div', 'section-h', 'This device'), layoutToggle());
+  box.append(el('div', 'section-h', 'This device'), layoutToggle(), groupToggle());
   if (!mock) box.append(demoToggle());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }

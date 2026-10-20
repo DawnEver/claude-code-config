@@ -52,6 +52,35 @@ export function applyFilters(snapshot, filters) {
 /** Live sessions waiting for the human, across hosts, most urgent first. */
 export const attention = (snapshot) => sortSessions(sessionsOf(snapshot).filter((s) => !s.stale && ATTENTION.includes(s.status)));
 
+/**
+ * How long a session has been in its current state, from its last activity (the snapshot has no
+ * per-state timestamp; status changes are activity, so it is the time since the last change).
+ */
+export function stateAge(s, now = Date.now()) {
+  const at = Date.parse(s.lastActivityAt);
+  const word = s.stale ? null : ATTENTION.includes(s.status) ? 'waiting' : s.status === 'idle' || s.status === 'working' ? s.status : null;
+  if (!word || !Number.isFinite(at)) return ago(s.lastActivityAt, now);
+  const m = Math.max(0, Math.floor((now - at) / 60000));
+  return `${word} ${m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`}`;
+}
+
+/**
+ * The sessions view grouped `by` 'host' (the filtered hosts as they are) or 'project': one group
+ * per project across hosts, by name, sessions by urgency; `online` when any of its hosts is.
+ */
+export function groupSessions(hosts, by = 'host') {
+  if (by !== 'project') return hosts;
+  const groups = new Map();
+  for (const h of hosts) for (const s of h.sessions) {
+    const id = s.project ?? 'unknown project';
+    const g = groups.get(id) ?? { id, online: false, sessions: [] };
+    g.online ||= h.online;
+    g.sessions.push(s);
+    groups.set(id, g);
+  }
+  return [...groups.values()].map((g) => ({ ...g, sessions: sortSessions(g.sessions) })).sort((a, b) => a.id.localeCompare(b.id));
+}
+
 export function stats(snapshot) {
   const live = sessionsOf(snapshot).filter((s) => !s.stale);
   return { hostsOnline: snapshot.hosts.filter((h) => h.online).length, hosts: snapshot.hosts.length,
@@ -156,13 +185,17 @@ export function quotaAlertsFor(prev, q, now = Date.now()) {
 /** One alert's identity: the account, its verdict and the window period. A new period is a new alert. */
 export const alertKey = (q) => JSON.stringify([q.key, q.verdict, q.bind?.k ?? null, q.bind?.resetsAt ?? null]);
 
+/** A forecast run-out this close is an alert in the needs-you card; a farther one is only shown. */
+export const RUNOUT_ALERT_MS = 3600000;
+
 /**
- * Accounts that need the human: a window exhausted (a projected run-out is only shown);
- * minus the alerts already read (`read`: alert keys).
+ * Accounts that need the human: a window exhausted, or forecast to run out within
+ * RUNOUT_ALERT_MS; minus the alerts already read (`read`: alert keys).
  */
 export const quotaAlerts = (snapshot, now = Date.now(), read = []) =>
   (snapshot.accounts ?? []).map((a) => quotaView(a, now))
-    .filter((q) => q.verdict === 'exhausted' && !read.includes(alertKey(q)));
+    .filter((q) => (q.verdict === 'exhausted' || (q.verdict === 'short' && q.bind.forecast.eta - now <= RUNOUT_ALERT_MS))
+      && !read.includes(alertKey(q)));
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
