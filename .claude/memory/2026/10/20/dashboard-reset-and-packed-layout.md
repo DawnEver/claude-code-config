@@ -28,3 +28,12 @@ Code: `scripts/dashboard/public/{app.js,view.mjs,index.html}` (uncommitted, unde
   left/used unit + mark binding window; plain wording for no data/new/≤/≥; staleness as styling;
   session wait time; project grouping; pre-exhaustion alerts; visible mark-read; legend on touch;
   three-level type scale.
+
+## Update: gaps fanned out, shipped
+- All proposed gaps + SR-014/015/016 fixed (two worktree agents, merged; worktrees started at
+  origin c631fa8, not the local commit — merge conflicts resolved by hand). Three type levels
+  `--t1/--t2/--t3` (16/14/12 px) in index.html.
+- Bar unit is a per-device choice: Config > "Quota bars show % used" (`dashboard.unit`);
+  `amount(used, unit)` in view.mjs is the one place the unit is applied.
+- Deployed via `npm run dashboard -- deploy` after `npx wrangler login`; pushed `ab3be1c`.
+- Foreign SR-001..013 removed from today's sharp-review.md.
