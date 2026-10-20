@@ -8,7 +8,7 @@ import { checkMacNotify } from './check-mac-notify.js';
 import { installCliWrappers } from './install-cli-wrappers.js';
 import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
-import { refreshProviderCache } from './provider-setup.mjs';
+import { migrateApiKeysToStore, refreshProviderCache } from './provider-setup.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { isMain } from '../shared/is-main.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
