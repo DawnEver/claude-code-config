@@ -47,7 +47,7 @@ let groupOrder = store.get('dashboard.groupOrder') === 'urgency' ? 'urgency' : '
 const openRows = new Set();
 let legendOpen = false;   // the quota legend, kept across polls
 let accounts = new Map();
-let unit = store.get('dashboard.unit') === 'used' ? 'used' : 'left';   // bars and numbers read as % left or % used
+let unit = store.get('dashboard.unit') === 'left' ? 'left' : 'used';   // bars and numbers read as % left or % used
 let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns, not aligned rows
 document.body.classList.toggle('packed', packed);
 let configShown = null;   // the config view last rendered (JSON)
