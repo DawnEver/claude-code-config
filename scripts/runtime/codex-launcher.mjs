@@ -1,8 +1,8 @@
 // scripts/runtime/codex-launcher.mjs — pure helper for the `codex.js` launcher.
 //
-// Projects a single `providers.<name>` block from claude_env_settings.json into
-// the env + CLI flags the `codex` binary needs. Mirrors `cc-launcher.mjs` in
-// shape (same single source of truth, same provider-projection pattern) but
+// Projects one provider into the env + CLI flags the `codex` binary needs: the model from
+// ai-lab's catalogue (the provider cache), the key from the git credential store into the
+// env var the projection rule names (`codexApiKeyEnv`). Mirrors `cc-launcher.mjs` but
 // targets codex's different surface: codex selects the provider via
 // `--config model_provider=<name>` (which resolves base_url / env_key / wire_api
 // from the `[model_providers.<name>]` block setup writes into `codex_config.toml`),
@@ -15,6 +15,9 @@ import { join } from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
+import { readProviderCache } from '../shared/provider-cache.mjs';
+import { resolveProvider } from '../shared/provider-projection.mjs';
+import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
 
 // Subcommands that open the interactive TUI; every other subcommand (exec, app-server, ...)
 // is non-interactive and must not be redirected. A bare positional is the TUI's prompt.
@@ -40,8 +43,8 @@ const CODEX_STRIP_KEYS = [
 ];
 
 /**
- * Derive codex's model id from the shared `models` source of truth (the same
- * object `cc-launcher.mjs` reads). `models.codex` wins when set explicitly;
+ * Derive codex's model id from the catalogue's `models` map (the same map
+ * `cc-launcher.mjs` projects). `models.codex` wins when set explicitly;
  * otherwise codex uses `models.base` with the `[1m]` context-window suffix
  * stripped — the suffix is a Claude-side request, codex uses the bare model id.
  */
@@ -73,6 +76,8 @@ export function buildCodexInvocation({
   extraArgs = [],
   envSettingsPath,
   localPath = LOCAL_ENV_SETTINGS_PATH,
+  readCache = () => readProviderCache(),
+  fetchKey = fetchStoredKey,
 }) {
   // Provenance (HARNESS_*, GIT_COMMITTER_NAME) is NOT injected here: Codex may run
   // commands in a shared daemon this env never reaches. setup writes it into
@@ -95,44 +100,27 @@ export function buildCodexInvocation({
   }
 
   const settings = readMergedEnvSettings({ sharedPath: envSettingsPath, localPath });
-  const available = Object.keys(settings?.providers || {}).sort();
-  const profile = settings?.providers?.[provider];
+  const resolved = resolveProvider({ provider, settings, readCache });
+  const { available } = resolved;
+  const fail = (error) => ({ env, args: [...extraArgs], provider, available, error });
+  if (resolved.error) return fail(resolved.error);
+  const { rules, row } = resolved;
 
-  if (!profile) {
-    return { env, args: [...extraArgs], provider, available,
-      error: `Unknown codex provider: ${provider}. Available: ${available.join(', ') || '(none)'}` };
+  if (rules.codexApiKeyEnv) {
+    const user = sessionUsername(provider, row);
+    if (user.error) return fail(user.error);
+    const got = fetchKey({ host: row.host, username: user.username });
+    if (got.error) return fail(got.error);
+    env[rules.codexApiKeyEnv] = got.key;
   }
-
-  // Surface a clear error when the provider declares an API-key env var but no
-  // apiKey was supplied. Without this check, the user would get an opaque auth
-  // error from a third-party endpoint.
-  if (profile.codexApiKeyEnv && !profile.apiKey) {
-    return { env, args: [...extraArgs], provider, available,
-      error: `Codex provider '${provider}' has no apiKey — add it to ~/.claude/claude_env_settings.local.json under providers.${provider}.apiKey` };
-  }
-
-  const args = [];
-
-  if (profile.codexApiKeyEnv && profile.apiKey) {
-    env[profile.codexApiKeyEnv] = profile.apiKey;
-  }
-  // Select the provider's `[model_providers.<name>]` block (base_url, env_key,
-  // wire_api) from config.toml. Previously the launcher overrode the OPENAI
-  // provider's base_url with `--config openai_base_url=...`; that hijacked the
-  // request (openai/chatgpt auth + openai model list) instead of using the
-  // provider's own auth and wire_api — see docs/providers.md § Codex side.
-  //
-  // model_catalog_json is scoped HERE (per-provider) rather than in the global
-  // codex_config.toml so plain `codex` keeps OpenAI's built-in model list. The
-  // catalog is resolved to an absolute path (model_catalog_json is applied on
-  // startup only and does not accept `~`).
-  if (provider) {
-    args.push('--config', `model_provider=${provider}`);
-    args.push('--config', `model_catalog_json=${join(homedir(), '.codex', 'models.json')}`);
-  }
-  if (profile.models?.codex || profile.models?.base) {
-    args.push('--model', codexModel(profile.models));
-  }
+  // Select the provider's `[model_providers.<name>]` block (base_url, env_key, wire_api) that
+  // setup composes into ~/.codex/config.toml from the same cache (inject-codex-providers.mjs).
+  // model_catalog_json is scoped HERE (per-provider) rather than globally so plain `codex`
+  // keeps OpenAI's built-in model list; it must be absolute (applied on startup, no `~`).
+  const args = ['--config', `model_provider=${provider}`,
+    '--config', `model_catalog_json=${join(homedir(), '.codex', 'models.json')}`];
+  const models = row.models || {};
+  if (models.codex || models.base) args.push('--model', codexModel(models));
 
   return { env, args: [...args, ...extraArgs], provider, available, error: null };
 }

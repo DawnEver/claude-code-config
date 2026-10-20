@@ -103,7 +103,10 @@ if (provider === 'claude') {
   // call with a non-claude provider failed with "Unknown provider" and an empty
   // available list. Reusing buildClaudeInvocation also means VS Code, `ccc` and
   // `cods` cannot drift: one projection, one source of truth.
-  const { env: projected, error } = buildClaudeInvocation({ provider, envSettingsPath });
+  // The key is NOT projected: these env vars are written into VS Code's settings.json, and a
+  // key lives only in the git credential store. Launch VS Code from an environment that has
+  // the key, or use `ccds` in its terminal.
+  const { env: projected, error } = buildClaudeInvocation({ provider, envSettingsPath, withKey: false });
   if (error) {
     console.error(`ERROR ${error}`);
     process.exit(1);
@@ -113,7 +116,7 @@ if (provider === 'claude') {
   );
   if (!Object.keys(profile).length) {
     console.error(`ERROR Provider "${provider}" projects no env vars — check its ` +
-      `url/models block in claude_env_settings.json`);
+      `row in ai-lab's providers.toml (the provider cache)`);
     process.exit(1);
   }
 

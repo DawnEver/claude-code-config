@@ -1,9 +1,4 @@
 {
-  "providers": {
-    "deepseek": {
-      "apiKey": "sk-your-deepseek-api-key"
-    }
-  },
   "bridge": {
     "botToken": "123456789:your-bot-token-from-botfather",
     "allowedUserIds": [

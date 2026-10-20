@@ -604,7 +604,7 @@ export function setup(options = {}) {
     console.log(`GEN   ~/.claude/provider-cache.json - ${cache.providers} provider(s) from ${cache.python} -m ai_lab.providers`);
   }
 
-  // Regenerate the derivable codex artifacts from the shared providers registry:
+  // Regenerate the derivable codex artifacts from the provider cache + projection rules:
   // the [model_providers.*] section of codex_config.toml (only when that file
   // exists) AND the gitignored repo models.json (unconditionally — models.json
   // derives purely from providers.<name>.models and is unrelated to
@@ -630,8 +630,11 @@ export function setup(options = {}) {
       ? `could not parse JSON: ${artifacts.error.message}`
       : 'not found; skipping codex artifact generation'}`);
     counters.errors++;
+  } else if (artifacts.cache !== 'ok') {
+    console.log(`ERR   codex artifacts - ${artifacts.cache}`);
+    counters.errors++;
   } else if (artifacts.models.status === 'updated') {
-    console.log(`INJECT models.json — ${artifacts.models.models} model catalog entr(y/ies) generated from providers.<name>.models`);
+    console.log(`INJECT models.json — ${artifacts.models.models} model catalog entr(y/ies) generated from the provider cache`);
   } else if (artifacts.models.status === 'empty') {
     console.log('NOTE   models.json — no provider declares a codex model; nothing to inject');
   }

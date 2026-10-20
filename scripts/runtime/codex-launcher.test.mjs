@@ -1,13 +1,10 @@
 // Unit tests for scripts/runtime/codex-launcher.mjs — the env + CLI-flag
 // projection that `codex.js` uses to spawn the `codex` binary.
 //
-// Single source of truth: same `providers.<name>` block as `cc.js`. The codex
-// projection differs from the claude one: codex needs `--config openai_base_url=…`
-// (not `OPENAI_BASE_URL` env — silently ignored in v0.118+, see
-// openai/codex#16719), `--model <name>` (no env var exists), and the API key
-// env-var name is the literal `env_key` configured in `codex_config.toml`'s
-// `model_providers.<id>` block. Local file paths are injected into a temp dir;
-// the real ~/.claude is never touched.
+// The codex projection differs from the claude one: `--config model_provider=<name>`
+// selects the block setup composes, `--model <name>` (no env var exists), and the key goes
+// into the projection rule's env var. The catalogue and the key are injected; the real
+// ~/.claude is never touched.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +12,8 @@ import { writeFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { buildCodexInvocation } from './codex-launcher.mjs';
+import { readProviderCache } from '../shared/provider-cache.mjs';
+import { fakeAiLab, writeCache } from '../shared/provider-cache-fixture.mjs';
 
 // Provider launches scope the codex model catalog to the absolute
 // ~/.codex/models.json (global config would leak 3rd-party models into plain
@@ -49,157 +48,52 @@ test('default Codex (provider=null) leaves env untouched beyond strip sets and a
   }
 });
 
-test('codex.js deepseek derives --model from models.base (strips [1m])', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: {
-      deepseek: {
-        url: 'https://api.deepseek.com',
-        codexApiKeyEnv: 'DEEPSEEK_API_KEY',
-        codexPath: '/v1',
-        models: { base: 'deepseek-v4-flash[1m]' },
-      },
-    },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'sk-secret' } } }));
-  const { env, args, error } = buildCodexInvocation({
-    provider: 'deepseek', envSettingsPath: shared, localPath: local,
-  });
+// The catalogue comes from the provider cache, the key from the credential store: both injected.
+const lab = fakeAiLab();
+const cachePath = writeCache(lab);
+const readCache = () => readProviderCache({ path: cachePath });
+const keys = (store = { 'api.deepseek.com/api-key-session': 'sk-secret' }) =>
+  ({ host, username }) => (store[`${host}/${username}`] ? { key: store[`${host}/${username}`] } : { error: `no key ${username}@${host}` });
+const RULES = { providers: { deepseek: { claudeApiKeyEnv: 'ANTHROPIC_API_KEY', codexApiKeyEnv: 'DEEPSEEK_API_KEY' } } };
+
+function invoke(shared, local, opts = {}) {
+  const f = fixture();
+  writeFileSync(f.shared, JSON.stringify(shared));
+  writeFileSync(f.local, JSON.stringify(local ?? {}));
+  return buildCodexInvocation({ provider: 'deepseek', envSettingsPath: f.shared, localPath: f.local,
+    readCache, fetchKey: keys(), ...opts });
+}
+
+test('deepseek: provider block, scoped catalog and --model from the catalogue base (strips [1m]), key into codexApiKeyEnv', () => {
+  const { env, args, error } = invoke(RULES, {}, { extraArgs: ['exec', 'hi'] });
   assert.equal(error, null);
+  assert.deepEqual(args, ['--config', 'model_provider=deepseek', '--config', CATALOG_FLAG,
+    '--model', 'deepseek-v4-flash', 'exec', 'hi']);
   assert.equal(env.DEEPSEEK_API_KEY, 'sk-secret');
-  // Must not leak Claude-side env vars
-  assert.equal(env.ANTHROPIC_API_KEY, undefined);
-  assert.equal(env.ANTHROPIC_BASE_URL, undefined);
-  // Args order: --config model_provider=<name> (selects the provider's
-  // [model_providers.*] block from config.toml), --model <model>. The [1m]
-  // context-window suffix is Claude-side; codex gets the bare model id.
-  assert.deepEqual(args, [
-    '--config', 'model_provider=deepseek',
-    '--config', CATALOG_FLAG,
-    '--model', 'deepseek-v4-flash',
-  ]);
 });
 
-test('codex.js models.codex override wins over the base derivation', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: {
-      deepseek: {
-        url: 'https://api.deepseek.com',
-        codexApiKeyEnv: 'DEEPSEEK_API_KEY',
-        codexPath: '/v1',
-        models: { base: 'deepseek-v4-flash[1m]', codex: 'deepseek-v4-pro' },
-      },
-    },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'sk-secret' } } }));
-  const { args, error } = buildCodexInvocation({
-    provider: 'deepseek', envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(error, null);
-  assert.equal(args[args.length - 1], 'deepseek-v4-pro');
+test('no key in the store refuses the launch', () => {
+  assert.match(invoke(RULES, {}, { fetchKey: keys({}) }).error, /no key api-key-session@api\.deepseek\.com/);
 });
 
-test('codex.js gmi uses ANTHROPIC_AUTH_TOKEN via codexApiKeyEnv and the M3 model', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: {
-      gmi: {
-        url: 'https://api.gmi-serving.com',
-        codexApiKeyEnv: 'ANTHROPIC_AUTH_TOKEN',
-        codexPath: '/v1',
-        models: { base: 'MiniMaxAI/MiniMax-M3[1m]' },
-      },
-    },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { gmi: { apiKey: 'gmi-secret' } } }));
-  const { env, args, error } = buildCodexInvocation({
-    provider: 'gmi', envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(error, null);
-  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'gmi-secret');
-  assert.deepEqual(args, [
-    '--config', 'model_provider=gmi',
-    '--config', CATALOG_FLAG,
-    '--model', 'MiniMaxAI/MiniMax-M3',
-  ]);
+test('an absent cache refuses naming the remedy', () => {
+  const { error } = invoke(RULES, {}, { readCache: () => readProviderCache({ path: join(lab.dir, 'absent.json') }) });
+  assert.match(error, /absent.*node scripts\/setup\/setup\.js/);
 });
 
-test('codex.js extraArgs are appended after launcher-injected flags', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com', codexApiKeyEnv: 'K', codexPath: '/v1', models: { base: 'm' } } },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'k' } } }));
-  const { args } = buildCodexInvocation({
-    provider: 'deepseek', extraArgs: ['-q', 'hello'],
-    envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(args[args.length - 2], '-q');
-  assert.equal(args[args.length - 1], 'hello');
-  // Launcher-injected flags come first
-  assert.equal(args[0], '--config');
-  assert.equal(args[4], '--model');
+test('unknown provider lists the available ones', () => {
+  const { error } = invoke(RULES, {}, { provider: 'kimi' });
+  assert.match(error, /Unknown provider: kimi\. Available: deepseek/);
 });
 
-test('codex.js missing shared file returns a clear error', () => {
-  const { shared } = fixture();
-  const { error } = buildCodexInvocation({ provider: 'deepseek', envSettingsPath: shared });
-  assert.match(error, /^Missing:/);
-});
-
-test('codex.js unknown provider returns an error listing available', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({ providers: { deepseek: {}, gmi: {} } }));
-  const { error, available } = buildCodexInvocation({
-    provider: 'nope', envSettingsPath: shared, localPath: local,
-  });
-  assert.match(error, /^Unknown codex provider: nope/);
-  assert.deepEqual(available, ['deepseek', 'gmi']);
-});
-
-test('codex.js selects the provider even with no models (emits model_provider but no --model)', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { minimal: { codexApiKeyEnv: 'K' } },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { minimal: { apiKey: 'k' } } }));
-  const { args, env, error } = buildCodexInvocation({
-    provider: 'minimal', envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(error, null);
-  assert.equal(env.K, 'k');
-  // Always select the provider's [model_providers.minimal] block; --model only
-  // when the provider declares a models map.
-  assert.deepEqual(args, ['--config', 'model_provider=minimal', '--config', CATALOG_FLAG]);
-  assert.equal(args.includes('--model'), false);
-});
-
-test('codex.js local overlay merges apiKey over the shared providers block', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com', codexApiKeyEnv: 'DEEPSEEK_API_KEY', models: { base: 'deepseek-v4-flash' } } },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: { deepseek: { apiKey: 'sk-only-in-local' } } }));
-  const { env, error } = buildCodexInvocation({
-    provider: 'deepseek', envSettingsPath: shared, localPath: local,
-  });
-  assert.equal(error, null);
-  assert.equal(env.DEEPSEEK_API_KEY, 'sk-only-in-local');
-});
-
-test('codex.js returns an error when codexApiKeyEnv is declared but apiKey is missing', () => {
-  const { shared, local } = fixture();
-  writeFileSync(shared, JSON.stringify({
-    providers: { deepseek: { url: 'https://api.deepseek.com', codexApiKeyEnv: 'DEEPSEEK_API_KEY' } },
-  }));
-  writeFileSync(local, JSON.stringify({ providers: {} }));
-  const { env, error } = buildCodexInvocation({
-    provider: 'deepseek', envSettingsPath: shared, localPath: local,
-  });
-  assert.match(error, /no apiKey/);
-  assert.match(error, /providers\.deepseek\.apiKey/);
+test('retired apiKey in the local file is refused by name', () => {
+  const { error, env } = invoke(RULES, { providers: { deepseek: { apiKey: 'sk-old' } } });
+  assert.match(error, /providers\.deepseek\.apiKey ->/);
   assert.equal(env.DEEPSEEK_API_KEY, undefined);
+});
+
+test('missing shared file returns a clear error', () => {
+  assert.match(buildCodexInvocation({ provider: 'deepseek', envSettingsPath: '/nonexistent/x.json', readCache, fetchKey: keys() }).error, /Missing: /);
 });
 
 // ── provenance (docs/harness-architecture.md §8b) ──
@@ -217,7 +111,7 @@ function bridgeFixture(botToken) {
   const dir = mkdtempSync(join(tmpdir(), 'codex-bridge-'));
   const shared = join(dir, 'claude_env_settings.json');
   const local = join(dir, 'claude_env_settings.local.json');
-  writeFileSync(shared, JSON.stringify({ providers: { deepseek: { url: 'https://api.deepseek.com', codexPath: '/v1' } } }));
+  writeFileSync(shared, JSON.stringify({ providers: { deepseek: { codexApiKeyEnv: 'DEEPSEEK_API_KEY' } } }));
   writeFileSync(local, JSON.stringify(botToken ? { bridge: { botToken } } : {}));
   return { shared, local };
 }

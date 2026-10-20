@@ -1,11 +1,10 @@
 // scripts/runtime/cc-launcher.mjs — pure helper for the `cc.js` launcher.
 //
-// Projects a single `providers.<name>` block from claude_env_settings.json into
-// the env vars the `claude` CLI needs. The shared `claude_env_settings.json` is
-// the single source of truth for both the `claude` and `codex` launchers — see
-// `codex-launcher.mjs` for the codex side. Per-host details (path suffix, env-var
-// name, model alias, optional extras map) live as named fields under the provider
-// block; URL and apiKey are declared once.
+// Projects one provider into the env vars the `claude` CLI needs: the base URL and the
+// Claude-role model map from ai-lab's catalogue (the provider cache, provider-cache.mjs), the
+// key from the git credential store (credential-key.mjs) into the env var the provider's
+// projection rule in claude_env_settings.json names (`claudeApiKeyEnv`). The codex side is
+// codex-launcher.mjs, over the same cache and rules.
 //
 // `cc.js` is a thin spawn wrapper around this; the helper is testable without
 // spawning the `claude` binary.
@@ -17,6 +16,9 @@ import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
+import { readProviderCache } from '../shared/provider-cache.mjs';
+import { resolveProvider } from '../shared/provider-projection.mjs';
+import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
 
 export const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
 
@@ -51,6 +53,11 @@ export function buildClaudeInvocation({
   seat = null,
   home = os.homedir(),
   seats = seat === null ? [] : readSeats(),
+  readCache = () => readProviderCache(),
+  fetchKey = fetchStoredKey,
+  // false: project everything but the key (setup-vscode writes the env into a settings file,
+  // and a key is never written to a file).
+  withKey = true,
 }) {
   const env = { ...process.env };
   for (const k of PROVIDER_KEYS) delete env[k];
@@ -86,35 +93,26 @@ export function buildClaudeInvocation({
   }
 
   const settings = readMergedEnvSettings({ sharedPath: envSettingsPath, localPath });
-  const available = Object.keys(settings?.providers || {}).sort();
-  const profile = settings?.providers?.[provider];
+  const resolved = resolveProvider({ provider, settings, readCache });
+  const { available } = resolved;
+  const fail = (error) => ({ env, args: [...extraArgs], provider, available, error });
+  if (resolved.error) return fail(resolved.error);
+  const { rules, row } = resolved;
 
-  if (!profile) {
-    return { env, args: [...extraArgs], provider, available,
-      error: `Unknown provider: ${provider}. Available: ${available.join(', ') || '(none)'}` };
-  }
+  const baseUrl = row.endpoints?.anthropic;
+  if (!baseUrl) return fail(`provider ${provider} declares no anthropic protocol in the ai-lab catalogue; Claude Code cannot use it`);
+  env.ANTHROPIC_BASE_URL = baseUrl;
 
-  // Surface a clear error when the provider declares an API-key env var but no
-  // apiKey was supplied (either the shared block is missing apiKey, or the local
-  // file is in mixed/legacy shape and the migrator didn't touch it). Without
-  // this check, the user would get an opaque 401 from a third-party endpoint.
-  if (profile.claudeApiKeyEnv && !profile.apiKey) {
-    return { env, args: [...extraArgs], provider, available,
-      error: `Provider '${provider}' has no apiKey — add it to ~/.claude/claude_env_settings.local.json under providers.${provider}.apiKey` };
+  if (rules.claudeApiKeyEnv && withKey) {
+    const user = sessionUsername(provider, row);
+    if (user.error) return fail(user.error);
+    const got = fetchKey({ host: row.host, username: user.username });
+    if (got.error) return fail(got.error);
+    env[rules.claudeApiKeyEnv] = got.key;
   }
-
-  if (profile.claudeApiKeyEnv && profile.apiKey) {
-    env[profile.claudeApiKeyEnv] = profile.apiKey;
-  }
-  if (profile.url) {
-    env.ANTHROPIC_BASE_URL = profile.url + (profile.claudePath ?? '');
-  }
-  // Project the Claude model env vars from the single `models` source of truth.
-  // `models.base` is the canonical model (→ ANTHROPIC_MODEL); optional role keys
-  // (fable/opus/sonnet/haiku/subagent) override the per-class default, falling
-  // back to base. Codex's model derives from the same `models` map in
-  // codex-launcher.mjs — so the two hosts cannot drift.
-  const m = profile.models || {};
+  // The Claude-role model map is the catalogue's; `base` is ANTHROPIC_MODEL and each role
+  // falls back to it. Codex derives its model from the same map (codex-launcher.mjs).
+  const m = row.models || {};
   if (m.base) {
     env.ANTHROPIC_MODEL = m.base;
     env.ANTHROPIC_DEFAULT_FABLE_MODEL = m.fable ?? m.base;

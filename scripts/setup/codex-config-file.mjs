@@ -17,7 +17,8 @@ import {
   assertLossless,
   withShellEnvSet,
 } from './codex-config-compose.mjs';
-import { generateModelProvidersBlock } from './inject-codex-providers.mjs';
+import { codexView, generateModelProvidersBlock } from './inject-codex-providers.mjs';
+import { readProviderCache } from '../shared/provider-cache.mjs';
 import { codexShellEnv } from '../shared/machine.mjs';
 
 /**
@@ -68,7 +69,7 @@ export function localSectionsForThisHost(text) {
  * @param {{syncDir: string, envSettingsPath: string, codexDir: string, shellEnv?: object}} opts
  * @returns {{status: string, [k: string]: any}}
  */
-export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, shellEnv = codexShellEnv() }) {
+export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, shellEnv = codexShellEnv(), readCache = () => readProviderCache() }) {
   const payloadPath = path.join(syncDir, 'codex_config.toml');
 
   let payloadText;
@@ -102,10 +103,11 @@ export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, she
   let providers = 0;
   try {
     const settings = JSON.parse(fs.readFileSync(envSettingsPath, 'utf8'));
-    providersBlock = splitCodexConfig(generateModelProvidersBlock(settings)).generated;
+    const { cache } = readCache();
+    if (cache) providersBlock = splitCodexConfig(generateModelProvidersBlock(codexView(settings, cache))).generated;
     providers = (providersBlock.match(/^\[model_providers\./gm) || []).length;
   } catch {
-    // Missing/malformed shared registry is reported by the caller.
+    // A missing/malformed registry or a stale cache is reported by the caller.
   }
 
   const target = path.join(codexDir, 'config.toml');
