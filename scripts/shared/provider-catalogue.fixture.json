@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "generated_at": "GENERATED_AT",
+  "ai_lab_version": "0.0.1.dev54+g9458d42c7.d20261020",
+  "python": "PYTHON",
+  "inputs": [],
+  "source_sha256": "SOURCE",
+  "protocols": [
+    "anthropic",
+    "gemini",
+    "openai",
+    "typesafe"
+  ],
+  "providers": {
+    "anthropic": {
+      "wire": "anthropic_messages",
+      "protocol": "anthropic",
+      "url": "https://api.anthropic.com",
+      "host": "api.anthropic.com",
+      "paths": {
+        "anthropic": "/v1"
+      },
+      "endpoints": {
+        "anthropic": "https://api.anthropic.com/v1"
+      },
+      "auth": "api",
+      "key_name": "ANTHROPIC_API_KEY",
+      "key_usernames": {
+        "default": "api-key",
+        "optimization": "api-key-optimization",
+        "pr-review": "api-key-pr-review",
+        "session": "api-key-session"
+      },
+      "vision": true,
+      "vendor": "anthropic",
+      "model_wires": {},
+      "models": {}
+    },
+    "deepseek": {
+      "wire": "openai_chat_json",
+      "protocol": "openai",
+      "url": "https://api.deepseek.com",
+      "host": "api.deepseek.com",
+      "paths": {
+        "anthropic": "/anthropic",
+        "openai": "/v1"
+      },
+      "endpoints": {
+        "anthropic": "https://api.deepseek.com/anthropic",
+        "openai": "https://api.deepseek.com/v1"
+      },
+      "auth": "api",
+      "key_name": "DEEPSEEK_API_KEY",
+      "key_usernames": {
+        "default": "api-key",
+        "optimization": "api-key-optimization",
+        "pr-review": "api-key-pr-review",
+        "session": "api-key-session"
+      },
+      "vision": false,
+      "vendor": "deepseek",
+      "model_wires": {},
+      "models": {
+        "base": "deepseek-v4-flash[1m]",
+        "fable": "deepseek-v4-pro[1m]",
+        "opus": "deepseek-v4-flash[1m]",
+        "sonnet": "deepseek-v4-flash[1m]",
+        "haiku": "deepseek-v4-flash[1m]",
+        "subagent": "deepseek-v4-flash[1m]"
+      }
+    },
+    "ollama": {
+      "wire": "openai_chat",
+      "protocol": "openai",
+      "url": "http://localhost:11434",
+      "host": "localhost",
+      "paths": {
+        "openai": "/v1"
+      },
+      "endpoints": {
+        "openai": "http://localhost:11434/v1"
+      },
+      "auth": "local",
+      "key_name": "",
+      "key_usernames": {},
+      "vision": true,
+      "vendor": "",
+      "model_wires": {},
+      "models": {}
+    }
+  }
+}

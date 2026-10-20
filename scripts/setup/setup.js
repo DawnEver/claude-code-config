@@ -8,6 +8,7 @@ import { checkMacNotify } from './check-mac-notify.js';
 import { installCliWrappers } from './install-cli-wrappers.js';
 import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
+import { refreshProviderCache } from './provider-setup.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { isMain } from '../shared/is-main.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
@@ -432,6 +433,7 @@ function expandHome(p, home) {
 export function parseSetupArgs(argv = []) {
   const idx = argv.indexOf('--sync-dir');
   const mIdx = argv.indexOf('--machine');
+  const pIdx = argv.indexOf('--ai-lab-python');
   return {
     replace: argv.includes('--replace') || argv.includes('-r'),
     initSyncDir: argv.includes('--init-sync-dir'),
@@ -439,6 +441,7 @@ export function parseSetupArgs(argv = []) {
     syncDirFlagPresent: idx !== -1,
     machine: mIdx !== -1 ? argv[mIdx + 1] : undefined,
     machineFlagPresent: mIdx !== -1,
+    aiLabPython: pIdx !== -1 ? argv[pIdx + 1] : undefined,
   };
 }
 
@@ -589,6 +592,17 @@ export function setup(options = {}) {
   }
 
   const counters = { created: 0, skipped: 0, errors: earlyErrors, replace };
+
+  // The provider catalogue is ai-lab's: copy it into ~/.claude/provider-cache.json, the only
+  // thing a launcher reads (scripts/shared/provider-cache.mjs). Before the codex artifacts,
+  // which derive from it.
+  const cache = refreshProviderCache({ aiLabPython: options.aiLabPython });
+  if (cache.error) {
+    console.log(`ERR   provider-cache.json - ${cache.error}`);
+    counters.errors++;
+  } else {
+    console.log(`GEN   ~/.claude/provider-cache.json - ${cache.providers} provider(s) from ${cache.python} -m ai_lab.providers`);
+  }
 
   // Regenerate the derivable codex artifacts from the shared providers registry:
   // the [model_providers.*] section of codex_config.toml (only when that file
