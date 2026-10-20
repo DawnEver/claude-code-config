@@ -34,7 +34,7 @@ const json = (status, body) => new Response(JSON.stringify(body), { status,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
 const error = (status, code) => json(status, { error: { code } });
 
-export function createApi(config, { now = Date.now, log = () => {}, store = null, version = null } = {}) {
+export function createApi(config, { now = Date.now, log = () => {}, store = null } = {}) {
   const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000, now, store });
   const hits = new Map();   // client -> requests in the current minute
   let window = null;
@@ -52,7 +52,7 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
   async function route(request) {
     const url = new URL(request.url);
     if (limited(request)) return error(429, 'rate_limited');
-    if (request.method === 'GET' && url.pathname === '/api/health') return json(200, { ok: true, schemaVersion: SCHEMA_VERSION, version: version && { commit: version.tag || null, id: version.id, at: version.timestamp } });
+    if (request.method === 'GET' && url.pathname === '/api/health') return json(200, { ok: true, schemaVersion: SCHEMA_VERSION });
     const push = /^\/api\/hosts\/([^/]+)\/snapshot$/.exec(url.pathname);
     if (push && request.method === 'POST') {
       const hostId = push[1];   // a machine name needs no percent-decoding

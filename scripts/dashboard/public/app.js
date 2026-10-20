@@ -40,13 +40,15 @@ const readKey = () => (demoOn ? 'dashboard.readAlerts.demo' : 'dashboard.readAle
 const loadRead = () => { try { const v = JSON.parse(store.get(readKey())); return Array.isArray(v) ? v : []; } catch { return []; } };
 let readAlerts = loadRead();
 // Sessions grouped by host (default) or by project: a setting of this device.
-let groupBy = store.get('dashboard.groupBy') === 'project' ? 'project' : 'host';
+let groupBy = store.get('dashboard.groupBy') === 'host' ? 'host' : 'project';
+// Inside a project group: by workstation (default) or by urgency alone.
+let groupOrder = store.get('dashboard.groupOrder') === 'urgency' ? 'urgency' : 'host';
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
 let legendOpen = false;   // the quota legend, kept across polls
 let accounts = new Map();
 let unit = store.get('dashboard.unit') === 'used' ? 'used' : 'left';   // bars and numbers read as % left or % used
-let packed = store.get('dashboard.packed') === '1';   // hosts in packed columns, not aligned rows
+let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns, not aligned rows
 document.body.classList.toggle('packed', packed);
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // an edit typed but not saved
@@ -335,7 +337,7 @@ function renderHosts() {
     return;
   }
   if (groupBy === 'project') {
-    for (const g of groupSessions(hosts, 'project')) {
+    for (const g of groupSessions(hosts, 'project', groupOrder)) {
       const section = el('section', `host${g.online ? '' : ' off'}`);
       const head = el('div', 'host-head');
       head.append(el('span', `dot ${g.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', g.id),
@@ -475,10 +477,20 @@ function groupToggle() {
   return row;
 }
 
+function orderToggle() {
+  const row = el('label', 'cfg demo-toggle');
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = groupOrder === 'urgency';
+  box.addEventListener('change', () => { groupOrder = box.checked ? 'urgency' : 'host'; store.set('dashboard.groupOrder', groupOrder); render(); });
+  row.append(box, el('span', null, 'In a project, order sessions by urgency instead of by workstation'));
+  return row;
+}
+
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
-  box.append(el('div', 'section-h', 'This device'), unitToggle(), layoutToggle(), groupToggle());
+  box.append(el('div', 'section-h', 'This device'), unitToggle(), layoutToggle(), groupToggle(), orderToggle());
   if (!mock) box.append(demoToggle());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }

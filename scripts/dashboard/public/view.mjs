@@ -68,17 +68,20 @@ export function stateAge(s, now = Date.now()) {
  * The sessions view grouped `by` 'host' (the filtered hosts as they are) or 'project': one group
  * per project across hosts, by name, sessions by urgency; `online` when any of its hosts is.
  */
-export function groupSessions(hosts, by = 'host') {
+export function groupSessions(hosts, by = 'host', order = 'host') {
   if (by !== 'project') return hosts;
+  const rank = new Map(hosts.map((h, i) => [h.id, i]));
+  // Inside a project: by workstation (in the host order given), most urgent first within one; or by urgency alone.
+  const arrange = (list) => (order === 'host' ? sortSessions(list).sort((a, b) => rank.get(a.hostId) - rank.get(b.hostId)) : sortSessions(list));
   const groups = new Map();
   for (const h of hosts) for (const s of h.sessions) {
     const id = s.project ?? 'unknown project';
     const g = groups.get(id) ?? { id, online: false, sessions: [] };
     g.online ||= h.online;
-    g.sessions.push(s);
+    g.sessions.push({ ...s, hostId: s.hostId ?? h.id });
     groups.set(id, g);
   }
-  return [...groups.values()].map((g) => ({ ...g, sessions: sortSessions(g.sessions) })).sort((a, b) => a.id.localeCompare(b.id));
+  return [...groups.values()].map((g) => ({ ...g, sessions: arrange(g.sessions) })).sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export function stats(snapshot) {

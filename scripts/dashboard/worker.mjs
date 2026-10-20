@@ -10,7 +10,7 @@ import { createApi, parseDashboardConfig } from './api.mjs';
 export class DashboardHub extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    this.api = createApi(parseDashboardConfig(env.DASHBOARD_CONFIG, env.TELEGRAM_PUBLIC_KEY), { log: (m) => console.log(m), store: ctx.storage.kv, version: env.CF_VERSION_METADATA });
+    this.api = createApi(parseDashboardConfig(env.DASHBOARD_CONFIG, env.TELEGRAM_PUBLIC_KEY), { log: (m) => console.log(m), store: ctx.storage.kv });
   }
 
   fetch(request) {
@@ -18,10 +18,16 @@ export class DashboardHub extends DurableObject {
   }
 }
 
+/** Cloudflare's version metadata as /api/health reports it: tag = the git commit deploy tagged it with. */
+export const versionOf = (v) => (v ? { commit: v.tag || null, id: v.id, at: v.timestamp } : null);
+
 export default {
-  fetch(request, env) {
+  async fetch(request, env) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return new Response('not found', { status: 404 });
-    return env.DASHBOARD.get(env.DASHBOARD.idFromName('dashboard')).fetch(request);
+    const res = await env.DASHBOARD.get(env.DASHBOARD.idFromName('dashboard')).fetch(request);
+    // The version binding reaches the Worker, not the Durable Object: health gets it added here.
+    if (url.pathname !== '/api/health' || !res.ok) return res;
+    return Response.json({ ...(await res.json()), version: versionOf(env.CF_VERSION_METADATA) });
   },
 };
