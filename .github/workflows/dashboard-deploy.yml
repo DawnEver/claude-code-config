@@ -27,4 +27,4 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           DASHBOARD_DOMAIN: ${{ vars.DASHBOARD_DOMAIN }}
-        run: npx -y wrangler@4 deploy --config scripts/dashboard/wrangler.jsonc --domain "$DASHBOARD_DOMAIN"
+        run: npx -y wrangler@4 deploy --config scripts/dashboard/wrangler.jsonc --domain "$DASHBOARD_DOMAIN" --tag "${GITHUB_SHA::7}"

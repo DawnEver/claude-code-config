@@ -52,6 +52,38 @@ export function applyFilters(snapshot, filters) {
 /** Live sessions waiting for the human, across hosts, most urgent first. */
 export const attention = (snapshot) => sortSessions(sessionsOf(snapshot).filter((s) => !s.stale && ATTENTION.includes(s.status)));
 
+/**
+ * How long a session has been in its current state, from its last activity (the snapshot has no
+ * per-state timestamp; status changes are activity, so it is the time since the last change).
+ */
+export function stateAge(s, now = Date.now()) {
+  const at = Date.parse(s.lastActivityAt);
+  const word = s.stale ? null : ATTENTION.includes(s.status) ? 'waiting' : s.status === 'idle' || s.status === 'working' ? s.status : null;
+  if (!word || !Number.isFinite(at)) return ago(s.lastActivityAt, now);
+  const m = Math.max(0, Math.floor((now - at) / 60000));
+  return `${word} ${m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`}`;
+}
+
+/**
+ * The sessions view grouped `by` 'host' (the filtered hosts as they are) or 'project': one group
+ * per project across hosts, by name, sessions by urgency; `online` when any of its hosts is.
+ */
+export function groupSessions(hosts, by = 'host', order = 'host') {
+  if (by !== 'project') return hosts;
+  const rank = new Map(hosts.map((h, i) => [h.id, i]));
+  // Inside a project: by workstation (in the host order given), most urgent first within one; or by urgency alone.
+  const arrange = (list) => (order === 'host' ? sortSessions(list).sort((a, b) => rank.get(a.hostId) - rank.get(b.hostId)) : sortSessions(list));
+  const groups = new Map();
+  for (const h of hosts) for (const s of h.sessions) {
+    const id = s.project ?? 'unknown project';
+    const g = groups.get(id) ?? { id, online: false, sessions: [] };
+    g.online ||= h.online;
+    g.sessions.push({ ...s, hostId: s.hostId ?? h.id });
+    groups.set(id, g);
+  }
+  return [...groups.values()].map((g) => ({ ...g, sessions: arrange(g.sessions) })).sort((a, b) => a.id.localeCompare(b.id));
+}
+
 export function stats(snapshot) {
   const live = sessionsOf(snapshot).filter((s) => !s.stale);
   return { hostsOnline: snapshot.hosts.filter((h) => h.online).length, hosts: snapshot.hosts.length,
@@ -103,11 +135,41 @@ export function quotaView(a, now = Date.now()) {
 
 export const accountName = (q) => `${q.agent === 'claude' ? 'Claude' : 'Codex'}${q.label ? ` · ${q.label}` : ''}`;
 
-/** Why an account needs the human, in one line; '' when it does not. */
-export function verdictText(q, now = Date.now()) {
-  if (q.verdict === 'exhausted') return `${q.bind.k} exhausted · resets in ${countdown(q.bind.resetsAt, now)}`;
-  if (q.verdict === 'short') return `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta, now)} · resets in ${countdown(q.bind.resetsAt, now)}`;
+/** Why an account needs the human, in one line; '' when it does not. `withReset: false` where the row already shows it. */
+export function verdictText(q, { now = Date.now(), withReset = true } = {}) {
+  const reset = withReset && q.bind?.resetsAt > now ? ` · resets in ${countdown(q.bind.resetsAt, now)}` : '';
+  if (q.verdict === 'exhausted') return `${q.bind.k} exhausted${reset}`;
+  if (q.verdict === 'short') return `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta, now)}${reset}`;
   return '';
+}
+
+/** A window's reset countdown; '' once the reset is past or unknown (a new window has none to show). */
+export const resetText = (w, now = Date.now()) => (!w.renewed && w.resetsAt > now ? `↻ ${countdown(w.resetsAt, now)}` : '');
+
+/** A window's label in the page's one unit, % left; a stale reading is a ceiling (`≤`) unless already exhausted. */
+export function windowLabel(w, stale, unit = 'left') {
+  if (w.renewed) return { text: 'unused', title: 'new window, nothing spent yet', stale: false };
+  const left = Math.max(0, Math.round(100 - w.used));
+  const ceiling = stale && left > 0;
+  const n = amount(w.used, unit);
+  const bound = ceiling ? (unit === 'left' ? '≤' : '≥') : '';
+  return { text: `${bound}${n}%`, title: `${ceiling ? (unit === 'left' ? 'at most' : 'at least') : ''}${ceiling ? ' ' : ''}${n}% ${unit}${ceiling ? ' (stale reading)' : ''}`, stale: ceiling };
+}
+
+/** A window's use as the reader chose to see it: what is left (default) or what is used. The one place the unit is applied. */
+export const amount = (used, unit = 'left') => Math.round(unit === 'left' ? Math.max(0, 100 - used) : Math.min(100, used));
+
+/** An email's local part, for a meta line with the full address in its title. */
+export const emailName = (email) => email?.split('@')[0] ?? null;
+
+/** Per agent, the account with most left on its binding window right now; exhausted and unread ones never win. */
+export function bestAccounts(accounts) {
+  const best = new Map();
+  for (const q of accounts) {
+    if (q.left === null || q.verdict === 'exhausted' || q.verdict === 'none') continue;
+    if (!best.has(q.agent) || q.left > best.get(q.agent).left) best.set(q.agent, q);
+  }
+  return [...best].map(([agent, q]) => ({ agent, q }));
 }
 
 /**
@@ -119,7 +181,7 @@ export function verdictText(q, now = Date.now()) {
 export function quotaAlertsFor(prev, q, now = Date.now()) {
   const who = `${accountName(q)}${q.email ? ` (${q.email})` : ''}`;
   const texts = [];
-  if (q.verdict === 'exhausted' && prev?.verdict !== 'exhausted') texts.push(`${who}: ${verdictText(q, now)}`);
+  if (q.verdict === 'exhausted' && prev?.verdict !== 'exhausted') texts.push(`${who}: ${verdictText(q, { now })}`);
   for (const p of q.problems) if (!prev?.problems?.includes(p)) texts.push(`${who}: ${p}`);
   const extraAt = q.extraReset ? q.extraReset.at ?? 0 : null;
   if (extraAt !== null && prev?.extraAt !== extraAt) {
@@ -131,13 +193,17 @@ export function quotaAlertsFor(prev, q, now = Date.now()) {
 /** One alert's identity: the account, its verdict and the window period. A new period is a new alert. */
 export const alertKey = (q) => JSON.stringify([q.key, q.verdict, q.bind?.k ?? null, q.bind?.resetsAt ?? null]);
 
+/** A forecast run-out this close is an alert in the needs-you card; a farther one is only shown. */
+export const RUNOUT_ALERT_MS = 3600000;
+
 /**
- * Accounts that need the human: a window exhausted (a projected run-out is only shown);
- * minus the alerts already read (`read`: alert keys).
+ * Accounts that need the human: a window exhausted, or forecast to run out within
+ * RUNOUT_ALERT_MS; minus the alerts already read (`read`: alert keys).
  */
 export const quotaAlerts = (snapshot, now = Date.now(), read = []) =>
   (snapshot.accounts ?? []).map((a) => quotaView(a, now))
-    .filter((q) => q.verdict === 'exhausted' && !read.includes(alertKey(q)));
+    .filter((q) => (q.verdict === 'exhausted' || (q.verdict === 'short' && q.bind.forecast.eta - now <= RUNOUT_ALERT_MS))
+      && !read.includes(alertKey(q)));
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -197,13 +263,16 @@ export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? (q.agent =
 /**
  * Quota by host: each host with the accounts it runs. An account is one budget however many
  * hosts spend it, so a shared one says where else it runs (`sharedWith`) rather than reading as
- * a second budget. Online hosts first; a host without accounts is left out.
+ * a second budget: its full card sits on the first host in order (online first), elsewhere
+ * `refTo` names that host. Online hosts first; a host without accounts is left out.
  */
 export function quotaByHost(snapshot, now = Date.now()) {
   const accounts = [...accountIndex(snapshot, now).values()];
-  return [...snapshot.hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id))
-    .map((h) => ({ id: h.id, online: h.online, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
-      .map((q) => ({ ...q, sharedWith: q.hosts.filter((x) => x !== h.id) })) }))
+  const hosts = [...snapshot.hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
+  const owner = new Map();
+  for (const h of hosts) for (const q of accounts) if (q.hosts?.includes(h.id) && !owner.has(q.key)) owner.set(q.key, h.id);
+  return hosts.map((h) => ({ id: h.id, online: h.online, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
+      .map((q) => ({ ...q, sharedWith: q.hosts.filter((x) => x !== h.id), refTo: owner.get(q.key) === h.id ? null : owner.get(q.key) })) }))
     .filter((h) => h.accounts.length);
 }
 
