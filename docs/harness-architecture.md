@@ -165,8 +165,16 @@ No bot accounts: they multiply credentials and lose layer 1. Instead:
     the shared head has one; never in the shared payload). Every Codex command tags,
     however Codex was started; a static file cannot see the caller's shell, so a user-set
     committer name is **not** preserved in Codex sessions. `codex-launcher.mjs` injects
-    nothing. Doctor FAILs (`codex-provenance`) when a named host's composed config lacks
+    only the session id (below). Doctor FAILs (`codex-provenance`) when a named host's composed config lacks
     its machine name — re-run setup after `--machine`.
+- **Session (implemented):** every launcher (`ccc`, `ccds`, `codc`, ...) issues ONE
+  `LAB_SESSION` per session (`sessionEnv()`), kept when already inherited, so a subagent, a
+  fabric takeover or a nested launcher shares it. lab-commons' `lab-session` commit-msg row
+  writes it as the `Lab-Session:` trailer (the agent never does) and refuses an agent commit
+  without it; `forge pr create` and pre-push of a new `pr/*` admit one open PR per session
+  (ONE-SESSION-ONE-PR). It is never in `codexShellEnv()`: a static file would give every
+  session one id, so a Codex command run in a shared daemon the launcher env never reaches has
+  none, and its commit is refused rather than misattributed. `Claude-Session:` is prose.
 - **Env contract:** the same paths export `HARNESS_MACHINE` and `HARNESS_AGENT`
   (`claude`|`codex`) for other tools (e.g. lab-commons' forge) to read. No machine name →
   nothing is injected. `setup-vscode.js` (Claude in VS Code) carries no provenance.

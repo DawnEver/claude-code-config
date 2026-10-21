@@ -8,6 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import { randomUUID } from 'crypto';
 
 export const MACHINE_PATH = path.join(os.homedir(), '.claude', 'machine.json');
 export const MACHINE_FIX_CMD = 'node scripts/setup/setup.js --machine <NAME>';
@@ -58,6 +59,19 @@ export function provenanceEnv({ machine, agent, userName, env = process.env }) {
   const userSet = env.GIT_COMMITTER_NAME && !env.HARNESS_AGENT;
   if (userName && !userSet) out.GIT_COMMITTER_NAME = `${userName} (${machine}/${agent})`;
   return out;
+}
+
+/** The env var carrying the session id: lab-commons' commit-msg hook stamps it as `Lab-Session:`. */
+export const SESSION_ENV = 'LAB_SESSION';
+
+/**
+ * ONE id per agent session, vendor-neutral: issued by the launcher (ccc, ccds, codc, ...) and
+ * inherited by every child — a subagent, a fabric takeover, a nested launcher — so an id already
+ * in `env` is kept. lab-commons refuses an agent commit without it (ONE-SESSION-ONE-PR). Never in
+ * codexShellEnv: a static config.toml would give every session the same id.
+ */
+export function sessionEnv(env = process.env) {
+  return { [SESSION_ENV]: env[SESSION_ENV] || randomUUID() };
 }
 
 /**

@@ -138,6 +138,12 @@ test('provenance: no machine name -> nothing injected', () => {
   assert.equal(env.HARNESS_MACHINE, process.env.HARNESS_MACHINE);
 });
 
+test('session: every launch carries LAB_SESSION, with or without a machine name', () => {
+  const { env } = buildClaudeInvocation({ provider: null, envSettingsPath: '/nonexistent',
+    machine: null, gitUserName: 'Me' });
+  assert.ok(env.LAB_SESSION);
+});
+
 // ── session bridge channel (docs/bridge.md) ──
 
 const CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];

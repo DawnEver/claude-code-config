@@ -105,6 +105,11 @@ test('provenance: the codex launcher injects nothing (config.toml shell_environm
   assert.equal(env.GIT_COMMITTER_NAME, process.env.GIT_COMMITTER_NAME);
 });
 
+test('session: the codex launcher issues LAB_SESSION (config.toml cannot: it is per session)', () => {
+  const { env } = buildCodexInvocation({ provider: null, envSettingsPath: '/nonexistent' });
+  assert.ok(env.LAB_SESSION);
+});
+
 // ── session bridge: the TUI must attach to the shared app-server (docs/bridge.md) ──
 
 function bridgeFixture(botToken) {

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   isValidMachineName, readMachineName, writeMachineName, provenanceEnv, codexShellEnv,
+  sessionEnv, SESSION_ENV,
 } from './machine.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'machine-'));
@@ -62,4 +63,15 @@ test('codexShellEnv: fixed codex provenance, independent of the calling env', ()
   assert.deepEqual(codexShellEnv({ machine: 'host-a', userName: 'Me' }), {
     HARNESS_MACHINE: 'host-a', HARNESS_AGENT: 'codex', GIT_COMMITTER_NAME: 'Me (host-a/codex)',
   });
+});
+
+test('sessionEnv: issues one fresh id per session, independent of the machine name', () => {
+  const a = sessionEnv({}), b = sessionEnv({});
+  assert.equal(SESSION_ENV, 'LAB_SESSION');
+  assert.match(a.LAB_SESSION, /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/);
+  assert.notEqual(a.LAB_SESSION, b.LAB_SESSION);
+});
+
+test('sessionEnv: a child launched inside a session inherits its id (codex/ccds under ccc alike)', () => {
+  assert.deepEqual(sessionEnv({ LAB_SESSION: 'outer-session-1' }), { LAB_SESSION: 'outer-session-1' });
 });
