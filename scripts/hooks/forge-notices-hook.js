@@ -1,31 +1,21 @@
-// forge-notices-hook.js — tell the session what the forge found wrong with ITS PRs (SessionStart, Stop).
+// forge-notices-hook.js — a starting or resumed session learns what the forge found wrong with ITS PRs.
 //
-// The notices are lab-commons' (scripts/shared/forge-notices.mjs asks for them, cached ~60 s).
-// SessionStart: every open notice, as additionalContext. Stop: only notices this session has not been
-// told yet, as a one-time `decision: block` with the notices as the reason -- the one Stop output the
-// model reads -- so a new red/conflict/stall reaches it at the end of the turn it appeared in, and is
-// never repeated (no stop loop; `stop_hook_active` is honoured too). Silent on no LAB_SESSION, no repo
-// venv, no notices, or any failure: exit 0 with no output.
+// SessionStart only, by design: a notice matters at the moments a session ACTS on its PR, and the
+// vendor-neutral one is the push (lab-commons' pre-push row prints that PR's notices). This hook covers
+// the other one -- a session resuming work on PRs it already has. No per-turn poll (no Stop or
+// UserPromptSubmit hook): an idle session is the integrator's escalation, not a network call per turn.
+// Silent on no LAB_SESSION, no repo venv, no notices, or any failure: exit 0 with no output.
 
 import { readFileSync } from 'node:fs';
-import { forgeNotices, render, untold } from '../shared/forge-notices.mjs';
+import { forgeNotices, render } from '../shared/forge-notices.mjs';
 import { isMain } from '../shared/is-main.mjs';
 
 /** The hook's stdout object for `input` (the hook payload), or null for silence. */
 export function respond(input, { env = process.env, ...seams } = {}) {
-  const event = input.hook_event_name;
-  if (event === 'Stop' && input.stop_hook_active) return null;
+  if (input.hook_event_name !== 'SessionStart') return null;
   const result = forgeNotices({ session: env.LAB_SESSION, cwd: input.cwd || process.cwd(), ...seams });
   if (!result) return null;
-  if (event === 'SessionStart') {
-    untold(result);
-    return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: render(result.lines) } };
-  }
-  if (event === 'Stop') {
-    const fresh = untold(result);
-    return fresh.length ? { decision: 'block', reason: render(fresh) } : null;
-  }
-  return null;
+  return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: render(result.lines) } };
 }
 
 if (isMain(import.meta.url)) {
