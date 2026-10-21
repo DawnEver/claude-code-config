@@ -91,6 +91,21 @@ export function stats(snapshot) {
     attention: live.filter((s) => ATTENTION.includes(s.status)).length };
 }
 
+/**
+ * An absolute time as this device chose to read it: `clock` '24' (default) or '12'; `date` 'day'
+ * (21 Oct, default), 'iso' (2026-10-21) or 'off'. Local time zone.
+ */
+export function formatTime(ms, { clock = '24', date = 'day' } = {}) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  const h = d.getHours();
+  const time = clock === '12' ? `${h % 12 || 12}:${pad(d.getMinutes())} ${h < 12 ? 'AM' : 'PM'}` : `${pad(h)}:${pad(d.getMinutes())}`;
+  const day = date === 'iso' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    : date === 'day' ? `${d.getDate()} ${MONTHS[d.getMonth()]}` : '';
+  return day ? `${day} ${time}` : time;
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 export function ago(iso, now = Date.now()) {
   const at = Date.parse(iso);
   if (!Number.isFinite(at)) return 'never';

@@ -2,10 +2,11 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 
 const POLL_MS = 8000;
+const REPO = 'https://github.com/DawnEver/claude-code-config';
 const tg = window.Telegram?.WebApp;
 const params = new URLSearchParams(location.search);
 const mock = params.has('mock');
@@ -48,6 +49,9 @@ const openRows = new Set();
 let legendOpen = false;   // the quota legend, kept across polls
 let accounts = new Map();
 let unit = store.get('dashboard.unit') === 'left' ? 'left' : 'used';   // bars and numbers read as % left or % used
+// How absolute times read on this device: 24h (default) or 12h clock; date 'day', 'iso' or 'off'.
+const timeFormat = { clock: store.get('dashboard.clock') === '12' ? '12' : '24', date: ['iso', 'off'].includes(store.get('dashboard.date')) ? store.get('dashboard.date') : 'day' };
+let deployed = null;   // the live version from /api/health: {commit, id, at}
 let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns, not aligned rows
 document.body.classList.toggle('packed', packed);
 let configShown = null;   // the config view last rendered (JSON)
@@ -440,6 +444,21 @@ function configRow(r) {
   return row;
 }
 
+/** Clock and date style for absolute times, this device only. */
+function timeSettings() {
+  const row = el('div', 'cfg demo-toggle');
+  const pick = (name, label, options) => {
+    const select = el('select');
+    select.setAttribute('aria-label', label);
+    for (const [value, text] of options) select.append(Object.assign(el('option', null, text), { value, selected: timeFormat[name] === value }));
+    select.addEventListener('change', () => { timeFormat[name] = select.value; store.set(`dashboard.${name}`, select.value); renderVersion(); });
+    return select;
+  };
+  row.append(el('span', null, 'Times'), pick('clock', 'clock', [['24', '24-hour'], ['12', '12-hour']]),
+    pick('date', 'date', [['day', '21 Oct'], ['iso', '2026-10-21'], ['off', 'no date']]));
+  return row;
+}
+
 function unitToggle() {
   const row = el('label', 'cfg demo-toggle');
   const box = el('input');
@@ -502,7 +521,7 @@ function orderToggle() {
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
-  box.append(el('div', 'section-h', 'This device'), unitToggle(), layoutToggle(), groupToggle(), orderToggle());
+  box.append(el('div', 'section-h', 'This device'), timeSettings(), unitToggle(), layoutToggle(), groupToggle(), orderToggle());
   if (!mock) box.append(demoToggle());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }
@@ -558,7 +577,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
 function render() {
   if (!snapshot) return;
   accounts = accountIndex(snapshot);
-  $('updated').textContent = snapshot.mock ? 'example data' : lastOk && snapshot.demo ? `demo · updated ${ago(new Date(lastOk).toISOString())}` : lastOk ? `updated ${ago(new Date(lastOk).toISOString())}` : '';
+  $('updated').textContent = snapshot.mock ? 'example data' : lastOk && snapshot.demo ? `demo · data ${ago(new Date(lastOk).toISOString())}` : lastOk ? `data ${ago(new Date(lastOk).toISOString())}` : '';
   renderSummary();
   renderTabs();
   renderQuota();
@@ -619,10 +638,26 @@ async function load() {
 async function showVersion() {
   try {
     const { version: v } = await (await fetch('api/health', { cache: 'no-store' })).json();
-    if (!v) return;
-    $('version').textContent = [v.commit || v.id?.slice(0, 8), v.at && new Date(v.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })].filter(Boolean).join(' · ');
-    $('version').title = `deployed version ${v.id}`;
+    if (v) { deployed = v; renderVersion(); }
   } catch { /* no version shown */ }
+}
+
+/**
+ * The live build: when it was deployed (what a human compares) and its commit, which opens on
+ * GitHub. Kept apart from the data's own "updated" time.
+ */
+function renderVersion() {
+  const box = $('version');
+  box.replaceChildren();
+  if (!deployed) return;
+  box.append(document.createTextNode(`build ${deployed.at ? formatTime(Date.parse(deployed.at), timeFormat) : deployed.id.slice(0, 8)}`));
+  if (deployed.commit) {
+    const sha = deployed.commit.replace(/\+$/, '');
+    const link = el('button', 'commit', deployed.commit);
+    link.title = deployed.commit.endsWith('+') ? 'deployed from this commit plus uncommitted changes' : 'open this commit on GitHub';
+    link.addEventListener('click', () => { const url = `${REPO}/commit/${sha}`; tg?.openLink ? tg.openLink(url) : window.open(url, '_blank', 'noopener'); });
+    box.append(document.createTextNode(' · '), link);
+  }
 }
 
 load();
