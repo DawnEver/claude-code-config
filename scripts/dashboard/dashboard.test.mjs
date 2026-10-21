@@ -563,7 +563,7 @@ test('view: windowLabel — every number is % left; unused and stale read plainl
   assert.deepEqual(windowLabel({ used: 100, renewed: false }, true), { text: '0%', title: '0% left', stale: false }, 'exhausted stays exhausted');
   assert.deepEqual(windowLabel({ used: 26, renewed: false }, true, 'used'), { text: '≥26%', title: 'at least 26% used (stale reading)', stale: true }, 'the used unit');
   assert.deepEqual([amount(26), amount(26, 'used'), amount(130), amount(130, 'used')], [74, 26, 0, 100]);
-  assert.deepEqual(windowLabel({ used: 0, renewed: true }, false), { text: 'unused', title: 'new window, nothing spent yet', stale: false });
+  assert.deepEqual(windowLabel({ used: 0, renewed: true }, false), { text: 'not read', title: 'the window has reset since the last reading; use unknown until the account is used on this host', stale: false });
   assert.equal(emailName('alice@example.com'), 'alice');
   assert.equal(emailName(null), null);
 });

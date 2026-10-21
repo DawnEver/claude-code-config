@@ -148,7 +148,8 @@ export const resetText = (w, now = Date.now()) => (!w.renewed && w.resetsAt > no
 
 /** A window's label in the page's one unit, % left; a stale reading is a ceiling (`≤`) unless already exhausted. */
 export function windowLabel(w, stale, unit = 'left') {
-  if (w.renewed) return { text: 'unused', title: 'new window, nothing spent yet', stale: false };
+  // A passed reset is all that is known: the last reading predates it, so the use now is unknown, not zero.
+  if (w.renewed) return { text: 'not read', title: 'the window has reset since the last reading; use unknown until the account is used on this host', stale: false };
   const left = Math.max(0, Math.round(100 - w.used));
   const ceiling = stale && left > 0;
   const n = amount(w.used, unit);

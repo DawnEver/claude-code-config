@@ -126,7 +126,7 @@ function quotaAlertRow(q) {
 
 /** Position bar: fill = what is left, the line = what an even spend would leave by now. */
 function bar(w, stale) {
-  const track = el('div', `bar${w.forecast?.short || w.used >= 100 ? ' hot' : ''}`);
+  const track = el('div', `bar${w.renewed ? ' unknown' : w.forecast?.short || w.used >= 100 ? ' hot' : ''}`);
   const fill = el('div', 'fill');
   fill.style.width = `${amount(w.used, unit)}%`;
   const pace = el('div', 'pace');
@@ -183,7 +183,7 @@ function quotaDetail(q) {
     row.append(kCell(w, q), bar(w, q.stale), leftCell(w, q.stale), resetCell(w));
     const sub = el('div', 'win-sub');
     const forecast = w.forecast && (w.forecast.short ? `runs out in ${countdown(w.forecast.eta)}` : `→ ${amount(w.forecast.atReset, unit)}% ${unit} at reset`);
-    sub.append(trend(w), el('span', null, w.renewed ? 'unused: new window, not started' : forecast || ''));
+    sub.append(trend(w), el('span', null, w.renewed ? 'reset since the last reading: use unknown' : forecast || ''));
     box.append(row, sub);
   }
   if (q.resetCredits) {
@@ -220,7 +220,7 @@ function quotaRow(q, hostId) {
   const top = el('div', 'qrow-top');
   let left;
   if (q.bind) { left = leftCell(q.bind, q.stale, 'left'); left.textContent += ` ${unit}`; }
-  else { left = el('span', 'left', 'no reading'); left.title = 'no window reported for this account yet'; }
+  else left = noReading(q);
   top.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'chev', open ? '⌄' : '›'));
   row.append(top);
   if (open) row.append(quotaDetail(q));
@@ -267,10 +267,18 @@ function renderQuota() {
 }
 
 /** A shared account already carded on another host: one line pointing there. */
+/** The headline when no window has a current reading: reset since the last one, or never read. */
+function noReading(q) {
+  const reset = q.windows.length > 0;
+  const span = el('span', 'left', reset ? 'not read since reset' : 'no reading');
+  span.title = reset ? 'every window has reset since the last reading: use unknown until the account is used on this host' : 'no window reported for this account yet';
+  return span;
+}
+
 function quotaRef(q) {
   const row = el('div', `qrow qref v-${q.verdict}${q.stale ? ' stale' : ''}`);
-  const left = q.bind ? leftCell(q.bind, q.stale, 'left') : el('span', 'left', 'no reading');
-  if (q.bind) left.textContent += ' left';
+  const left = q.bind ? leftCell(q.bind, q.stale, 'left') : noReading(q);
+  if (q.bind) left.textContent += ` ${unit}`;
   row.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'see', `→ see ${q.refTo}`));
   row.title = `one budget: its full card is on ${q.refTo}`;
   return row;
@@ -290,7 +298,7 @@ function quotaHeader() {
     'Orange bar: runs out before reset, or exhausted. ↻ = time to reset.',
     '≤ and a dim ◷: the reading is stale, so at most that much is left.',
     'Trend (tap a row): spend per slice of the window, half height = even spend; grey hatched = not observed, flat grey = still ahead; the vertical line = now.',
-    'unused = a new window, nothing spent yet. → see <host> = a shared account, carded on that host.']) body.append(el('p', null, line));
+    'not read = the window has reset since the last reading, so its use is unknown. → see <host> = a shared account, carded on that host.']) body.append(el('p', null, line));
   legend.append(summary, body);
   const head = el('div', 'qhead');
   head.append(el('span', 'section-h', `Quota ${unit}`), legend);
