@@ -97,15 +97,6 @@ if (error) {
 
 console.log(provider ? `[codex] Using provider: ${provider}` : '[codex] Using default Codex');
 
-// Codex has no session hooks: the launch is where its session hears the forge's notices for its PRs.
-try {
-  const { forgeNotices, render } = await import('../shared/forge-notices.mjs');
-  const found = forgeNotices({ session: env.LAB_SESSION, cwd: process.cwd() });
-  if (found) console.error(render(found.lines));
-} catch {
-  // Notices must never block a launch.
-}
-
 // Not `shell: true`: that concatenates args unescaped, so `cods exec "a prompt with spaces"`
 // reached Codex as separate words. `prepareSpawn` resolves the npm shim and quotes for us.
 const launch = prepareSpawn('codex', args, { env });

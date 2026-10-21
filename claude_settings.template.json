@@ -72,11 +72,6 @@
             "type": "command",
             "command": "node ~/.claude/scripts/bridge/ensure.mjs",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "node ~/.claude/scripts/hooks/forge-notices-hook.js",
-            "timeout": 15
           }
         ]
       }
