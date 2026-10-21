@@ -65,13 +65,14 @@ export function provenanceEnv({ machine, agent, userName, env = process.env }) {
 export const SESSION_ENV = 'LAB_SESSION';
 
 /**
- * ONE id per agent session, vendor-neutral: issued by the launcher (ccc, ccds, codc, ...) and
- * inherited by every child — a subagent, a fabric takeover, a nested launcher — so an id already
- * in `env` is kept. lab-commons refuses an agent commit without it (ONE-SESSION-ONE-PR). Never in
- * codexShellEnv: a static config.toml would give every session the same id.
+ * ONE id per agent session, vendor-neutral, stable across a resume. In order: an id already in
+ * `env` (a subagent, a fabric takeover, a nested launcher inherits its parent's); the vendor's own
+ * conversation id `vendorId` (vendor-session.mjs reads it from the launch args); else a fresh UUID.
+ * lab-commons refuses an agent commit without it (ONE-SESSION-ONE-PR). Never in codexShellEnv: a
+ * static config.toml would give every session the same id.
  */
-export function sessionEnv(env = process.env) {
-  return { [SESSION_ENV]: env[SESSION_ENV] || randomUUID() };
+export function sessionEnv(env = process.env, vendorId = null) {
+  return { [SESSION_ENV]: env[SESSION_ENV] || vendorId || randomUUID() };
 }
 
 /**

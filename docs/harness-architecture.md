@@ -169,7 +169,10 @@ No bot accounts: they multiply credentials and lose layer 1. Instead:
     its machine name — re-run setup after `--machine`.
 - **Session (implemented):** every launcher (`ccc`, `ccds`, `codc`, ...) issues ONE
   `LAB_SESSION` per session (`sessionEnv()`), kept when already inherited, so a subagent, a
-  fabric takeover or a nested launcher shares it. lab-commons' `lab-session` commit-msg row
+  fabric takeover or a nested launcher shares it. It is the vendor's own conversation id, so a
+  resume keeps it (`scripts/shared/vendor-session.mjs`): a fresh Claude launch is pinned with
+  `--session-id <LAB_SESSION>`, `--resume <id>`/`--continue` and `codex resume <id>|--last` reuse the
+  resumed id; a launcher UUID is only the fallback (fresh Codex, the bare `--resume` picker). lab-commons' `lab-session` commit-msg row
   writes it as the `Lab-Session:` trailer (the agent never does) and refuses an agent commit
   without it; `forge pr create` and pre-push of a new `pr/*` admit one open PR per session
   (ONE-SESSION-ONE-PR). It is never in `codexShellEnv()`: a static file would give every

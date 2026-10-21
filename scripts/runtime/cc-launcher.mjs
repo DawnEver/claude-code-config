@@ -14,13 +14,32 @@ import os from 'os';
 import { baseDir, readSeats, resolveSeat, seatHome, seatsFor } from '../shared/seats.mjs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
-import { readMachineName, readGitUserName, provenanceEnv, sessionEnv } from '../shared/machine.mjs';
+import { readMachineName, readGitUserName, provenanceEnv, sessionEnv, SESSION_ENV } from '../shared/machine.mjs';
+import { claudeSession } from '../shared/vendor-session.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { resolveProvider } from '../shared/provider-projection.mjs';
 import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
 
 export const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
+
+// `claude <command>` runs no conversation, so it is never pinned with `--session-id` (`claude --help`, 2026-10-21).
+const CLAUDE_COMMANDS = new Set(['agents', 'attach', 'auth', 'auto-mode', 'doctor', 'gateway', 'import', 'install',
+  'logs', 'mcp', 'plugin', 'plugins', 'purge', 'respawn', 'rm', 'setup-token', 'stop', 'kill', 'ultrareview',
+  'update', 'upgrade']);
+
+/**
+ * Set `env.LAB_SESSION` (inherited, else Claude's own conversation id, else a fresh UUID) and pin a fresh
+ * conversation to it with `--session-id`, so a later `--resume <id>` keeps the same LAB_SESSION.
+ */
+export function withClaudeSession(env, extraArgs, { configDir, cwd }) {
+  const inherited = env[SESSION_ENV];
+  const { id, pin } = claudeSession(extraArgs, { configDir, cwd });
+  Object.assign(env, sessionEnv(env, id));
+  const command = extraArgs[0] && CLAUDE_COMMANDS.has(extraArgs[0]);
+  if (!inherited && pin && !command) extraArgs = [...extraArgs, '--session-id', env[SESSION_ENV]];
+  return { extraArgs };
+}
 
 /**
  * Build the env + args for spawning the `claude` CLI with a given provider.
@@ -52,6 +71,7 @@ export function buildClaudeInvocation({
   gitUserName = machine ? readGitUserName() : null,
   seat = null,
   home = os.homedir(),
+  cwd = process.cwd(),
   seats = seat === null ? [] : readSeats(),
   readCache = () => readProviderCache(),
   fetchKey = fetchStoredKey,
@@ -61,7 +81,7 @@ export function buildClaudeInvocation({
 }) {
   const env = { ...process.env };
   for (const k of PROVIDER_KEYS) delete env[k];
-  Object.assign(env, provenanceEnv({ machine, agent: 'claude', userName: gitUserName, env }), sessionEnv(env));
+  Object.assign(env, provenanceEnv({ machine, agent: 'claude', userName: gitUserName, env }));
   // The launcher alone picks the config dir: a seat's (scripts/shared/seats.mjs), else the
   // base dir, even when started from a shell that inherited another seat's CLAUDE_CONFIG_DIR.
   delete env.CLAUDE_CONFIG_DIR;
@@ -78,6 +98,7 @@ export function buildClaudeInvocation({
     if (!existsSync(dir)) return fail(`no seat dir ${dir}: add seat ${seat} for this machine to \`seats\` in claude_env_settings.json, then run setup`);
     if (dir !== baseDir(home)) env.CLAUDE_CONFIG_DIR = dir;
   }
+  ({ extraArgs } = withClaudeSession(env, extraArgs, { configDir: env.CLAUDE_CONFIG_DIR || baseDir(home), cwd }));
 
   if (!provider || provider === 'claude') {
     // A machine with its own bot token runs the session bridge (docs/bridge.md), so every
