@@ -14,6 +14,10 @@ import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { fakeAiLab, writeCache } from '../shared/provider-cache-fixture.mjs';
 
+// These tests read the args the launcher builds; an inherited LAB_SESSION adds none, so they hold whether or not
+// the run itself is inside a session. Pinning a fresh session (--session-id) is vendor-session.test.mjs's.
+process.env.LAB_SESSION ||= 'test-inherited-session';
+
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'cc-launcher-'));
   return {

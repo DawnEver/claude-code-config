@@ -19,6 +19,7 @@ import { readProviderCache } from '../shared/provider-cache.mjs';
 import { resolveProvider } from '../shared/provider-projection.mjs';
 import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
 import { sessionEnv } from '../shared/machine.mjs';
+import { codexSession } from '../shared/vendor-session.mjs';
 
 // Subcommands that open the interactive TUI; every other subcommand (exec, app-server, ...)
 // is non-interactive and must not be redirected. A bare positional is the TUI's prompt.
@@ -79,13 +80,16 @@ export function buildCodexInvocation({
   localPath = LOCAL_ENV_SETTINGS_PATH,
   readCache = () => readProviderCache(),
   fetchKey = fetchStoredKey,
+  baseEnv = process.env,
+  codexHome = baseEnv.CODEX_HOME || join(homedir(), '.codex'),
 }) {
   // Provenance (HARNESS_*, GIT_COMMITTER_NAME) is NOT injected here: Codex may run
   // commands in a shared daemon this env never reaches. setup writes it into
   // ~/.codex/config.toml [shell_environment_policy.set] instead — see codexShellEnv().
   // The session id is per session, so it rides this env (config.toml cannot carry it); a command
   // run in a shared daemon this env never reaches has none, and lab-commons refuses its commit.
-  const env = { ...process.env, ...sessionEnv() };
+  // A resumed thread keeps its id (`codex resume <id>` / `--last`, vendor-session.mjs).
+  const env = { ...baseEnv, ...sessionEnv(baseEnv, codexSession(extraArgs, { codexHome })) };
   for (const k of PROVIDER_KEYS) delete env[k];
   for (const k of CODEX_STRIP_KEYS) delete env[k];
 
