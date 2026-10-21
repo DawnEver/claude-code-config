@@ -91,6 +91,21 @@ export function stats(snapshot) {
     attention: live.filter((s) => ATTENTION.includes(s.status)).length };
 }
 
+/**
+ * An absolute time as this device chose to read it: `clock` '24' (default) or '12'; `date` 'day'
+ * (21 Oct, default), 'iso' (2026-10-21) or 'off'. Local time zone.
+ */
+export function formatTime(ms, { clock = '24', date = 'day' } = {}) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  const h = d.getHours();
+  const time = clock === '12' ? `${h % 12 || 12}:${pad(d.getMinutes())} ${h < 12 ? 'AM' : 'PM'}` : `${pad(h)}:${pad(d.getMinutes())}`;
+  const day = date === 'iso' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    : date === 'day' ? `${d.getDate()} ${MONTHS[d.getMonth()]}` : '';
+  return day ? `${day} ${time}` : time;
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
 export function ago(iso, now = Date.now()) {
   const at = Date.parse(iso);
   if (!Number.isFinite(at)) return 'never';
@@ -148,7 +163,8 @@ export const resetText = (w, now = Date.now()) => (!w.renewed && w.resetsAt > no
 
 /** A window's label in the page's one unit, % left; a stale reading is a ceiling (`≤`) unless already exhausted. */
 export function windowLabel(w, stale, unit = 'left') {
-  if (w.renewed) return { text: 'unused', title: 'new window, nothing spent yet', stale: false };
+  // A passed reset is all that is known: the last reading predates it, so the use now is unknown, not zero.
+  if (w.renewed) return { text: 'not read', title: 'the window has reset since the last reading; use unknown until the account is used on this host', stale: false };
   const left = Math.max(0, Math.round(100 - w.used));
   const ceiling = stale && left > 0;
   const n = amount(w.used, unit);

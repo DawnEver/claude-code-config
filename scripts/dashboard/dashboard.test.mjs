@@ -7,7 +7,7 @@ import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -563,7 +563,7 @@ test('view: windowLabel — every number is % left; unused and stale read plainl
   assert.deepEqual(windowLabel({ used: 100, renewed: false }, true), { text: '0%', title: '0% left', stale: false }, 'exhausted stays exhausted');
   assert.deepEqual(windowLabel({ used: 26, renewed: false }, true, 'used'), { text: '≥26%', title: 'at least 26% used (stale reading)', stale: true }, 'the used unit');
   assert.deepEqual([amount(26), amount(26, 'used'), amount(130), amount(130, 'used')], [74, 26, 0, 100]);
-  assert.deepEqual(windowLabel({ used: 0, renewed: true }, false), { text: 'unused', title: 'new window, nothing spent yet', stale: false });
+  assert.deepEqual(windowLabel({ used: 0, renewed: true }, false), { text: 'not read', title: 'the window has reset since the last reading; use unknown until the account is used on this host', stale: false });
   assert.equal(emailName('alice@example.com'), 'alice');
   assert.equal(emailName(null), null);
 });
@@ -589,3 +589,11 @@ test('view: a shared account renders fully once — on its first online host —
   assert.equal(by2.find((h) => h.id === 'host-a').accounts.find((q) => q.key === 'claude:a').refTo, null, 'no online host: the first in order');
 });
 
+
+test('view: formatTime — 24h and a short day by default; 12h, ISO date and no date on request', () => {
+  const t = new Date(2026, 9, 21, 23, 36).getTime();
+  assert.equal(formatTime(t), '21 Oct 23:36');
+  assert.equal(formatTime(t, { clock: '12' }), '21 Oct 11:36 PM');
+  assert.equal(formatTime(t, { date: 'iso' }), '2026-10-21 23:36');
+  assert.equal(formatTime(new Date(2026, 0, 2, 0, 5).getTime(), { clock: '12', date: 'off' }), '12:05 AM');
+});

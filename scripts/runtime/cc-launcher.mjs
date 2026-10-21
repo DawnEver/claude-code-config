@@ -14,7 +14,7 @@ import os from 'os';
 import { baseDir, readSeats, resolveSeat, seatHome, seatsFor } from '../shared/seats.mjs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
-import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
+import { readMachineName, readGitUserName, provenanceEnv, sessionEnv } from '../shared/machine.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { resolveProvider } from '../shared/provider-projection.mjs';
@@ -61,7 +61,7 @@ export function buildClaudeInvocation({
 }) {
   const env = { ...process.env };
   for (const k of PROVIDER_KEYS) delete env[k];
-  Object.assign(env, provenanceEnv({ machine, agent: 'claude', userName: gitUserName, env }));
+  Object.assign(env, provenanceEnv({ machine, agent: 'claude', userName: gitUserName, env }), sessionEnv(env));
   // The launcher alone picks the config dir: a seat's (scripts/shared/seats.mjs), else the
   // base dir, even when started from a shell that inherited another seat's CLAUDE_CONFIG_DIR.
   delete env.CLAUDE_CONFIG_DIR;

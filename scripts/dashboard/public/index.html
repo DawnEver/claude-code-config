@@ -23,6 +23,7 @@
   .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
   h1 { font-size: 20px; margin: 0; }
   #version { font-weight: 400; margin-left: 6px; }
+  #version .commit { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
   .muted { color: var(--hint); font-size: var(--t3); }
 
   /* 1. Does anything need me? */
@@ -148,6 +149,7 @@
   .win .k { color: var(--hint); font-size: var(--t3); font-weight: 600; }
   .win .used { text-align: right; font-size: var(--t2); font-weight: 600; }
   .bar { position: relative; height: 8px; border-radius: 4px; background: var(--sep); }
+  .bar.unknown { background: repeating-linear-gradient(135deg, var(--sep) 0 4px, transparent 4px 8px); } .bar.unknown .fill, .bar.unknown .pace { display: none; }
   .bar .fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 4px; background: var(--run); }
   .bar.hot .fill { background: var(--warn); }
   .bar .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--fg); opacity: .55; border-radius: 1px; }
