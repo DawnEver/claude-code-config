@@ -57,7 +57,7 @@ test('schema: whitelists fields, derives a Topic link, never forwards the chat i
   const p = parseHostPush(push({ sessions: [session({ cwd: '/home/u/x', token: 'secret' }), session({ id: 's2', topic: null, status: 'bogus' }),
     session({ agent: 'gpt' }), session()] }));
   assert.equal(p.sessions.length, 2, 'unknown agent and duplicate dropped');
-  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'project', 'seat', 'status', 'topic']);
+  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'mention', 'name', 'project', 'seat', 'status', 'topic', 'unread']);
   assert.deepEqual(p.sessions[0].topic, { url: 'https://t.me/c/1234567890/77', closed: false });
   assert.equal(p.sessions[1].status, 'unknown');
   assert.equal(p.sessions[1].topic, null);
@@ -71,7 +71,7 @@ test('schema: whitelists fields, derives a Topic link, never forwards the chat i
 test('registry: ordering per boot, offline after TTL, configured hosts listed before their first push', () => {
   let t = NOW;
   const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => t });
-  assert.deepEqual(r.host('host-b'), { id: 'host-b', online: false, lastSeen: null, sessions: [], config: null });
+  assert.deepEqual(r.host('host-b'), { id: 'host-b', online: false, lastSeen: null, sessions: [], resources: null, config: null });
   assert.equal(r.accept('host-a', parseHostPush(push({ seq: 5 }))).accepted, true);
   assert.equal(r.accept('host-a', parseHostPush(push({ seq: 4, sessions: [] }))).accepted, false, 'delayed older push');
   assert.equal(r.host('host-a').sessions.length, 1);
@@ -596,4 +596,21 @@ test('view: formatTime — 24h and a short day by default; 12h, ISO date and no 
   assert.equal(formatTime(t, { clock: '12' }), '21 Oct 11:36 PM');
   assert.equal(formatTime(t, { date: 'iso' }), '2026-10-21 23:36');
   assert.equal(formatTime(new Date(2026, 0, 2, 0, 5).getTime(), { clock: '12', date: 'off' }), '12:05 AM');
+});
+
+test('chat list: name over project, Telegram-style time and badges, machine load meters', async () => {
+  const v = await import('./public/view.mjs');
+  assert.equal(v.sessionLabel({ name: 'Fix login', project: 'p' }), 'Fix login');
+  assert.equal(v.sessionLabel({ name: null, project: 'p' }), 'p');
+  const now = new Date(2026, 9, 22, 15, 0).getTime();
+  assert.equal(v.chatTime(new Date(2026, 9, 22, 9, 5).toISOString(), now), '09:05');
+  assert.equal(v.chatTime(new Date(2026, 9, 20, 9, 5).toISOString(), now), 'Tue');
+  assert.equal(v.chatTime(new Date(2026, 8, 1).toISOString(), now), '1 Sep');
+  assert.deepEqual([0, 5, 120].map(v.unreadBadge), ['', '5', '99+']);
+  const GB = 1024 ** 3;
+  assert.deepEqual(v.resourceMeters({ cpu: 40, cores: 8, mem: { used: 8 * GB, total: 32 * GB }, gpus: [] }),
+    [{ label: 'CPU', pct: 40, text: '40% · 8 cores' }, { label: 'RAM', pct: 25, text: '8 / 32 GB' }]);
+  assert.deepEqual(v.resourceMeters(null), []);
+  const mock = v.mockDashboard();
+  assert.ok(v.quotaByHost(mock).find((h) => h.id === 'host-a').resources.gpus.length);
 });

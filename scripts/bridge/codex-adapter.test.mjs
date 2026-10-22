@@ -70,7 +70,7 @@ test('start() returns false when the daemon probe fails, without connecting', as
 test('handshake then subscribe every loaded thread via thread/resume', async () => {
   const { srv, ups } = await started();
   assert.deepEqual(srv.calls.map((c) => c.method), ['initialize', 'initialized', 'account/read', 'account/rateLimits/read', 'thread/loaded/list', 'thread/resume']);
-  assert.deepEqual(ups, [{ id: 't1', cwd: '/w', branch: 'feat/x', backlog: [] }]);
+  assert.deepEqual(ups, [{ id: 't1', cwd: '/w', branch: 'feat/x', name: null, backlog: [] }]);
 });
 
 test('account quota: read on refresh, replaced by pushes for the codex bucket only', async () => {

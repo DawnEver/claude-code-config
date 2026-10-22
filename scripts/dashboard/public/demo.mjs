@@ -38,6 +38,7 @@ export function demoMasker() {
   const project = namer((n) => `project-${letter(n)}`);
   const branchN = namer((n) => `branch-${n}`);
   const session = namer((n) => `session-${n}`);
+  const sessionTitle = namer((n) => `Task ${n}`);
   const chat = namer((n) => String(1000000000 + n));
   const account = namer((n, k) => `${k.split(':')[0]}:account-${n}`);
   // A seat alias and its account's org share one letter: team-a sits in Team A.
@@ -86,7 +87,7 @@ export function demoMasker() {
   return (snap) => {
     // Structured fields first: they fix the numbering the free text then reuses.
     const hosts = (snap.hosts ?? []).map((h) => ({ ...h, id: host(h.id),
-      sessions: (h.sessions ?? []).map((s) => ({ ...s, id: session(s.id), hostId: host(s.hostId), project: project(s.project),
+      sessions: (h.sessions ?? []).map((s) => ({ ...s, id: session(s.id), name: sessionTitle(s.name), hostId: host(s.hostId), project: project(s.project),
         branch: branch(s.branch), seat: seat(s.seat), account: account(s.account), topic: s.topic && { ...s.topic, url: topicUrl(s.topic.url) } })),
       config: h.config && { ...h.config,
         editable: Object.fromEntries(Object.entries(h.config.editable ?? {}).map(([k, v]) => [configKey(k), v])),

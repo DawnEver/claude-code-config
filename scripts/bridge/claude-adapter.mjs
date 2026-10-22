@@ -61,6 +61,42 @@ export function continuedIn(file) {
   return next;
 }
 
+// A session's name: /rename (custom-title) wins over the agent view's name, which wins over the
+// generated title; within one kind the latest record wins.
+const NAME_RANK = { 'custom-title': 2, 'agent-name': 1, 'ai-title': 0 };
+const NAME_CHUNK = 4 * 1024 * 1024;
+export const NO_NAME = Object.freeze({ name: null, rank: -1, at: 0 });
+
+/**
+ * The session's name from its transcript, read on from where the last call stopped (`prev.at`,
+ * bytes; only whole lines), so a hook costs only what was appended since. Returns the new state.
+ */
+export function transcriptName(file, prev = NO_NAME) {
+  let fd;
+  try { fd = fs.openSync(file, 'r'); } catch { return prev; }
+  try {
+    const size = fs.fstatSync(fd).size;
+    let { name, rank, at } = size < prev.at ? NO_NAME : prev;
+    while (at < size) {
+      const buf = Buffer.alloc(Math.min(NAME_CHUNK, size - at));
+      const n = fs.readSync(fd, buf, 0, buf.length, at);
+      const end = buf.lastIndexOf(10, n - 1);
+      if (end < 0) break;   // a line still being written (or longer than a chunk)
+      for (const l of buf.toString('utf8', 0, end).split('\n')) {
+        if (!/"type":"(?:custom-title|agent-name|ai-title)"/.test(l)) continue;
+        try {
+          const e = JSON.parse(l);
+          const r = NAME_RANK[e.type];
+          const v = e.customTitle ?? e.agentName ?? e.aiTitle;
+          if (r !== undefined && r >= rank && typeof v === 'string' && v.trim()) { name = v.trim(); rank = r; }
+        } catch { /* cut line */ }
+      }
+      at += end + 1;
+    }
+    return { name, rank, at };
+  } finally { fs.closeSync(fd); }
+}
+
 /** A prompt that arrived through a channel, as UserPromptSubmit reports it -> its text. */
 export function unwrapChannel(text) {
   const m = /^\s*<channel\b[^>]*>([\s\S]*)<\/channel>\s*$/.exec(text);
@@ -139,8 +175,11 @@ export class ClaudeAdapter extends EventEmitter {
           this.sessions.set(sessionId, { peer, socket, ids: new Set([...(previous?.ids ?? []), sessionId]), sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
             queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
-            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null });
-          this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, backlog: [] });
+            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null,
+            named: previous?.named ?? NO_NAME });
+          const s = this.sessions.get(sessionId);
+          if (s.transcript) s.named = transcriptName(s.transcript, s.named);
+          this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, name: s.named.name, backlog: [] });
           this.#emitStatus(sessionId);
           this.#takeOver(sessionId);
           this.#release();
@@ -257,9 +296,22 @@ export class ClaudeAdapter extends EventEmitter {
   /** A hook names the session's transcript: the first time, look for the session it continues. */
   #learnTranscript(id, file) {
     const s = this.sessions.get(id);
-    if (!s || !file || s.transcript === file) return;
-    s.transcript = file;
-    this.#takeOver(id);
+    if (!s || !file) return;
+    if (s.transcript !== file) {
+      s.transcript = file;
+      s.named = NO_NAME;   // /clear or /resume: another conversation, its own name
+      this.#takeOver(id);
+    }
+    this.#readName(id);
+  }
+
+  /** Read what the transcript appended for a new name; the daemon retitles the Topic. */
+  #readName(id) {
+    const s = this.sessions.get(id);
+    if (!s?.transcript) return;
+    const before = s.named?.name ?? null;
+    s.named = transcriptName(s.transcript, s.named ?? NO_NAME);
+    if (s.named.name !== before) this.emit('name', { id, name: s.named.name });
   }
 
   /** Session `next` continues session `old`: the daemon moves its Topic, its queue moves along. */

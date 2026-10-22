@@ -289,7 +289,7 @@ export class CodexAdapter extends EventEmitter {
     this.threads.set(threadId, info);
     // Back from release: what ran since it went quiet replays (updatedAt is seconds).
     const since = released === undefined ? this.connectedAt : released * 1000;
-    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, backlog: backlogSince(th.turns, since) });
+    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, name: th.name ?? null, backlog: backlogSince(th.turns, since) });
   }
 
   /** A non-main thread: never subscribed again; `dismiss` lets the daemon close any Topic it has. */
@@ -401,6 +401,8 @@ export class CodexAdapter extends EventEmitter {
         break;
       }
       case 'thread/closed': this.#drop(p.threadId); break;
+      // Renamed (/rename, or by any client): the Topic title follows.
+      case 'thread/name/updated': if (this.threads.has(p.threadId)) this.emit('name', { id: p.threadId, name: p.threadName ?? null }); break;
       default: break;
     }
   }

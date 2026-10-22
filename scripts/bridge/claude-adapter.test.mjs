@@ -542,3 +542,18 @@ test('handoff: the relaunch\'s first hook naming its transcript also moves the s
   assert.deepEqual(moves, [{ id: 'x', from: 'y' }]);
   old.destroy(); fresh.destroy();
 }));
+
+test('transcriptName: /rename beats the generated title, read on incrementally', async () => {
+  const { transcriptName } = await import('./claude-adapter.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tname-'));
+  const file = path.join(dir, 't.jsonl');
+  const line = (o) => `${JSON.stringify(o)}\n`;
+  fs.writeFileSync(file, line({ type: 'user' }) + line({ type: 'ai-title', aiTitle: 'Generated' }));
+  let s = transcriptName(file);
+  assert.equal(s.name, 'Generated');
+  fs.appendFileSync(file, line({ type: 'custom-title', customTitle: 'Mine' }) + line({ type: 'ai-title', aiTitle: 'Later' }) + '{"type":"custom-title","custom');
+  s = transcriptName(file, s);
+  assert.equal(s.name, 'Mine');
+  assert.equal(s.at, fs.statSync(file).size - '{"type":"custom-title","custom'.length, 'a cut line is read next time');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -71,7 +71,14 @@ no API, no authentication.
   opened with `Telegram.WebApp.openTelegramLink`. A closed Topic still links (marked closed);
   re-binding (resume, supersede, recreate) shows on the next push. The group id appears only
   inside that link (Telegram needs it); the chat id itself is not served.
-- **Not exported**: cwd, Topic titles, tokens. Account emails are (Quota, below). `lastActivityAt` is the bridge's last
+- **Not exported**: cwd, Topic titles, tokens, and no message text. Account emails are (Quota, below).
+  The session's own name is (`name`, see bridge.md; Claude's generated title is a summary of the conversation, so a
+  name may echo its topic), and two counts per Topic: `unread`, the messages
+  posted since the human last wrote there (a prompt typed at the machine counts as writing; reading
+  without replying cannot be seen), and `mention`, while a `waiting for you` mention stands.
+- **Chat list** (Config → This device): sessions drawn as Telegram lists chats: agent avatar with
+  the status dot, name and time, status and where it runs, then the unread count and `@`. No message
+  preview: it would put conversation content on Cloudflare. `lastActivityAt` is the bridge's last
   mirrored activity (a session with no group configured stays at its `up` time).
 - The Durable Object keeps nothing on disk: when Cloudflare evicts or restarts it, the dashboard is
   empty until the next push round (`everySeconds`).
@@ -103,6 +110,9 @@ app-server); the Worker never recomputes it.
   a tap opens it in place to the detail: org and plan, each window's trend on a local-time axis
   (hours for 5h, weekday and date for 7d, a line at the present), reset and forecast. A shared
   account appears under every host that runs it, marked as one budget.
+- **Machine load** (Config → This device, off by default): each host's CPU % (all cores since the
+  previous push), memory and, where `nvidia-smi` exists, each GPU's use and memory, above its accounts.
+  Sampled by `scripts/bridge/resources.mjs` on every push; numbers and a GPU model name only.
 - **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
   the trend (spend per slice against an even spend; hatched = never observed), reset time and
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most

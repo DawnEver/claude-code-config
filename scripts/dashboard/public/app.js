@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceMeters } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 
 const POLL_MS = 8000;
@@ -54,6 +54,10 @@ const timeFormat = { clock: store.get('dashboard.clock') === '12' ? '12' : '24',
 let deployed = null;   // the live version from /api/health: {commit, id, at}
 let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns, not aligned rows
 document.body.classList.toggle('packed', packed);
+// Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) instead of status rows.
+let chatList = store.get('dashboard.chatList') === '1';
+// Quota hosts show their CPU, memory and GPU load.
+let showResources = store.get('dashboard.resources') === '1';
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // an edit typed but not saved
 
@@ -70,14 +74,17 @@ function openTopic(url) {
  * The title is what its group does not already say: in a project group the machine and branch,
  * elsewhere the project.
  */
-function sessionRow(s, { withHost = false, inProject = false } = {}) {
+function sessionRow(s, opts = {}) {
+  if (chatList) return chatRow(s, opts);
+  const { withHost = false, inProject = false } = opts;
   const status = displayStatus(s);
   const row = el(s.topic ? 'button' : 'div', `row s-${status}${s.topic ? ' link' : ''}`);
   const main = el('div', 'main');
-  main.append(el('div', 'title', inProject ? [s.hostId, s.branch].filter(Boolean).join(' · ') : s.project ?? 'unknown project'));
+  const where = inProject ? [s.hostId, s.branch].filter(Boolean).join(' · ') : s.project ?? 'unknown project';
+  main.append(el('div', 'title', s.name ?? where));
   const sub = el('div', 'sub');
   sub.append(el('span', `agent ${s.agent}`, s.agent === 'claude' ? 'Claude' : 'Codex'));
-  const rest = [!inProject && withHost && s.hostId, !inProject && s.branch, stateAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
+  const rest = [s.name && where, !inProject && withHost && s.hostId, !inProject && s.branch, stateAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
   sub.append(document.createTextNode(` · ${rest.join(' · ')}`));
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
@@ -89,6 +96,32 @@ function sessionRow(s, { withHost = false, inProject = false } = {}) {
     row.title = 'Open Topic';
     row.addEventListener('click', () => openTopic(s.topic.url));
   }
+  return row;
+}
+
+/**
+ * One session as Telegram lists a chat: the agent as avatar (its status as the dot on it), the
+ * name and the time of the last activity, then where it runs and its state; on the right the
+ * messages the Topic got since you last spoke there, and @ while a mention waits for you.
+ * Counts only: no message text reaches the dashboard.
+ */
+function chatRow(s, { withHost = false, inProject = false } = {}) {
+  const status = displayStatus(s);
+  const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
+  const avatar = el('span', `avatar ${s.agent}`, s.agent === 'claude' ? 'C' : 'X');
+  avatar.append(el('span', 'dot'));
+  const body = el('div', 'main');
+  const top = el('div', 'chat-top');
+  top.append(el('span', 'title', sessionLabel(s)), el('span', `chat-time${s.unread ? ' fresh' : ''}`, chatTime(s.lastActivityAt, Date.now(), timeFormat)));
+  const bottom = el('div', 'chat-bottom');
+  const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
+  bottom.append(el('span', 'sub', [STATUS_LABELS[status] ?? status, ...where, s.topic?.closed && 'Topic closed'].filter(Boolean).join(' · ')));
+  if (s.mention) { const at = el('span', 'badge at', '@'); at.title = 'a mention waits for you'; bottom.append(at); }
+  const n = unreadBadge(s.unread);
+  if (n) { const b = el('span', 'badge', n); b.title = 'messages since you last wrote in this Topic'; bottom.append(b); }
+  body.append(top, bottom);
+  row.append(avatar, body);
+  if (s.topic) { row.title = 'Open Topic'; row.addEventListener('click', () => openTopic(s.topic.url)); }
   return row;
 }
 
@@ -264,13 +297,31 @@ function renderQuota() {
     best.forEach(({ q }, i) => bestLine.append(i ? ' · ' : '', acctTag(q, true)));
     const rows = el('div', 'qrows');
     for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q) : quotaRow(q, h.id));
-    section.append(head, bestLine, rows);
+    section.append(head, ...(showResources ? [resourcesBox(h.resources, h.online)] : []), bestLine, rows);
     hosts.append(section);
   }
   box.append(quotaHeader(), hosts);
 }
 
-/** A shared account already carded on another host: one line pointing there. */
+/** A host's load: one meter per CPU, memory and GPU, coloured past 80%. */
+function resourcesBox(r, online) {
+  const meters = resourceMeters(r);
+  const box = el('div', `res${online ? '' : ' stale-v'}`);
+  if (!meters.length) { box.append(el('span', 'muted', 'no load reported')); return box; }
+  for (const m of meters) {
+    const cell = el('div', 'res-m');
+    const track = el('div', `bar${m.pct >= 80 ? ' hot' : ''}`);
+    const fill = el('div', 'fill');
+    fill.style.width = `${Math.min(100, Math.max(0, m.pct))}%`;
+    track.append(fill);
+    const text = el('span', 'res-t', m.text);
+    if (m.title) text.title = m.title;
+    cell.append(el('span', 'k', m.label), track, text);
+    box.append(cell);
+  }
+  return box;
+}
+
 /** The headline when no window has a current reading: reset since the last one, or never read. */
 function noReading(q) {
   const reset = q.windows.length > 0;
@@ -459,70 +510,46 @@ function timeSettings() {
   return row;
 }
 
-function unitToggle() {
+/** A setting of this device shown as a checkbox: `get` reads it, `set` stores it; the page redraws. */
+function deviceToggle(label, get, set) {
   const row = el('label', 'cfg demo-toggle');
   const box = el('input');
   box.type = 'checkbox';
-  box.checked = unit === 'used';
-  box.addEventListener('change', () => { unit = box.checked ? 'used' : 'left'; store.set('dashboard.unit', unit); render(); });
-  row.append(box, el('span', null, 'Quota bars show % used (fill = spent) instead of % left (fill = remaining)'));
+  box.checked = get();
+  box.addEventListener('change', () => { set(box.checked); render(); });
+  row.append(box, el('span', null, label));
   return row;
 }
 
-function layoutToggle() {
-  const row = el('label', 'cfg demo-toggle');
-  const box = el('input');
-  box.type = 'checkbox';
-  box.checked = packed;
-  box.addEventListener('change', () => { packed = box.checked; store.set('dashboard.packed', packed ? '1' : '0'); document.body.classList.toggle('packed', packed); });
-  row.append(box, el('span', null, 'Packed layout (Sessions and Quota): hosts flow down each column and fill the gaps, instead of aligned rows'));
-  return row;
-}
-
-function demoToggle() {
-  const row = el('label', 'cfg demo-toggle');
-  const box = el('input');
-  box.type = 'checkbox';
-  box.checked = demoOn;
-  box.addEventListener('change', () => {
-    demoOn = box.checked;
-    store.set('dashboard.demo', demoOn ? '1' : '0');
+/** Every checkbox of the "This device" section, in the order shown. */
+const deviceToggles = () => [
+  deviceToggle('Quota bars show % used (fill = spent) instead of % left (fill = remaining)', () => unit === 'used',
+    (v) => { unit = v ? 'used' : 'left'; store.set('dashboard.unit', unit); }),
+  deviceToggle('Packed layout (Sessions and Quota): hosts flow down each column and fill the gaps, instead of aligned rows', () => packed,
+    (v) => { packed = v; store.set('dashboard.packed', v ? '1' : '0'); document.body.classList.toggle('packed', v); }),
+  deviceToggle('Group sessions by project instead of by host', () => groupBy === 'project',
+    (v) => { groupBy = v ? 'project' : 'host'; store.set('dashboard.groupBy', groupBy); }),
+  deviceToggle('In a project, order sessions by urgency instead of by workstation', () => groupOrder === 'urgency',
+    (v) => { groupOrder = v ? 'urgency' : 'host'; store.set('dashboard.groupOrder', groupOrder); }),
+  deviceToggle('Sessions as a chat list (Telegram style): name, time, unread count and @ mentions', () => chatList,
+    (v) => { chatList = v; store.set('dashboard.chatList', v ? '1' : '0'); }),
+  deviceToggle('Quota: show each machine\'s CPU, memory and GPU load', () => showResources,
+    (v) => { showResources = v; store.set('dashboard.resources', v ? '1' : '0'); }),
+  ...(mock ? [] : [deviceToggle('Demo mode: mask machines, accounts, projects and ids on this device (config edits off)', () => demoOn, (v) => {
+    demoOn = v;
+    store.set('dashboard.demo', v ? '1' : '0');
     readAlerts = loadRead();
     filters.host = filters.project = '';   // the chosen names belong to the other view
     selectsKey = null;
     snapshot = shown();
     configShown = null;
-    render();
-  });
-  row.append(box, el('span', null, 'Demo mode: mask machines, accounts, projects and ids on this device (config edits off)'));
-  return row;
-}
-
-function groupToggle() {
-  const row = el('label', 'cfg demo-toggle');
-  const box = el('input');
-  box.type = 'checkbox';
-  box.checked = groupBy === 'project';
-  box.addEventListener('change', () => { groupBy = box.checked ? 'project' : 'host'; store.set('dashboard.groupBy', groupBy); render(); });
-  row.append(box, el('span', null, 'Group sessions by project instead of by host (this device)'));
-  return row;
-}
-
-function orderToggle() {
-  const row = el('label', 'cfg demo-toggle');
-  const box = el('input');
-  box.type = 'checkbox';
-  box.checked = groupOrder === 'urgency';
-  box.addEventListener('change', () => { groupOrder = box.checked ? 'urgency' : 'host'; store.set('dashboard.groupOrder', groupOrder); render(); });
-  row.append(box, el('span', null, 'In a project, order sessions by urgency instead of by workstation'));
-  return row;
-}
+  })]),
+];
 
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
-  box.append(el('div', 'section-h', 'This device'), timeSettings(), unitToggle(), layoutToggle(), groupToggle(), orderToggle());
-  if (!mock) box.append(demoToggle());
+  box.append(el('div', 'section-h', 'This device'), timeSettings(), ...deviceToggles());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }
   box.append(el('div', 'section-h', 'Shared settings'));

@@ -51,13 +51,14 @@ and is never mirrored:
 - **One forum group per project**, Topics enabled. Project = origin repo name of the
   session's cwd, so all worktrees of a repo share a group. Unknown projects go to
   `bridge.fallbackChatId`; without one the session is registered but not mirrored.
-- **One Topic per session**, titled `<machine> | <project> | <branch> | <agent>`; a group dedicated to one repo can drop `<project>` with `bridge.projects.<repo>.projectInTitle`: `"main"` (keep it only on main/master) or `"never"` (default `"always"`).
+- **One Topic per session**, titled `[<name> | ]<machine> | <project> | <branch> | <agent>`. `<name>` is the session's own name: Claude's `/rename` (`custom-title`), else its agent-view name, else its generated title (`ai-title`), read incrementally from the transcript on every hook; Codex's `thread.name` (`thread/name/updated`). A rename retitles the Topic. A session with no name yet keeps the plain title; a group dedicated to one repo can drop `<project>` with `bridge.projects.<repo>.projectInTitle`: `"main"` (keep it only on main/master) or `"never"` (default `"always"`).
   Display-only project names drop a trailing `studio` or `lab` (separated by spaces,
   hyphens or underscores); configuration/routing still use the full origin repo name.
   Concurrent same-name live sessions use a stable six-hex session-derived suffix
   ` · a7c2e1`, extended only on a collision. Ended cached Topics do not reserve names.
   Reattachments rename old active Topics in place, preserving Topic/session IDs and
   an existing stable suffix. Historical inactive Topics are not bulk rewritten.
+- **Mentions are cleared.** Posts are silent; a request still waiting after the grace gets one `@you waiting for you`. Once anything follows it in the Topic (a later post, or the human writing there), that message is deleted, so Telegram's @ badge for the Topic goes away.
 - `~/.claude/bridge/topics.json` (`chatId|<agent>:<id>` -> `{topicId, title, closedAt?}`) lets
   a session re-attach to its Topic after a daemon restart or a `--resume`; it is a cache,
   deleting it only means new Topics.

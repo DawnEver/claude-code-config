@@ -35,6 +35,7 @@ import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
+import { ResourceReader } from './resources.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
@@ -53,21 +54,26 @@ export const STATUS_CODES = { running: 'working', idle: 'idle', 'waiting-approva
 /** Status code -> the text of the status card. */
 export const STATUS_LABELS = { working: 'Working', idle: 'Idle', needs_approval: 'Needs approval', needs_input: 'Needs input', unknown: 'Unknown', ended: 'Ended' };
 const statusCode = (state) => STATUS_CODES[state] ?? 'unknown';
+/** A session name as its host reports it, or null: one line, bounded. */
+export const sessionName = (v) => { const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; return t ? t.slice(0, 200) : null; };
 const clock = t => new Date(t).toTimeString().slice(0, 5);
 
 /**
- * `machine | [project |] branch | agent[ · suffix]`. projectInTitle drops the project in a
- * group dedicated to one repo: 'main' keeps it only on main/master, 'never' always drops it.
+ * `[name | ]machine | [project |] branch | agent[ · suffix]`: the session's own name (Claude's
+ * /rename or generated title, Codex's thread name) first, so a Topic list reads by task.
+ * projectInTitle drops the project in a group dedicated to one repo: 'main' keeps it only on
+ * main/master, 'never' always drops it.
  */
-export function topicTitle({ machine, project, branch, agent, suffix = '', projectInTitle = 'always' }) {
+export function topicTitle({ name, machine, project, branch, agent, suffix = '', projectInTitle = 'always' }) {
   const clean = value => String(value ?? '').replace(/[|\r\n]/g, ' ').trim();
   const clip = (value, max) => {
     const chars = Array.from(value);
     return chars.length > max ? chars.slice(0, max - 1).join('') + '…' : value;
   };
-  const name = clean(project).replace(/[-_ ]+(?:studio|lab)(?=$|[-_ ])/gi, '') || 'unknown';
+  const projectName = clean(project).replace(/[-_ ]+(?:studio|lab)(?=$|[-_ ])/gi, '') || 'unknown';
   const showProject = projectInTitle === 'always' || (projectInTitle === 'main' && ['main', 'master'].includes(clean(branch)));
-  const head = `${clip(clean(machine), 24)} | ${showProject ? `${clip(name, 32)} | ` : ''}`;
+  const label = clean(name);
+  const head = `${label ? `${clip(label, 40)} | ` : ''}${clip(clean(machine), 24)} | ${showProject ? `${clip(projectName, 32)} | ` : ''}`;
   const tail = ` | ${clip(clean(agent), 20)}${suffix ? ` · ${suffix}` : ''}`;
   const available = Math.max(1, 128 - Array.from(head + tail).length);
   const source = Array.from(clean(branch) || 'detached');
@@ -105,7 +111,7 @@ export class Bridge {
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
     a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
     a.on('status', e => this.updateStatus(sessionKey(a.agent, e.id)).catch(err => this.#warnOnce('status-card', err.message)));
-    for (const kind of ['superseded', 'prompt', 'progress', 'final', 'notice', 'approval', 'question']) {
+    for (const kind of ['superseded', 'name', 'prompt', 'progress', 'final', 'notice', 'approval', 'question']) {
       a.on(kind, (e) => {
         const key = sessionKey(a.agent, e.id);
         const q = this.held.get(key);
@@ -135,6 +141,7 @@ export class Bridge {
 
   #event(key, kind, e) {
     if (kind === 'superseded') return Promise.resolve(this.supersede(key, e.from));
+    if (kind === 'name') return this.rename(key, e.name);
     if (kind === 'prompt') return this.prompt(key, e.text);
     if (kind === 'progress') return this.progress(key, e.text);
     if (kind === 'final') return this.final(key, e.text, e.status);
@@ -152,7 +159,7 @@ export class Bridge {
    * minus the turns the backlog already carried (a turn that completes during bring-up is
    * reported both ways).
    */
-  async sessionUp(agent, { id, cwd, branch, seat = null, backlog = [] }) {
+  async sessionUp(agent, { id, cwd, branch, seat = null, name = null, backlog = [] }) {
     const key = sessionKey(agent, id);
     if (this.sessions.has(key) || this.held.has(key)) return this.sessions.get(key);
     this.held.set(key, []);
@@ -163,11 +170,13 @@ export class Bridge {
       const cacheKey = chatId === null ? null : TopicCache.key(chatId, key);
       const cached = cacheKey === null || this.deletingTopics.has(cacheKey) ? null : this.topics.get(cacheKey);
       // A Claude seat (scripts/shared/seats.mjs) names the login the session runs as.
-      const titleOf = (suffix = '') => topicTitle({ machine: this.machine, project: ctx.project, branch: ctx.branch,
+      // unread/mention: what the Topic holds since the human last spoke there (the dashboard's chat list).
+      const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, name: sessionName(name),
+        project: ctx.project, branch: ctx.branch, cwd, seat, chain: Promise.resolve(), progress: null, injected: [],
+        unread: 0, mention: null };
+      s.titleOf = (suffix = '') => topicTitle({ name: s.name, machine: this.machine, project: ctx.project, branch: ctx.branch,
         agent: seat ? `${agent}:${seat}` : agent, suffix, projectInTitle: this.config.projects[ctx.project]?.projectInTitle });
-      const base = titleOf();
-      const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, base, titleOf,
-        title: base, project: ctx.project, branch: ctx.branch, cwd, seat, chain: Promise.resolve(), progress: null, injected: [] };
+      const base = s.base = s.title = s.titleOf();
       this.sessions.set(key, s);
       s.title = this.#selectTitle(s, cached?.title);
       if (cached && cached.title !== s.title) {
@@ -204,11 +213,36 @@ export class Bridge {
    */
   dashboardSnapshot() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({
-      id: s.id, agent: s.agent, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null,
+      id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null,
+      unread: s.unread ?? 0, mention: !!s.mention,
       status: statusCode(this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.state),
       lastActivityAt: new Date(s.lastActivity).toISOString(),
       topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed' } : null,
     }));
+  }
+
+  /**
+   * The session's name changed (renamed, or its title generated): the Topic title follows. A
+   * Topic not created yet takes the name when it is.
+   */
+  async rename(key, raw) {
+    const s = this.sessions.get(key);
+    const name = sessionName(raw);
+    if (!s || s.name === name) return;
+    s.name = name;
+    s.base = s.titleOf();
+    // Behind any Topic creation in flight, so the Topic it creates is retitled too.
+    await this.#serial(s, async () => {
+      if (this.sessions.get(key) !== s) return;
+      const title = this.#selectTitle(s, null);
+      if (!s.topicId) { s.title = title; return; }
+      if (title === s.title) return;
+      try { await this.telegram.editForumTopic(s.chatId, s.topicId, title); }
+      catch (e) { if (!TOPIC_UNCHANGED.test(e.message)) { this.#warnOnce('editForumTopic', e.message); return; } }
+      s.title = title;
+      this.#save(s);
+      this.log(`renamed topic ${title} [topic ${s.topicId}]`);
+    });
   }
 
   sessionDown(key) {
@@ -442,7 +476,10 @@ export class Bridge {
     }
     try {
       this.log(`post ${s.title} [topic ${s.topicId}] (${text.length} chars)`);
-      return await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...opts });
+      const { fromHuman, ...send } = opts;
+      const sent = await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...send });
+      if (sent.length) this.#posted(s, { fromHuman, mention: send.alert?.length ? sent[0].message_id : null });
+      return sent;
     } catch (e) {
       // Telegram-side drift (Topic deleted or closed by hand): repair once, then resend.
       const fix = !retry || !s.topicId ? null : TOPIC_GONE.test(e.message) ? onTopicGone(s) : TOPIC_CLOSED.test(e.message) ? onTopicFoundClosed(s) : null;
@@ -484,6 +521,32 @@ export class Bridge {
     s.nudge.unref?.();
   }
 
+  /**
+   * A message reached the Topic: unread unless the human wrote it (a prompt typed at the
+   * machine). A mention stands only until something follows it: then it is deleted, so neither
+   * Telegram nor the dashboard keeps an @ for a request that has moved on. Counts only, never text.
+   */
+  #posted(s, { fromHuman = false, mention = null } = {}) {
+    this.#clearMention(s);
+    s.unread = fromHuman ? 0 : s.unread + 1;
+    s.mention = mention;   // the mention message's id, or null
+  }
+
+  /** The human spoke in the Topic: what was there is read, and a mention has done its job. */
+  #seen(s) {
+    s.unread = 0;
+    this.#clearMention(s);
+  }
+
+  /** Delete the standing mention message; it no longer counts as unread. */
+  #clearMention(s) {
+    const id = s.mention;
+    if (!id) return;
+    s.mention = null;
+    s.unread = Math.max(0, s.unread - 1);
+    this.telegram.deleteMessage(s.chatId, id).catch((e) => this.#warnOnce('delete-mention', e.message));
+  }
+
   #activity(s) {
     if (s.chatId !== null) this.#apply(s, onActivity(s, this.now())).catch(() => {});
   }
@@ -498,7 +561,7 @@ export class Bridge {
     s.injected = s.injected.filter((x) => now - x.at < ECHO_TTL_MS);
     const i = s.injected.findIndex((x) => x.text === text.trim());
     if (i !== -1) { s.injected.splice(i, 1); this.#activity(s); return; }
-    await this.#send(s, `> ${text}`);
+    await this.#send(s, `> ${text}`, { fromHuman: true });
   }
 
   /** One progress message per turn, edited in place and throttled. */
@@ -656,6 +719,7 @@ export class Bridge {
     if (!m.is_topic_message) return;
     const s = this.#sessionAt(m.chat.id, m.message_thread_id);
     if (!s || s.state === 'ended') return;
+    this.#seen(s);
     const host = this.hosts.get(s.agent);
     let text = (m.text ?? m.caption ?? '').trim();
     const attachment = m.document ?? m.photo?.at(-1);
@@ -854,9 +918,10 @@ export async function main() {
       for (const r of results) log(`dashboard: config ${changes.find((c) => c.id === r.id).key} ${r.ok ? 'applied' : `refused (${r.error})`}`);
       return results;
     };
+    const resources = new ResourceReader();
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSnapshot().map((s) => ({ ...s, account: accountFor(s, list) })),
-      accounts: () => accounts.read(), onConfigChanges });
+      accounts: () => accounts.read(), resources: () => resources.read(), onConfigChanges });
     push.start();
   }
   const sweep = (orphans) => (config.deleteClosedAfterHours > 0 ? bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`)) : null);

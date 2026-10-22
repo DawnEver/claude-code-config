@@ -84,6 +84,39 @@ export function groupSessions(hosts, by = 'host', order = 'host') {
   return [...groups.values()].map((g) => ({ ...g, sessions: arrange(g.sessions) })).sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/** What a session is called: its own name (renamed or generated), else its project. */
+export const sessionLabel = (s) => s.name ?? s.project ?? 'unknown project';
+
+/** A chat list's time column: the clock today, the weekday within a week, else the date. */
+export function chatTime(iso, now = Date.now(), { clock = '24' } = {}) {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return '';
+  const d = new Date(at), today = new Date(now);
+  if (d.toDateString() === today.toDateString()) return formatTime(at, { clock, date: 'off' });
+  return now - at < 6 * 86400000 ? WEEKDAYS[d.getDay()] : `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+/** A count badge as Telegram draws it: up to 99, then 99+. */
+export const unreadBadge = (n) => (n > 99 ? '99+' : n > 0 ? String(n) : '');
+
+const GB = 1024 ** 3;
+const gb = (b) => (b / GB >= 10 ? Math.round(b / GB) : Math.round((b / GB) * 10) / 10);
+
+/** A host's load as meters: CPU, memory, then each GPU's compute and memory; [] when it reported none. */
+export function resourceMeters(r) {
+  if (!r) return [];
+  const pct = (used, total) => Math.round((used / total) * 100);
+  const out = [];
+  if (r.cpu !== null && r.cpu !== undefined) out.push({ label: 'CPU', pct: r.cpu, text: `${r.cpu}%${r.cores ? ` · ${r.cores} cores` : ''}` });
+  if (r.mem) out.push({ label: 'RAM', pct: pct(r.mem.used, r.mem.total), text: `${gb(r.mem.used)} / ${gb(r.mem.total)} GB` });
+  (r.gpus ?? []).forEach((g, i) => {
+    const label = (r.gpus.length > 1 ? `GPU${i}` : 'GPU');
+    out.push({ label, pct: g.util ?? 0, text: `${g.util ?? '?'}%${g.name ? ` · ${g.name}` : ''}`, title: g.name ?? null });
+    out.push({ label: `${label} mem`, pct: pct(g.memUsed, g.memTotal), text: `${gb(g.memUsed)} / ${gb(g.memTotal)} GB` });
+  });
+  return out;
+}
+
 export function stats(snapshot) {
   const live = sessionsOf(snapshot).filter((s) => !s.stale);
   return { hostsOnline: snapshot.hosts.filter((h) => h.online).length, hosts: snapshot.hosts.length,
@@ -104,6 +137,7 @@ export function formatTime(ms, { clock = '24', date = 'day' } = {}) {
     : date === 'day' ? `${d.getDate()} ${MONTHS[d.getMonth()]}` : '';
   return day ? `${day} ${time}` : time;
 }
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export function ago(iso, now = Date.now()) {
@@ -221,7 +255,6 @@ export const quotaAlerts = (snapshot, now = Date.now(), read = []) =>
     .filter((q) => (q.verdict === 'exhausted' || (q.verdict === 'short' && q.bind.forecast.eta - now <= RUNOUT_ALERT_MS))
       && !read.includes(alertKey(q)));
 
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
  * Time ticks for a window's trend, whose axis runs from the window's opening to its reset, in
@@ -287,7 +320,7 @@ export function quotaByHost(snapshot, now = Date.now()) {
   const hosts = [...snapshot.hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
   const owner = new Map();
   for (const h of hosts) for (const q of accounts) if (q.hosts?.includes(h.id) && !owner.has(q.key)) owner.set(q.key, h.id);
-  return hosts.map((h) => ({ id: h.id, online: h.online, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
+  return hosts.map((h) => ({ id: h.id, online: h.online, resources: h.resources ?? null, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
       .map((q) => ({ ...q, sharedWith: q.hosts.filter((x) => x !== h.id), refTo: owner.get(q.key) === h.id ? null : owner.get(q.key) })) }))
     .filter((h) => h.accounts.length);
 }
@@ -314,15 +347,17 @@ export function mockDashboard(now = Date.now()) {
   const H = 3600000;
   const t = (sec) => new Date(now - sec * 1000).toISOString();
   const acct = { claude: 'claude:a', codex: 'codex:b' };
-  const s = (hostId, stale, id, agent, project, branch, status, sec, topic, seat = null) =>
-    ({ id, hostId, agent, project, branch, seat, status, lastActivityAt: t(sec), stale, topic, account: acct[agent] });
+  const s = (hostId, stale, id, agent, project, branch, status, sec, topic, seat = null, name = null, unread = 0, mention = false) =>
+    ({ id, hostId, agent, name, project, branch, seat, status, unread, mention, lastActivityAt: t(sec), stale, topic, account: acct[agent] });
   return { schemaVersion: 1, generatedAt: t(0), mock: true, hosts: [
     { id: 'host-a', online: true, lastSeen: t(4), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: [], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
-      s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a'),
-      s('host-a', false, '019a7f20-2222', 'codex', 'frontend', 'main', 'needs_approval', 40, { url: 'https://t.me/c/1000000001/13', closed: false })] },
+      s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a', 'OAuth token refresh', 3),
+      s('host-a', false, '019a7f20-2222', 'codex', 'frontend', 'main', 'needs_approval', 40, { url: 'https://t.me/c/1000000001/13', closed: false }, null, 'Landing page redesign', 5, true)],
+      resources: { cpu: 42, cores: 16, mem: { used: 21e9, total: 34e9 }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
     { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
-      s('host-b', false, '7d1e9b3c-3333', 'claude', 'refactor', 'refactor/core', 'idle', 900, { url: 'https://t.me/c/1000000002/7', closed: true }),
-      s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null)] },
+      s('host-b', false, '7d1e9b3c-3333', 'claude', 'refactor', 'refactor/core', 'idle', 900, { url: 'https://t.me/c/1000000002/7', closed: true }, null, 'Split the parser module', 1),
+      s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null)],
+      resources: { cpu: 7, cores: 10, mem: { used: 9e9, total: 17e9 }, gpus: [] } },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
   ], configKeys: [

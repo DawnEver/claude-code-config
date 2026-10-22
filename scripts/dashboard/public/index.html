@@ -77,6 +77,29 @@
   .s-stale .dot, .s-unknown .dot, .s-ended .dot { background: transparent; border: 2px solid var(--idle); }
   .on-dot { background: var(--ok); } .off-dot { background: transparent; border: 2px solid var(--idle); }
 
+  /* Sessions as a Telegram chat list (Config: this device). */
+  .chat { display: flex; align-items: center; gap: 10px; padding: 8px 12px; width: 100%; border: 0; background: none;
+    color: inherit; font: inherit; text-align: left; }
+  .list .chat + .chat { border-top: 1px solid var(--sep); }
+  .chat.link { cursor: pointer; } .chat.link:active { background: var(--sep); }
+  .avatar { position: relative; flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+    color: #fff; font-weight: 700; font-size: 18px; background: var(--idle); }
+  .avatar.claude { background: var(--claude); } .avatar.codex { background: var(--codex); }
+  .avatar .dot { position: absolute; right: -1px; bottom: -1px; width: 13px; height: 13px; border: 2px solid var(--card); }
+  .chat-top, .chat-bottom { display: flex; align-items: center; gap: 6px; }
+  .chat-top .title { flex: 1; }
+  .chat-bottom .sub { flex: 1; margin-top: 2px; font-size: var(--t2); }
+  .chat-time { flex: none; color: var(--hint); font-size: var(--t3); } .chat-time.fresh { color: var(--accent); }
+  .badge { flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); color: var(--accent-fg);
+    font: 600 13px/22px system-ui, sans-serif; text-align: center; }
+  .badge.at { padding: 0; width: 22px; }
+
+  /* Machine load on the Quota tab (Config: this device). */
+  .res { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 12px; margin: 0 4px 8px; font-size: var(--t3); }
+  .res-m { display: grid; grid-template-columns: 52px minmax(36px, 1fr) auto; gap: 6px; align-items: center; }
+  .res-m .k { color: var(--hint); font-weight: 600; white-space: nowrap; }
+  .res-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+
   /* Quota: one card per account. */
   /* Tabs: one question per view; the needs-you card above covers both. */
   .tabs { display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content; }

@@ -150,6 +150,7 @@ function fakeTelegram() {
     closeForumTopic: async (c, id) => { t.closed.push([c, id]); return true; },
     reopenForumTopic: async (c, id) => { t.reopened.push([c, id]); return true; },
     deleteForumTopic: async (c, id) => { t.deleted.push([c, id]); return true; },
+    deleteMessage: async (c, id) => { (t.deletedMessages ??= []).push([c, id]); return true; },
     pinChatMessage: async (c, id) => { t.pinned.push([c, id]); return true; },
   });
   return t;
@@ -832,4 +833,35 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   assert.equal(r.bridge.dashboardSnapshot().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
   r.bridge.sessionDown('codex:quiet');
   assert.deepEqual(r.bridge.dashboardSnapshot().map((s) => s.id), ['busy']);
+});
+
+test('the session name leads the Topic title and a rename retitles the Topic', async () => {
+  assert.equal(topicTitle({ name: 'fix login', machine: 'host-a', project: 'proj', branch: 'main', agent: 'codex' }), 'fix login | host-a | proj | main | codex');
+  assert.equal(topicTitle({ name: '  ', machine: 'host-a', project: 'proj', branch: 'main', agent: 'codex' }), 'host-a | proj | main | codex');
+  const r = make();
+  await live(r, 'codex', 'x', { name: 'first' });
+  assert.equal(r.telegram.topics.at(-1)[1], 'first | host-a | proj | main | codex');
+  r.hosts.codex.emit('name', { id: 'x', name: 'second\nline' });
+  await until(() => r.telegram.renamed.length === 1);
+  assert.equal(r.telegram.renamed[0][2], 'second line | host-a | proj | main | codex');
+  assert.equal(r.bridge.dashboardSnapshot()[0].name, 'second line');
+});
+
+test('unread counts what reached the Topic since the human spoke; a mention is deleted once followed', async () => {
+  const r = make();
+  await live(r, 'codex', 'x');   // the prompt typed at the machine: read
+  assert.equal(r.bridge.dashboardSnapshot()[0].unread, 0);
+  r.hosts.codex.emit('final', { id: 'x', text: 'boom', status: 'failed' });
+  await until(() => r.telegram.sent.at(-1).text === 'waiting for you');
+  const nudge = r.telegram.sent.at(-1);
+  assert.equal(r.bridge.dashboardSnapshot()[0].unread, 2);
+  assert.equal(r.bridge.dashboardSnapshot()[0].mention, true);
+  r.hosts.codex.emit('final', { id: 'x', text: 'recovered' });
+  await until(() => r.telegram.deletedMessages?.length === 1);
+  assert.deepEqual(r.telegram.deletedMessages[0], [nudge.chatId, nudge.message_id]);
+  assert.equal(r.bridge.dashboardSnapshot()[0].mention, false);
+  assert.equal(r.bridge.dashboardSnapshot()[0].unread, 2, 'the deleted mention no longer counts');
+  await r.bridge.handleUpdate(msg(ALICE, 'thanks', r.bridge.sessions.get('codex:x').topicId));
+  assert.equal(r.bridge.dashboardSnapshot()[0].unread, 0);
+  assert.ok(!('last' in r.bridge.dashboardSnapshot()[0]), 'no message text leaves the host');
 });

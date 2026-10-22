@@ -91,7 +91,7 @@ export class Registry {
     const p = this.hosts.get(id);
     const online = !!p && this.now() - p.receivedAt < this.ttlMs;
     return { id, online, lastSeen: p ? new Date(p.receivedAt).toISOString() : null,
-      sessions: (p?.sessions ?? []).map((s) => ({ ...s, hostId: id, stale: !online })), config: p?.config ?? null };
+      sessions: (p?.sessions ?? []).map((s) => ({ ...s, hostId: id, stale: !online })), resources: p?.resources ?? null, config: p?.config ?? null };
   }
 
   /**

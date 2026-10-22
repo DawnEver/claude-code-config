@@ -29,8 +29,9 @@ function parseSession(s) {
   const t = s.topic;
   const url = t && topicUrl(t.chatId, t.topicId);
   return {
-    id, agent: s.agent, project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
+    id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
+    unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,
     lastActivityAt: Number.isFinite(at) ? new Date(at).toISOString() : null,
     topic: url ? { url, closed: t.closed === true } : null,
   };
@@ -65,6 +66,16 @@ function parseAccount(a) {
     extraReset: ex && typeof ex === 'object' ? { at: epoch(ex.at), url } : null };
 }
 
+/** A host's load (scripts/bridge/resources.mjs): CPU %, memory and each GPU, numbers and a GPU model name only. */
+function parseResources(r) {
+  if (!r || typeof r !== 'object') return null;
+  const TB = 1e15;
+  const mem = num(r.mem?.total, 1, TB) ? { used: num(r.mem.used, 0, r.mem.total) ?? 0, total: r.mem.total } : null;
+  return { cpu: num(r.cpu, 0, 100), cores: num(r.cores, 1, 4096), mem,
+    gpus: (Array.isArray(r.gpus) ? r.gpus : []).slice(0, 8).filter((g) => num(g?.memTotal, 1, TB)).map((g) => ({ name: text(g.name, 64),
+      util: num(g.util, 0, 100), memUsed: num(g.memUsed, 0, g.memTotal) ?? 0, memTotal: g.memTotal })) };
+}
+
 /** A host's config summary (scripts/bridge/context.mjs configSummary): editable values and facts only. */
 function parseConfigSummary(c) {
   if (!c || typeof c !== 'object') return null;
@@ -81,7 +92,7 @@ const CHANGE_ID = /^[a-f0-9]{16,32}$/;
 const parseResult = (r) => (r && CHANGE_ID.test(r.id) ? { id: r.id, ok: r.ok === true, error: r.ok === true ? null : text(r.error, 200) ?? 'failed' } : null);
 export const isChangeId = (id) => CHANGE_ID.test(id ?? '');
 
-/** A host's POST body -> {bootAt, seq, sessions, accounts, config, configResults} or null. Unknown session entries are dropped, not fatal. */
+/** A host's POST body -> {bootAt, seq, sessions, accounts, resources, config, configResults} or null. Unknown session entries are dropped, not fatal. */
 export function parseHostPush(body) {
   if (!body || body.schemaVersion !== SCHEMA_VERSION || !Array.isArray(body.sessions)) return null;
   if (!Number.isSafeInteger(body.bootAt) || body.bootAt < 1 || !Number.isSafeInteger(body.seq) || body.seq < 1) return null;
@@ -92,7 +103,7 @@ export function parseHostPush(body) {
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
-  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, config: parseConfigSummary(body.config),
+  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, resources: parseResources(body.resources), config: parseConfigSummary(body.config),
     configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean) };
 }
 
