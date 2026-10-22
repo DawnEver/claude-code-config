@@ -5,6 +5,11 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 
+/** The provider launchers, per host binary they need: [wrapper name, provider argument]. */
+export const LAUNCHERS = { claude: [['ccc', 'claude'], ['ccds', 'deepseek']], codex: [['codc', 'codex'], ['cods', 'deepseek']] };
+/** Every wrapper this repo writes. `migrate` removes any other marked wrapper as an orphan. */
+export const WRAPPER_NAMES = [...Object.values(LAUNCHERS).flat().map(([name]) => name), 'todo'];
+
 const isWindows = process.platform === 'win32';
 const MARKER = '# claude-code-alias';
 // The .cmd wrappers carry the same marker as a batch comment. Recognising only the `#`
@@ -130,12 +135,7 @@ export function installCliWrappers(claudeDir) {
   // ccc/ccds launch the `claude` binary (see cc.js), so install them only when
   // claude is present — they are inert under a Codex-only install.
   if (hasClaude) {
-    const ALIASES = [
-      { name: 'ccc',  provider: 'claude'   },
-      { name: 'ccds', provider: 'deepseek' },
-    ];
-
-    for (const { name, provider } of ALIASES) {
+    for (const [name, provider] of LAUNCHERS.claude) {
       if (isWindows) {
         const cmdContent = cmdWrapper(name, ccJsPath, `${provider} %*`);
         writeIfChanged(path.join(binDir, `${name}.cmd`), cmdContent, `${name}.cmd`);
@@ -156,12 +156,7 @@ export function installCliWrappers(claudeDir) {
   // present — it is inert under a Claude-only install.
   //
   if (hasCodex) {
-    const CODEX_ALIASES = [
-      { name: 'codc',  provider: 'codex' },
-      { name: 'cods',  provider: 'deepseek' },
-    ];
-
-    for (const { name, provider } of CODEX_ALIASES) {
+    for (const [name, provider] of LAUNCHERS.codex) {
       if (isWindows) {
         const cmdContent = cmdWrapper(name, codexJsPath, `${provider} %*`);
         writeIfChanged(path.join(binDir, `${name}.cmd`), cmdContent, `${name}.cmd`);

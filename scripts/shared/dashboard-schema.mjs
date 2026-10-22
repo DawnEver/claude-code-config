@@ -6,9 +6,10 @@
 import { isValidMachineName } from './machine.mjs';
 
 export const SCHEMA_VERSION = 1;
-export const AGENTS = ['claude', 'codex'];
+import { AGENTS, STATUSES } from '../dashboard/public/shared/vocab.mjs';
+
+export { AGENTS, STATUSES };
 /** Native session status (scripts/bridge/daemon.mjs STATUS_CODES). Freshness (`stale`) is separate, set by the gateway. */
-export const STATUSES = ['working', 'idle', 'needs_approval', 'needs_input', 'ended', 'unknown'];
 export const MAX_SESSIONS = 200;
 /** A host id is its machine name (scripts/shared/machine.mjs), bounded for the gateway. */
 export const isHostId = (id) => isValidMachineName(id) && id.length <= 64;

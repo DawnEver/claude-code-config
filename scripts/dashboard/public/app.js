@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceView } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceView, agentName } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 
 const POLL_MS = 8000;
@@ -86,7 +86,7 @@ function sessionRow(s, opts = {}) {
   const where = inProject ? [s.hostId, s.branch].filter(Boolean).join(' · ') : s.project ?? 'unknown project';
   main.append(el('div', 'title', s.name ?? where));
   const sub = el('div', 'sub');
-  sub.append(el('span', `agent ${s.agent}`, s.agent === 'claude' ? 'Claude' : 'Codex'));
+  sub.append(el('span', `agent ${s.agent}`, agentName(s.agent)));
   const rest = [s.name && where, !inProject && withHost && s.hostId, !inProject && s.branch, stateAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
   sub.append(document.createTextNode(` · ${rest.join(' · ')}`));
   const q = s.account && accounts.get(s.account);
@@ -133,14 +133,14 @@ function renderSummary() {
   const st = stats(snapshot);
   const waiting = attention(snapshot);
   if (snapshot.accounts) {
-    const standing = quotaAlerts(snapshot).map(alertKey);
+    const standing = quotaAlerts(snapshot, Date.now(), [], accounts).map(alertKey);
     readAlerts = readAlerts.filter((k) => standing.includes(k));
     store.set(readKey(), JSON.stringify(readAlerts));
   }
   // Off (the default): Events is the only notification; the "Needs you" chip still lists the sessions.
   box.hidden = !banner;
   if (!banner) return;
-  const quota = quotaAlerts(snapshot, Date.now(), readAlerts);
+  const quota = quotaAlerts(snapshot, Date.now(), readAlerts, accounts);
   const n = waiting.length + quota.length;
   box.className = `summary${n ? ' alert' : ''}`;
   box.replaceChildren();
@@ -244,7 +244,7 @@ function quotaDetail(q) {
 /** An account as a compact tag: who and how much is left, coloured by its verdict. */
 function acctTag(q, withAgent = false) {
   const left = q.left === null ? '' : ` ${windowLabel(q.bind, q.stale, unit).text}`;
-  const tag = el('span', `acct v-${q.verdict}`, `${withAgent ? `${q.agent === 'claude' ? 'Claude' : 'Codex'} ` : ''}${accountTag(q)}${left}`);
+  const tag = el('span', `acct v-${q.verdict}`, `${withAgent ? `${agentName(q.agent)} ` : ''}${accountTag(q)}${left}`);
   tag.title = `${accountName(q)}${q.email ? ` · ${q.email}` : ''}${q.left === null ? '' : ` · ${q.left}% left`}`;
   return tag;
 }
@@ -295,13 +295,13 @@ function renderQuota() {
   box.replaceChildren();
   const grid = el('div', 'quota-hosts');
   for (const h of hostList) {
-    if (!h.accounts.length) { grid.append(hostSection(h, el('div', 'qrows empty', 'No accounts'))); continue; }
+    if (!h.accounts.length) { grid.append(hostSection(h, [el('div', 'qrows empty', 'No accounts')])); continue; }
     const best = bestAccounts(h.accounts);
     const bestLine = el('div', 'qbest', best.length ? 'Best now: ' : 'Best now: none with quota left');
     best.forEach(({ q }, i) => bestLine.append(i ? ' · ' : '', acctTag(q, true)));
     const rows = el('div', 'qrows');
     for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q) : quotaRow(q, h.id));
-    grid.append(hostSection(h, bestLine, rows));
+    grid.append(hostSection(h, [bestLine, rows]));
   }
   box.append(el('div', 'section-h', `Quota ${unit}`), grid);
 }
@@ -368,7 +368,7 @@ function renderSelects() {
     const select = el('select');
     select.setAttribute('aria-label', name);
     select.append(Object.assign(el('option', null, label[name]), { value: '' }));
-    for (const v of opts[name]) select.append(Object.assign(el('option', null, name === 'agent' ? (v === 'claude' ? 'Claude' : 'Codex') : v), { value: v }));
+    for (const v of opts[name]) select.append(Object.assign(el('option', null, name === 'agent' ? agentName(v) : v), { value: v }));
     select.value = opts[name].includes(filters[name]) ? filters[name] : '';
     filters[name] = select.value;
     select.addEventListener('change', () => { filters[name] = select.value; render(); });
@@ -403,7 +403,7 @@ function renderHosts() {
     const list = el('div', 'list');
     if (!h.sessions.length) list.append(el('div', 'empty', h.online ? 'No sessions' : 'No data'));
     for (const s of h.sessions) list.append(sessionRow(s));
-    main.append(hostSection(h, ...(h.accounts.length ? [tags] : []), list));
+    main.append(hostSection(h, [...(h.accounts.length ? [tags] : []), list]));
   }
 }
 
@@ -411,12 +411,12 @@ function renderHosts() {
  * One host as every tab shows it: online dot, name, how many sessions (or when it was last
  * seen), and its load when shown; then the tab's own content. The one host header there is.
  */
-function hostSection(h, ...body) {
+function hostSection(h, body, { load = loadMode !== 'off' } = {}) {
   const section = el('section', `host${h.online ? '' : ' off'}`);
   const head = el('div', 'host-head');
   head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id),
     el('span', 'muted meta', h.online ? `${h.sessions.length} session${h.sessions.length === 1 ? '' : 's'}` : `offline · seen ${ago(h.lastSeen)}`));
-  section.append(head, ...(loadMode === 'off' ? [] : [resourcesBox(h.resources, h.online)]), ...body);
+  section.append(head, ...(load ? [resourcesBox(h.resources, h.online)] : []), ...body);
   return section;
 }
 
@@ -557,25 +557,22 @@ function renderConfig() {
   box.append(shared, el('div', 'muted', 'Only these can change here. Who may control a host, where sessions are mirrored and every secret stay in the files.'));
   const grid = el('div', 'quota-hosts');
   for (const h of v.hosts) {
-    const section = el('section', `host${h.online ? '' : ' off'}`);
-    const head = el('div', 'host-head');
-    head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id));
+    const facts = h.config.facts;
     const dl = el('dl', 'facts cfg');
     const on = (b) => (b ? 'on' : 'off');
-    for (const [k, val] of [['Telegram bridge', on(h.facts.bridge)], ['Allowed users', String(h.facts.allowedUsers)],
-      ['Approvals from Telegram', on(h.facts.approvalsFromTelegram)],
-      ['Codex sources', h.facts.codexSources.join(', ') || '—'], h.facts.dashboardError && ['Dashboard', h.facts.dashboardError]].filter(Boolean)) {
+    for (const [k, val] of [['Telegram bridge', on(facts.bridge)], ['Allowed users', String(facts.allowedUsers)],
+      ['Approvals from Telegram', on(facts.approvalsFromTelegram)],
+      ['Codex sources', facts.codexSources.join(', ') || '—'], facts.dashboardError && ['Dashboard', facts.dashboardError]].filter(Boolean)) {
       dl.append(el('dt', null, k), el('dd', null, val));
     }
-    section.append(head, dl);
-    grid.append(section);
+    grid.append(hostSection(h, [dl], { load: false }));
   }
   box.append(el('div', 'section-h', 'Hosts'), grid);
 }
 
 function renderTabs() {
   // Looking at the events marks them seen (after this render still shows which were new).
-  const t = tabs(snapshot, Date.now(), seenAt, readAlerts, shownFrom);
+  const t = tabs(snapshot, Date.now(), seenAt, readAlerts, shownFrom, accounts);
   $('tabs').hidden = false;   // always: Config holds this device's settings, whatever data there is
   $('n-sessions').textContent = String(t.sessions);
   $('n-quota').textContent = String(t.quota);
@@ -602,7 +599,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
 function render() {
   if (!snapshot) return;
   accounts = accountIndex(snapshot);
-  hostList = hostsView(snapshot);
+  hostList = hostsView(snapshot, Date.now(), accounts);   // one account index per render, shared by every view
   $('updated').textContent = snapshot.mock ? 'example data' : lastOk && snapshot.demo ? `demo · data ${ago(new Date(lastOk).toISOString())}` : lastOk ? `data ${ago(new Date(lastOk).toISOString())}` : '';
   renderSummary();
   renderTabs();

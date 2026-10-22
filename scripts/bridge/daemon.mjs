@@ -36,6 +36,7 @@ import { AccountReader, accountFor } from './quota.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
 import { ResourceReader } from './resources.mjs';
+import { STATUS } from '../dashboard/public/shared/vocab.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
@@ -49,10 +50,8 @@ const TOPIC_CLOSED = /TOPIC_CLOSED/i;
 const TOPIC_UNCHANGED = /TOPIC_NOT_MODIFIED/i;
 
 export const sessionKey = (agent, id) => `${agent}:${id}`;
-/** Native adapter state -> status code, the one vocabulary (STATUSES in scripts/shared/dashboard-schema.mjs). */
+/** Native adapter state -> status code (STATUS in scripts/dashboard/public/shared/vocab.mjs, the one vocabulary). */
 export const STATUS_CODES = { running: 'working', idle: 'idle', 'waiting-approval': 'needs_approval', 'waiting-input': 'needs_input', unknown: 'unknown', disconnected: 'ended' };
-/** Status code -> the text of the status card. */
-export const STATUS_LABELS = { working: 'Working', idle: 'Idle', needs_approval: 'Needs approval', needs_input: 'Needs input', unknown: 'Unknown', ended: 'Ended' };
 const statusCode = (state) => STATUS_CODES[state] ?? 'unknown';
 /** A session name as its host reports it, or null: one line, bounded. */
 export const sessionName = (v) => { const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; return t ? t.slice(0, 200) : null; };
@@ -393,7 +392,7 @@ export class Bridge {
     // The Topic title already names the session; the card answers only "what is it doing,
     // since when, and how fresh is this".
     if (s.statusState !== state) { s.statusState = state; s.statusSince = this.now(); }
-    const content = `${STATUS_LABELS[statusCode(state)]} · since ${clock(s.statusSince)}`;
+    const content = `${STATUS[statusCode(state)].label} · since ${clock(s.statusSince)}`;
     if (!force && s.statusText === content) return;
     const text = `${content}\nChecked ${clock(this.now())}`;
     s.statusRef ??= randomBytes(12).toString('hex');

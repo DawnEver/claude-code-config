@@ -16,7 +16,8 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, KNOWN_WRAPPER_NAMES, removeExisting, setup } from '../../scripts/setup/setup.js';
+import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, removeExisting, setup } from '../../scripts/setup/setup.js';
+import { WRAPPER_NAMES } from '../../scripts/setup/install-cli-wrappers.js';
 import { isManagedWrapper, resolveWrapperBinDirs } from '../../scripts/setup/install-cli-wrappers.js';
 import {
   CLAUDE_GITIGNORE_TEMPLATE,
@@ -116,7 +117,7 @@ export function migrateOrphanedWrappers({ dryRun } = {}) {
   const { binDir } = resolveWrapperBinDirs();
   if (!binDir || !fs.existsSync(binDir)) return [];
 
-  const known = new Set(KNOWN_WRAPPER_NAMES);
+  const known = new Set(WRAPPER_NAMES);
   const removed = [];
 
   let entries;
@@ -135,10 +136,10 @@ export function migrateOrphanedWrappers({ dryRun } = {}) {
     if (known.has(baseName)) continue;
 
     if (dryRun) {
-      console.log(`WOULD REMOVE  alias ${entry.name} - orphaned (no longer in KNOWN_WRAPPER_NAMES)`);
+      console.log(`WOULD REMOVE  alias ${entry.name} - orphaned (no longer in WRAPPER_NAMES)`);
     } else {
       fs.unlinkSync(full);
-      console.log(`REMV  alias ${entry.name} - orphaned (no longer in KNOWN_WRAPPER_NAMES)`);
+      console.log(`REMV  alias ${entry.name} - orphaned (no longer in WRAPPER_NAMES)`);
     }
     removed.push(entry.name);
   }

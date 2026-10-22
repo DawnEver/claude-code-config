@@ -3,11 +3,14 @@
 // the view adds is freshness: a session of an offline host reads `Stale`, never its last state.
 // The page answers, in order: does anything need me, what is running, where.
 
-export const STATUS_LABELS = { working: 'Working', idle: 'Idle', needs_approval: 'Needs approval', needs_input: 'Needs input',
-  ended: 'Ended', unknown: 'Unknown', stale: 'Stale' };
+import { STATUS, QUOTA_STALE_MS, agentName } from './shared/vocab.mjs';
+
+export { QUOTA_STALE_MS, agentName };
+/** A session's status as shown: the host's status, or `stale` when its host went silent. */
+export const STATUS_LABELS = { ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [k, v.label])), stale: 'Stale' };
 export const ATTENTION = ['needs_approval', 'needs_input'];
 /** Most urgent first: what needs the human, then what runs, then the rest. */
-const RANK = { needs_approval: 0, needs_input: 1, working: 2, idle: 3, unknown: 4, ended: 5, stale: 6 };
+const RANK = { ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [k, v.rank])), stale: Object.keys(STATUS).length };
 
 /** The status chips: each a predicate over a session's display status. */
 export const GROUPS = {
@@ -161,8 +164,6 @@ export function ago(iso, now = Date.now()) {
 
 // ── Quota (per account; computed by the host, scripts/bridge/quota.mjs accountModels) ──
 
-/** A reading older than this is a floor on use (`≥`) and is never projected from. */
-export const QUOTA_STALE_MS = 15 * 60000;
 
 /** Time to `ms` in its two largest units: `4d 7h`, `3h 15m`, `12m`. */
 export function countdown(ms, now = Date.now()) {
@@ -191,7 +192,7 @@ export function quotaView(a, now = Date.now()) {
   return { ...a, stale, windows, bind, verdict, left: bind ? Math.round(100 - bind.used) : null };
 }
 
-export const accountName = (q) => `${q.agent === 'claude' ? 'Claude' : 'Codex'}${q.label ? ` · ${q.label}` : ''}`;
+export const accountName = (q) => `${agentName(q.agent)}${q.label ? ` · ${q.label}` : ''}`;
 
 /** Why an account needs the human, in one line; '' when it does not. `withReset: false` where the row already shows it. */
 export function verdictText(q, { now = Date.now(), withReset = true } = {}) {
@@ -254,10 +255,11 @@ export const alertKey = (q) => JSON.stringify([q.key, q.verdict, q.bind?.k ?? nu
 
 /**
  * Accounts that need the human: a window exhausted (a forecast run-out is shown on the account
- * row, never alerted); minus the alerts already read (`read`: alert keys).
+ * row, never alerted); minus the alerts already read (`read`: alert keys). `index` is the
+ * render's accountIndex, so a page computes each account's view once.
  */
-export const quotaAlerts = (snapshot, now = Date.now(), read = []) =>
-  (snapshot.accounts ?? []).map((a) => quotaView(a, now))
+export const quotaAlerts = (snapshot, now = Date.now(), read = [], index = accountIndex(snapshot, now)) =>
+  [...index.values()]
     .filter((q) => q.verdict === 'exhausted' && !read.includes(alertKey(q)));
 
 
@@ -292,6 +294,7 @@ export function configView(snapshot) {
   // A `*` segment matches any one segment of the dotted key.
   const fits = (pattern, key) => { const p = pattern.split('.'), k = key.split('.'); return p.length === k.length && p.every((x, i) => x === '*' || x === k[i]); };
   const metaOf = (key) => metas.find((m) => m.key === key) ?? metas.find((m) => fits(m.key, key)) ?? null;
+  // The shared value is read from the freshest online host; the hosts are listed in the one host order.
   const hosts = [...snapshot.hosts].filter((h) => h.config).sort((a, b) => Number(b.online) - Number(a.online)
     || String(b.lastSeen).localeCompare(String(a.lastSeen)));
   const keys = [...new Set(hosts.flatMap((h) => Object.keys(h.config.editable)))].sort();
@@ -304,7 +307,7 @@ export function configView(snapshot) {
         overrides: reporting.filter((h) => h.config.localOverrides.includes(key)).map((h) => h.id),
         pending: (snapshot.configPending ?? []).find((c) => c.key === key) ?? null };
     }).filter((r) => r.meta),
-    hosts: hosts.map((h) => ({ id: h.id, online: h.online, facts: h.config.facts })),
+    hosts: sortHosts(hosts),
   };
 }
 
@@ -312,7 +315,7 @@ export function configView(snapshot) {
 export const accountIndex = (snapshot, now = Date.now()) => new Map((snapshot.accounts ?? []).map((a) => [a.key, quotaView(a, now)]));
 
 /** An account in a few characters: the seat alias, else the email's name, else the agent. */
-export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? (q.agent === 'claude' ? 'Claude' : 'Codex');
+export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? agentName(q.agent);
 
 /**
  * The one host model every tab renders from: each host as the gateway reported it (online,
@@ -321,8 +324,8 @@ export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? (q.agent =
  * rather than reading as a second budget: its full card sits on the first host in order,
  * elsewhere `refTo` names that host. Every host is listed, with or without accounts.
  */
-export function hostsView(snapshot, now = Date.now()) {
-  const accounts = [...accountIndex(snapshot, now).values()];
+export function hostsView(snapshot, now = Date.now(), index = accountIndex(snapshot, now)) {
+  const accounts = [...index.values()];
   const hosts = sortHosts(snapshot.hosts);
   const owner = new Map();
   for (const h of hosts) for (const q of accounts) if (q.hosts?.includes(h.id) && !owner.has(q.key)) owner.set(q.key, h.id);
@@ -336,10 +339,10 @@ export function hostsView(snapshot, now = Date.now()) {
  * quota tab while an unread quota alert stands; `unseen` counts events newer than `seenAt`;
  * `events` counts what the Events tab lists (unread when it was opened, `shownFrom`).
  */
-export function tabs(snapshot, now = Date.now(), seenAt = null, read = [], shownFrom = seenAt) {
+export function tabs(snapshot, now = Date.now(), seenAt = null, read = [], shownFrom = seenAt, index = accountIndex(snapshot, now)) {
   const accounts = snapshot.accounts ?? [];
   const events = snapshot.events ?? [];
-  return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now, read).length > 0,
+  return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now, read, index).length > 0,
     events: unreadEvents(events, shownFrom).length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length };
 }
 

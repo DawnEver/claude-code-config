@@ -170,10 +170,19 @@ test('set-menu: the local bot token must be the configured bot', () => {
 });
 
 test('one status vocabulary from native state to the wire', async () => {
-  const { STATUS_CODES, STATUS_LABELS } = await import('../bridge/daemon.mjs');
+  const { STATUS_CODES } = await import('../bridge/daemon.mjs');
   const { STATUSES } = await import('../shared/dashboard-schema.mjs');
-  assert.deepEqual([...new Set(Object.values(STATUS_CODES))].sort(), [...STATUSES].sort());
-  assert.deepEqual(Object.keys(STATUS_LABELS).sort(), [...STATUSES].sort());
+  const { STATUS_LABELS } = await import('./public/view.mjs');
+  assert.deepEqual([...new Set(Object.values(STATUS_CODES))].sort(), [...STATUSES].sort(), 'every native state maps onto the vocabulary, and covers it');
+  assert.deepEqual(Object.keys(STATUS_LABELS).sort(), [...STATUSES, 'stale'].sort(), 'the page adds only freshness');
+});
+
+test('the vocabulary is defined once: no status label, agent name or stale threshold copied elsewhere', () => {
+  const files = ['../bridge/daemon.mjs', '../bridge/quota.mjs', '../shared/dashboard-schema.mjs', './public/view.mjs', './public/app.js', './registry.mjs']
+    .map((f) => [f, fs.readFileSync(new URL(f, import.meta.url), 'utf8')]);
+  for (const [f, src] of files) {
+    assert.doesNotMatch(src, /'Needs approval'|'Needs input'|15 \* 60000|=== 'claude' \? 'Claude'/, `${f} restates the vocabulary`);
+  }
 });
 
 test('view: needs-you first, stale is freshness, chips narrow, hosts online first', () => {

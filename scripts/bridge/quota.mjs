@@ -18,14 +18,13 @@ import os from 'os';
 import { readBridgeConfig } from './context.mjs';
 import { fetchExtraResets } from './extra-resets.mjs';
 import { burn, readSeries, recordSample } from './quota-series.mjs';
+import { QUOTA_STALE_MS } from '../dashboard/public/shared/vocab.mjs';
 import { baseDir, holds, orgOk, readAccount, readSeats, sameText, seatDir, seatsFor, usageFile } from '../shared/seats.mjs';
 
 const H = 3600000;
 const CLAUDE_WINDOWS = { five_hour: 5 * H, seven_day: 168 * H };
 // Too early in a window the average pace is noise; do not project from it.
 const MIN_ELAPSED_FRACTION = 0.1;
-// A reading older than this is a floor on use and is never projected from (view.mjs QUOTA_STALE_MS).
-const STALE_MS = 15 * 60000;
 
 const pct = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : null);
 /** A window's label from its length: 5h, 7d. */
@@ -127,7 +126,7 @@ const cellsFor = (windowMs) => Math.max(1, Math.round(windowMs / (windowMs <= 24
  * not yet started: no use, no reset time.
  */
 function windowModels(q, now) {
-  const fresh = q && now - q.at <= STALE_MS;
+  const fresh = q && now - q.at <= QUOTA_STALE_MS;
   return Object.entries(q?.windows ?? {}).map(([k, v]) => {
     if (v.resetsAt <= now) return { k, used: 0, resetsAt: null, windowMs: v.windowMs, cells: [], forecast: null };
     const b = burn(q.series ?? [], k, { now, cells: cellsFor(v.windowMs), seenUntil: fresh ? now : q.at });

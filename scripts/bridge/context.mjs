@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'child_process';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
-import { parseConfigChange } from '../shared/dashboard-schema.mjs';
+import { CONFIG_KEYS, parseConfigChange } from '../shared/dashboard-schema.mjs';
 import { resolveSyncDir } from '../shared/sync-dir.mjs';
 
 export const CLAUDE_DIR = path.join(os.homedir(), '.claude');
@@ -142,9 +142,10 @@ const getPath = (obj, key) => key.split('.').reduce((o, k) => (o && typeof o ===
  * never a token, an id or a chat.
  */
 export function configSummary(config, { localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
-  const editable = { 'bridge.idleCloseMinutes': config.idleCloseMinutes, 'bridge.deleteClosedAfterHours': config.deleteClosedAfterHours };
-  if (config.dashboard) editable['bridge.dashboard.everySeconds'] = config.dashboard.everySeconds;
-  for (const [name, p] of Object.entries(config.projects)) editable[`bridge.projects.${name}.projectInTitle`] = p.projectInTitle;
+  // Every CONFIG_KEYS key this host has a value for, read from the normalized config (`bridge.`
+  // is its root); a `*` segment is each configured project.
+  const keys = Object.keys(CONFIG_KEYS).flatMap((k) => (k.includes('*') ? Object.keys(config.projects).map((name) => k.replace('*', name)) : [k]));
+  const editable = Object.fromEntries(keys.map((k) => [k, getPath({ bridge: config }, k)]).filter(([, v]) => v !== undefined));
   const local = readJson(localPath) ?? {};
   return { editable, localOverrides: Object.keys(editable).filter((k) => getPath(local, k) !== undefined),
     facts: { bridge: Boolean(config.botToken), allowedUsers: config.allowedUserIds.length, approvalsFromTelegram: config.approvalsFromTelegram,

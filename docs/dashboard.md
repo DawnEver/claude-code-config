@@ -23,6 +23,7 @@ no daemon, loads no channel and writes no series.
 | Layer | File | Owns |
 | --- | --- | --- |
 | Export | `Bridge.dashboardSessions()` in `scripts/bridge/daemon.mjs` | projection of the existing registry + adapter snapshot; no new state |
+| Vocabulary | `scripts/dashboard/public/shared/vocab.mjs` | agents, statuses (label, rank), quota stale threshold: imported by the bridge, the schema and the page, under `public/` because the page loads only what the Worker serves |
 | Contract | `scripts/shared/dashboard-schema.mjs` | wire format, status codes, Topic link rule, the trust boundary `parseHostPush` |
 | Transport | `scripts/bridge/dashboard-push.mjs` | outbound push on a timer; never on the Telegram message path |
 | Gateway | `scripts/dashboard/{worker,api,auth,registry}.mjs` | Worker entry + Durable Object (`worker.mjs`), the HTTP API on Web-standard Request/Response (`api.mjs`), Ed25519 viewer + host-token auth (`auth.mjs`), last push per host (`registry.mjs`) |
