@@ -32,15 +32,20 @@
       "Grep",
       "WebFetch",
       "Monitor",
-      "NotebookEdit"
+      "NotebookEdit",
+      "Bash(rm -rf .claude/worktrees/*)",
+      "Bash(git worktree remove *)",
+      "Bash(git worktree prune)"
     ],
     "deny": [
-      "Bash(rm -rf *)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(rm -rf .git*)",
+      "Bash(rm -rf ..*)",
       "Bash(sudo *)",
       "Bash(curl * | bash)",
-      "Bash(rm -rf:*)",
-      "Bash(git push --force:*)",
-      "Bash(git reset --hard:*)"
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)"
     ],
     "defaultMode": "auto"
   },
@@ -245,7 +250,17 @@
   "skipAutoPermissionPrompt": true,
   "autoMode": {
     "environment": [
-      "$defaults"
+      "$defaults",
+      "Source control: <forge-host>/<org> and every repo under it are the user's own trusted remotes; integrate/main is the team integration branch, main is the release branch",
+      "Forge hosts (<machine>, ...) and their lab-commons checkouts belong to the user"
+    ],
+    "allow": [
+      "$defaults",
+      "The integrator merging a PR into integrate/main locally with git merge --no-ff and pushing it, when the merge message carries a Break-Glass: <reason> trailer (user ruling 2026-10-21: always allowed)",
+      "Installing lab-commons git hook shims into a repo's own .git/hooks via `python -m lab_commons.dev.hook_install --install`",
+      "Deleting agent worktrees under .claude/worktrees/ (rm -rf .claude/worktrees/*, git worktree remove, git worktree prune)",
+      "Reading forge state and opening PRs: `python -m lab_commons.dev.forge queue|status|pr ...`",
+      "Installing a missing JMAG material card into the local JMAG library (user ruling 2026-10-13)"
     ]
   }
 }
