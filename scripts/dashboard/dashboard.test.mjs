@@ -624,7 +624,7 @@ test('chat list: name over project, Telegram-style time and badges, machine load
   const GB = 1024 ** 3;
   const r = v.resourceView({ cpu: 40, cores: 32, cpuModel: 'Intel Core i9-13900K', mem: { used: 8 * GB, total: 32 * GB, type: 'DDR5' },
     gpus: [{ name: 'NVIDIA GeForce RTX 3060', util: 1, memUsed: 1.4 * GB, memTotal: 12 * GB }] });
-  assert.deepEqual(r.meters.map((m) => [m.label, m.text]), [['CPU', '40%'], ['RAM', '8/32 GB'], ['GPU', '1%'], ['GPU mem', '1.4/12 GB']],
+  assert.deepEqual(r.meters.map((m) => [m.label, m.text]), [['CPU', '40%'], ['RAM', '8/32 GB'], ['GPU', '1%'], ['GPU MEM', '1.4/12 GB']],
     'values stay short: they sit beside a bar and must never be cut');
   assert.equal(r.about, 'Intel Core i9-13900K · 32 cores · 32 GB DDR5 · NVIDIA GeForce RTX 3060', 'what the hardware is goes on its own line');
   assert.deepEqual(v.resourceView(null), { meters: [], about: '' });

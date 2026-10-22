@@ -123,7 +123,7 @@ export function resourceView(r) {
   gpus.forEach((g, i) => {
     const label = gpus.length > 1 ? `GPU${i}` : 'GPU';
     meters.push({ label, pct: g.util ?? 0, text: `${g.util ?? '?'}%` });
-    meters.push({ label: `${label} mem`, pct: pct(g.memUsed, g.memTotal), text: `${gb(g.memUsed)}/${gb(g.memTotal)} GB` });
+    meters.push({ label: `${label} MEM`, pct: pct(g.memUsed, g.memTotal), text: `${gb(g.memUsed)}/${gb(g.memTotal)} GB` });
   });
   const about = [r.cpuModel, r.cores && `${r.cores} cores`, r.mem && `${gb(r.mem.total)} GB${r.mem.type ? ` ${r.mem.type}` : ''}`,
     ...gpus.map((g, i) => g.name && (gpus.length > 1 ? `GPU${i} ${g.name}` : g.name))].filter(Boolean).join(' · ');

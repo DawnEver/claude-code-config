@@ -394,6 +394,9 @@ export class Bridge {
     // The Topic title already names the session; the card answers only "what is it doing,
     // since when, and how fresh is this".
     if (s.statusState !== state) { s.statusState = state; s.statusSince = this.now(); }
+    // A mention says "you are needed, still": once the session runs again (handled at the
+    // machine) or is gone, it is not, even before anything new is posted.
+    if (s.mention && (state === 'running' || state === 'disconnected')) { this.#clearMention(s); this.#save(s); }
     const content = `${STATUS[statusCode(state)].label} · since ${clock(s.statusSince)}`;
     if (!force && s.statusText === content) return;
     const text = `${content}\nChecked ${clock(this.now())}`;

@@ -895,3 +895,23 @@ test('a standing mention and the unread count survive a daemon restart', async (
     assert.deepEqual(b.telegram.deletedMessages[0], [nudge.chatId, nudge.message_id], 'the old daemon\'s mention is still deleted');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+for (const [how, act] of [
+  ['the session runs again (handled at the machine)', (r, set) => { set('running'); r.hosts.codex.emit('status', { id: 'x' }); }],
+  ['the session ends', (r) => r.bridge.sessionDown('codex:x')],
+]) {
+  test(`a standing mention is deleted when ${how}, before anything new is posted`, async () => {
+    const r = make();
+    let state = 'idle';
+    r.hosts.codex.statusSnapshot = () => ({ state });
+    await live(r, 'codex', 'x');
+    r.hosts.codex.emit('final', { id: 'x', text: 'boom', status: 'failed' });
+    await until(() => r.telegram.sent.at(-1).text === 'waiting for you');
+    const nudge = r.telegram.sent.at(-1);
+    const posts = r.telegram.sent.length;
+    act(r, (v) => { state = v; });
+    await until(() => r.telegram.deletedMessages?.length === 1);
+    assert.deepEqual(r.telegram.deletedMessages[0], [nudge.chatId, nudge.message_id]);
+    assert.equal(r.telegram.sent.length, posts, 'nothing new was posted');
+  });
+}
