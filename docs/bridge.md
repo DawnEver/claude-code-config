@@ -464,9 +464,14 @@ node ~/.claude/scripts/bridge/send-attachment.mjs /absolute/workspace/result.png
 node ~/.claude/scripts/bridge/send-attachment.mjs /absolute/workspace/report.pdf document
 ```
 
+Both go through one local IPC method, `attachment`: a channel names its own session; the
+CLI authenticates with the runtime token and names `agent` + `sessionId`.
+
 Destinations come from the live session, never from tool arguments. Outgoing paths must
-resolve inside that session's workspace; common credential paths are blocked, but this
-is not a content-based secret scanner. Review selected files before sending. Downloaded
+resolve inside that session's workspace; `.git`, `.claude`, `.ssh`, `.env`-style and other
+common credential paths are blocked. A Claude Code worktree (`.claude/worktrees/<name>/`) is a
+working copy, so its files are judged like any workspace file. This is not a content-based
+secret scanner. Review selected files before sending. Downloaded
 cache files must first be explicitly copied into the workspace before republishing.
 Photos are limited to 10 MiB and may be compressed by Telegram; documents are limited
 to 50 MiB and preserve original bytes. Captions are plain text, at most 1024 characters.

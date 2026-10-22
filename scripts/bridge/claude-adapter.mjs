@@ -31,6 +31,7 @@ import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 import { isValidAlias } from '../shared/seats.mjs';
+import { AGENTS } from '../dashboard/public/shared/vocab.mjs';
 
 const AUTH_TIMEOUT_MS = 5000;
 const heldKey = (m) => JSON.stringify([m.kind, m.text, m.texts ?? null]);
@@ -200,16 +201,20 @@ export class ClaudeAdapter extends EventEmitter {
           clearTimeout(authTimer);   // a waiting question outlives the auth window
           return this.#question(socket, ids(p), p);
         }
-        if (method === 'codex_attachment') {
-          if (!this.#tokenOk(p.token)) throw unauthorized();
-          if (typeof p.sessionId !== 'string' || !this.sendCodexAttachment) throw new Error('Codex attachment session required');
-          return this.sendCodexAttachment(p.sessionId, p);
-        }
-        if (!sessionId || this.sessions.get(sessionId)?.socket !== socket) throw unauthorized();
+        // An attachment for any agent's session. With the runtime token it names its session
+        // (`agent`, `sessionId`: a CLI such as send-attachment.mjs); without, it is this
+        // registered channel's own Claude session.
         if (method === 'attachment') {
           if (!this.sendAttachment) throw new Error('attachment delivery unavailable');
-          return this.sendAttachment(sessionId, p);
+          if (p.token !== undefined) {
+            if (!this.#tokenOk(p.token)) throw unauthorized();
+            if (!AGENTS.includes(p.agent) || typeof p.sessionId !== 'string' || !p.sessionId) throw new Error('attachment: agent and sessionId required');
+            return this.sendAttachment(p.agent, p.sessionId, p);
+          }
+          if (!sessionId || this.sessions.get(sessionId)?.socket !== socket) throw unauthorized();
+          return this.sendAttachment('claude', sessionId, p);
         }
+        if (!sessionId || this.sessions.get(sessionId)?.socket !== socket) throw unauthorized();
         if (method === 'reply') {
           const text = String(p.text ?? '');
           this.sessions.get(sessionId)?.sent.add(text.trim());

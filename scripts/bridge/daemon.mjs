@@ -104,8 +104,8 @@ export class Bridge {
   }
 
   #wire(a) {
-    if (a.agent === 'claude') a.sendAttachment = (id, p) => this.sendAttachment(sessionKey(a.agent, id), p);
-    if (a.agent === 'claude') a.sendCodexAttachment = (id, p) => this.sendAttachment(sessionKey('codex', id), p);
+    // An adapter that takes local requests (the Claude adapter's IPC) may carry an attachment for any agent's session.
+    a.sendAttachment = (agent, id, p) => this.sendAttachment(sessionKey(agent, id), p);
     a.on('up', (e) => this.sessionUp(a.agent, e).catch((err) => this.log(`${a.agent} up: ${err.message}`)));
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
     a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
@@ -615,8 +615,11 @@ export class Bridge {
       const file = fs.realpathSync(request.path);
       // Compare like with like: the path as given against the cwd as given, the realpath
       // against the real root — a symlinked cwd (macOS /var -> /private/var) otherwise reads as outside.
-      const selected = path.relative(path.resolve(s.cwd), path.resolve(request.path));
-      const relative = path.relative(root, file);
+      // A Claude Code worktree (<repo>/.claude/worktrees/<name>/) is a full working copy, not
+      // the .claude config: what is inside it is judged like any workspace file.
+      const workspace = (p) => p.replace(/^\.claude[\\/]worktrees[\\/][^\\/]+(?=[\\/])/, '').replace(/^[\\/]/, '');
+      const selected = workspace(path.relative(path.resolve(s.cwd), path.resolve(request.path)));
+      const relative = workspace(path.relative(root, file));
       const blocked = p => !p || p.startsWith(`..${path.sep}`) || p === '..' || path.isAbsolute(p) ||
         p.split(path.sep).some(part => /^\.(?:git|claude|codex|ssh|aws|npmrc|netrc|env(?:\..*)?)$/i.test(part)) ||
         /(?:^|[\\/])(?:credentials|secrets?|private[-_]key)(?:[.\\/]|$)|\.(?:pem|key|p12)$/i.test(p);

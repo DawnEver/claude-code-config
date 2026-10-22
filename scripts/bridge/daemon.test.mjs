@@ -135,6 +135,17 @@ test('attachments are session scoped and reject files outside the workspace', as
     fs.writeFileSync(path.join(dir, '.env'), 'secret fixture');
     await assert.rejects(r.bridge.sendAttachment('claude:upload', { path: path.join(dir, '.env') }));
     assert.equal(calls.length, 1);
+    // A Claude Code worktree is a working copy: its files go; .claude itself and secrets in a worktree do not.
+    const tree = path.join(dir, '.claude', 'worktrees', 'agent-1');
+    fs.mkdirSync(path.join(tree, 'output'), { recursive: true });
+    fs.writeFileSync(path.join(tree, 'output', 'plot.png'), 'png fixture');
+    fs.writeFileSync(path.join(tree, '.env'), 'secret fixture');
+    fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{}');
+    await r.bridge.sendAttachment('claude:upload', { path: path.join(tree, 'output', 'plot.png'), kind: 'photo' });
+    assert.equal(calls.length, 2, 'a worktree file is a workspace file');
+    await assert.rejects(r.bridge.sendAttachment('claude:upload', { path: path.join(tree, '.env') }), /non-sensitive/);
+    await assert.rejects(r.bridge.sendAttachment('claude:upload', { path: path.join(dir, '.claude', 'settings.json') }), /non-sensitive/);
+    assert.equal(calls.length, 2);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

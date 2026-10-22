@@ -14,11 +14,11 @@ test('Codex upload CLI uses authenticated session-scoped IPC and propagates fail
     const runtimeFile = path.join(dir, 'runtime.json');
     fs.writeFileSync(runtimeFile, JSON.stringify({ port, token: adapter.token }));
     const calls = [];
-    adapter.sendCodexAttachment = async (id, request) => { calls.push({ id, request }); return { message_id: 42 }; };
+    adapter.sendAttachment = async (agent, id, request) => { calls.push({ agent, id, request }); return { message_id: 42 }; };
     assert.equal((await sendSessionAttachment(path.join(dir, 'result.txt'), { runtimeFile, sessionId: 'thread' })).message_id, 42);
-    assert.equal(calls[0].id, 'thread');
+    assert.deepEqual([calls[0].agent, calls[0].id], ['codex', 'thread']);
     assert.equal(calls[0].request.kind, 'document');
-    adapter.sendCodexAttachment = async () => { throw new Error('no live confirmed attachment Topic'); };
+    adapter.sendAttachment = async () => { throw new Error('no live confirmed attachment Topic'); };
     await assert.rejects(sendSessionAttachment(path.join(dir, 'result.txt'), { runtimeFile, sessionId: 'thread' }), /no live confirmed/);
   } finally { await adapter.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
