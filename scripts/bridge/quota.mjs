@@ -142,6 +142,10 @@ function windowModels(q, now) {
 const PLAN_NAMES = { self_serve_business_prolite: 'Business Premium', team_labs_premium: 'Team Premium', team_labs_standard: 'Team Standard' };
 export const planName = (id) => PLAN_NAMES[id] ?? String(id).split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
+/** An account's key, the same everywhere it is stored (the dashboard's quota, the usage store's turns). */
+export const claudeAccountKey = (account, fallback) => `claude:${(account?.email ?? fallback).toLowerCase()}|${account?.orgUuid ?? account?.org ?? ''}`;
+export const codexAccountKey = (email, fallback) => `codex:${(email ?? fallback).toLowerCase()}`;
+
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 
 /** What is wrong with `account` sitting in `seat`'s place, or null. */
@@ -193,7 +197,7 @@ export function accountModels({ machine, seats, codexAccount, claude = [], codex
   for (const g of claudeGroups(claude, seats, machine)) {
     if (!g.quota && !g.problems.length) continue;
     const email = g.account?.email ?? null;
-    out.push({ key: `claude:${(email ?? `${machine}/${g.label ?? 'base'}`).toLowerCase()}|${g.account?.orgUuid ?? g.account?.org ?? ''}`,
+    out.push({ key: claudeAccountKey(g.account, `${machine}/${g.label ?? 'base'}`),
       agent: 'claude', label: g.label ?? null, email, aliases: g.aliases,
       detail: [g.account?.org, g.account?.tier && planName(g.account.tier)].filter(Boolean).join(' · ') || null,
       problems: g.problems, at: g.quota?.at ?? null, windows: windowModels(g.quota, now), resetCredits: null,
@@ -202,7 +206,7 @@ export function accountModels({ machine, seats, codexAccount, claude = [], codex
   if (codex || codexAccount) {
     const expiries = (Array.isArray(codexResetCredits?.credits) ? codexResetCredits.credits : [])
       .map((c) => (c?.expiresAt > 0 ? c.expiresAt * 1000 : null)).filter((x) => x === null || x > now);
-    out.push({ key: `codex:${(codexAccount?.email ?? machine).toLowerCase()}`, agent: 'codex', label: null,
+    out.push({ key: codexAccountKey(codexAccount?.email, machine), agent: 'codex', label: null,
       email: codexAccount?.email ?? null, detail: codexAccount?.plan ? planName(codexAccount.plan) : null, problems: [],
       at: codex?.at ?? null, windows: windowModels(codex, now),
       resetCredits: codexResetCredits?.availableCount > 0 ? { count: codexResetCredits.availableCount, expiries } : null,

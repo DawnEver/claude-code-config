@@ -70,7 +70,7 @@ export function demoMasker() {
     return PROBLEM.test(t) ? problem(t) : fallback(t);
   };
 
-  return (snap) => {
+  const mask = (snap) => {
     // Structured fields first: they fix the numbering the free text then reuses.
     const hosts = (snap.hosts ?? []).map((h) => ({ ...h, id: host(h.id),
       sessions: (h.sessions ?? []).map((s) => ({ ...s, id: session(s.id), name: sessionTitle(s.name), hostId: host(s.hostId), project: project(s.project),
@@ -92,4 +92,8 @@ export function demoMasker() {
         ...(e.host ? { host: host(e.host) } : {}), ...(e.key ? { key: configKey(e.key) } : {}),
         ...(e.problem ? { problem: text(e.problem) } : {}), ...(e.error ? { error: text(e.error) } : {}) })) };
   };
+  /** The Usage tab's report (scripts/dashboard/usage-store.mjs): its projects and machines, under the same names. */
+  mask.usage = (r) => r && { ...r, projects: (r.projects ?? []).map((x) => ({ ...x, k: project(x.k) })),
+    machines: (r.machines ?? []).map((x) => ({ ...x, k: host(x.k) })) };
+  return mask;
 }

@@ -10,6 +10,8 @@
 //                                                      map, then deploy (the Worker learns hosts only then)
 //   node scripts/dashboard/deploy.mjs deploy       upload DASHBOARD_CONFIG and deploy to the url's domain
 //                                                      (code alone also deploys from CI on push)
+//   node scripts/dashboard/deploy.mjs usage-db     create the usage store (D1 `agents-usage`) if missing, bind it in
+//                                                      wrangler.jsonc, apply its migrations (docs/usage.md)
 //   node scripts/dashboard/deploy.mjs set-menu     point the dashboard bot's menu button at the url and
 //                                                      read it back; the bot token is this machine's local
 //                                                      bridge.dashboard.botToken, never synced or printed
@@ -57,15 +59,40 @@ async function hostToken() {
   console.log('the daemon picks the new token up within a minute');
 }
 
+export const USAGE_DB = 'agents-usage';
+const WRANGLER = path.join(HERE, 'wrangler.jsonc');
+
+function wrangler(args, opts = {}) {
+  return execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['-y', 'wrangler@4', ...args],
+    { encoding: 'utf8', shell: process.platform === 'win32', ...opts });
+}
+
+/** wrangler.jsonc with the usage store bound to `id`: the binding's one definition. */
+export function bindUsageDb(jsonc, id) {
+  const binding = `"d1_databases": [{ "binding": "USAGE", "database_name": "${USAGE_DB}", "database_id": "${id}", "migrations_dir": "migrations" }]`;
+  return /"d1_databases":.*$/m.test(jsonc) ? jsonc.replace(/"d1_databases":.*$/m, `${binding},`)
+    : jsonc.replace(/("durable_objects":.*$)/m, `$1
+  // The usage store (docs/usage.md): \`npm run dashboard -- usage-db\` creates and binds it.
+  ${binding},`);
+}
+
+function usageDb() {
+  const find = () => JSON.parse(wrangler(['d1', 'list', '--json'])).find((d) => d.name === USAGE_DB);
+  let db = find();
+  if (!db) { wrangler(['d1', 'create', USAGE_DB], { stdio: 'inherit' }); db = find(); }
+  if (!db?.uuid) throw new Error(`could not create or find D1 ${USAGE_DB}`);
+  fs.writeFileSync(WRANGLER, bindUsageDb(fs.readFileSync(WRANGLER, 'utf8'), db.uuid));
+  wrangler(['d1', 'migrations', 'apply', USAGE_DB, '--remote', '--config', WRANGLER], { stdio: 'inherit' });
+  console.log(`${USAGE_DB} (${db.uuid}) bound in wrangler.jsonc and migrated; deploy to serve it`);
+}
+
 function deploy() {
   const { domain, config } = dashboardConfigFrom(readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {});
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-deploy-'));
   const secrets = path.join(dir, 'secrets.json');
   try {
     writePrivateFile(secrets, JSON.stringify({ DASHBOARD_CONFIG: JSON.stringify(config) }));
-    execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      ['-y', 'wrangler@4', 'deploy', '--config', path.join(HERE, 'wrangler.jsonc'), '--domain', domain, '--secrets-file', secrets, '--tag', commitTag()],
-      { stdio: 'inherit', shell: process.platform === 'win32' });
+    wrangler(['deploy', '--config', WRANGLER, '--domain', domain, '--secrets-file', secrets, '--tag', commitTag()], { stdio: 'inherit' });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log(`deployed to https://${domain}/ (hosts: ${Object.keys(config.hosts).join(', ') || 'none'})`);
 }
@@ -110,7 +137,8 @@ export async function main([cmd] = process.argv.slice(2)) {
   if (cmd === 'host-token') return hostToken();
   if (cmd === 'deploy') return deploy();
   if (cmd === 'set-menu') return setMenu();
-  throw new Error('usage: deploy.mjs host-token | deploy | set-menu');
+  if (cmd === 'usage-db') return usageDb();
+  throw new Error('usage: deploy.mjs host-token | deploy | usage-db | set-menu');
 }
 
 // exitCode, not exit(): exiting with fetch sockets still open trips a libuv assertion on Windows.

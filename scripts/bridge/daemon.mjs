@@ -23,6 +23,7 @@
 // are equally honoured only for allowlisted ids.
 
 import fs from 'fs';
+import os from 'os';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -38,6 +39,8 @@ import { AccountReader, accountFor } from './quota.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
 import { ResourceReader } from './resources.mjs';
+import { UsageScanner, sources as usageSources } from '../usage/scan.mjs';
+import { UsagePush } from '../usage/push.mjs';
 import { STATUS } from '../dashboard/public/shared/vocab.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
@@ -922,10 +925,17 @@ export async function main() {
       return results;
     };
     const resources = new ResourceReader();
+    // The usage store (docs/usage.md): the transcripts' turns, each quota window, hourly load.
+    let lastAccounts = [];
+    const usage = new UsagePush({ url: config.dashboard.url, hostToken: config.dashboard.hostToken, machine, log, accounts: () => lastAccounts,
+      scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, 'usage-cursor.json'),
+        sources: () => usageSources(os.homedir(), { codexEmail: () => codex.account?.email ?? null, machine }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSessions().map((s) => ({ ...s, account: accountFor(s, list) })),
-      accounts: () => accounts.read(), resources: () => resources.read(), onConfigChanges });
+      accounts: () => (lastAccounts = accounts.read()),
+      resources: () => { const r = resources.read(); usage.sample(r); return r; }, onConfigChanges });
     push.start();
+    usage.start();
   }
   const sweep = (orphans) => (config.deleteClosedAfterHours > 0 ? bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`)) : null);
   sweep(false);

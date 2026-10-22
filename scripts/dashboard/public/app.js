@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceView, agentName, eventText } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceView, agentName, eventText, usageView, tokenText, hoursText } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 
@@ -23,7 +23,7 @@ const store = { get: (k) => { try { return localStorage.getItem(k); } catch { re
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
 // The open tab survives a reopen: a #quota / #events link opens that tab; otherwise the last
 // one used; sessions the first time.
-const TABS = ['sessions', 'quota', 'events', 'config'];
+const TABS = ['sessions', 'quota', 'usage', 'events', 'config'];
 const hashTab = location.hash.slice(1);
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
 // Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
@@ -64,6 +64,12 @@ let needsYouCard = store.get('dashboard.needsYouCard') === '1';
 // Each host header's load: 'detailed' (meters and the hardware line, default), 'compact' (meters) or 'off'.
 const LOAD_MODES = [['detailed', 'Detailed'], ['compact', 'Compact'], ['off', 'Off']];
 let loadMode = LOAD_MODES.some(([m]) => m === store.get('dashboard.load')) ? store.get('dashboard.load') : 'detailed';
+// Usage (the store's report, docs/usage.md): fetched when its tab opens and every few minutes while open.
+const USAGE_RANGES = [7, 30, 90, 365];
+const USAGE_EVERY_MS = 5 * 60000;
+let usageDays = USAGE_RANGES.includes(Number(store.get('dashboard.usageDays'))) ? Number(store.get('dashboard.usageDays')) : 30;
+let usage = null;        // {days, report, at} | {days, error, at}
+let usageLoading = false;
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // an edit typed but not saved
 
@@ -573,6 +579,68 @@ function renderConfig() {
   box.append(el('div', 'section-h', 'Hosts'), grid);
 }
 
+const tzOffsetMin = () => -new Date().getTimezoneOffset();
+
+async function fetchUsage(force = false) {
+  if (mock || usageLoading || !tg?.initData) return;
+  if (!force && usage?.days === usageDays && Date.now() - usage.at < USAGE_EVERY_MS) return;
+  usageLoading = true;
+  try {
+    const res = await fetch(`api/usage?days=${usageDays}&tz=${tzOffsetMin()}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
+    usage = res.ok ? { days: usageDays, report: await res.json(), at: Date.now() }
+      : { days: usageDays, error: res.status === 503 ? 'The usage store is not set up (npm run dashboard -- usage-db)' : `Usage unavailable (HTTP ${res.status})`, at: Date.now() };
+  } catch { usage = { days: usageDays, error: 'Usage unreachable', at: Date.now() }; } finally { usageLoading = false; }
+  renderUsage();
+}
+
+/** One ranked list: name, agent time and turns, tokens, and a hairline for its share. */
+function usageList(title, rows) {
+  const box = el('div', 'usage-list');
+  for (const r of rows) {
+    const row = el('div', 'u');
+    const share = el('i', 'share');
+    share.style.width = `${Math.round(r.share * 100)}%`;
+    row.append(el('span', 'n', r.name), el('span', 'm', `${hoursText(r.active)} · ${r.turns} turns`), el('b', null, tokenText(r.tokens)), share);
+    row.title = `${r.sessions} sessions · ${Math.round(r.share * 100)}% of the tokens`;
+    box.append(row);
+  }
+  return [el('div', 'section-h', title), rows.length ? box : el('div', 'qrows empty', 'none')];
+}
+
+function renderUsage() {
+  const box = $('usage-view');
+  box.replaceChildren();
+  const range = el('div', 'usage-range');
+  for (const d of USAGE_RANGES) {
+    const b = el('button', null, d === 365 ? '1y' : `${d}d`);
+    b.setAttribute('aria-pressed', String(d === usageDays));
+    b.addEventListener('click', () => { usageDays = d; store.set('dashboard.usageDays', String(d)); renderUsage(); fetchUsage(true); });
+    range.append(b);
+  }
+  box.append(range);
+  if (mock) return box.append(el('div', 'qrows empty', 'No usage in the example data'));
+  if (!usage || usage.days !== usageDays) return box.append(el('div', 'qrows empty', 'Loading…'));
+  if (usage.error) return box.append(el('div', 'qrows empty', usage.error));
+  const v = usageView(demoOn ? (masker ??= demoMasker()).usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
+  const totals = el('div', 'usage-totals');
+  const total = (value, label, title) => { const c = el('div'); c.append(el('b', null, value), el('span', null, label)); if (title) c.title = title; totals.append(c); };
+  total(tokenText(v.totals.tokens), 'tokens', 'input, cache read and write, and output');
+  total(hoursText(v.totals.active), 'agent time', 'turn durations summed: parallel sessions add up');
+  total(String(v.totals.turns), 'turns');
+  if (v.totals.cacheHit != null) total(`${Math.round(v.totals.cacheHit * 100)}%`, 'cache hit', 'input tokens read from the prompt cache');
+  if (v.totals.costUsd != null) total(`$${Math.round(v.totals.costUsd)}`, 'API value', 'what Claude Code priced its sessions at: list price, not a subscription bill');
+  const chart = el('div', 'usage-days');
+  for (const d of v.days) {
+    const col = el('div', 'd');
+    col.title = `${d.day}: Claude ${tokenText(d.claude)}, Codex ${tokenText(d.codex)}, ${hoursText(d.active)} agent time`;
+    for (const a of ['claude', 'codex']) { const seg = el('div', a); seg.style.height = `${d[`${a}Pct`]}%`; col.append(seg); }
+    chart.append(col);
+  }
+  const axis = el('div', 'usage-axis');
+  axis.append(el('span', null, v.days[0]?.day ?? ''), el('span', null, 'tokens per day · Claude / Codex'), el('span', null, v.days.at(-1)?.day ?? ''));
+  box.append(totals, chart, axis, ...usageList('Projects', v.projects), ...usageList('Models', v.models), ...usageList('Machines', v.machines));
+}
+
 function renderTabs() {
   // Looking at the events marks them seen (after this render still shows which were new).
   const t = tabs(snapshot, Date.now(), seenAt, readAlerts, shownFrom, accounts);
@@ -591,6 +659,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
   b.addEventListener('click', () => {
     tab = b.dataset.tab;
     if (tab === 'events') shownFrom = seenAt;
+    if (tab === 'usage') { renderUsage(); fetchUsage(); }
     configShown = null;
     configDirty = false;
     store.set('dashboard.tab', tab);
@@ -628,6 +697,7 @@ function stop(message) {
   $('chips').replaceChildren();
   $('quota-view').replaceChildren();
   $('events-view').replaceChildren();
+  $('usage-view').replaceChildren();
   $('config-view').replaceChildren();
   $('tabs').hidden = true;
 }
@@ -659,6 +729,7 @@ async function load() {
   if (loading) return;
   loading = true;
   try { await fetchSnapshot(); } finally { loading = false; }
+  if (tab === 'usage') fetchUsage();   // at most every USAGE_EVERY_MS
 }
 
 /** The deployed version beside the title, for a human to check what is live: commit and upload time. */

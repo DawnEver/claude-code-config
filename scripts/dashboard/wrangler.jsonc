@@ -6,6 +6,8 @@
   "compatibility_date": "2026-10-01",
   "assets": { "directory": "public", "not_found_handling": "none" },
   "durable_objects": { "bindings": [{ "name": "DASHBOARD", "class_name": "DashboardHub" }] },
+  // The usage store (docs/usage.md): `npm run dashboard -- usage-db` creates and binds it.
+  "d1_databases": [{ "binding": "USAGE", "database_name": "agents-usage", "database_id": "c2325c20-f5d6-48ac-bd81-73671efe7a79", "migrations_dir": "migrations" }],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DashboardHub"] }],
   // The deployed version (id, tag = git commit, upload time), read by /api/health.
   "version_metadata": { "binding": "CF_VERSION_METADATA" },

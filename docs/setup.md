@@ -64,8 +64,9 @@ store (`python -m ai_lab.auth login <provider> --task session`). See [`providers
 `rem`, `sharp-review`, `evolve` and `fabric` are enabled via `enabledPlugins`. That list is set on
 **fresh install** (the template is copied to `claude_settings.json` on first run) and is
 otherwise a deliberate edit to the shared payload — `npm run migrate` does not enable plugins.
-`traceme` is archived: not enabled and not installed. A host that still has it installed gets a
-doctor WARN; remove it with `claude plugin uninstall traceme@cc-market`.
+`traceme` is gone from the marketplace: usage statistics are the usage store (`docs/usage.md`).
+A host that still has it installed gets doctor's orphaned-plugin WARN; remove it with
+`claude plugin uninstall traceme@cc-market`.
 
 ### LSPs
 

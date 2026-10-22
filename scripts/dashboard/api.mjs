@@ -4,6 +4,8 @@
 import { SCHEMA_VERSION, isHostId, parseConfigChange, parseHostPush } from '../shared/dashboard-schema.mjs';
 import { Registry } from './registry.mjs';
 import { TELEGRAM_PUBLIC_KEY, verifyHostToken, verifyInitData } from './auth.mjs';
+import { parseUsageBatch } from '../shared/usage-schema.mjs';
+import { ingest, query, report } from './usage-store.mjs';
 
 const MAX_BODY = 256 * 1024;
 const MAX_CONFIG_BODY = 4096;   // one {key, value}
@@ -35,7 +37,18 @@ const json = (status, body) => new Response(JSON.stringify(body), { status,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
 const error = (status, code) => json(status, { error: { code } });
 
-export function createApi(config, { now = Date.now, log = () => {}, store = null } = {}) {
+/** A request body as text, or null when over `max` bytes. */
+async function body(request, max) {
+  if (Number(request.headers.get('content-length')) > max) return null;
+  const text = await request.text();
+  return text.length > max ? null : text;
+}
+
+/**
+ * `store`: the Durable Object's key-value storage (events, alert state). `db`: the usage store
+ * (D1, scripts/dashboard/usage-store.mjs); without it the usage routes answer 503.
+ */
+export function createApi(config, { now = Date.now, log = () => {}, store = null, db = null } = {}) {
   const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000, now, store });
   const hits = new Map();   // client -> requests in the current minute
   let window = null;
@@ -54,21 +67,33 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
     const url = new URL(request.url);
     if (limited(request)) return error(429, 'rate_limited');
     if (request.method === 'GET' && url.pathname === '/api/health') return json(200, { ok: true, schemaVersion: SCHEMA_VERSION });
-    const push = /^\/api\/hosts\/([^/]+)\/snapshot$/.exec(url.pathname);
-    if (push && request.method === 'POST') {
-      const hostId = push[1];   // a machine name needs no percent-decoding
+    // A host's own routes: its snapshot, its usage, and read-only SQL over the usage store.
+    const hostRoute = /^\/api\/hosts\/([^/]+)\/(snapshot|usage|query)$/.exec(url.pathname);
+    if (hostRoute && request.method === 'POST') {
+      const [, hostId, what] = hostRoute;   // a machine name needs no percent-decoding
       if (!isHostId(hostId) || !(await verifyHostToken(hostId, request.headers.get('authorization'), config.hosts))) {
-        log(`host push refused: ${isHostId(hostId) ? hostId : 'invalid host id'}`);
+        log(`host ${what} refused: ${isHostId(hostId) ? hostId : 'invalid host id'}`);
         return error(401, 'unauthorized');
       }
-      if (Number(request.headers.get('content-length')) > MAX_BODY) return error(413, 'too_large');
-      const text = await request.text();
-      if (text.length > MAX_BODY) return error(413, 'too_large');
-      let parsed;
-      try { parsed = parseHostPush(JSON.parse(text)); } catch { return error(400, 'invalid_body'); }
-      if (!parsed) return error(400, 'invalid_snapshot');
-      const { accepted, configChanges = [] } = registry.accept(hostId, parsed);
-      return json(200, { accepted, configChanges });
+      const text = await body(request, MAX_BODY);
+      if (text === null) return error(413, 'too_large');
+      let raw;
+      try { raw = JSON.parse(text); } catch { return error(400, 'invalid_body'); }
+      if (what === 'snapshot') {
+        const parsed = parseHostPush(raw);
+        if (!parsed) return error(400, 'invalid_snapshot');
+        const { accepted, configChanges = [] } = registry.accept(hostId, parsed);
+        return json(200, { accepted, configChanges });
+      }
+      if (!db) return error(503, 'no_usage_store');
+      if (what === 'usage') {
+        const batch = parseUsageBatch(raw);
+        if (!batch) return error(400, 'invalid_usage');
+        return json(200, { stored: await ingest(db, hostId, batch, now()) });
+      }
+      const result = await query(db, raw?.sql);
+      if (result.error) log(`query by ${hostId} refused: ${result.error}`);
+      return json(result.error ? 400 : 200, result);
     }
     if (request.method !== 'GET' && !(request.method === 'POST' && url.pathname === '/api/config')) return error(404, 'not_found');
     const who = await verifyInitData(/^tma (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1],
@@ -79,9 +104,8 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
     }
     if (url.pathname === '/api/config') {
       // The one write: a change to a CONFIG_KEYS key, queued for a host to apply.
-      if (Number(request.headers.get('content-length')) > MAX_CONFIG_BODY) return error(413, 'too_large');
-      const text = await request.text();
-      if (text.length > MAX_CONFIG_BODY) return error(413, 'too_large');
+      const text = await body(request, MAX_CONFIG_BODY);
+      if (text === null) return error(413, 'too_large');
       let change;
       try { change = parseConfigChange(JSON.parse(text)); } catch { change = null; }
       if (!change) return error(400, 'not_editable');
@@ -89,6 +113,12 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       return json(202, { id: registry.requestChange(change, who.userId) });
     }
     if (url.pathname === '/api/dashboard') return json(200, registry.snapshot());
+    if (url.pathname === '/api/usage') {
+      if (!db) return error(503, 'no_usage_store');
+      const days = Math.min(366, Math.max(1, Number(url.searchParams.get('days')) || 30));
+      const tz = Math.min(840, Math.max(-720, Number(url.searchParams.get('tz')) || 0));
+      return json(200, await report(db, { days, tzOffsetMin: tz, now: now() }));
+    }
     return error(404, 'not_found');
   }
 

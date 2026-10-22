@@ -325,3 +325,48 @@ export function eventText(e, now = Date.now()) {
 
 /** The events the Events tab lists: those newer than the last visit (`seenAt`); read ones are cleared. */
 export const unreadEvents = (events = [], seenAt = null) => events.filter((e) => !seenAt || e.at > seenAt);
+
+const tokensOf = (r) => (r.input ?? 0) + (r.cache_read ?? 0) + (r.cache_write ?? 0) + (r.output ?? 0);
+
+/** A token count as people read it: 950, 12k, 3.4M, 1.2B. */
+export function tokenText(n) {
+  if (!(n > 0)) return '0';
+  for (const [v, s] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']]) if (n >= v) return `${(n / v).toFixed(n >= 10 * v ? 0 : 1).replace(/\.0$/, '')}${s}`;
+  return String(Math.round(n));
+}
+
+/** Agent time as people read it: 45m, 3.5h, 120h. */
+export const hoursText = (ms) => (!(ms > 0) ? '0' : ms < 3600000 ? `${Math.round(ms / 60000)}m` : `${(ms / 3600000).toFixed(ms < 36000000 ? 1 : 0).replace(/\.0$/, '')}h`);
+
+/**
+ * The Usage tab from the store's report (scripts/dashboard/usage-store.mjs report): totals, one
+ * bar per day of the range (every day, empty ones too) split by agent, and the ranked lists.
+ * `active` is agent time: turns' durations summed, so parallel sessions add up.
+ */
+export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
+  if (!report) return null;
+  const byDay = new Map();
+  let tokens = 0, active = 0, turns = 0, input = 0, cacheRead = 0, cacheWrite = 0;
+  for (const d of report.daily ?? []) {
+    const row = byDay.get(d.day) ?? { day: d.day, claude: 0, codex: 0, active: 0 };
+    row[d.agent] = (row[d.agent] ?? 0) + tokensOf(d);
+    row.active += d.active_ms ?? 0;
+    byDay.set(d.day, row);
+    tokens += tokensOf(d); active += d.active_ms ?? 0; turns += d.turns ?? 0;
+    input += d.input ?? 0; cacheRead += d.cache_read ?? 0; cacheWrite += d.cache_write ?? 0;
+  }
+  const days = [];
+  const today = Math.floor((now + tzOffsetMin * 60000) / 86400000);
+  for (let i = report.days - 1; i >= 0; i--) {
+    const day = new Date((today - i) * 86400000).toISOString().slice(0, 10);
+    days.push(byDay.get(day) ?? { day, claude: 0, codex: 0, active: 0 });
+  }
+  const max = Math.max(1, ...days.map((d) => d.claude + d.codex));
+  const list = (rows) => rows.map((r) => ({ name: r.k ?? 'unknown', tokens: tokensOf(r), share: tokens ? tokensOf(r) / tokens : 0,
+    active: r.active_ms ?? 0, turns: r.turns ?? 0, sessions: r.sessions ?? 0 }));
+  return {
+    totals: { tokens, active, turns, costUsd: report.costUsd ?? null, cacheHit: input + cacheRead + cacheWrite ? cacheRead / (input + cacheRead + cacheWrite) : null },
+    days: days.map((d) => ({ ...d, claudePct: (d.claude / max) * 100, codexPct: (d.codex / max) * 100 })),
+    projects: list(report.projects ?? []), models: list(report.models ?? []), machines: list(report.machines ?? []),
+  };
+}

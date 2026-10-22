@@ -72,7 +72,7 @@ no API, no authentication.
   opened with `Telegram.WebApp.openTelegramLink`. A closed Topic still links (marked closed);
   re-binding (resume, supersede, recreate) shows on the next push. The group id appears only
   inside that link (Telegram needs it); the chat id itself is not served.
-- **Not exported**: cwd, Topic titles, tokens, and no message text. Account emails are (Quota, below).
+- **Not exported**: cwd, Topic titles, and no message text. Token counts go to the usage store, not the snapshot (`docs/usage.md`). Account emails are (Quota, below).
   The session's own name is (`name`, see bridge.md; Claude's generated title is a summary of the conversation, so a
   name may echo its topic), and two counts per Topic: `unread`, the messages
   posted since the human last wrote there (a prompt typed at the machine counts as writing; reading
@@ -85,6 +85,11 @@ no API, no authentication.
   restarts it, hosts and sessions are empty until the next push round (`everySeconds`). The events
   and what each account was last alerted for are history no push can rebuild, so they live in its
   storage: a restart neither loses them nor alerts a standing condition again.
+
+## Usage
+
+The Usage tab reads the usage store (D1 behind this Worker): tokens, agent time and turns by day,
+project, model and machine over 7 d to 1 y. Host side, schema, SQL access and setup: `docs/usage.md`.
 
 ## Quota
 
