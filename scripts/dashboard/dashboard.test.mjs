@@ -4,7 +4,7 @@ import fs from 'fs';
 import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
 import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schema.mjs';
 import { Registry } from './registry.mjs';
-import { createApi, parseDashboardConfig } from './api.mjs';
+import { createApi, parseDashboardConfig, REPORT_TTL_MS } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
@@ -90,11 +90,11 @@ test('registry: ordering per boot, offline after TTL, configured hosts listed be
   assert.equal(r.accept('host-b', parseHostPush(push({ bootAt: t + 3600000 }))).accepted, false, 'a boot dated ahead of the gateway clock');
 });
 
-async function gateway(over = {}) {
+async function gateway(over = {}, { db = null } = {}) {
   const { token, hash } = await newHostToken();
   let now = NOW;
   const api = createApi(parseDashboardConfig({ botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash }, ratePerMinute: 1000, ...over }, PUBLIC_KEY),
-    { now: () => now });
+    { now: () => now, db });
   const req = (p, init = {}) => api(new Request(`https://dashboard.example${p}`, init));
   return { api, token, req, tick: (ms) => { now += ms; } };
 }
@@ -648,4 +648,21 @@ test('layers: the Worker never imports page presentation; the shared layer impor
   for (const f of fs.readdirSync(new URL('./public/shared/', import.meta.url))) {
     for (const [, spec] of read(`./public/shared/${f}`).matchAll(/from '([^']+)'/g)) assert.match(spec, /^\.\/[\w-]+\.mjs$/, `${f} imports ${spec}`);
   }
+});
+
+test('usage report: for an allowlisted viewer, held REPORT_TTL_MS per range so a left-open tab does not reread the store', async () => {
+  let reads = 0;
+  const db = { prepare: () => ({ bind: () => ({ all: async () => { reads++; return { results: [] }; } }) }) };
+  const g = await gateway({}, { db });
+  assert.equal((await g.req('/api/usage?days=30', await asViewer(MALLORY))).status, 403);
+  assert.equal((await g.req('/api/usage?days=30', await asViewer(ALICE))).status, 200);
+  const once = reads;
+  await g.req('/api/usage?days=30', await asViewer(ALICE));
+  assert.equal(reads, once, 'held');
+  await g.req('/api/usage?days=7', await asViewer(ALICE));
+  assert.ok(reads > once, 'another range reads');
+  const again = reads;
+  g.tick(REPORT_TTL_MS);
+  await g.req('/api/usage?days=30', await asViewer(ALICE));
+  assert.ok(reads > again, 'expired: read again');
 });

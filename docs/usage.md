@@ -48,6 +48,10 @@ Tokens mean the same on both hosts: `input` uncached, `cache_read`, `cache_write
 - First run: the whole backlog on disk, in rounds of about 2000 rows. About 3 min for 1.4 GB
   of transcripts; the parse yields between files, so the daemon keeps serving Telegram.
 - Size: about 300 rows a day per busy machine, about 50 MB a year. D1's free tier is 5 GB.
+- Budget (free tier: 100k rows written, 5M read a day): an active session's last turn is
+  rewritten each round, a few thousand writes a day per machine. A report reads the rows of
+  its range, so the Worker holds each range's report 5 min (`REPORT_TTL_MS`, api.mjs): a tab
+  left open on 1 y costs one read per 5 min, not one per poll.
 
 ## Reading it
 

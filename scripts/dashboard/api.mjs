@@ -9,6 +9,7 @@ import { ingest, query, report } from './usage-store.mjs';
 
 const MAX_BODY = 256 * 1024;
 const MAX_CONFIG_BODY = 4096;   // one {key, value}
+export const REPORT_TTL_MS = 5 * 60000;
 
 /**
  * DASHBOARD_CONFIG (JSON): {botId, allowedUserIds, hosts: {machine: sha256}, ttlSeconds?,
@@ -51,6 +52,9 @@ async function body(request, max) {
 export function createApi(config, { now = Date.now, log = () => {}, store = null, db = null } = {}) {
   const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000, now, store });
   const hits = new Map();   // client -> requests in the current minute
+  // The Usage tab's report per (days, tz), kept REPORT_TTL_MS: a year's report reads the whole
+  // table, and D1's free tier counts every row read.
+  const reports = new Map();
   let window = null;
 
   const limited = (request) => {
@@ -117,7 +121,12 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       if (!db) return error(503, 'no_usage_store');
       const days = Math.min(366, Math.max(1, Number(url.searchParams.get('days')) || 30));
       const tz = Math.min(840, Math.max(-720, Number(url.searchParams.get('tz')) || 0));
-      return json(200, await report(db, { days, tzOffsetMin: tz, now: now() }));
+      const key = `${days}|${tz}`;
+      const held = reports.get(key);
+      if (held && now() - held.at < REPORT_TTL_MS) return json(200, held.value);
+      const value = await report(db, { days, tzOffsetMin: tz, now: now() });
+      reports.set(key, { at: now(), value });
+      return json(200, value);
     }
     return error(404, 'not_found');
   }
