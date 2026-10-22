@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-# Architecture audit 2026-10-22 (pending user go-ahead; none fixed yet)
+# Architecture audit 2026-10-22 — DONE (all P0/P1/P2, e9209a0..2030a46)
 
 Three read-only reviewers (bridge / dashboard / setup-runtime-hooks). Security: no gap found.
 Proposed: fix all P0/P1/P2 small items in one pass (separate tested commits); the two M items later.
@@ -42,3 +42,12 @@ Proposed: fix all P0/P1/P2 small items in one pass (separate tested commits); th
 - `dashboardSnapshot()` returns only sessions; "banner" names both `#summary` setting and `#banner` strip; 5 stale comments in app.js; 'Claude'/'Codex' open-coded 6x.
 - daemon.mjs header lists wrong adapter events; notify-hook.js macOS finds terminal-notifier only in Homebrew dirs.
 - accountIndex/quotaView computed 2-3x per render.
+
+## Outcome (2026-10-22)
+All items fixed in seven commits e9209a0..2030a46. Decisions: Reload button removed (Cache-Control: no-cache instead);
+the 1 h run-out alert dropped (only an exhausted window alerts); both key migrations deleted. New shared layer
+`scripts/dashboard/public/shared/` (vocab, quota-model, config-keys) imported by bridge, Worker and page; events are
+data worded by `eventText`. Kept on purpose: codex.js link-check throttle (measured 150-300 ms on the cloud folder);
+`applyConfigChange` resolves the sync dir itself (documented write exception). Guards: vocab single-source test,
+layering test, doctor `rules-symbols`. Also: worktree files (.claude/worktrees/<name>/) can be sent as attachments.
+Not done (permission): allowing `mcp__session-bridge__send_attachment`/`reply` in claude_settings.json — user adds it.
