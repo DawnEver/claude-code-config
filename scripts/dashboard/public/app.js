@@ -56,8 +56,8 @@ let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns
 document.body.classList.toggle('packed', packed);
 // Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) instead of status rows.
 let chatList = store.get('dashboard.chatList') === '1';
-// Quota hosts show their CPU, memory and GPU load.
-let showResources = store.get('dashboard.resources') === '1';
+// Quota hosts show their CPU, memory and GPU load (on unless turned off on this device).
+let showResources = store.get('dashboard.resources') !== '0';
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // an edit typed but not saved
 

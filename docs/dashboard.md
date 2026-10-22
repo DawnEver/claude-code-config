@@ -110,7 +110,7 @@ app-server); the Worker never recomputes it.
   a tap opens it in place to the detail: org and plan, each window's trend on a local-time axis
   (hours for 5h, weekday and date for 7d, a line at the present), reset and forecast. A shared
   account appears under every host that runs it, marked as one budget.
-- **Machine load** (Config → This device, off by default): each host's CPU % (all cores since the
+- **Machine load** (Config → This device, on by default): each host's CPU % (all cores since the
   previous push), memory and, where `nvidia-smi` exists, each GPU's use and memory, above its accounts.
   Sampled by `scripts/bridge/resources.mjs` on every push; numbers and a GPU model name only.
 - **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
