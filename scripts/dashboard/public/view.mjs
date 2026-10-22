@@ -106,7 +106,7 @@ const gb = (b) => (b / GB >= 10 ? Math.round(b / GB) : Math.round((b / GB) * 10)
 
 /**
  * A host's load: `meters` (CPU, memory, then each GPU's compute and memory), each a short value
- * that always fits beside its bar, and `about`, what the hardware is (cores, GPU models) — a
+ * that always fits beside its bar, and `about`, what the hardware is (CPU model, cores, memory size and type, GPU models) — a
  * line of its own, so a long model name never crowds a number. Empty when nothing was reported.
  */
 export function resourceView(r) {
@@ -121,7 +121,8 @@ export function resourceView(r) {
     meters.push({ label, pct: g.util ?? 0, text: `${g.util ?? '?'}%` });
     meters.push({ label: `${label} mem`, pct: pct(g.memUsed, g.memTotal), text: `${gb(g.memUsed)}/${gb(g.memTotal)} GB` });
   });
-  const about = [r.cores && `${r.cores} cores`, ...gpus.map((g, i) => g.name && (gpus.length > 1 ? `GPU${i} ${g.name}` : g.name))].filter(Boolean).join(' · ');
+  const about = [r.cpuModel, r.cores && `${r.cores} cores`, r.mem && `${gb(r.mem.total)} GB${r.mem.type ? ` ${r.mem.type}` : ''}`,
+    ...gpus.map((g, i) => g.name && (gpus.length > 1 ? `GPU${i} ${g.name}` : g.name))].filter(Boolean).join(' · ');
   return { meters, about };
 }
 
@@ -361,11 +362,11 @@ export function mockDashboard(now = Date.now()) {
     { id: 'host-a', online: true, lastSeen: t(4), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: [], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
       s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a', 'OAuth token refresh', 3),
       s('host-a', false, '019a7f20-2222', 'codex', 'frontend', 'main', 'needs_approval', 40, { url: 'https://t.me/c/1000000001/13', closed: false }, null, 'Landing page redesign', 5, true)],
-      resources: { cpu: 42, cores: 16, mem: { used: 21e9, total: 34e9 }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
+      resources: { cpu: 42, cores: 16, cpuModel: 'AMD Ryzen 9 7950X', mem: { used: 21e9, total: 34e9, type: 'DDR5' }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
     { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
       s('host-b', false, '7d1e9b3c-3333', 'claude', 'refactor', 'refactor/core', 'idle', 900, { url: 'https://t.me/c/1000000002/7', closed: true }, null, 'Split the parser module', 1),
       s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null)],
-      resources: { cpu: 7, cores: 10, mem: { used: 9e9, total: 17e9 }, gpus: [] } },
+      resources: { cpu: 7, cores: 10, cpuModel: 'Apple M2 Pro', mem: { used: 9e9, total: 17e9, type: 'LPDDR5' }, gpus: [] } },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
   ], configKeys: [

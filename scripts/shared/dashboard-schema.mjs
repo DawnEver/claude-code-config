@@ -70,8 +70,9 @@ function parseAccount(a) {
 function parseResources(r) {
   if (!r || typeof r !== 'object') return null;
   const TB = 1e15;
-  const mem = num(r.mem?.total, 1, TB) ? { used: num(r.mem.used, 0, r.mem.total) ?? 0, total: r.mem.total } : null;
-  return { cpu: num(r.cpu, 0, 100), cores: num(r.cores, 1, 4096), mem,
+  const mem = num(r.mem?.total, 1, TB) ? { used: num(r.mem.used, 0, r.mem.total) ?? 0, total: r.mem.total,
+    type: typeof r.mem.type === 'string' && /^(LP)?DDR\d?X?$/.test(r.mem.type) ? r.mem.type : null } : null;
+  return { cpu: num(r.cpu, 0, 100), cores: num(r.cores, 1, 4096), cpuModel: text(r.cpuModel, 80), mem,
     gpus: (Array.isArray(r.gpus) ? r.gpus : []).slice(0, 8).filter((g) => num(g?.memTotal, 1, TB)).map((g) => ({ name: text(g.name, 64),
       util: num(g.util, 0, 100), memUsed: num(g.memUsed, 0, g.memTotal) ?? 0, memTotal: g.memTotal })) };
 }

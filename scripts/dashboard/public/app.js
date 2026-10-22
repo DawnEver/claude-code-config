@@ -46,7 +46,6 @@ let groupBy = store.get('dashboard.groupBy') === 'host' ? 'host' : 'project';
 let groupOrder = store.get('dashboard.groupOrder') === 'urgency' ? 'urgency' : 'host';
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
-let legendOpen = false;   // the quota legend, kept across polls
 let accounts = new Map();
 let hostList = [];   // hostsView(snapshot): the one host model the Sessions and Quota tabs render
 let unit = store.get('dashboard.unit') === 'left' ? 'left' : 'used';   // bars and numbers read as % left or % used
@@ -57,8 +56,11 @@ let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns
 document.body.classList.toggle('packed', packed);
 // Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) instead of status rows.
 let chatList = store.get('dashboard.chatList') === '1';
-// Every host header shows its CPU, memory and GPU load (on unless turned off on this device).
-let showResources = store.get('dashboard.resources') !== '0';
+// The "needs you" banner above the tabs: off unless turned on here; the Events tab is the notification.
+let banner = store.get('dashboard.banner') === '1';
+// Each host header's load: 'detailed' (meters and the hardware line, default), 'compact' (meters) or 'off'.
+const LOAD_MODES = [['detailed', 'Detailed'], ['compact', 'Compact'], ['off', 'Off']];
+let loadMode = LOAD_MODES.some(([m]) => m === store.get('dashboard.load')) ? store.get('dashboard.load') : 'detailed';
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // an edit typed but not saved
 
@@ -135,6 +137,9 @@ function renderSummary() {
     readAlerts = readAlerts.filter((k) => standing.includes(k));
     store.set(readKey(), JSON.stringify(readAlerts));
   }
+  // Off (the default): Events is the only notification; the "Needs you" chip still lists the sessions.
+  box.hidden = !banner;
+  if (!banner) return;
   const quota = quotaAlerts(snapshot, Date.now(), readAlerts);
   const n = waiting.length + quota.length;
   box.className = `summary${n ? ' alert' : ''}`;
@@ -298,7 +303,7 @@ function renderQuota() {
     for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q) : quotaRow(q, h.id));
     grid.append(hostSection(h, bestLine, rows));
   }
-  box.append(quotaHeader(), grid);
+  box.append(el('div', 'section-h', `Quota ${unit}`), grid);
 }
 
 /** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */
@@ -315,7 +320,7 @@ function resourcesBox(r, online) {
     cell.append(el('span', 'k', m.label), track, el('span', 'res-t', m.text));
     box.append(cell);
   }
-  if (about) box.append(el('div', 'res-about muted', about));
+  if (about && loadMode === 'detailed') box.append(el('div', 'res-about muted', about));
   return box;
 }
 
@@ -334,27 +339,6 @@ function quotaRef(q) {
   row.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'see', `→ see ${q.refTo}`));
   row.title = `one budget: its full card is on ${q.refTo}`;
   return row;
-}
-
-/** The quota view's header: a '?' that opens a legend (a tap, not a hover, so it works on touch). */
-function quotaHeader() {
-  const legend = el('details', 'qlegend');
-  legend.open = legendOpen;
-  legend.addEventListener('toggle', () => { legendOpen = legend.open; });
-  const summary = el('summary', null, '?');
-  summary.title = 'What the bars mean';
-  const body = el('div', 'qlegend-body');
-  for (const line of [`Every number is % ${unit} (switch in Config). The bold, underlined window (5h / 7d) is the binding one: the account's % ${unit}.`,
-    unit === 'left' ? 'Bar fill = what is left; the thin line = what an even spend would leave by now. Fill short of the line: spending faster than even.'
-      : 'Bar fill = what is used; the thin line = what an even spend would have used by now. Fill past the line: spending faster than even.',
-    'Orange bar: runs out before reset, or exhausted. ↻ = time to reset.',
-    '≤ and a dim ◷: the reading is stale, so at most that much is left.',
-    'Trend (tap a row): spend per slice of the window, half height = even spend; grey hatched = not observed, flat grey = still ahead; the vertical line = now.',
-    'not read = the window has reset since the last reading, so its use is unknown. → see <host> = a shared account, carded on that host.']) body.append(el('p', null, line));
-  legend.append(summary, body);
-  const head = el('div', 'qhead');
-  head.append(el('span', 'section-h', `Quota ${unit}`), legend);
-  return head;
 }
 
 function renderChips() {
@@ -432,7 +416,7 @@ function hostSection(h, ...body) {
   const head = el('div', 'host-head');
   head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id),
     el('span', 'muted meta', h.online ? `${h.sessions.length} session${h.sessions.length === 1 ? '' : 's'}` : `offline · seen ${ago(h.lastSeen)}`));
-  section.append(head, ...(showResources ? [resourcesBox(h.resources, h.online)] : []), ...body);
+  section.append(head, ...(loadMode === 'off' ? [] : [resourcesBox(h.resources, h.online)]), ...body);
   return section;
 }
 
@@ -500,6 +484,17 @@ function configRow(r) {
 }
 
 /** Clock and date style for absolute times, this device only. */
+/** How much of each machine's load its host header shows: meters and hardware, meters, or none. */
+function loadSetting() {
+  const row = el('div', 'cfg demo-toggle');
+  const select = el('select');
+  select.setAttribute('aria-label', 'machine load');
+  for (const [value, text] of LOAD_MODES) select.append(Object.assign(el('option', null, text), { value, selected: loadMode === value }));
+  select.addEventListener('change', () => { loadMode = select.value; store.set('dashboard.load', loadMode); render(); });
+  row.append(el('span', null, 'Machine load (CPU, memory, GPU) under each host'), select);
+  return row;
+}
+
 function timeSettings() {
   const row = el('div', 'cfg demo-toggle');
   const pick = (name, label, options) => {
@@ -535,10 +530,10 @@ const deviceToggles = () => [
     (v) => { groupBy = v ? 'project' : 'host'; store.set('dashboard.groupBy', groupBy); }),
   deviceToggle('In a project, order sessions by urgency instead of by workstation', () => groupOrder === 'urgency',
     (v) => { groupOrder = v ? 'urgency' : 'host'; store.set('dashboard.groupOrder', groupOrder); }),
+  deviceToggle('"Needs you" banner at the top (otherwise only the Events tab notifies)', () => banner,
+    (v) => { banner = v; store.set('dashboard.banner', v ? '1' : '0'); }),
   deviceToggle('Sessions as a chat list (Telegram style): name, time, unread count and @ mentions', () => chatList,
     (v) => { chatList = v; store.set('dashboard.chatList', v ? '1' : '0'); }),
-  deviceToggle('Show each machine\'s CPU, memory and GPU load (Sessions and Quota)', () => showResources,
-    (v) => { showResources = v; store.set('dashboard.resources', v ? '1' : '0'); }),
   ...(mock ? [] : [deviceToggle('Demo mode: mask machines, accounts, projects and ids on this device (config edits off)', () => demoOn, (v) => {
     demoOn = v;
     store.set('dashboard.demo', v ? '1' : '0');
@@ -553,7 +548,7 @@ const deviceToggles = () => [
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
-  box.append(el('div', 'section-h', 'This device'), timeSettings(), ...deviceToggles());
+  box.append(el('div', 'section-h', 'This device'), timeSettings(), loadSetting(), ...deviceToggles(), reloadButton());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }
   box.append(el('div', 'section-h', 'Shared settings'));
@@ -628,6 +623,7 @@ function render() {
 }
 
 function stop(message) {
+  $('summary').hidden = false;   // sign-in and access problems show whatever the banner setting
   $('summary').replaceChildren(el('div', 'summary-head', message));
   $('hosts').replaceChildren();
   $('chips').replaceChildren();
@@ -678,6 +674,26 @@ async function showVersion() {
  * The live build: when it was deployed (what a human compares) and its commit, which opens on
  * GitHub. Kept apart from the data's own "updated" time.
  */
+/** Every file the page is made of: what a forced reload fetches again. */
+const PAGE_FILES = ['index.html', 'app.js', 'view.mjs', 'demo.mjs'];
+
+/**
+ * Load the deployed version now: Telegram's web view may keep an old copy of the page, so every
+ * file is fetched again past the cache (which replaces the cached copy), then the page reloads.
+ */
+function reloadButton() {
+  const row = el('div', 'cfg demo-toggle');
+  const button = el('button', 'dismiss', 'Reload');
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    button.textContent = 'Reloading…';
+    await Promise.all(PAGE_FILES.map((f) => fetch(f, { cache: 'reload' }).catch(() => null)));
+    location.reload();
+  });
+  row.append(button, el('span', null, 'Force-load the latest deployed version (this device keeps the page cached)'));
+  return row;
+}
+
 function renderVersion() {
   const box = $('version');
   box.replaceChildren();
