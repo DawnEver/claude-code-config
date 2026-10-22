@@ -2,8 +2,9 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceView, agentName } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceView, agentName, eventText } from './view.mjs';
 import { demoMasker } from './demo.mjs';
+import { mockDashboard } from './mock.mjs';
 
 const POLL_MS = 8000;
 const REPO = 'https://github.com/DawnEver/claude-code-config';
@@ -428,7 +429,7 @@ function renderEvents() {
   const list = el('div', 'event-list');
   for (const e of events) {
     const row = el('div', 'event new');
-    row.append(el('div', 'text', e.text), el('div', 'muted', ago(e.at)));
+    row.append(el('div', 'text', eventText(e)), el('div', 'muted', ago(e.at)));
     list.append(row);
   }
   box.append(list);

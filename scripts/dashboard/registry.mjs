@@ -7,7 +7,7 @@
 // and every session it last reported is `stale`.
 
 import { SCHEMA_VERSION, configKeysMeta } from '../shared/dashboard-schema.mjs';
-import { quotaAlertsFor, quotaView } from './public/view.mjs';
+import { quotaAlertsFor, quotaView } from './public/shared/quota-model.mjs';
 
 /** How many past events the dashboard keeps. */
 export const MAX_EVENTS = 50;
@@ -18,38 +18,38 @@ export class Registry {
   constructor({ hosts = [], ttlMs = 60000, now = Date.now, store = null } = {}) {
     Object.assign(this, { ttlMs, now, store });
     this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
-    this.alerted = new Map(Object.entries(store?.get('alerted') ?? {}));   // account key -> what was last alerted (view.mjs quotaAlertsFor)
-    this.events = store?.get('events') ?? [];   // alerts and config changes as a history for the dashboard, newest first
+    this.alerted = new Map(Object.entries(store?.get('alerted') ?? {}));   // account key -> what was last alerted (quota-model.mjs quotaAlertsFor)
+    // Alerts and config changes as data ({at, kind, ...}), newest first; the page words them. An
+    // entry with no kind is from before events were data: dropped.
+    this.events = (store?.get('events') ?? []).filter((e) => e?.kind);
     this.changes = new Map();   // pending config change id -> {id, key, value, by, at, host?, sentAt?}
   }
 
   /**
    * Accept a parsed push unless it is not newer than the one held: an older boot, or the same
-   * boot's earlier tick. Returns {accepted, alerts, configChanges}: `alerts` are the quota
-   * events this push's accounts now warrant, judged once here on the merged view (so an account
-   * several hosts report alerts once) and kept as dashboard events; nothing is posted anywhere.
+   * boot's earlier tick. Returns {accepted, configChanges}. The quota events this push's accounts
+   * now warrant are judged once here, on the merged view (so an account several hosts report
+   * alerts once), and kept as dashboard events; nothing is posted anywhere.
    */
   accept(hostId, push) {
     const prev = this.hosts.get(hostId);
     // A boot dated ahead of this clock would outrank every later boot: refused (5 min skew).
-    if (push.bootAt > this.now() + 300000) return { accepted: false, alerts: [] };
-    if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false, alerts: [] };
+    if (push.bootAt > this.now() + 300000) return { accepted: false };
+    if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false };
     this.hosts.set(hostId, { ...push, receivedAt: this.now() });
     const configChanges = this.#settle(hostId, push.configResults);
     const merged = new Map(this.accounts().map((a) => [a.key, a]));
-    const alerts = [];
     for (const key of new Set(push.accounts.map((a) => a.key))) {
-      const { texts, state } = quotaAlertsFor(this.alerted.get(key), quotaView(merged.get(key), this.now()), this.now());
+      const { events, state } = quotaAlertsFor(this.alerted.get(key), quotaView(merged.get(key), this.now()));
       this.alerted.set(key, state);
-      alerts.push(...texts);
+      for (const e of events) this.#event(e);
     }
     this.store?.put('alerted', Object.fromEntries(this.alerted));
-    for (const text of alerts) this.#event(text);
-    return { accepted: true, alerts, configChanges };
+    return { accepted: true, configChanges };
   }
 
-  #event(text) {
-    this.events = [{ at: new Date(this.now()).toISOString(), text }, ...this.events].slice(0, MAX_EVENTS);
+  #event(e) {
+    this.events = [{ at: new Date(this.now()).toISOString(), ...e }, ...this.events].slice(0, MAX_EVENTS);
     this.store?.put('events', this.events);
   }
 
@@ -61,7 +61,7 @@ export class Registry {
     for (const [id, c] of this.changes) if (c.key === key) this.changes.delete(id);
     const id = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
     this.changes.set(id, { id, key, value, by, at: this.now() });
-    this.#event(`config ${key} = ${JSON.stringify(value)} requested`);
+    this.#event({ kind: 'config', key, value, outcome: 'requested' });
     return id;
   }
 
@@ -75,7 +75,7 @@ export class Registry {
       const c = this.changes.get(r.id);
       if (!c || c.host !== hostId) continue;
       this.changes.delete(r.id);
-      this.#event(`config ${c.key} = ${JSON.stringify(c.value)} ${r.ok ? `applied by ${hostId}` : `refused by ${hostId}: ${r.error}`}`);
+      this.#event({ kind: 'config', key: c.key, value: c.value, outcome: r.ok ? 'applied' : 'refused', host: hostId, ...(r.ok ? {} : { error: r.error }) });
     }
     const out = [];
     for (const c of this.changes.values()) {

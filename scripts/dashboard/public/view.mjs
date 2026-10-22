@@ -4,8 +4,9 @@
 // The page answers, in order: does anything need me, what is running, where.
 
 import { STATUS, QUOTA_STALE_MS, agentName } from './shared/vocab.mjs';
+import { quotaView, alertKey } from './shared/quota-model.mjs';
 
-export { QUOTA_STALE_MS, agentName };
+export { QUOTA_STALE_MS, agentName, quotaView, alertKey };
 /** A session's status as shown: the host's status, or `stale` when its host went silent. */
 export const STATUS_LABELS = { ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [k, v.label])), stale: 'Stale' };
 export const ATTENTION = ['needs_approval', 'needs_input'];
@@ -172,26 +173,6 @@ export function countdown(ms, now = Date.now()) {
   return d ? `${d}d ${h}h` : h ? `${h}h ${min}m` : `${min}m`;
 }
 
-/**
- * One account as the page reads it, on the reader's clock: each window's use, the even-spend
- * pace by now, and the forecast (none from a stale reading); then the binding window — the one
- * that runs out soonest, else the fullest — and its verdict.
- */
-export function quotaView(a, now = Date.now()) {
-  const stale = !a.at || now - a.at > QUOTA_STALE_MS;
-  const windows = a.windows.map((w) => {
-    const renewed = !w.resetsAt || w.resetsAt <= now;
-    return { k: w.k, renewed, used: renewed ? 0 : w.used, resetsAt: renewed ? null : w.resetsAt, windowMs: w.windowMs,
-      pace: renewed ? 0 : Math.min(100, Math.max(0, (1 - (w.resetsAt - now) / w.windowMs) * 100)),
-      cells: renewed ? [] : w.cells, forecast: renewed || stale ? null : w.forecast };
-  });
-  const live = windows.filter((w) => !w.renewed);
-  const bind = live.filter((w) => w.forecast?.short).sort((x, y) => x.forecast.eta - y.forecast.eta)[0]
-    ?? [...live].sort((x, y) => y.used - x.used)[0] ?? null;
-  const verdict = !bind ? 'none' : bind.used >= 100 ? 'exhausted' : bind.forecast?.short ? 'short' : 'ok';
-  return { ...a, stale, windows, bind, verdict, left: bind ? Math.round(100 - bind.used) : null };
-}
-
 export const accountName = (q) => `${agentName(q.agent)}${q.label ? ` · ${q.label}` : ''}`;
 
 /** Why an account needs the human, in one line; '' when it does not. `withReset: false` where the row already shows it. */
@@ -231,27 +212,6 @@ export function bestAccounts(accounts) {
   }
   return [...best].map(([agent, q]) => ({ agent, q }));
 }
-
-/**
- * The quota alerts a change of `q` warrants against what was last alerted for its account
- * (`prev`): a window turning exhausted (a forecast run-out is shown, never alerted), a new seat problem, a newly announced
- * extra reset. Returns the alert texts and the state to remember. Events, not state: an
- * unchanged condition alerts once; recovering clears it, so a relapse alerts again.
- */
-export function quotaAlertsFor(prev, q, now = Date.now()) {
-  const who = `${accountName(q)}${q.email ? ` (${q.email})` : ''}`;
-  const texts = [];
-  if (q.verdict === 'exhausted' && prev?.verdict !== 'exhausted') texts.push(`${who}: ${verdictText(q, { now })}`);
-  for (const p of q.problems) if (!prev?.problems?.includes(p)) texts.push(`${who}: ${p}`);
-  const extraAt = q.extraReset ? q.extraReset.at ?? 0 : null;
-  if (extraAt !== null && prev?.extraAt !== extraAt) {
-    texts.push(`${who}: extra reset announced${q.extraReset.at ? ` · in ${countdown(q.extraReset.at, now)}` : ''}${q.extraReset.url ? ` · ${q.extraReset.url}` : ''}`);
-  }
-  return { texts, state: { verdict: q.verdict, problems: [...q.problems], extraAt } };
-}
-
-/** One alert's identity: the account, its verdict and the window period. A new period is a new alert. */
-export const alertKey = (q) => JSON.stringify([q.key, q.verdict, q.bind?.k ?? null, q.bind?.resetsAt ?? null]);
 
 /**
  * Accounts that need the human: a window exhausted (a forecast run-out is shown on the account
@@ -346,43 +306,22 @@ export function tabs(snapshot, now = Date.now(), seenAt = null, read = [], shown
     events: unreadEvents(events, shownFrom).length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length };
 }
 
+/**
+ * An event (registry.mjs: an alert or a config change, stored as data) in words, on the reader's
+ * clock: a countdown is to now, not to when the event happened.
+ */
+export function eventText(e, now = Date.now()) {
+  const who = e.account ? `${accountName(e.account)}${e.account.email ? ` (${e.account.email})` : ''}: ` : '';
+  const until = (at) => (at > now ? countdown(at, now) : null);
+  switch (e.kind) {
+    case 'exhausted': return `${who}${e.window} exhausted${until(e.resetsAt) ? ` · resets in ${until(e.resetsAt)}` : ''}`;
+    case 'seat-problem': return `${who}${e.problem}`;
+    case 'extra-reset': return `${who}extra reset announced${until(e.at) ? ` · in ${until(e.at)}` : ''}${e.url ? ` · ${e.url}` : ''}`;
+    case 'config': return `config ${e.key} = ${JSON.stringify(e.value)} ${e.outcome === 'requested' ? 'requested'
+      : e.outcome === 'applied' ? `applied by ${e.host}` : `refused by ${e.host}: ${e.error}`}`;
+    default: return e.kind;
+  }
+}
+
 /** The events the Events tab lists: those newer than the last visit (`seenAt`); read ones are cleared. */
 export const unreadEvents = (events = [], seenAt = null) => events.filter((e) => !seenAt || e.at > seenAt);
-
-/** Example data for `?mock`: rendering only, no gateway involved. */
-export function mockDashboard(now = Date.now()) {
-  const H = 3600000;
-  const t = (sec) => new Date(now - sec * 1000).toISOString();
-  const acct = { claude: 'claude:a', codex: 'codex:b' };
-  const s = (hostId, stale, id, agent, project, branch, status, sec, topic, seat = null, name = null, unread = 0, mention = false) =>
-    ({ id, hostId, agent, name, project, branch, seat, status, unread, mention, lastActivityAt: t(sec), stale, topic, account: acct[agent] });
-  return { schemaVersion: 1, generatedAt: t(0), mock: true, hosts: [
-    { id: 'host-a', online: true, lastSeen: t(4), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: [], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
-      s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a', 'OAuth token refresh', 3),
-      s('host-a', false, '019a7f20-2222', 'codex', 'frontend', 'main', 'needs_approval', 40, { url: 'https://t.me/c/1000000001/13', closed: false }, null, 'Landing page redesign', 5, true)],
-      resources: { cpu: 42, cores: 16, cpuModel: 'AMD Ryzen 9 7950X', mem: { used: 21e9, total: 34e9, type: 'DDR5' }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
-    { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
-      s('host-b', false, '7d1e9b3c-3333', 'claude', 'refactor', 'refactor/core', 'idle', 900, { url: 'https://t.me/c/1000000002/7', closed: true }, null, 'Split the parser module', 1),
-      s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null)],
-      resources: { cpu: 7, cores: 10, cpuModel: 'Apple M2 Pro', mem: { used: 9e9, total: 17e9, type: 'LPDDR5' }, gpus: [] } },
-    { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
-      s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
-  ], configKeys: [
-    { key: 'bridge.idleCloseMinutes', label: 'Close an idle Topic after (minutes, 0 = never)', min: 0, max: 1440 },
-    { key: 'bridge.deleteClosedAfterHours', label: 'Delete a closed Topic after (hours, 0 = never)', min: 0, max: 720 },
-    { key: 'bridge.dashboard.everySeconds', label: 'Push to the dashboard every (seconds)', min: 5, max: 3600 },
-    { key: 'bridge.projects.*.projectInTitle', label: 'Project name in Topic titles', options: ['always', 'main', 'never'] },
-  ], configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }], events: [
-    { at: t(40), text: 'Claude · team-a (alice@example.com): 7d runs out in 1d 23h · resets in 5d 9h' },
-    { at: t(7200), text: 'Codex (bob@example.com): extra reset announced · in 2h 0m' },
-  ], accounts: [
-    { key: 'claude:a', agent: 'claude', label: 'team-a', email: 'alice@example.com', detail: 'Team A · Team Premium', problems: [],
-      at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null, windows: [
-        { k: '5h', used: 26, resetsAt: now + 24 * 60000, windowMs: 5 * H, cells: [0.4, 0.8, 1.2, 0.9, 1.6, 2, 1.1, 0.7, 0.9, null], forecast: { atReset: 31, eta: null, short: false } },
-        { k: '7d', used: 45, resetsAt: now + 129 * H, windowMs: 168 * H, cells: [0.6, 1.4, 1.8, 0.9, 1.1, 2.2, 2.6, 2.4, 2.5, null, null, null, null, null], forecast: { atReset: 118, eta: now + 47 * H, short: true } }] },
-    { key: 'codex:b', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-a', 'host-b'],
-      resetCredits: { count: 1, expiries: [now + 3 * 24 * H] }, extraReset: null, windows: [
-        { k: '5h', used: 100, resetsAt: now + 3 * H, windowMs: 5 * H, cells: [-1, -1, 30, 40, null, null, null, null, null, null], forecast: null },
-        { k: '7d', used: 12, resetsAt: now + 100 * H, windowMs: 168 * H, cells: [0.4, 0.7, 0.6, 0.9, 0.5, null, null, null, null, null, null, null, null, null], forecast: { atReset: 30, eta: null, short: false } }] },
-  ] };
-}
