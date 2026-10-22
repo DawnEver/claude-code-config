@@ -94,11 +94,12 @@
     font: 600 13px/22px system-ui, sans-serif; text-align: center; }
   .badge.at { padding: 0; width: 22px; }
 
-  /* Machine load on the Quota tab (Config: this device). */
-  .res { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 12px; margin: 0 4px 8px; font-size: var(--t3); }
+  /* Machine load under each host header, Sessions and Quota (Config: this device). */
+  .res { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin: 0 4px 8px; font-size: var(--t3); }
   .res-m { display: grid; grid-template-columns: 52px minmax(36px, 1fr) auto; gap: 6px; align-items: center; }
   .res-m .k { color: var(--hint); font-weight: 600; white-space: nowrap; }
-  .res-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+  .res-t { white-space: nowrap; text-align: right; }
+  .res-about { grid-column: 1 / -1; overflow-wrap: anywhere; }
 
   /* Quota: one card per account. */
   /* Tabs: one question per view; the needs-you card above covers both. */

@@ -35,18 +35,20 @@ export function filterOptions(snapshot) {
   return { host: snapshot.hosts.map((h) => h.id), agent: uniq(all.map((s) => s.agent)), project: uniq(all.map((s) => s.project)), counts };
 }
 
+/** The one host order of every tab: online first, then by name. */
+export const sortHosts = (hosts) => [...hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
+
 /**
- * Hosts with their sessions narrowed by `filters` ({host, agent, project: '' = all; group: a
- * GROUPS key}) and sorted by urgency; online hosts first. A narrowing filter drops empty hosts.
+ * `hosts` (hostsView) with their sessions narrowed by `filters` ({host, agent, project: '' = all;
+ * group: a GROUPS key}) and sorted by urgency, host order kept. A narrowing filter drops empty hosts.
  */
-export function applyFilters(snapshot, filters) {
+export function applyFilters(hosts, filters) {
   const group = GROUPS[filters.group] ?? GROUPS.all;
   const narrowed = filters.agent || filters.project || (filters.group && filters.group !== 'all');
-  return snapshot.hosts.filter((h) => !filters.host || h.id === filters.host).map((h) => ({ ...h,
+  return hosts.filter((h) => !filters.host || h.id === filters.host).map((h) => ({ ...h,
     sessions: sortSessions(h.sessions.filter((s) => (!filters.agent || s.agent === filters.agent)
       && (!filters.project || s.project === filters.project) && group.has(displayStatus(s)))) }))
-    .filter((h) => !narrowed || h.sessions.length)
-    .sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
+    .filter((h) => !narrowed || h.sessions.length);
 }
 
 /** Live sessions waiting for the human, across hosts, most urgent first. */
@@ -102,19 +104,25 @@ export const unreadBadge = (n) => (n > 99 ? '99+' : n > 0 ? String(n) : '');
 const GB = 1024 ** 3;
 const gb = (b) => (b / GB >= 10 ? Math.round(b / GB) : Math.round((b / GB) * 10) / 10);
 
-/** A host's load as meters: CPU, memory, then each GPU's compute and memory; [] when it reported none. */
-export function resourceMeters(r) {
-  if (!r) return [];
+/**
+ * A host's load: `meters` (CPU, memory, then each GPU's compute and memory), each a short value
+ * that always fits beside its bar, and `about`, what the hardware is (cores, GPU models) — a
+ * line of its own, so a long model name never crowds a number. Empty when nothing was reported.
+ */
+export function resourceView(r) {
+  if (!r) return { meters: [], about: '' };
   const pct = (used, total) => Math.round((used / total) * 100);
-  const out = [];
-  if (r.cpu !== null && r.cpu !== undefined) out.push({ label: 'CPU', pct: r.cpu, text: `${r.cpu}%${r.cores ? ` · ${r.cores} cores` : ''}` });
-  if (r.mem) out.push({ label: 'RAM', pct: pct(r.mem.used, r.mem.total), text: `${gb(r.mem.used)} / ${gb(r.mem.total)} GB` });
-  (r.gpus ?? []).forEach((g, i) => {
-    const label = (r.gpus.length > 1 ? `GPU${i}` : 'GPU');
-    out.push({ label, pct: g.util ?? 0, text: `${g.util ?? '?'}%${g.name ? ` · ${g.name}` : ''}`, title: g.name ?? null });
-    out.push({ label: `${label} mem`, pct: pct(g.memUsed, g.memTotal), text: `${gb(g.memUsed)} / ${gb(g.memTotal)} GB` });
+  const meters = [];
+  if (r.cpu !== null && r.cpu !== undefined) meters.push({ label: 'CPU', pct: r.cpu, text: `${r.cpu}%` });
+  if (r.mem) meters.push({ label: 'RAM', pct: pct(r.mem.used, r.mem.total), text: `${gb(r.mem.used)}/${gb(r.mem.total)} GB` });
+  const gpus = r.gpus ?? [];
+  gpus.forEach((g, i) => {
+    const label = gpus.length > 1 ? `GPU${i}` : 'GPU';
+    meters.push({ label, pct: g.util ?? 0, text: `${g.util ?? '?'}%` });
+    meters.push({ label: `${label} mem`, pct: pct(g.memUsed, g.memTotal), text: `${gb(g.memUsed)}/${gb(g.memTotal)} GB` });
   });
-  return out;
+  const about = [r.cores && `${r.cores} cores`, ...gpus.map((g, i) => g.name && (gpus.length > 1 ? `GPU${i} ${g.name}` : g.name))].filter(Boolean).join(' · ');
+  return { meters, about };
 }
 
 export function stats(snapshot) {
@@ -310,19 +318,19 @@ export const accountIndex = (snapshot, now = Date.now()) => new Map((snapshot.ac
 export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? (q.agent === 'claude' ? 'Claude' : 'Codex');
 
 /**
- * Quota by host: each host with the accounts it runs. An account is one budget however many
- * hosts spend it, so a shared one says where else it runs (`sharedWith`) rather than reading as
- * a second budget: its full card sits on the first host in order (online first), elsewhere
- * `refTo` names that host. Online hosts first; a host without accounts is left out.
+ * The one host model every tab renders from: each host as the gateway reported it (online,
+ * lastSeen, resources, sessions) plus the accounts it runs, in the one host order. An account is
+ * one budget however many hosts spend it, so a shared one says where else it runs (`sharedWith`)
+ * rather than reading as a second budget: its full card sits on the first host in order,
+ * elsewhere `refTo` names that host. Every host is listed, with or without accounts.
  */
-export function quotaByHost(snapshot, now = Date.now()) {
+export function hostsView(snapshot, now = Date.now()) {
   const accounts = [...accountIndex(snapshot, now).values()];
-  const hosts = [...snapshot.hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
+  const hosts = sortHosts(snapshot.hosts);
   const owner = new Map();
   for (const h of hosts) for (const q of accounts) if (q.hosts?.includes(h.id) && !owner.has(q.key)) owner.set(q.key, h.id);
-  return hosts.map((h) => ({ id: h.id, online: h.online, resources: h.resources ?? null, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
-      .map((q) => ({ ...q, sharedWith: q.hosts.filter((x) => x !== h.id), refTo: owner.get(q.key) === h.id ? null : owner.get(q.key) })) }))
-    .filter((h) => h.accounts.length);
+  return hosts.map((h) => ({ ...h, accounts: accounts.filter((q) => q.hosts?.includes(h.id))
+    .map((q) => ({ ...q, sharedWith: q.hosts.filter((x) => x !== h.id), refTo: owner.get(q.key) === h.id ? null : owner.get(q.key) })) }));
 }
 
 /**

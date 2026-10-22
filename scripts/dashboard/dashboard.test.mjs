@@ -7,7 +7,7 @@ import { Registry } from './registry.mjs';
 import { createApi, parseDashboardConfig } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, quotaByHost, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
+import { ago, applyFilters, attention, displayStatus, filterOptions, mockDashboard, quotaAlerts, quotaAlertsFor, alertKey, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -183,11 +183,11 @@ test('view: needs-you first, stale is freshness, chips narrow, hosts online firs
   assert.deepEqual(stats(f), { hostsOnline: 2, hosts: 3, working: 2, attention: 1 });
   assert.deepEqual(attention(f).map((s) => s.project), ['frontend'], 'live sessions waiting for the human');
   assert.deepEqual(filterOptions(f).counts, { all: 5, attention: 1, working: 2, idle: 1, stale: 1 });
-  assert.deepEqual(applyFilters(f, all)[0].sessions.map((s) => s.status), ['needs_approval', 'working'], 'most urgent first');
-  assert.deepEqual(applyFilters(f, all).map((h) => h.id), ['host-a', 'host-b', 'host-c'], 'offline host last');
-  assert.deepEqual(applyFilters(f, { ...all, agent: 'codex' }).map((h) => h.sessions.length), [1, 1]);
-  assert.deepEqual(applyFilters(f, { ...all, group: 'attention' }).map((h) => h.id), ['host-a']);
-  assert.deepEqual(applyFilters(f, { ...all, group: 'stale', project: 'backend-api' }).map((h) => h.id), ['host-c']);
+  assert.deepEqual(applyFilters(hostsView(f, NOW), all)[0].sessions.map((s) => s.status), ['needs_approval', 'working'], 'most urgent first');
+  assert.deepEqual(applyFilters(hostsView(f, NOW), all).map((h) => h.id), ['host-a', 'host-b', 'host-c'], 'offline host last');
+  assert.deepEqual(applyFilters(hostsView(f, NOW), { ...all, agent: 'codex' }).map((h) => h.sessions.length), [1, 1]);
+  assert.deepEqual(applyFilters(hostsView(f, NOW), { ...all, group: 'attention' }).map((h) => h.id), ['host-a']);
+  assert.deepEqual(applyFilters(hostsView(f, NOW), { ...all, group: 'stale', project: 'backend-api' }).map((h) => h.id), ['host-c']);
   assert.equal(ago(new Date(NOW - 5000).toISOString(), NOW), 'just now');
   assert.equal(ago('garbage'), 'never');
 });
@@ -285,7 +285,7 @@ test('view: a session row says how long it has been in its state', () => {
 });
 
 test('view: sessions group by host as filtered, or by project across hosts', () => {
-  const hosts = applyFilters(mockDashboard(NOW), {});
+  const hosts = applyFilters(hostsView(mockDashboard(NOW), NOW), {});
   assert.equal(groupSessions(hosts, 'host'), hosts);
   const g = groupSessions(hosts, 'project');
   assert.deepEqual(g.map((x) => x.id), [...new Set(hosts.flatMap((h) => h.sessions.map((s) => s.project ?? 'unknown project')))].sort());
@@ -366,7 +366,7 @@ test('events: every alert is kept as history for the dashboard, newest first, bo
 });
 
 test('view: quota by host — each host with the accounts it runs; a shared account says where else it runs', () => {
-  const by = quotaByHost(mockDashboard(NOW), NOW);
+  const by = hostsView(mockDashboard(NOW), NOW);
   assert.deepEqual(by.map((h) => [h.id, h.accounts.map((q) => `${q.key}+${q.sharedWith.join(',')}`)]),
     [['host-a', ['claude:a+host-c', 'codex:b+host-b']], ['host-b', ['codex:b+host-a']], ['host-c', ['claude:a+host-a']]],
     'online hosts first; one budget, never a second card without saying so');
@@ -569,7 +569,7 @@ test('view: windowLabel — every number is % left; unused and stale read plainl
 });
 
 test('view: best account now — per agent the most left on its binding window, exhausted ignored', () => {
-  const by = quotaByHost(mockDashboard(NOW), NOW);
+  const by = hostsView(mockDashboard(NOW), NOW);
   assert.deepEqual(bestAccounts(by[0].accounts).map((b) => [b.agent, b.q.key, b.q.left]), [['claude', 'claude:a', 55]],
     'codex:b is exhausted on 5h, so Codex has no best account');
   const a = (key, agent, left, verdict = 'ok') => ({ key, agent, left, verdict });
@@ -578,12 +578,12 @@ test('view: best account now — per agent the most left on its binding window, 
 });
 
 test('view: a shared account renders fully once — on its first online host — and as a reference elsewhere', () => {
-  const by = quotaByHost(mockDashboard(NOW), NOW);
+  const by = hostsView(mockDashboard(NOW), NOW);
   assert.deepEqual(by.map((h) => [h.id, h.accounts.map((q) => `${q.key}${q.refTo ? `>${q.refTo}` : ''}`)]),
     [['host-a', ['claude:a', 'codex:b']], ['host-b', ['codex:b>host-a']], ['host-c', ['claude:a>host-a']]]);
   const off = mockDashboard(NOW);
   off.hosts[0].online = false;
-  const by2 = quotaByHost(off, NOW);
+  const by2 = hostsView(off, NOW);
   assert.equal(by2.find((h) => h.id === 'host-b').accounts[0].refTo, null, 'the first online host owns the card');
   assert.equal(by2.find((h) => h.id === 'host-a').accounts.find((q) => q.key === 'codex:b').refTo, 'host-b');
   assert.equal(by2.find((h) => h.id === 'host-a').accounts.find((q) => q.key === 'claude:a').refTo, null, 'no online host: the first in order');
@@ -608,9 +608,20 @@ test('chat list: name over project, Telegram-style time and badges, machine load
   assert.equal(v.chatTime(new Date(2026, 8, 1).toISOString(), now), '1 Sep');
   assert.deepEqual([0, 5, 120].map(v.unreadBadge), ['', '5', '99+']);
   const GB = 1024 ** 3;
-  assert.deepEqual(v.resourceMeters({ cpu: 40, cores: 8, mem: { used: 8 * GB, total: 32 * GB }, gpus: [] }),
-    [{ label: 'CPU', pct: 40, text: '40% · 8 cores' }, { label: 'RAM', pct: 25, text: '8 / 32 GB' }]);
-  assert.deepEqual(v.resourceMeters(null), []);
-  const mock = v.mockDashboard();
-  assert.ok(v.quotaByHost(mock).find((h) => h.id === 'host-a').resources.gpus.length);
+  const r = v.resourceView({ cpu: 40, cores: 32, mem: { used: 8 * GB, total: 32 * GB },
+    gpus: [{ name: 'NVIDIA GeForce RTX 3060', util: 1, memUsed: 1.4 * GB, memTotal: 12 * GB }] });
+  assert.deepEqual(r.meters.map((m) => [m.label, m.text]), [['CPU', '40%'], ['RAM', '8/32 GB'], ['GPU', '1%'], ['GPU mem', '1.4/12 GB']],
+    'values stay short: they sit beside a bar and must never be cut');
+  assert.equal(r.about, '32 cores · NVIDIA GeForce RTX 3060', 'what the hardware is goes on its own line');
+  assert.deepEqual(v.resourceView(null), { meters: [], about: '' });
+});
+
+test('view: one host model for every tab — all hosts, one order, accounts attached', async () => {
+  const v = await import('./public/view.mjs');
+  const snap = v.mockDashboard(NOW);
+  snap.hosts.push({ id: 'host-d', online: true, lastSeen: snap.generatedAt, sessions: [], resources: null });
+  const hosts = v.hostsView(snap, NOW);
+  assert.deepEqual(hosts.map((h) => h.id), ['host-a', 'host-b', 'host-d', 'host-c'], 'online first, then by name; a host without accounts is listed');
+  assert.deepEqual(hosts.find((h) => h.id === 'host-d').accounts, []);
+  assert.ok(hosts[0].resources.gpus.length && hosts[0].sessions.length, 'sessions, accounts and load ride the same host object');
 });

@@ -105,13 +105,18 @@ app-server); the Worker never recomputes it.
   Events tab, newest first, with an unread count since this device last opened it. The tab
   lists only what was unread when it was opened: events read on one visit are cleared from
   the next (per device).
+- **One host model**: `hostsView()` in `public/view.mjs` is the only host list — gateway host
+  (online, lastSeen, sessions, resources) plus the accounts it runs, in one order (online first,
+  then by name). Sessions and Quota both render it through one host header (`hostSection` in
+  `app.js`); every host is listed in both, one without accounts as "No accounts".
 - **Layout**: by host — what each machine has left on each account. One compact row per
   account (both windows' bars against even pace, what is left, where else that budget runs);
   a tap opens it in place to the detail: org and plan, each window's trend on a local-time axis
   (hours for 5h, weekday and date for 7d, a line at the present), reset and forecast. A shared
   account appears under every host that runs it, marked as one budget.
 - **Machine load** (Config → This device, on by default): each host's CPU % (all cores since the
-  previous push), memory and, where `nvidia-smi` exists, each GPU's use and memory, above its accounts.
+  previous push), memory and, where `nvidia-smi` exists, each GPU's use and memory, under the host header of both tabs (short
+  values beside each bar; core count and GPU model on a line of their own).
   Sampled by `scripts/bridge/resources.mjs` on every push; numbers and a GPU model name only.
 - **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
   the trend (spend per slice against an even spend; hatched = never observed), reset time and

@@ -34,7 +34,8 @@ Claude's ai-title is itself a conversation summary — docs say a name may echo 
 - macOS: os.freemem() counts only free pages (used reads ~100%), so `vm_stat`
   free+inactive+speculative+purgeable is used there. Windows/Linux os.freemem is fine (MemAvailable).
 - Schema `parseResources` bounds everything; registry passes `resources` per host.
-- Limit: `quotaByHost` drops hosts without accounts, so their load is not shown.
+- Since fixed: `quotaByHost` became `hostsView`, the one host model of both tabs (every host, one order,
+  one header `hostSection`); `resourceMeters` became `resourceView` {meters (short values), about}.
 
 ## UI (device settings, localStorage)
 `deviceToggles()` in app.js is the single list of "This device" checkboxes (unit, packed, groupBy,

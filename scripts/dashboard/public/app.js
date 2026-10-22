@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, quotaByHost, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceMeters } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, mockDashboard, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceView } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 
 const POLL_MS = 8000;
@@ -48,6 +48,7 @@ let groupOrder = store.get('dashboard.groupOrder') === 'urgency' ? 'urgency' : '
 const openRows = new Set();
 let legendOpen = false;   // the quota legend, kept across polls
 let accounts = new Map();
+let hostList = [];   // hostsView(snapshot): the one host model the Sessions and Quota tabs render
 let unit = store.get('dashboard.unit') === 'left' ? 'left' : 'used';   // bars and numbers read as % left or % used
 // How absolute times read on this device: 24h (default) or 12h clock; date 'day', 'iso' or 'off'.
 const timeFormat = { clock: store.get('dashboard.clock') === '12' ? '12' : '24', date: ['iso', 'off'].includes(store.get('dashboard.date')) ? store.get('dashboard.date') : 'day' };
@@ -56,7 +57,7 @@ let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns
 document.body.classList.toggle('packed', packed);
 // Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) instead of status rows.
 let chatList = store.get('dashboard.chatList') === '1';
-// Quota hosts show their CPU, memory and GPU load (on unless turned off on this device).
+// Every host header shows its CPU, memory and GPU load (on unless turned off on this device).
 let showResources = store.get('dashboard.resources') !== '0';
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // an edit typed but not saved
@@ -287,25 +288,22 @@ function quotaRow(q, hostId) {
 function renderQuota() {
   const box = $('quota-view');
   box.replaceChildren();
-  const hosts = el('div', 'quota-hosts');
-  for (const h of quotaByHost(snapshot)) {
-    const section = el('section', `host${h.online ? '' : ' off'}`);
-    const head = el('div', 'host-head');
-    head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id));
+  const grid = el('div', 'quota-hosts');
+  for (const h of hostList) {
+    if (!h.accounts.length) { grid.append(hostSection(h, el('div', 'qrows empty', 'No accounts'))); continue; }
     const best = bestAccounts(h.accounts);
     const bestLine = el('div', 'qbest', best.length ? 'Best now: ' : 'Best now: none with quota left');
     best.forEach(({ q }, i) => bestLine.append(i ? ' · ' : '', acctTag(q, true)));
     const rows = el('div', 'qrows');
     for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q) : quotaRow(q, h.id));
-    section.append(head, ...(showResources ? [resourcesBox(h.resources, h.online)] : []), bestLine, rows);
-    hosts.append(section);
+    grid.append(hostSection(h, bestLine, rows));
   }
-  box.append(quotaHeader(), hosts);
+  box.append(quotaHeader(), grid);
 }
 
-/** A host's load: one meter per CPU, memory and GPU, coloured past 80%. */
+/** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */
 function resourcesBox(r, online) {
-  const meters = resourceMeters(r);
+  const { meters, about } = resourceView(r);
   const box = el('div', `res${online ? '' : ' stale-v'}`);
   if (!meters.length) { box.append(el('span', 'muted', 'no load reported')); return box; }
   for (const m of meters) {
@@ -314,11 +312,10 @@ function resourcesBox(r, online) {
     const fill = el('div', 'fill');
     fill.style.width = `${Math.min(100, Math.max(0, m.pct))}%`;
     track.append(fill);
-    const text = el('span', 'res-t', m.text);
-    if (m.title) text.title = m.title;
-    cell.append(el('span', 'k', m.label), track, text);
+    cell.append(el('span', 'k', m.label), track, el('span', 'res-t', m.text));
     box.append(cell);
   }
+  if (about) box.append(el('div', 'res-about muted', about));
   return box;
 }
 
@@ -398,7 +395,7 @@ function renderSelects() {
 function renderHosts() {
   const main = $('hosts');
   main.replaceChildren();
-  const hosts = applyFilters(snapshot, filters);
+  const hosts = applyFilters(hostList, filters);
   if (!hosts.length) {
     main.append(el('div', 'empty', snapshot.hosts.length ? 'Nothing matches' : 'No hosts registered yet'));
     return;
@@ -417,19 +414,26 @@ function renderHosts() {
     return;
   }
   for (const h of hosts) {
-    const section = el('section', `host${h.online ? '' : ' off'}`);
-    const head = el('div', 'host-head');
-    const runs = [...accounts.values()].filter((q) => q.hosts?.includes(h.id));
-    const tagsBox = el('span', 'acct-tags');
-    for (const q of runs) tagsBox.append(acctTag(q, true));
-    head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id), tagsBox,
-      el('span', 'muted meta', h.online ? `${h.sessions.length} session${h.sessions.length === 1 ? '' : 's'}` : `offline · seen ${ago(h.lastSeen)}`));
+    const tags = el('div', 'qbest');
+    h.accounts.forEach((q, i) => tags.append(i ? ' ' : '', acctTag(q, true)));
     const list = el('div', 'list');
     if (!h.sessions.length) list.append(el('div', 'empty', h.online ? 'No sessions' : 'No data'));
     for (const s of h.sessions) list.append(sessionRow(s));
-    section.append(head, list);
-    main.append(section);
+    main.append(hostSection(h, ...(h.accounts.length ? [tags] : []), list));
   }
+}
+
+/**
+ * One host as every tab shows it: online dot, name, how many sessions (or when it was last
+ * seen), and its load when shown; then the tab's own content. The one host header there is.
+ */
+function hostSection(h, ...body) {
+  const section = el('section', `host${h.online ? '' : ' off'}`);
+  const head = el('div', 'host-head');
+  head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id),
+    el('span', 'muted meta', h.online ? `${h.sessions.length} session${h.sessions.length === 1 ? '' : 's'}` : `offline · seen ${ago(h.lastSeen)}`));
+  section.append(head, ...(showResources ? [resourcesBox(h.resources, h.online)] : []), ...body);
+  return section;
 }
 
 function renderEvents() {
@@ -533,7 +537,7 @@ const deviceToggles = () => [
     (v) => { groupOrder = v ? 'urgency' : 'host'; store.set('dashboard.groupOrder', groupOrder); }),
   deviceToggle('Sessions as a chat list (Telegram style): name, time, unread count and @ mentions', () => chatList,
     (v) => { chatList = v; store.set('dashboard.chatList', v ? '1' : '0'); }),
-  deviceToggle('Quota: show each machine\'s CPU, memory and GPU load', () => showResources,
+  deviceToggle('Show each machine\'s CPU, memory and GPU load (Sessions and Quota)', () => showResources,
     (v) => { showResources = v; store.set('dashboard.resources', v ? '1' : '0'); }),
   ...(mock ? [] : [deviceToggle('Demo mode: mask machines, accounts, projects and ids on this device (config edits off)', () => demoOn, (v) => {
     demoOn = v;
@@ -604,6 +608,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
 function render() {
   if (!snapshot) return;
   accounts = accountIndex(snapshot);
+  hostList = hostsView(snapshot);
   $('updated').textContent = snapshot.mock ? 'example data' : lastOk && snapshot.demo ? `demo · data ${ago(new Date(lastOk).toISOString())}` : lastOk ? `data ${ago(new Date(lastOk).toISOString())}` : '';
   renderSummary();
   renderTabs();
