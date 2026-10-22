@@ -206,7 +206,7 @@ test('end to end: bridge registry -> push -> gateway -> viewer', async () => {
   await bridge.sessionUp('codex', { id: 'thread-1', cwd: '/secret/home/proj' });
   await bridge.prompt('codex:thread-1', 'go');
   const push = new DashboardPush({ url: 'https://dashboard.example', hostToken: g.token, machine: 'host-a',
-    sessions: () => bridge.dashboardSnapshot(), fetch: (url, init) => g.api(new Request(url, init)) });
+    sessions: () => bridge.dashboardSessions(), fetch: (url, init) => g.api(new Request(url, init)) });
   assert.equal(await push.tick(), true);
   const snapshot = await (await g.req('/api/dashboard', await asViewer(ALICE))).json();
   const [s] = snapshot.hosts[0].sessions;
@@ -264,10 +264,9 @@ test('view: quota verdict on the reader\'s clock; stale readings are floors that
   assert.equal(renewed.windows[0].renewed, true);
   assert.equal(renewed.verdict, 'none');
   const hit = (over = {}) => account({ key: 'k2', windows: [{ ...account().windows[0], used: 100, forecast: null, ...over }] });
-  assert.deepEqual(quotaAlerts({ accounts: [account(), hit()] }, NOW).map((x) => x.key), ['k2'], 'a hit limit; a run-out 1.3h away is only shown');
+  assert.deepEqual(quotaAlerts({ accounts: [account(), hit()] }, NOW).map((x) => x.key), ['k2'], 'a hit limit; a forecast run-out is only shown');
   const soon = account({ key: 'k3', windows: [{ ...account().windows[0], forecast: { atReset: 150, eta: NOW + 0.5 * HR, short: true } }] });
-  assert.deepEqual(quotaAlerts({ accounts: [account(), soon] }, NOW).map((x) => x.key), ['k3'], 'a run-out within the hour is an alert');
-  assert.equal(quotaAlerts({ accounts: [account({ at: NOW + 0.3 * HR })] }, NOW + 0.3 * HR).length, 1, 'the threshold is judged on the reader clock');
+  assert.deepEqual(quotaAlerts({ accounts: [soon] }, NOW), [], 'even a run-out within the hour is never an alert');
   const [read] = quotaAlerts({ accounts: [hit()] }, NOW);
   assert.deepEqual(quotaAlerts({ accounts: [hit()] }, NOW, [alertKey(read)]), [], 'a read alert leaves the card');
   const next = hit({ resetsAt: account().windows[0].resetsAt + 5 * HR });
@@ -298,11 +297,11 @@ test('view: sessions group by host as filtered, or by project across hosts', () 
 
 test('view: tabs count each view and flag quota that needs the human; no accounts, no tabs', () => {
   const m = mockDashboard(NOW);
-  assert.deepEqual(tabs(m, NOW), { sessions: 5, quota: 2, alert: true, events: 2, unseen: 2, show: true });
+  assert.deepEqual(tabs(m, NOW), { sessions: 5, quota: 2, alert: true, events: 2, unseen: 2 });
   assert.equal(tabs(m, NOW, m.events[1].at).unseen, 1, 'only events newer than the last look');
   assert.equal(tabs(m, NOW, m.events[0].at).unseen, 0);
   assert.equal(tabs(m, NOW, null, quotaAlerts(m, NOW).map(alertKey)).alert, false, 'read alerts do not flag the quota tab');
-  assert.deepEqual(tabs({ hosts: [] }, NOW), { sessions: 0, quota: 0, alert: false, events: 0, unseen: 0, show: false });
+  assert.deepEqual(tabs({ hosts: [] }, NOW), { sessions: 0, quota: 0, alert: false, events: 0, unseen: 0 });
   assert.deepEqual(unreadEvents(m.events, m.events[1].at), [m.events[0]], 'events read on an earlier visit are cleared');
   assert.deepEqual(unreadEvents(m.events, null), m.events, 'first visit: everything');
   assert.deepEqual(unreadEvents(m.events, m.events[0].at), []);

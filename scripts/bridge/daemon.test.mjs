@@ -681,22 +681,22 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
 });
 
 
-test('dashboardSnapshot lists every registered session with its status', async () => {
+test('dashboardSessions lists every registered session with its status', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'running' });
   await up(r, 'codex', 'quiet');
   await live(r, 'codex', 'busy');
-  assert.equal(r.bridge.dashboardSnapshot().length, 2, 'a session without a Topic is still running here');
-  assert.ok(r.bridge.dashboardSnapshot().every((x) => x.status === 'working'));
+  assert.equal(r.bridge.dashboardSessions().length, 2, 'a session without a Topic is still running here');
+  assert.ok(r.bridge.dashboardSessions().every((x) => x.status === 'working'));
 });
 
 test('a Claude session seat names its Topic and its dashboard entry', async () => {
   const r = make();
   const s = await up(r, 'claude', 'seated', { seat: 'team-b' });
   assert.match(s.title, / \| claude:team-b$/);
-  assert.equal(r.bridge.dashboardSnapshot()[0].seat, 'team-b');
+  assert.equal(r.bridge.dashboardSessions()[0].seat, 'team-b');
   await up(r, 'claude', 'base');
-  assert.equal(r.bridge.dashboardSnapshot()[1].seat, null);
+  assert.equal(r.bridge.dashboardSessions()[1].seat, null);
 });
 
 test('a failed Topic rename keeps the cached title and session, and is logged', async () => {
@@ -777,7 +777,7 @@ test('waiting-input reads Needs input', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-input' });
   await up(r, 'codex', 'q');
-  assert.equal(r.bridge.dashboardSnapshot()[0].status, 'needs_input');
+  assert.equal(r.bridge.dashboardSessions()[0].status, 'needs_input');
 });
 
 test('sweep: an open Topic no registered session holds is closed as an orphan, then ages out', async () => {
@@ -822,7 +822,7 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-approval' });
   await up(r, 'codex', 'quiet');
   await live(r, 'claude', 'busy', { seat: 'team-a' });
-  const snap = Object.fromEntries(r.bridge.dashboardSnapshot().map((s) => [s.id, s]));
+  const snap = Object.fromEntries(r.bridge.dashboardSessions().map((s) => [s.id, s]));
   assert.equal(snap.quiet.status, 'needs_approval');
   assert.equal(snap.quiet.topic, null, 'lazy Topic: none before activity');
   assert.equal(snap.busy.seat, 'team-a');
@@ -830,9 +830,9 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.telegram.sent[0].threadId, closed: false });
   assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
   r.hosts.codex.statusSnapshot = () => null;
-  assert.equal(r.bridge.dashboardSnapshot().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
+  assert.equal(r.bridge.dashboardSessions().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
   r.bridge.sessionDown('codex:quiet');
-  assert.deepEqual(r.bridge.dashboardSnapshot().map((s) => s.id), ['busy']);
+  assert.deepEqual(r.bridge.dashboardSessions().map((s) => s.id), ['busy']);
 });
 
 test('the session name leads the Topic title and a rename retitles the Topic', async () => {
@@ -844,24 +844,43 @@ test('the session name leads the Topic title and a rename retitles the Topic', a
   r.hosts.codex.emit('name', { id: 'x', name: 'second\nline' });
   await until(() => r.telegram.renamed.length === 1);
   assert.equal(r.telegram.renamed[0][2], 'second line | host-a | proj | main | codex');
-  assert.equal(r.bridge.dashboardSnapshot()[0].name, 'second line');
+  assert.equal(r.bridge.dashboardSessions()[0].name, 'second line');
 });
 
 test('unread counts what reached the Topic since the human spoke; a mention is deleted once followed', async () => {
   const r = make();
   await live(r, 'codex', 'x');   // the prompt typed at the machine: read
-  assert.equal(r.bridge.dashboardSnapshot()[0].unread, 0);
+  assert.equal(r.bridge.dashboardSessions()[0].unread, 0);
   r.hosts.codex.emit('final', { id: 'x', text: 'boom', status: 'failed' });
   await until(() => r.telegram.sent.at(-1).text === 'waiting for you');
   const nudge = r.telegram.sent.at(-1);
-  assert.equal(r.bridge.dashboardSnapshot()[0].unread, 2);
-  assert.equal(r.bridge.dashboardSnapshot()[0].mention, true);
+  assert.equal(r.bridge.dashboardSessions()[0].unread, 1, 'the mention is the @, not a message to read');
+  assert.equal(r.bridge.dashboardSessions()[0].mention, true);
   r.hosts.codex.emit('final', { id: 'x', text: 'recovered' });
   await until(() => r.telegram.deletedMessages?.length === 1);
   assert.deepEqual(r.telegram.deletedMessages[0], [nudge.chatId, nudge.message_id]);
-  assert.equal(r.bridge.dashboardSnapshot()[0].mention, false);
-  assert.equal(r.bridge.dashboardSnapshot()[0].unread, 2, 'the deleted mention no longer counts');
+  assert.equal(r.bridge.dashboardSessions()[0].mention, false);
+  assert.equal(r.bridge.dashboardSessions()[0].unread, 2);
   await r.bridge.handleUpdate(msg(ALICE, 'thanks', r.bridge.sessions.get('codex:x').topicId));
-  assert.equal(r.bridge.dashboardSnapshot()[0].unread, 0);
-  assert.ok(!('last' in r.bridge.dashboardSnapshot()[0]), 'no message text leaves the host');
+  assert.equal(r.bridge.dashboardSessions()[0].unread, 0);
+  assert.ok(!('last' in r.bridge.dashboardSessions()[0]), 'no message text leaves the host');
+});
+
+test('a standing mention and the unread count survive a daemon restart', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-mention-'));
+  try {
+    const file = path.join(dir, 'topics.json');
+    const a = make({ topicCacheFile: file });
+    await live(a, 'codex', 'x');
+    a.hosts.codex.emit('final', { id: 'x', text: 'boom', status: 'failed' });
+    await until(() => a.telegram.sent.at(-1).text === 'waiting for you');
+    const nudge = a.telegram.sent.at(-1);
+    await settle();
+    const b = make({ topicCacheFile: file });   // the replacement daemon
+    await up(b, 'codex', 'x');
+    assert.deepEqual([b.bridge.dashboardSessions()[0].unread, b.bridge.dashboardSessions()[0].mention], [1, true]);
+    b.hosts.codex.emit('final', { id: 'x', text: 'recovered' });
+    await until(() => b.telegram.deletedMessages?.length === 1);
+    assert.deepEqual(b.telegram.deletedMessages[0], [nudge.chatId, nudge.message_id], 'the old daemon\'s mention is still deleted');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

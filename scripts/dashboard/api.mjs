@@ -6,6 +6,7 @@ import { Registry } from './registry.mjs';
 import { TELEGRAM_PUBLIC_KEY, verifyHostToken, verifyInitData } from './auth.mjs';
 
 const MAX_BODY = 256 * 1024;
+const MAX_CONFIG_BODY = 4096;   // one {key, value}
 
 /**
  * DASHBOARD_CONFIG (JSON): {botId, allowedUserIds, hosts: {machine: sha256}, ttlSeconds?,
@@ -78,8 +79,9 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
     }
     if (url.pathname === '/api/config') {
       // The one write: a change to a CONFIG_KEYS key, queued for a host to apply.
+      if (Number(request.headers.get('content-length')) > MAX_CONFIG_BODY) return error(413, 'too_large');
       const text = await request.text();
-      if (text.length > 4096) return error(413, 'too_large');
+      if (text.length > MAX_CONFIG_BODY) return error(413, 'too_large');
       let change;
       try { change = parseConfigChange(JSON.parse(text)); } catch { change = null; }
       if (!change) return error(400, 'not_editable');

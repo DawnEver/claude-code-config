@@ -6,8 +6,8 @@
 
 - `migrateRepoLinks()` — removes orphaned `~/.claude`/`~/.codex` symlinks whose dest is no
   longer in the current repo layout, then re-runs `setup()`.
-- `migrateOrphanedAliases()` — removes wrapper files this repo wrote (they carry a marker)
-  whose name is no longer in `KNOWN_ALIAS_NAMES`. This is why `cogmi` was removed without
+- `migrateOrphanedWrappers()` — removes wrapper files this repo wrote (they carry a marker)
+  whose name is no longer in `KNOWN_WRAPPER_NAMES`. This is why `cogmi` was removed without
   leaving `cogmi.cmd` behind. It sweeps the claude bin dir, so on a Codex-only host it is a
   no-op — the wrappers there live in codex's bin dir.
 - `migrateProject(cwd)` — scans `<repo>/cc-market/*/migrations/migrate.mjs` and calls each

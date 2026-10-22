@@ -7,7 +7,7 @@ control. The Topics stay the conversation surface; the bridge stays the session 
 
 ```
 Native session ── adapter.statusSnapshot ── Bridge.sessions        (daemon.mjs: the only state)
-                                                 │ dashboardSnapshot()  read-only projection
+                                                 │ dashboardSessions()  read-only projection
                                                  ▼
                                    dashboard-push.mjs  ── HTTPS POST, host bearer token ──▶ Cloudflare Worker
                                                                                           │ DashboardHub Durable Object
@@ -22,7 +22,7 @@ no daemon, loads no channel and writes no series.
 
 | Layer | File | Owns |
 | --- | --- | --- |
-| Export | `Bridge.dashboardSnapshot()` in `scripts/bridge/daemon.mjs` | projection of the existing registry + adapter snapshot; no new state |
+| Export | `Bridge.dashboardSessions()` in `scripts/bridge/daemon.mjs` | projection of the existing registry + adapter snapshot; no new state |
 | Contract | `scripts/shared/dashboard-schema.mjs` | wire format, status codes, Topic link rule, the trust boundary `parseHostPush` |
 | Transport | `scripts/bridge/dashboard-push.mjs` | outbound push on a timer; never on the Telegram message path |
 | Gateway | `scripts/dashboard/{worker,api,auth,registry}.mjs` | Worker entry + Durable Object (`worker.mjs`), the HTTP API on Web-standard Request/Response (`api.mjs`), Ed25519 viewer + host-token auth (`auth.mjs`), last push per host (`registry.mjs`) |
@@ -105,8 +105,8 @@ app-server); the Worker never recomputes it.
   Events tab, newest first, with an unread count since this device last opened it. The tab
   lists only what was unread when it was opened: events read on one visit are cleared from
   the next (per device).
-- **Reload** (Config → This device): Telegram's web view can keep an old copy of the page; the
-  button fetches every page file again past the cache, then reloads, so a fresh deploy shows at once.
+- **Fresh on every open**: every page file is served `Cache-Control: no-cache` (`public/_headers`), so
+  the web view revalidates (a 304 when unchanged) and a new deploy shows on the next open.
 - **One host model**: `hostsView()` in `public/view.mjs` is the only host list — gateway host
   (online, lastSeen, sessions, resources) plus the accounts it runs, in one order (online first,
   then by name). Sessions and Quota both render it through one host header (`hostSection` in
@@ -242,7 +242,7 @@ is whitelisted field by field; at most 200 per host.
   awaited by Telegram routing; a failing or refusing gateway logs once and the bridge carries on.
 - Roll back a host: remove its `hostToken` (or the whole `bridge.dashboard` block). Roll
   back the gateway: `npx wrangler delete --config scripts/dashboard/wrangler.jsonc`.
-  Revert the code: additive on the bridge side — `dashboardSnapshot()`, the push, the config key.
+  Revert the code: additive on the bridge side — `dashboardSessions()`, the push, the config key.
 
 ## Known limits (V0.1)
 

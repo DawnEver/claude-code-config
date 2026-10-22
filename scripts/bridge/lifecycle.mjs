@@ -19,6 +19,10 @@ export function newSession({ key, cached, now }) {
     state: cached ? (cached.closedAt != null ? 'closed' : 'open') : 'none',
     closedAt: cached?.closedAt ?? null,
     lastActivity: now,
+    // What the Topic holds since the human last wrote there, kept across daemon restarts: the
+    // count of posts, and the standing "waiting for you" mention's message id (deleted once followed).
+    unread: Number.isSafeInteger(cached?.unread) && cached.unread > 0 ? cached.unread : 0,
+    mention: Number.isSafeInteger(cached?.mention) ? cached.mention : null,
   };
 }
 
@@ -55,6 +59,8 @@ export function onDown(s, now) {
 /** Telegram says the Topic no longer exists. */
 export function onTopicGone(s) {
   s.topicId = null;
+  s.unread = 0;
+  s.mention = null;   // its message went with the Topic
   s.state = 'open';
   s.closedAt = null;
   return ['create'];
@@ -71,5 +77,6 @@ export function onTopicFoundClosed(s) {
 export function cacheEntry(s, title) {
   if (!s.topicId) return null;
   return { topicId: s.topicId, title, ...(s.closedAt != null ? { closedAt: s.closedAt } : {}),
-    ...(s.statusMessageId ? { statusMessageId: s.statusMessageId } : {}) };
+    ...(s.statusMessageId ? { statusMessageId: s.statusMessageId } : {}),
+    ...(s.unread ? { unread: s.unread } : {}), ...(s.mention ? { mention: s.mention } : {}) };
 }

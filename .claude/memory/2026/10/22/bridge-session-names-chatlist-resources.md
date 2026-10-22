@@ -39,8 +39,18 @@ Claude's ai-title is itself a conversation summary — docs say a name may echo 
 
 ## UI (device settings, localStorage)
 `deviceToggles()` in app.js is the single list of "This device" checkboxes (unit, packed, groupBy,
-groupOrder, `dashboard.chatList`, `dashboard.resources`, demo). Chat row: agent avatar + status dot,
+groupOrder, `dashboard.banner`, `dashboard.chatList`, demo). Chat row: agent avatar + status dot,
 name/time (`chatTime`), status · where, `@` badge, unread badge (`unreadBadge`, 99+). Demo masks name -> `Task N`.
+- Machine load: a select `dashboard.load` = detailed (default: meters + hardware line) / compact
+  (meters) / off, rendered under every host header via `hostSection`. `hostsView()` is the one host
+  model (every host, one order) for Sessions and Quota.
+- Hardware: `cpuModelName()` strips (R)/(TM)/CPU/@GHz/"N-Core Processor"; memory type read ONCE per
+  daemon: Windows `Win32_PhysicalMemory.SMBIOSMemoryType` (26 DDR4, 34 DDR5...), macOS
+  `system_profiler SPMemoryDataType`, Linux `dmidecode -t 17` (root only, else null). Schema
+  validates type `/^(LP)?DDR\d?X?$/`. Hardware line: CPU · cores · `32 GB DDR5` · GPU.
+- Needs-you banner (`#summary`) off by default (`dashboard.banner`); Events tab is the notification;
+  `stop()` still shows sign-in errors there. Quota `?` legend removed. Config has a Reload button
+  (refetches PAGE_FILES with `cache: 'reload'`, then reloads) — audit says replace with Cache-Control.
 
 ## Gotcha: editing source via node/heredoc on this Windows host
 JSON-built replacement scripts and heredocs mangled escapes: `'\n'` became a real newline,

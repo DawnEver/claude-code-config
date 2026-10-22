@@ -548,7 +548,7 @@ const deviceToggles = () => [
 function renderConfig() {
   const box = $('config-view');
   box.replaceChildren();
-  box.append(el('div', 'section-h', 'This device'), timeSettings(), loadSetting(), ...deviceToggles(), reloadButton());
+  box.append(el('div', 'section-h', 'This device'), timeSettings(), loadSetting(), ...deviceToggles());
   const v = configView(snapshot);
   if (!v.hosts.length) { box.append(el('div', 'empty', 'No host has reported its config yet')); return; }
   box.append(el('div', 'section-h', 'Shared settings'));
@@ -576,8 +576,7 @@ function renderConfig() {
 function renderTabs() {
   // Looking at the events marks them seen (after this render still shows which were new).
   const t = tabs(snapshot, Date.now(), seenAt, readAlerts, shownFrom);
-  $('tabs').hidden = !t.show;
-  if (!t.show) tab = 'sessions';
+  $('tabs').hidden = false;   // always: Config holds this device's settings, whatever data there is
   $('n-sessions').textContent = String(t.sessions);
   $('n-quota').textContent = String(t.quota);
   $('quota-dot').hidden = !t.alert;
@@ -674,26 +673,6 @@ async function showVersion() {
  * The live build: when it was deployed (what a human compares) and its commit, which opens on
  * GitHub. Kept apart from the data's own "updated" time.
  */
-/** Every file the page is made of: what a forced reload fetches again. */
-const PAGE_FILES = ['index.html', 'app.js', 'view.mjs', 'demo.mjs'];
-
-/**
- * Load the deployed version now: Telegram's web view may keep an old copy of the page, so every
- * file is fetched again past the cache (which replaces the cached copy), then the page reloads.
- */
-function reloadButton() {
-  const row = el('div', 'cfg demo-toggle');
-  const button = el('button', 'dismiss', 'Reload');
-  button.addEventListener('click', async () => {
-    button.disabled = true;
-    button.textContent = 'Reloading…';
-    await Promise.all(PAGE_FILES.map((f) => fetch(f, { cache: 'reload' }).catch(() => null)));
-    location.reload();
-  });
-  row.append(button, el('span', null, 'Force-load the latest deployed version (this device keeps the page cached)'));
-  return row;
-}
-
 function renderVersion() {
   const box = $('version');
   box.replaceChildren();

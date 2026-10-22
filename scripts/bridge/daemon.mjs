@@ -170,10 +170,8 @@ export class Bridge {
       const cacheKey = chatId === null ? null : TopicCache.key(chatId, key);
       const cached = cacheKey === null || this.deletingTopics.has(cacheKey) ? null : this.topics.get(cacheKey);
       // A Claude seat (scripts/shared/seats.mjs) names the login the session runs as.
-      // unread/mention: what the Topic holds since the human last spoke there (the dashboard's chat list).
       const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, name: sessionName(name),
-        project: ctx.project, branch: ctx.branch, cwd, seat, chain: Promise.resolve(), progress: null, injected: [],
-        unread: 0, mention: null };
+        project: ctx.project, branch: ctx.branch, cwd, seat, chain: Promise.resolve(), progress: null, injected: [] };
       s.titleOf = (suffix = '') => topicTitle({ name: s.name, machine: this.machine, project: ctx.project, branch: ctx.branch,
         agent: seat ? `${agent}:${seat}` : agent, suffix, projectInTitle: this.config.projects[ctx.project]?.projectInTitle });
       const base = s.base = s.title = s.titleOf();
@@ -211,7 +209,7 @@ export class Bridge {
    * adapter snapshots the status cards use. No cwd, no title: the project name stands in.
    * A Topic is listed only once Telegram confirmed it (lazy creation: many sessions have none).
    */
-  dashboardSnapshot() {
+  dashboardSessions() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({
       id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null,
       unread: s.unread ?? 0, mention: !!s.mention,
@@ -523,27 +521,30 @@ export class Bridge {
 
   /**
    * A message reached the Topic: unread unless the human wrote it (a prompt typed at the
-   * machine). A mention stands only until something follows it: then it is deleted, so neither
-   * Telegram nor the dashboard keeps an @ for a request that has moved on. Counts only, never text.
+   * machine). A mention is not counted: it is the @, and stands only until something follows
+   * it, then it is deleted, so neither Telegram nor the dashboard keeps an @ for a request that
+   * has moved on. Both are saved with the Topic, so a daemon restart can still delete the mention.
+   * Counts only, never text.
    */
   #posted(s, { fromHuman = false, mention = null } = {}) {
     this.#clearMention(s);
-    s.unread = fromHuman ? 0 : s.unread + 1;
-    s.mention = mention;   // the mention message's id, or null
+    if (mention) s.mention = mention;   // the mention itself is not a message to read: it is the @
+    else s.unread = fromHuman ? 0 : s.unread + 1;
+    this.#save(s);
   }
 
   /** The human spoke in the Topic: what was there is read, and a mention has done its job. */
   #seen(s) {
     s.unread = 0;
     this.#clearMention(s);
+    this.#save(s);
   }
 
-  /** Delete the standing mention message; it no longer counts as unread. */
+  /** Delete the standing mention message (the caller saves). */
   #clearMention(s) {
     const id = s.mention;
     if (!id) return;
     s.mention = null;
-    s.unread = Math.max(0, s.unread - 1);
     this.telegram.deleteMessage(s.chatId, id).catch((e) => this.#warnOnce('delete-mention', e.message));
   }
 
@@ -920,7 +921,7 @@ export async function main() {
     };
     const resources = new ResourceReader();
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
-      sessions: (list) => bridge.dashboardSnapshot().map((s) => ({ ...s, account: accountFor(s, list) })),
+      sessions: (list) => bridge.dashboardSessions().map((s) => ({ ...s, account: accountFor(s, list) })),
       accounts: () => accounts.read(), resources: () => resources.read(), onConfigChanges });
     push.start();
   }

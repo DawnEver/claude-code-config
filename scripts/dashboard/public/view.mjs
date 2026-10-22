@@ -252,17 +252,13 @@ export function quotaAlertsFor(prev, q, now = Date.now()) {
 /** One alert's identity: the account, its verdict and the window period. A new period is a new alert. */
 export const alertKey = (q) => JSON.stringify([q.key, q.verdict, q.bind?.k ?? null, q.bind?.resetsAt ?? null]);
 
-/** A forecast run-out this close is an alert in the needs-you card; a farther one is only shown. */
-export const RUNOUT_ALERT_MS = 3600000;
-
 /**
- * Accounts that need the human: a window exhausted, or forecast to run out within
- * RUNOUT_ALERT_MS; minus the alerts already read (`read`: alert keys).
+ * Accounts that need the human: a window exhausted (a forecast run-out is shown on the account
+ * row, never alerted); minus the alerts already read (`read`: alert keys).
  */
 export const quotaAlerts = (snapshot, now = Date.now(), read = []) =>
   (snapshot.accounts ?? []).map((a) => quotaView(a, now))
-    .filter((q) => (q.verdict === 'exhausted' || (q.verdict === 'short' && q.bind.forecast.eta - now <= RUNOUT_ALERT_MS))
-      && !read.includes(alertKey(q)));
+    .filter((q) => q.verdict === 'exhausted' && !read.includes(alertKey(q)));
 
 
 /**
@@ -344,8 +340,7 @@ export function tabs(snapshot, now = Date.now(), seenAt = null, read = [], shown
   const accounts = snapshot.accounts ?? [];
   const events = snapshot.events ?? [];
   return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now, read).length > 0,
-    events: unreadEvents(events, shownFrom).length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length,
-    show: accounts.length > 0 || events.length > 0 };
+    events: unreadEvents(events, shownFrom).length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length };
 }
 
 /** The events the Events tab lists: those newer than the last visit (`seenAt`); read ones are cleared. */
