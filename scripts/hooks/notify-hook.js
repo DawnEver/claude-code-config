@@ -34,9 +34,10 @@ function sendNativeNotification(title, message, workspaceRoot, enableSound) {
     // macOS 26+ breaks both AppleScript 'display notification' and
     // NSUserNotificationCenter. Use terminal-notifier (Homebrew) which ships
     // a properly bundled .app with UNUserNotificationCenter.
-    // Check both Homebrew prefixes: /opt/homebrew (Apple Silicon) and /usr/local (Intel).
-    const brewDirs = ['/opt/homebrew/bin', '/usr/local/bin'];
-    const notifyBin = brewDirs.map(d => path.join(d, 'terminal-notifier')).find(fs.existsSync);
+    // PATH first (MacPorts, Nix, any install), then both Homebrew prefixes — a hook run from an
+    // app launched by the GUI may have neither on its PATH.
+    const dirs = [...(process.env.PATH ?? '').split(path.delimiter).filter(Boolean), '/opt/homebrew/bin', '/usr/local/bin'];
+    const notifyBin = dirs.map(d => path.join(d, 'terminal-notifier')).find(fs.existsSync);
     if (!notifyBin) {
       console.error('[notify-hook] terminal-notifier not found. Install with: brew install terminal-notifier');
       return;

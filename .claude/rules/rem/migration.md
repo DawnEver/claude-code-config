@@ -11,14 +11,9 @@
   leaving `cogmi.cmd` behind. It sweeps the claude bin dir, so on a Codex-only host it is a
   no-op — the wrappers there live in codex's bin dir.
 - `migrateProject(cwd)` — scans `<repo>/cc-market/*/migrations/migrate.mjs` and calls each
-  one with `cwd` as `projectRoot`. It does **not** consult
+  one with `cwd` as the project root. It does **not** consult
   `~/.claude/plugins/installed_plugins.json`; discovery is by directory, so a plugin's
   migration runs for every project regardless of whether it is installed there.
-
-It no longer touches `enabledPlugins`. The retired-plugin swap it used to perform
-(`takeover@cc-market` → `fabric@cc-market`) can no longer match anything: that plugin is
-gone from cc-market, and the settings file is shared by every host, so no host can
-reintroduce it.
 
 ## Per-plugin migration convention
 
@@ -29,7 +24,7 @@ summary}`, idempotent/self-detecting, no-op once current. When a plugin makes a 
 
 ## Plugins auto-update
 
-Claude Code built-in `autoUpdate` replaces the old `update-plugins-hook.js` — no need to
+Claude Code's built-in plugin auto-update replaces the old `update-plugins-hook.js` — no need to
 re-add manual plugin update hooks.
 
 ## Stamp-memory deprecated

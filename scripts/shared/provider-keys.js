@@ -1,4 +1,5 @@
-// Shared provider env-var keys — single source of truth for cc.js and setup-vscode.js.
+// Shared provider env-var keys — the single source for every launcher projection (cc-launcher.mjs,
+// codex-launcher.mjs) and setup-vscode.js.
 // When adding or removing a provider key, update ONLY this file.
 export const PROVIDER_KEYS = [
   'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY',

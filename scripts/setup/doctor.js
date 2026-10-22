@@ -436,6 +436,28 @@ export function scanPublicHygiene(text, markers = []) {
   return hits;
 }
 
+/**
+ * A rule file (.claude/rules/**) is read by every session, so a function or constant it names
+ * must exist: one renamed in the code but not in the rule misleads every agent that reads it
+ * (rules/rem/migration.md named `KNOWN_ALIAS_NAMES` long after the code had renamed it). Only
+ * code-shaped names count — `name()`, `ALL_CAPS_WITH_UNDERSCORE`, `camelCase` — matched as whole
+ * words in the tracked JS. Words, file names and config keys are left alone.
+ */
+export function checkRuleSymbols(root = sourceDir, files = trackedFiles(root)) {
+  const code = files.filter((f) => /\.(mjs|js|cjs)$/.test(f)).map((f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch { return ''; } }).join('\n');
+  const known = new Set(code.match(/[A-Za-z_$][\w$]*/g) ?? []);
+  const out = [];
+  for (const f of files.filter((x) => /^\.claude\/rules\/.+\.md$/.test(x))) {
+    let text;
+    try { text = fs.readFileSync(path.join(root, f), 'utf8'); } catch { continue; }
+    for (const [, id, call] of text.matchAll(/`([A-Za-z_][\w]*)(\(\))?`/g)) {
+      const codeShaped = call || /^[A-Z][A-Z0-9]*_[A-Z0-9_]+$/.test(id) || /^[a-z]+[A-Z]\w*$/.test(id);
+      if (codeShaped && !known.has(id)) out.push(finding('FAIL', 'rules-symbols', `${f} names \`${id}\`, which no tracked script defines or uses`, 'rename it in the rule to what the code calls it now'));
+    }
+  }
+  return out;
+}
+
 function trackedFiles(root) {
   try {
     return execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
@@ -566,6 +588,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPlugins(settings, home),
     ...checkCodexPluginCache(repoRoot, home),
     ...checkHygiene(repoRoot),
+    ...checkRuleSymbols(repoRoot),
     ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers'),
       requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),

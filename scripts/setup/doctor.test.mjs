@@ -478,3 +478,20 @@ test('checkChannelServer: FAIL per bridged config dir that lost the session-brid
   assert.deepEqual(out.map((f) => [f.level, f.id]), [['FAIL', 'channel-server']]);   // base ok, b has no config yet
   assert.match(out[0].title, /^seat a: .*not registered/);
 });
+
+test('rules-symbols: a rule naming a function or constant the code no longer has fails', async () => {
+  const { checkRuleSymbols } = await import('./doctor.js');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rules-'));
+  try {
+    fs.mkdirSync(path.join(root, '.claude', 'rules'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'a.mjs'), 'export const WRAPPER_NAMES = []; export function migrateOrphanedWrappers() {}');
+    fs.writeFileSync(path.join(root, '.claude', 'rules', 'r.md'),
+      'Uses `migrateOrphanedWrappers()` and `WRAPPER_NAMES`; renamed from `KNOWN_ALIAS_NAMES`. Plain words: `setup`, `cwd`, `config.json`.');
+    const files = ['a.mjs', '.claude/rules/r.md'];
+    const out = checkRuleSymbols(root, files);
+    assert.deepEqual(out.map((f) => f.level), ['FAIL']);
+    assert.match(out[0].title, /KNOWN_ALIAS_NAMES/);
+    fs.writeFileSync(path.join(root, '.claude', 'rules', 'r.md'), 'Uses `migrateOrphanedWrappers()` and `WRAPPER_NAMES`.');
+    assert.deepEqual(checkRuleSymbols(root, files), [], 'clean: no finding');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

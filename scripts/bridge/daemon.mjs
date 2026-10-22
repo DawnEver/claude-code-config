@@ -3,15 +3,17 @@
 //
 // Owns the machine's single bot token and the only getUpdates loop, and multiplexes every
 // live session on the machine. Host specifics live in adapters (codex-adapter.mjs,
-// claude-adapter.mjs), which all emit the same events:
-//   up {id, cwd, branch?, backlog[]}, prompt {id, text, turnId?},
-//   progress {id, text}, final {id, text, turnId?, status?},
-//   approval {id, ref, summary, answerable}, approval-resolved {ref},
+// claude-adapter.mjs), which all emit the same events (#wire subscribes to exactly these):
+//   up {id, cwd, branch?, seat?, name?, backlog[]}, down {id}, dismiss {id} (not a main session),
+//   superseded {id, from}, name {id, name}, status {id},
+//   prompt {id, text, turnId?}, progress {id, text}, final {id, text, turnId?, status?},
+//   notice {id, text, alert?}, approval {id, ref, summary, answerable}, approval-resolved {ref, id?},
 //   question {id, ref, answerable, questions[{id, header, question, options|null, isOther, isSecret}]},
-//   question-resolved {ref}, down {id}
-// and offer the same interface: inject(id, text, user), status(id),
+//   question-resolved {ref, id?}, warn (text)
+// and offer the same interface: inject(id, text, user), status(id), statusSnapshot(id) -> {state},
 // answerApproval(ref, allow, id), answerQuestion(ref, {questionId: [answer]}, id), and
-// optionally interrupt(id), releaseQuestion(ref, id).
+// optionally interrupt(id), releaseQuestion(ref, id). The daemon gives each adapter
+// sendAttachment(agent, id, request) for files sent through its local requests.
 // This file is host-agnostic: one lifecycle (lifecycle.mjs), one ordered write queue per
 // session, one bring-up hold, one echo suppression.
 //

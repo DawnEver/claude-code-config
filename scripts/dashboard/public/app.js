@@ -18,10 +18,11 @@ let snapshot = null;
 let lastOk = null;
 let loading = false;
 let selectsKey = null;
-// The open tab survives a reopen; sessions is the default view.
+// Settings of this device: localStorage, never sent anywhere (private mode: none kept).
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
-// A #quota / #events link opens that tab; otherwise the last one used. 
+// The open tab survives a reopen: a #quota / #events link opens that tab; otherwise the last
+// one used; sessions the first time.
 const TABS = ['sessions', 'quota', 'events', 'config'];
 const hashTab = location.hash.slice(1);
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
@@ -41,7 +42,7 @@ const shown = () => (raw && demoOn ? (masker ??= demoMasker())(raw) : raw);
 const readKey = () => (demoOn ? 'dashboard.readAlerts.demo' : 'dashboard.readAlerts');
 const loadRead = () => { try { const v = JSON.parse(store.get(readKey())); return Array.isArray(v) ? v : []; } catch { return []; } };
 let readAlerts = loadRead();
-// Sessions grouped by host (default) or by project: a setting of this device.
+// Sessions grouped by project (default) or by host: a setting of this device.
 let groupBy = store.get('dashboard.groupBy') === 'host' ? 'host' : 'project';
 // Inside a project group: by workstation (default) or by urgency alone.
 let groupOrder = store.get('dashboard.groupOrder') === 'urgency' ? 'urgency' : 'host';
@@ -57,8 +58,9 @@ let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns
 document.body.classList.toggle('packed', packed);
 // Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) instead of status rows.
 let chatList = store.get('dashboard.chatList') === '1';
-// The "needs you" banner above the tabs: off unless turned on here; the Events tab is the notification.
-let banner = store.get('dashboard.banner') === '1';
+// The needs-you card above the tabs (#summary): off unless turned on here; the Events tab is the
+// notification. Not the #banner strip, which reports sign-in and gateway problems.
+let needsYouCard = store.get('dashboard.needsYouCard') === '1';
 // Each host header's load: 'detailed' (meters and the hardware line, default), 'compact' (meters) or 'off'.
 const LOAD_MODES = [['detailed', 'Detailed'], ['compact', 'Compact'], ['off', 'Off']];
 let loadMode = LOAD_MODES.some(([m]) => m === store.get('dashboard.load')) ? store.get('dashboard.load') : 'detailed';
@@ -139,8 +141,8 @@ function renderSummary() {
     store.set(readKey(), JSON.stringify(readAlerts));
   }
   // Off (the default): Events is the only notification; the "Needs you" chip still lists the sessions.
-  box.hidden = !banner;
-  if (!banner) return;
+  box.hidden = !needsYouCard;
+  if (!needsYouCard) return;
   const quota = quotaAlerts(snapshot, Date.now(), readAlerts, accounts);
   const n = waiting.length + quota.length;
   box.className = `summary${n ? ' alert' : ''}`;
@@ -168,7 +170,7 @@ function quotaAlertRow(q) {
   return row;
 }
 
-/** Position bar: fill = what is left, the line = what an even spend would leave by now. */
+/** Position bar in the reader's unit: fill = what is used (or left), the line = where an even spend would be by now. */
 function bar(w, stale) {
   const track = el('div', `bar${w.renewed ? ' unknown' : w.forecast?.short || w.used >= 100 ? ' hot' : ''}`);
   const fill = el('div', 'fill');
@@ -484,7 +486,6 @@ function configRow(r) {
   return row;
 }
 
-/** Clock and date style for absolute times, this device only. */
 /** How much of each machine's load its host header shows: meters and hardware, meters, or none. */
 function loadSetting() {
   const row = el('div', 'cfg demo-toggle');
@@ -496,6 +497,7 @@ function loadSetting() {
   return row;
 }
 
+/** Clock and date style for absolute times, this device only. */
 function timeSettings() {
   const row = el('div', 'cfg demo-toggle');
   const pick = (name, label, options) => {
@@ -531,8 +533,8 @@ const deviceToggles = () => [
     (v) => { groupBy = v ? 'project' : 'host'; store.set('dashboard.groupBy', groupBy); }),
   deviceToggle('In a project, order sessions by urgency instead of by workstation', () => groupOrder === 'urgency',
     (v) => { groupOrder = v ? 'urgency' : 'host'; store.set('dashboard.groupOrder', groupOrder); }),
-  deviceToggle('"Needs you" banner at the top (otherwise only the Events tab notifies)', () => banner,
-    (v) => { banner = v; store.set('dashboard.banner', v ? '1' : '0'); }),
+  deviceToggle('"Needs you" card at the top (otherwise only the Events tab notifies)', () => needsYouCard,
+    (v) => { needsYouCard = v; store.set('dashboard.needsYouCard', v ? '1' : '0'); }),
   deviceToggle('Sessions as a chat list (Telegram style): name, time, unread count and @ mentions', () => chatList,
     (v) => { chatList = v; store.set('dashboard.chatList', v ? '1' : '0'); }),
   ...(mock ? [] : [deviceToggle('Demo mode: mask machines, accounts, projects and ids on this device (config edits off)', () => demoOn, (v) => {
@@ -620,7 +622,7 @@ function render() {
 }
 
 function stop(message) {
-  $('summary').hidden = false;   // sign-in and access problems show whatever the banner setting
+  $('summary').hidden = false;   // sign-in and access problems show whatever the needs-you card setting
   $('summary').replaceChildren(el('div', 'summary-head', message));
   $('hosts').replaceChildren();
   $('chips').replaceChildren();

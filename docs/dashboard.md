@@ -11,7 +11,7 @@ Native session ── adapter.statusSnapshot ── Bridge.sessions        (daem
                                                  ▼
                                    dashboard-push.mjs  ── HTTPS POST, host bearer token ──▶ Cloudflare Worker
                                                                                           │ DashboardHub Durable Object
-Telegram ─ dashboard bot ─ Mini App (public/) ─ GET /api/dashboard, Authorization: tma <initData> ┘ (registry, memory only)
+Telegram ─ dashboard bot ─ Mini App (public/) ─ GET /api/dashboard, Authorization: tma <initData> ┘ (registry: pushes in memory, events in storage)
 ```
 
 **Optional, off by default.** Nothing here runs until a host is configured for it: the bridge
@@ -81,8 +81,10 @@ no API, no authentication.
   the status dot, name and time, status and where it runs, then the unread count and `@`. No message
   preview: it would put conversation content on Cloudflare. `lastActivityAt` is the bridge's last
   mirrored activity (a session with no group configured stays at its `up` time).
-- The Durable Object keeps nothing on disk: when Cloudflare evicts or restarts it, the dashboard is
-  empty until the next push round (`everySeconds`).
+- The Durable Object keeps the last push of each host in memory only: when Cloudflare evicts or
+  restarts it, hosts and sessions are empty until the next push round (`everySeconds`). The events
+  and what each account was last alerted for are history no push can rebuild, so they live in its
+  storage: a restart neither loses them nor alerts a standing condition again.
 
 ## Quota
 
@@ -101,8 +103,9 @@ app-server); the Worker never recomputes it.
   exhausted window joins the needs-you card (tap it to mark it read on this device; it returns
   with the next window period). A projected run-out is shown on the account row, never alerted.
 - **Events**: the Worker turns a window hitting its limit, a seat problem, or an announced extra
-  reset into events (`quotaAlertsFor` in `view.mjs`), kept in the Worker (last 50, memory only)
-  and shown only here — nothing is posted to Telegram. Shown in the
+  reset into events (`quotaAlertsFor` in `public/shared/quota-model.mjs`), stored as data
+  (`{at, kind, ...}`; last 50, in Durable Object storage) and worded by the page on its own clock
+  (`eventText` in `view.mjs`); shown only here — nothing is posted to Telegram. Shown in the
   Events tab, newest first, with an unread count since this device last opened it. The tab
   lists only what was unread when it was opened: events read on one visit are cleared from
   the next (per device).
@@ -124,7 +127,7 @@ app-server); the Worker never recomputes it.
   GPU models. Load is sampled by `scripts/bridge/resources.mjs` on every push; the memory type is
   read once per daemon (Windows `Win32_PhysicalMemory`, macOS `system_profiler`, Linux `dmidecode`,
   which needs root — unknown otherwise). Numbers and model names only.
-- **Needs-you banner** (Config → This device, off by default): the card above the tabs listing
+- **Needs-you card** (Config → This device, off by default): the card above the tabs listing
   sessions and quota that need you. Off, the Events tab is the only notification and the Sessions
   tab's "Needs you" chip lists those sessions; sign-in and access errors still show there.
 - **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
@@ -200,10 +203,10 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 
 | Route | Auth | Returns |
 | --- | --- | --- |
-| `GET /api/health` | none | `{ok, schemaVersion}` |
-| `GET /api/dashboard` | `Authorization: tma <raw initData>` | `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[]}]}` |
+| `GET /api/health` | none | `{ok, schemaVersion, version: {commit, id, at}}` (the live deploy) |
+| `GET /api/dashboard` | `Authorization: tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], events[], configKeys[], configPending[]}` |
 | `POST /api/config` | `Authorization: tma <raw initData>` | `202 {id}`: a `CONFIG_KEYS` change queued; `400` for any other key or value |
-| `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted}` (false = not newer than held) |
+| `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted, configChanges[]}` (accepted false = not newer than held; the changes this host should apply) |
 
 Every route shares the per-client `ratePerMinute` (120), keyed by `CF-Connecting-IP`, which
 Cloudflare sets and a client cannot forge. Refused hosts and viewers are logged (Workers

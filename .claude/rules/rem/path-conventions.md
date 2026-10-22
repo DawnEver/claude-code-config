@@ -18,7 +18,7 @@ and the CLI exited 1 at startup for *every* session there.
 ## 2. A git working tree NEVER lives in cloud storage
 
 `.git` must be owned exclusively by one machine. A sync daemon replicating it produces
-conflict copies of `index`/`FETCH_HEAD`, **overwrites `logs/HEAD` so the reflog is lost**,
+conflict copies of `.git/index` and `.git/FETCH_HEAD`, **overwrites `logs/HEAD` so the reflog is lost**,
 and pushes divergent branches. This repo was migrated out of OneDrive on 2026-08-29 after
 exactly that damage.
 
