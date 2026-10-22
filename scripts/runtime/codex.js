@@ -7,11 +7,12 @@
 // those wrappers exec this script with the provider name.
 
 import { spawn } from 'child_process';
-import { statSync, writeFileSync, existsSync } from 'fs';
+import { statSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { syncBeforeLaunch } from './startup-sync.mjs';
+import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 
 // Codex has no SessionStart hook. Always synchronize before loading repo-owned
 // modules or reading the shared provider config.
@@ -30,18 +31,11 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // Prefer the link setup materializes; fall back to the repo-relative path so the launcher
 // still works BEFORE the first setup run (where the old repo-relative resolution used to).
-function resolveEnvSettingsPath() {
-  const linked = join(homedir(), '.claude', 'claude_env_settings.json');
-  if (existsSync(linked)) return linked;
-  return join(REPO_ROOT, 'claude_env_settings.json');
-}
+const envSettingsPath = ENV_SETTINGS_PATH;
 
-const envSettingsPath = resolveEnvSettingsPath();
-
-// Throttle the link-health check: on a OneDrive-backed Windows FS, a cold-cache
-// `stat` per link can block for hundreds of ms. The check is essential after
-// OneDrive sync-downs or `git checkout`s but pointless to run on every TUI
-// launch. mtime < 24h old → skip; otherwise run + touch the stamp.
+// Throttle the link-health check: the links point into the sync payload's cloud folder, where
+// a cold-cache `stat` per link costs 150-300 ms (measured). The check matters after a cloud
+// sync-down or a pull, not on every TUI launch: a pull always runs it; otherwise at most daily.
 const LINK_CHECK_STAMP = join(homedir(), '.codex', '.link-check');
 const LINK_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 function isLinkCheckFresh() {

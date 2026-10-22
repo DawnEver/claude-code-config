@@ -1,6 +1,6 @@
 // scripts/bridge/context.mjs — what the bridge needs to know about this machine and a
 // session's working tree. Everything is read through ~/.claude links, never a machine path
-// (docs/sync-architecture.md §2): bridge config is the `bridge` block of the shared
+// (docs/sync-architecture.md §2) — the one write is the exception, see applyConfigChange: bridge config is the `bridge` block of the shared
 // claude_env_settings.json with the machine-local claude_env_settings.local.json merged on
 // top, and secrets (bot token, allowlist) exist only in the local layer.
 
@@ -10,12 +10,11 @@ import path from 'path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'child_process';
-import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
+import { readMergedEnvSettings, ENV_SETTINGS_PATH, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { CONFIG_KEYS, parseConfigChange } from '../shared/dashboard-schema.mjs';
 import { resolveSyncDir } from '../shared/sync-dir.mjs';
 
 export const CLAUDE_DIR = path.join(os.homedir(), '.claude');
-export const SHARED_ENV_SETTINGS_PATH = path.join(CLAUDE_DIR, 'claude_env_settings.json');
 /** Machine-local runtime dir: daemon port + IPC token + Telegram caches. Never synced. */
 export const BRIDGE_RUNTIME_DIR = path.join(CLAUDE_DIR, 'bridge');
 export const RUNTIME_FILE = path.join(BRIDGE_RUNTIME_DIR, 'runtime.json');
@@ -56,7 +55,7 @@ const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
  * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram, bridge.dashboard.hostToken
  * Either layer may set any key; local wins — except dashboard.hostToken, local only.
  */
-export function readBridgeConfig({ sharedPath = SHARED_ENV_SETTINGS_PATH, localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
+export function readBridgeConfig({ sharedPath = ENV_SETTINGS_PATH, localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
   const merged = readMergedEnvSettings({ sharedPath, localPath }) ?? {};
   const b = merged.bridge ?? {};
   const projects = {};

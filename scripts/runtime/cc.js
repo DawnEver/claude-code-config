@@ -10,9 +10,8 @@
 import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync } from 'fs';
-import { homedir } from 'os';
 import { syncBeforeLaunch } from './startup-sync.mjs';
+import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 
 // Synchronize before importing repo-owned implementation modules: git may
 // replace them during a fast-forward. The host must launch with the new config,
@@ -39,13 +38,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // Prefer the link setup materializes; fall back to the repo-relative path so the launcher
 // still works BEFORE the first setup run (where the old repo-relative resolution used to).
-function resolveEnvSettingsPath() {
-  const linked = join(homedir(), '.claude', 'claude_env_settings.json');
-  if (existsSync(linked)) return linked;
-  return join(REPO_ROOT, 'claude_env_settings.json');
-}
-
-const envSettingsPath = resolveEnvSettingsPath();
+const envSettingsPath = ENV_SETTINGS_PATH;
 
 const argv = process.argv.slice(2);
 const provider = argv[0] && !argv[0].startsWith('-') ? argv.shift() : '';

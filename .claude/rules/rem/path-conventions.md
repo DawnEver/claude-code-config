@@ -40,8 +40,10 @@ working tree by gitignored symlinks — it needs backup, not version control. Se
 pointer → **repo root**. The repo-root default is what keeps a no-cloud install zero-config;
 do not add cloud auto-detection.
 
-**How to apply:** only `setup.js` and `check-links.js` resolve the sync dir. Everything else —
-launchers included — reads through the `~/.claude/...` link. Full design:
+**How to apply:** only `setup.js` and `check-links.js` resolve the sync dir to read it. Everything
+else — launchers and `setup-vscode.js` included — reads through the `~/.claude/...` link. The one
+exception is a write: `applyConfigChange` (bridge/context.mjs) edits the sync dir's own copy,
+because a cloud client can detach the link and an edit to a detached copy never leaves the host. Full design:
 `docs/sync-architecture.md`.
 
 ## 3. `~/.codex/config.toml` is composed, not linked

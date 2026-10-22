@@ -23,14 +23,13 @@
 import fs from 'fs';
 import path from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
+import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { buildClaudeInvocation } from '../runtime/cc-launcher.mjs';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { resolveSyncDir } from '../shared/sync-dir.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourceDir = path.resolve(__dirname, '../..');
-const getSyncDir = () => resolveSyncDir({ repoRoot: sourceDir });
 const isWindows = process.platform === 'win32';
 
 const provider = process.argv[2] || 'claude';
@@ -94,8 +93,8 @@ if (provider === 'claude') {
   }
 } else {
   // Apply provider
-  // The payload may live outside the repo; resolve it the same way setup does.
-  const envSettingsPath = path.join(getSyncDir(), 'claude_env_settings.json');
+  // Read through the ~/.claude link, as the launchers do: the file `ccc` reads is the one VS Code gets.
+  const envSettingsPath = ENV_SETTINGS_PATH;
 
   // Project the provider through the launcher's own builder rather than reading
   // claude_env_settings.json here. This used to look up `env:<provider>` — a schema

@@ -14,7 +14,9 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import os from 'os';
 
-// Machine-local secrets file, next to the linked ~/.claude/claude_env_settings.json.
+// The shared settings, read through the ~/.claude link setup maintains (it resolves the sync dir).
+export const ENV_SETTINGS_PATH = join(os.homedir(), '.claude', 'claude_env_settings.json');
+// Machine-local secrets file, next to it.
 export const LOCAL_ENV_SETTINGS_PATH = join(os.homedir(), '.claude', 'claude_env_settings.local.json');
 
 export function isPlainObject(v) {

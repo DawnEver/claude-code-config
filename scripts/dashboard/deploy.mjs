@@ -22,7 +22,8 @@ import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
-import { SHARED_ENV_SETTINGS_PATH, writePrivateFile } from '../bridge/context.mjs';
+import { writePrivateFile } from '../bridge/context.mjs';
+import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { newHostToken } from './auth.mjs';
 import { parseDashboardConfig } from './api.mjs';
 
@@ -46,10 +47,10 @@ async function hostToken() {
   const local = fs.existsSync(LOCAL_ENV_SETTINGS_PATH) ? JSON.parse(fs.readFileSync(LOCAL_ENV_SETTINGS_PATH, 'utf8')) : {};
   local.bridge ??= {};
   local.bridge.dashboard = { ...local.bridge.dashboard, hostToken: token };
-  const shared = JSON.parse(fs.readFileSync(SHARED_ENV_SETTINGS_PATH, 'utf8'));
+  const shared = JSON.parse(fs.readFileSync(ENV_SETTINGS_PATH, 'utf8'));
   if (!shared.bridge?.dashboard?.url) throw new Error('no shared bridge.dashboard.url: set up the dashboard first (docs/dashboard.md § Setup)');
   shared.bridge.dashboard.hosts = { ...shared.bridge.dashboard.hosts, [machine]: hash };
-  fs.writeFileSync(SHARED_ENV_SETTINGS_PATH, JSON.stringify(shared, null, 2) + '\n');
+  fs.writeFileSync(ENV_SETTINGS_PATH, JSON.stringify(shared, null, 2) + '\n');
   writePrivateFile(LOCAL_ENV_SETTINGS_PATH, JSON.stringify(local, null, 2) + '\n');
   console.log(`${machine}: token in ${LOCAL_ENV_SETTINGS_PATH}, hash in the shared hosts`);
   deploy();
@@ -57,7 +58,7 @@ async function hostToken() {
 }
 
 function deploy() {
-  const { domain, config } = dashboardConfigFrom(readMergedEnvSettings({ sharedPath: SHARED_ENV_SETTINGS_PATH })?.bridge ?? {});
+  const { domain, config } = dashboardConfigFrom(readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {});
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-deploy-'));
   const secrets = path.join(dir, 'secrets.json');
   try {
@@ -89,7 +90,7 @@ export function menuRequest(g, token) {
 }
 
 async function setMenu() {
-  const g = readMergedEnvSettings({ sharedPath: SHARED_ENV_SETTINGS_PATH })?.bridge?.dashboard ?? {};
+  const g = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge?.dashboard ?? {};
   const token = localBotToken();
   const call = async (method, body) => {
     const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST',
