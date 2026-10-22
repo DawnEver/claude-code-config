@@ -14,9 +14,8 @@
  *   - Sets terminal.integrated.env.* so the "Open in Terminal" button
  *     launches claude with the provider's env vars.
  *   - Sets claudeCode.environmentVariables so the chat panel uses the
- *     provider's env vars (cross-platform, replaces legacy
- *     claudeCode.claudeProcessWrapper which only worked on macOS/Linux
- *     and required a native binary).
+ *     provider's env vars (cross-platform; never claudeCode.claudeProcessWrapper,
+ *     which rejects anything but a native binary).
  *   - When provider is "claude" (or omitted): clears all provider settings.
  */
 
@@ -86,22 +85,13 @@ if (provider === 'claude') {
     console.log('OK    claudeCode.environmentVariables — already empty');
   }
 
-  if (settings['claudeCode.claudeProcessWrapper']) {
-    delete settings['claudeCode.claudeProcessWrapper'];
-    console.log('WRITE claudeCode.claudeProcessWrapper — removed (legacy)');
-    changed = true;
-  }
 } else {
   // Apply provider
   // Read through the ~/.claude link, as the launchers do: the file `ccc` reads is the one VS Code gets.
   const envSettingsPath = ENV_SETTINGS_PATH;
 
   // Project the provider through the launcher's own builder rather than reading
-  // claude_env_settings.json here. This used to look up `env:<provider>` — a schema
-  // retired on 2026-08-25 when the registry moved to `providers.<name>` — so every
-  // call with a non-claude provider failed with "Unknown provider" and an empty
-  // available list. Reusing buildClaudeInvocation also means VS Code, `ccc` and
-  // `cods` cannot drift: one projection, one source of truth.
+  // claude_env_settings.json here, so VS Code, `ccc` and `cods` cannot drift: one projection.
   // The key is NOT projected: these env vars are written into VS Code's settings.json, and a
   // key lives only in the git credential store. Launch VS Code from an environment that has
   // the key, or use `ccds` in its terminal.
@@ -145,12 +135,6 @@ if (provider === 'claude') {
     console.log(`OK    claudeCode.environmentVariables — already up to date`);
   }
 
-  // Clean up legacy claudeProcessWrapper if still set from a previous version
-  if (settings['claudeCode.claudeProcessWrapper']) {
-    delete settings['claudeCode.claudeProcessWrapper'];
-    console.log('WRITE claudeCode.claudeProcessWrapper — removed (legacy)');
-    changed = true;
-  }
 }
 
 if (changed) {

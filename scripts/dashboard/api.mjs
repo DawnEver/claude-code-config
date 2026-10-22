@@ -89,10 +89,7 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       return json(202, { id: registry.requestChange(change, who.userId) });
     }
     if (url.pathname === '/api/dashboard') return json(200, registry.snapshot());
-    const sessions = /^\/api\/hosts\/([^/]+)\/sessions$/.exec(url.pathname);
-    const host = sessions && isHostId(sessions[1]) && registry.host(sessions[1]);
-    if (host) return json(200, { schemaVersion: SCHEMA_VERSION, ...host });
-    return error(404, sessions ? 'unknown_host' : 'not_found');
+    return error(404, 'not_found');
   }
 
   return (request) => route(request).catch((e) => {

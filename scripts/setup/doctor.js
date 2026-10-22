@@ -311,7 +311,7 @@ export function checkPlugins(settings, home = HOME) {
 
 // Codex does not expose a Claude-style installed_plugins.json. Its cache is the
 // observable install inventory, so compare it with the configured marketplace clone.
-// This catches retired plugins (for example takeover after it was absorbed by fabric)
+// This catches retired plugins (a plugin removed from its marketplace)
 // without treating disabled-but-still-available plugins as orphans.
 export function checkCodexPluginCache(repoRoot = sourceDir, home = HOME) {
   const cache = path.join(home, '.codex', 'plugins', 'cache', 'cc-market');

@@ -92,7 +92,6 @@ function parseConfigSummary(c) {
 
 const CHANGE_ID = /^[a-f0-9]{16,32}$/;
 const parseResult = (r) => (r && CHANGE_ID.test(r.id) ? { id: r.id, ok: r.ok === true, error: r.ok === true ? null : text(r.error, 200) ?? 'failed' } : null);
-export const isChangeId = (id) => CHANGE_ID.test(id ?? '');
 
 /** A host's POST body -> {bootAt, seq, sessions, accounts, resources, config, configResults} or null. Unknown session entries are dropped, not fatal. */
 export function parseHostPush(body) {

@@ -122,11 +122,9 @@ test('api: host push and viewer read, each authenticated', async () => {
   assert.equal(snapshot.schemaVersion, 1);
   assert.equal(snapshot.hosts[0].online, true);
   assert.equal(snapshot.hosts[0].sessions[0].hostId, 'host-a');
-  assert.equal((await (await g.req('/api/hosts/host-a/sessions', await asViewer(ALICE))).json()).sessions.length, 1);
-  assert.equal((await g.req('/api/hosts/host-x/sessions', await asViewer(ALICE))).status, 404);
-  assert.equal((await g.req('/api/hosts/%E0%A4%A/sessions', await asViewer(ALICE))).status, 404, 'malformed escape is no 500');
+  assert.equal((await g.req('/api/hosts/%E0%A4%A/sessions', await asViewer(ALICE))).status, 404, 'no per-host read endpoint; a malformed escape is no 500');
   assert.equal((await g.req('/api/hosts/%E0%A4%A/snapshot', hostPost(g.token, push()))).status, 401);
-  assert.equal((await g.req('/api/hosts/host-a/sessions')).status, 401);
+  assert.equal((await g.req('/api/dashboard')).status, 401);
   g.tick(61000);
   assert.equal((await (await g.req('/api/dashboard', await asViewer(ALICE))).json()).hosts[0].online, false);
 });

@@ -19,7 +19,6 @@ import {
   SEAT_LINKS,
   localSeats,
   getCodexLinks,
-  ensureRealDir,
   ensureClaudeHudConfig,
   linkEntry,
   getSyncDir,
@@ -35,7 +34,7 @@ export const SETUP_FIX_CMD = 'node ~/.claude/scripts/setup/setup.js --replace';
 
 /**
  * Re-link the sync payload files a cloud client detached (2026-10-18). Without symlink rights
- * setup hard-links them, and OneDrive replaces the synced file on every download, which breaks
+ * setup hard-links them, and a cloud client replaces the synced file on every download, which breaks
  * the link: the host then reads a private copy and never sees another host's edit.
  *   - sync copy at least as new as the private one: the change came from the cloud and nothing
  *     was edited here since the break, so re-linking loses nothing (the copy is kept as
@@ -151,7 +150,7 @@ export function checkLinks() {
   check(CLAUDE_LINKS, claudeDir);
   // A seat dir setup has not created yet is setup's job, not a link to heal.
   for (const { alias, dir } of localSeats()) if (fs.existsSync(dir)) check(SEAT_LINKS, dir, `seat ${alias}: `);
-  ensureRealDir(path.join(codexDir, 'skills'));
+  fs.mkdirSync(path.join(codexDir, 'skills'), { recursive: true });
   check(getCodexLinks(), codexDir);
 
   return { repaired, warnings };

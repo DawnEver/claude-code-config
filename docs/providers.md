@@ -57,15 +57,6 @@ the host and the `ai_lab.auth login` command. Store a key with:
 Note: the `session` task must be declared in lab-commons' `API_KEY_TASKS` (pending PR); until it
 is, the catalogue carries no `session` username and a provider launch refuses, naming that.
 
-### Migration of plaintext keys (one-shot, in setup)
-
-Each `providers.<p>.apiKey` still in `~/.claude/claude_env_settings.local.json` is stored with
-`<python> -m ai_lab.auth login <p> --task session` (the key on stdin, never argv; ai-lab's
-duplicate-key refusal applies). The file is first backed up to
-`claude_env_settings.local.json.setup-bak` (`.setup-bak.N` when one already exists), then each
-stored field is deleted (`scripts/setup/provider-setup.mjs`). A key ai-lab refuses stays in the
-file, setup reports it by provider name (never the key), and the launcher keeps refusing it.
-
 ## Missing tools refuse by name
 
 | role | needs | refusal |

@@ -423,17 +423,12 @@ export class Bridge {
     const taken = new Set([...this.sessions.values()]
       .filter(o => o !== s && o.chatId === s.chatId && (o.topicId || o.creating)).map(o => o.title));
     const hash = createHash('sha256').update(s.key).digest('hex');
+    const suffixed = [6, 8, 10, 12, 14, 16].map((n) => s.titleOf(hash.slice(0, n)));
     // Keep an already-derived short identity across reconnects, not historical counters.
-    for (let length = 6; length <= 16; length += 2) {
-      const candidate = s.titleOf(hash.slice(0, length));
-      if (previous === candidate && !taken.has(candidate)) return candidate;
-    }
-    if (!taken.has(s.base)) return s.base;
-    for (let length = 6; length <= 16; length += 2) {
-      const candidate = s.titleOf(hash.slice(0, length));
-      if (!taken.has(candidate)) return candidate;
-    }
-    throw new Error('could not derive a unique live Topic title');
+    if (suffixed.includes(previous) && !taken.has(previous)) return previous;
+    const title = [s.base, ...suffixed].find((t) => !taken.has(t));
+    if (!title) throw new Error('could not derive a unique live Topic title');
+    return title;
   }
 
   async #run(s, action) {
@@ -474,7 +469,7 @@ export class Bridge {
     try {
       this.log(`post ${s.title} [topic ${s.topicId}] (${text.length} chars)`);
       const { fromHuman, ...send } = opts;
-      const sent = await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId ?? undefined, ...send });
+      const sent = await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId, ...send });
       if (sent.length) this.#posted(s, { fromHuman, mention: send.alert?.length ? sent[0].message_id : null });
       return sent;
     } catch (e) {

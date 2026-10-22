@@ -2,7 +2,7 @@
 // SessionStart (startup) hook: verify the ~/.claude and ~/.codex links that
 // setup.js maintains, self-healing the safe cases. Full setup (aliases,
 // cc-market clone, local secrets template) stays manual — this hook only
-// guards link health, chiefly hard links that OneDrive sync-down or
+// guards link health, chiefly hard links that a cloud sync-down or
 // `git checkout` silently replace with a stale plain file.
 //
 // Silent when everything is healthy; never blocks the session.

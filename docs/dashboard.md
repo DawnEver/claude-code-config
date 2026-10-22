@@ -202,7 +202,6 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 | --- | --- | --- |
 | `GET /api/health` | none | `{ok, schemaVersion}` |
 | `GET /api/dashboard` | `Authorization: tma <raw initData>` | `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[]}]}` |
-| `GET /api/hosts/:hostId/sessions` | same | one host of the above |
 | `POST /api/config` | `Authorization: tma <raw initData>` | `202 {id}`: a `CONFIG_KEYS` change queued; `400` for any other key or value |
 | `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted}` (false = not newer than held) |
 

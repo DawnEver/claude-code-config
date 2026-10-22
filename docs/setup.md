@@ -56,9 +56,8 @@ cc-market plugin's `migrations/migrate.mjs` against the current project. Re-run 
 layout change.
 
 `npm run setup` also writes `~/.claude/provider-cache.json` from ai-lab
-(`--ai-lab-python <interpreter>` on a machine's first run) and moves any plaintext
-`providers.<name>.apiKey` from the local file into the git credential store, backing the file
-up to `~/.claude/claude_env_settings.local.json.setup-bak` first. See [`providers.md`](providers.md).
+(`--ai-lab-python <interpreter>` on a machine's first run). API keys live in the git credential
+store (`python -m ai_lab.auth login <provider> --task session`). See [`providers.md`](providers.md).
 
 ## Plugins
 

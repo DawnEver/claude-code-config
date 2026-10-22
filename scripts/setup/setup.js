@@ -6,9 +6,8 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { checkMacNotify } from './check-mac-notify.js';
 import { installCliWrappers } from './install-cli-wrappers.js';
-import { migrateLocalEnvSettings } from './migrate-local-env-settings.mjs';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
-import { migrateApiKeysToStore, refreshProviderCache } from './provider-setup.mjs';
+import { refreshProviderCache } from './provider-setup.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { isMain } from '../shared/is-main.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
@@ -58,7 +57,7 @@ export const CLAUDE_LINKS = [
   { src: 'keybindings.json', dest: 'keybindings.json', type: 'file', seat: true },
   // Platform prompts: the shared configs reference `~/.claude/system-prompt/...` and
   // `~/.codex/system-prompt/...` (see fabric.systemPromptFile / codex model_instructions_file),
-  // so every machine resolves them through THIS link regardless of its OneDrive username.
+  // so every machine resolves them through THIS link wherever its cloud folder lives.
   { src: 'system-prompt', dest: 'system-prompt', type: 'dir' },
   // The owner's private denylist for the public-hygiene guards (doctor, cc-market,
   // lab-commons all read ~/.claude/private-markers). It rides the sync payload so every
@@ -128,19 +127,6 @@ export function getCodexLinks(baseSourceDir = sourceDir) {
   return [...CODEX_LINKS, ...discoverCodexSkillLinks(baseSourceDir)];
 }
 
-// Legacy installs linked the whole skills dir (`~/.codex/skills -> repo/skills`).
-// We now link skills individually, but if the directory is still a junction, the
-// per-skill link destinations resolve *through* it back into the repo, producing
-// self-referential junctions inside repo/skills. Convert the legacy link to a
-// real directory first so per-skill links land in ~/.codex, not the repo.
-export function ensureRealDir(dirPath) {
-  const stat = fs.lstatSync(dirPath, { throwIfNoEntry: false });
-  if (stat && stat.isSymbolicLink()) {
-    fs.unlinkSync(dirPath);
-  }
-  fs.mkdirSync(dirPath, { recursive: true });
-}
-
 // claude-hud's config is machine-tuned (lineLayout, language, maxWidth) and is hard-linked
 // into ~/.claude. It is therefore NOT tracked: while it was, `git checkout`/`pull` was the
 // writer that replaced the inode and broke the link §10 describes. The tracked file is
@@ -187,7 +173,7 @@ function filesMatch(a, b) {
 // Hard links cannot cross volumes. Knowing that up front is what lets a hardlink-required
 // entry fall back to a copy instead of failing (see createLink), and lets an up-to-date copy
 // be recognised as satisfied rather than re-reported as unlinked on every run.
-// On Windows the volume is the drive: `dev` is not reliable there — a OneDrive-managed file
+// On Windows the volume is the drive: `dev` is not reliable there — a cloud-managed file
 // (a cloud-files reparse point) reports another dev than its folder's even when it is
 // hard-linked to a file beside it (2026-10-18), which made a detached payload look like a
 // cross-volume copy that cannot be linked.
@@ -217,7 +203,7 @@ export function isHardLinked(srcPath, destPath) {
 // Mode, or an elevated shell). Directory links use junctions, which need no privilege, so
 // only `type: 'file'` entries can fail this way. Hard links need no privilege either and are
 // genuinely two-way like a symlink -- but only while both names keep pointing at the same
-// file record: a writer that REPLACES rather than edits (OneDrive sync-down, `git checkout`,
+// file record: a writer that REPLACES rather than edits (a cloud sync-down, `git checkout`,
 // an atomic save) breaks the link and silently leaves a stale copy behind. Re-run setup with
 // --replace to re-link when that happens; unlinked entries are reported on every run.
 function createLink(srcPath, destPath, type, hardlink) {
@@ -560,33 +546,13 @@ export function setup(options = {}) {
 
   // Ensure the MACHINE-LOCAL secrets file exists (copied from a desensitized template).
   // Lives in ~/.claude — a REAL per-machine dir (only specific children are junctions into
-  // the repo) — so it is never cloud-synced. Each machine fills in its own API keys here;
-  // the shared claude_env_settings.json in the sync payload carries no secrets.
+  // the repo) — so it is never cloud-synced. It holds this machine's bridge secrets (bot token,
+  // allowlist); API keys live in the git credential store (docs/providers.md).
   const localEnvSettingsPath = path.join(claudeDir, 'claude_env_settings.local.json');
   const localEnvSettingsTemplatePath = path.join(sourceDir, 'claude_env_settings.local.template.json');
   if (!fs.existsSync(localEnvSettingsPath) && fs.existsSync(localEnvSettingsTemplatePath)) {
     fs.copyFileSync(localEnvSettingsTemplatePath, localEnvSettingsPath);
     console.log('COPY  claude_env_settings.local.template.json - ~/.claude/claude_env_settings.local.json');
-  }
-
-  // One-time local-file migration: pre-2026-08-25 local files held
-  // `env:<provider>: { ANTHROPIC_API_KEY: "sk-..." }` blocks. The new shape is
-  // `providers: { <provider>: { apiKey: "..." } }` (see docs/providers.md).
-  // setup.js auto-migrates on first run after the refactor — backup is written
-  // to `claude_env_settings.local.json.setup-bak` (same convention as linkEntry).
-  const migration = migrateLocalEnvSettings({ localPath: localEnvSettingsPath });
-  if (migration.status === 'migrated') {
-    console.log(`MIGR  claude_env_settings.local.json — ${migration.providers.length} provider(s) converted to providers.<name>.apiKey (backup: ${path.basename(migration.backupPath)})`);
-  } else if (migration.status === 'malformed') {
-    console.log(`NOTE  could not migrate local file (malformed JSON): ${migration.error}`);
-  } else if (migration.status === 'mixed') {
-    const legacy = migration.legacyKeys.map(k => k.replace(/^env:/, '')).join(', ');
-    const news = migration.newKeys.join(', ');
-    console.log(`NOTE  local file is in mixed shape (both env: and providers: present); left untouched.`);
-    console.log(`      legacy env: keys still present: ${legacy}`);
-    console.log(`      already in providers.*:         ${news}`);
-    console.log(`      Move the apiKey from each env:<x> into providers.<x>.apiKey, then delete the env:<x> block.`);
-    console.log(`      See docs/providers.md § Migrating from the legacy env:<provider> shape.`);
   }
 
   const counters = { created: 0, skipped: 0, errors: earlyErrors, replace };
@@ -601,16 +567,6 @@ export function setup(options = {}) {
   } else {
     console.log(`GEN   ~/.claude/provider-cache.json - ${cache.providers} provider(s) from ${cache.python} -m ai_lab.providers`);
   }
-
-  // Plaintext keys in the local file move into the git credential store (the launchers read
-  // only the store); the file is backed up first. A key ai-lab refuses stays, by name.
-  const keys = migrateApiKeysToStore({ localPath: localEnvSettingsPath, python: cache.python ?? options.aiLabPython });
-  for (const p of keys.stored ?? []) console.log(`MIGR  providers.${p}.apiKey -> git credential store (task session); backup: ${path.basename(keys.backupPath)}`);
-  for (const { provider, why } of keys.failed ?? []) {
-    console.log(`ERR   providers.${provider}.apiKey not migrated: ${why}`);
-    counters.errors++;
-  }
-  if (keys.status === 'malformed') console.log(`NOTE  could not read the local file for key migration: ${keys.error}`);
 
   // Regenerate the derivable codex artifacts from the provider cache + projection rules:
   // the [model_providers.*] section of codex_config.toml (only when that file
@@ -704,7 +660,8 @@ export function setup(options = {}) {
   console.log('\n--- Codex ---');
   // Convert any legacy `~/.codex/skills` junction into a real directory before
   // creating per-skill links (otherwise they self-reference into the repo).
-  ensureRealDir(path.join(codexDir, 'skills'));
+  // A real directory: Codex keeps its own .system skills there, ours are linked one by one.
+  fs.mkdirSync(path.join(codexDir, 'skills'), { recursive: true });
   processLinks(getCodexLinks(), codexDir, counters, syncDir);
 
   // Clone or update cc-market (community plugin marketplace)
@@ -779,7 +736,7 @@ export function setup(options = {}) {
   console.log(`\nDone: ${counters.created} linked, ${counters.skipped} skipped, ${counters.errors} errors`);
 
   // Surface failure to the shell. The refuse-to-seed guard counted an error but still
-  // exited 0, so migrate-host.mjs (and CI) read a failed run as success.
+  // exited 0, so a caller (CI, a script) read a failed run as success.
   if (counters.errors > 0) process.exitCode = 1;
   return counters;
 }
