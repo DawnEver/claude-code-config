@@ -276,7 +276,7 @@ export function withShellEnvSet(head = '', vars = {}) {
  * Build the per-host `~/.codex/config.toml`.
  */
 export function composeCodexConfig({ head = '', providersBlock = '', localSections = '' } = {}) {
-  const chunks = [head.trim()];
+  const chunks = [withoutRetiredCodexRootKey(head).trim()];
 
   const body = providersBlock.trim();
   if (body) chunks.push([START, body, END].join('\n'));
@@ -285,4 +285,31 @@ export function composeCodexConfig({ head = '', providersBlock = '', localSectio
   if (tail) chunks.push(tail);
 
   return chunks.filter(Boolean).join('\n\n') + '\n';
+}
+
+/** Native Codex retired this root flag. Filter only the local projection, never shared input. */
+export function withoutRetiredCodexRootKey(text = '') {
+  let root = true, quote = null, depth = 0, removing = false;
+  const kept = [];
+  for (const line of String(text).split('\n')) {
+    if (!quote && depth === 0) {
+      if (/^\s*\[/.test(line)) root = false;
+      removing = root && /^\s*(?:windows_wsl_setup_acknowledged|"windows_wsl_setup_acknowledged"|'windows_wsl_setup_acknowledged')\s*=/.test(line);
+    }
+    if (!removing) kept.push(line);
+    // Track strings/collections so a same-named key inside data is never treated as root.
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (quote) {
+        if (quote[0] === '"' && char === '\\') { i++; continue; }
+        if (line.startsWith(quote, i)) { i += quote.length - 1; quote = null; }
+      } else if (char === '#') break;
+      else if (char === '"' || char === "'") {
+        quote = line.startsWith(char.repeat(3), i) ? char.repeat(3) : char;
+        i += quote.length - 1;
+      } else if (char === '[' || char === '{') depth++;
+      else if (char === ']' || char === '}') depth--;
+    }
+  }
+  return kept.join('\n');
 }

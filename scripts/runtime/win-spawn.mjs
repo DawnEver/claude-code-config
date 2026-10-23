@@ -22,6 +22,7 @@ const META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
 /** Quote one argument so cmd.exe passes it through as a single verbatim word. */
 export function escapeArgument(arg, doubleEscapeMetaChars = false) {
   let s = String(arg);
+  if (/[\r\n]/.test(s)) throw new Error('Multiline Windows batch arguments are not supported; use a native executable or stdin');
   // Backslashes are only special before a quote: double those runs, then escape the quote.
   s = s.replace(/(\\*)"/g, '$1$1\\"');
   // Double a trailing run too, so it cannot escape the closing quote we are about to add.
@@ -72,23 +73,24 @@ export function buildSpawn({ command, args = [], platform = process.platform, co
 
   // A real executable can be spawned directly; no shell means no quoting problem.
   if (!/\.(bat|cmd)$/i.test(command)) return { command, args, options: {} };
+  if (/[\r\n]/.test(command)) throw new Error('Invalid multiline Windows batch command path');
 
   const line = [escapeCommand(command), ...args.map(a => escapeArgument(a, true))].join(' ');
   return {
     command: comspec || process.env.ComSpec || 'cmd.exe',
-    // /d skips AutoRun scripts, /s makes cmd strip exactly the outer quote pair.
-    args: ['/d', '/s', '/c', `"${line}"`],
+    // /d skips AutoRun; /v:off preserves literal ! even if the host enables expansion.
+    // /s makes cmd strip exactly the outer quote pair.
+    args: ['/d', '/v:off', '/s', '/c', `"${line}"`],
     options: { windowsVerbatimArguments: true },
   };
 }
 
 /**
- * Convenience wrapper: resolve `name` on PATH, then project it. Falls back to the plain
- * name (spawned via the shell) when resolution fails, so a missing binary still produces
- * the normal "not found" error rather than a confusing one from here.
+ * Convenience wrapper: resolve `name` on PATH, then project it. An unresolved binary
+ * stays unshelled and fails with the normal ENOENT; argv must never become shell code.
  */
 export function prepareSpawn(name, args, { env = process.env, platform = process.platform } = {}) {
   const resolved = resolveCommand(name, { env, platform });
-  if (!resolved) return { command: name, args, options: platform === 'win32' ? { shell: true } : {} };
+  if (!resolved) return { command: name, args, options: {} };
   return buildSpawn({ command: resolved, args, platform, comspec: env.ComSpec });
 }

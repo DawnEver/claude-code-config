@@ -27,6 +27,8 @@ Configure provider credentials through the credential store described in
 For Codex, review the newly installed native definitions with `/hooks`. Setup never
 auto-trusts hooks. Plugin source changes require a normal plugin release/update before
 an already-installed marketplace cache contains them.
+Native startup/tool hooks also preserve snapshot-protected cache files removed by vendor
+cleanup; this is recovery, not deletion or a guarantee of atomic native cache updates.
 
 ## Daily use
 

@@ -54,6 +54,17 @@ activation semantics. Doctor detects missing protected files
 and reports byte differences
 without assuming that a difference proves corruption. No updater runs automatically from
 setup, a hook or a launcher, and no hook-trust bypass or push is performed.
+Preservation-only repair is separate from updating: native startup and before-tool hooks
+can refill missing snapshot-protected files without vendor calls or activation changes.
+Native startup itself can delete old versions. If preparing a new snapshot fails during
+concurrent cleanup, the previous validated snapshot remains the recovery source.
+Run full preservation-only recovery without invoking the native updater:
+
+```sh
+node scripts/setup/update-codex-plugins.mjs --repair
+```
+
+An occupied recovery/update lock returns `busy` with a nonzero exit; it is never stolen.
 Snapshot restoration cannot make the vendor's delete/reinstall window atomic. If
 uninterrupted lazy imports are required, schedule an update after old clients have closed;
 the updater never kills them to manufacture that condition.

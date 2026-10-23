@@ -26,7 +26,8 @@ import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { inspectCodexHooks } from './codex-hooks.mjs';
-import { inspectProtectedPluginCaches } from './update-codex-plugins.mjs';
+import { inspectProtectedPluginCaches, inspectPluginCacheLock } from './update-codex-plugins.mjs';
+import { withoutRetiredCodexRootKey } from './codex-config-compose.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
@@ -515,6 +516,16 @@ export function checkCodexShellEnv({ machine = readMachineName(), configPath = p
     'fix: node scripts/setup/setup.js')];
 }
 
+// A real native launch reported this obsolete root key as ignored; never certify stale wiring.
+export function checkRetiredCodexRootKey({ configPath = path.join(codexDir, 'config.toml') } = {}) {
+  let text;
+  try { text = fs.readFileSync(configPath, 'utf8'); } catch { return []; }
+  if (withoutRetiredCodexRootKey(text) === text) return [];
+  return [finding('FAIL', 'codex-retired-root-key',
+    'active Codex config contains retired root windows_wsl_setup_acknowledged; native Codex ignores it',
+    'fix: node scripts/setup/setup.js (recompose this host config; shared payload remains unchanged)')];
+}
+
 // The fleet's bridge config is shared, but each host needs its OWN bot (one getUpdates
 // consumer per token). A host that never got one is silently absent from Telegram.
 export function checkBridgeHost({ sharedPath = path.join(HOME, '.claude', 'claude_env_settings.json'),
@@ -595,6 +606,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkHygiene(repoRoot),
     ...checkNativeCodexHooks({ codexHome: home === HOME ? codexDir : path.join(home, '.codex'), scriptsDir: path.join(home, '.claude', 'scripts') }),
     ...checkProtectedCodexCaches({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
+    ...checkPluginCacheLock({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
     ...checkRuleSymbols(repoRoot),
     ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers'),
       requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
@@ -607,6 +619,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkChannelServer({ home }),
     ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),
       configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
+    ...checkRetiredCodexRootKey({ configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
   ];
 }
 
@@ -624,7 +637,7 @@ export function checkProtectedCodexCaches({ codexHome = codexDir } = {}) {
     const state = inspectProtectedPluginCaches(codexHome);
     if (state.missing.length) return [finding('FAIL', 'codex-protected-cache',
       `${state.missing.length} snapshot-protected plugin cache path(s) disappeared after a native update`,
-      'restore missing files from the validated backup using update-codex-plugins.mjs; do not overwrite surviving files or restart a parallel session')];
+      'run node scripts/setup/update-codex-plugins.mjs --repair; preserve surviving files and do not restart a parallel session')];
     if (state.conflicts?.length) return [finding('WARN', 'codex-protected-cache',
       'existing plugin cache bytes differ from the update snapshot; they were not overwritten',
       'review the preserved backup and current files; a difference is not proof of corruption')];
@@ -633,6 +646,18 @@ export function checkProtectedCodexCaches({ codexHome = codexDir } = {}) {
     return [finding('WARN', 'codex-protected-cache', 'protected plugin backup metadata is unreadable or escapes its owned home',
       'review the machine-local backup pointer; no files were restored, deleted or overwritten by doctor')];
   }
+}
+
+// A timed-out native hook left an unidentified lock that silently prevented cache recovery.
+export function checkPluginCacheLock({ codexHome = codexDir, isAlive, now } = {}) {
+  let state;
+  try { state = inspectPluginCacheLock({ codexHome, isAlive, now }); }
+  catch { state = { status: 'unknown' }; }
+  if (state.status === 'absent' || state.status === 'active') return [];
+  return [finding('WARN', 'codex-plugin-cache-lock',
+    state.status === 'inactive' ? `plugin cache lock owner PID ${state.pid} is no longer alive; recovery is blocked` :
+      'plugin cache lock ownership is unknown or invalid; recovery may be blocked',
+    'inspect OS handles and confirm no updater or repair owns it before maintenance; doctor never deletes, rewrites or steals locks')];
 }
 
 const MARK = { FAIL: 'FAIL ', WARN: 'WARN ', OK: 'OK   ' };

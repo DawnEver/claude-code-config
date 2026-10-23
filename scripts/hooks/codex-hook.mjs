@@ -80,6 +80,12 @@ export async function runCodexHook(input, deps = {}) {
   const attempt = async fn => {
     try { return await fn(); } catch (e) { messages.push(`[cc-config] ${e.message}`); return null; }
   };
+  const repair = async (quick = false) => {
+    const result = await attempt(() => (deps.repair ?? (async options =>
+      (await import('../setup/update-codex-plugins.mjs')).repairProtectedPluginCaches(options)))({ codexHome: homeOf(env), quick }));
+    if (result?.status === 'deferred') messages.push('[cc-config] Protected cache repair deferred within the tool-start budget; run node scripts/setup/update-codex-plugins.mjs --repair in cc-config when idle.');
+    return result;
+  };
   if (['SessionStart', 'PreToolUse', 'PermissionRequest', 'SessionEnd'].includes(event))
     await attempt(() => (deps.receipt ?? recordReceipt)(event, env, deps.definition));
   if (event === 'SessionStart' && (!input.source || ['startup', 'resume', 'fork'].includes(input.source))) {
@@ -95,6 +101,7 @@ export async function runCodexHook(input, deps = {}) {
     // Import only after synchronization, in order: matching native handlers run concurrently.
     const healed = await attempt(deps.heal ?? (async () => (await import('../setup/check-links.js')).checkLinks()));
     if (healed?.warnings?.length) messages.push(`[setup-check] ${healed.warnings.join('; ')}`);
+    await repair();
     const checked = await attempt(deps.doctor ?? (() => {
       const result = execFileSync(process.execPath, [path.join(SCRIPTS, 'setup', 'doctor.js'), '--hook'],
         { encoding: 'utf8', timeout: 15000, windowsHide: true });
@@ -107,6 +114,7 @@ export async function runCodexHook(input, deps = {}) {
       if (result === 'different-home') messages.push('[cc-config] collector belongs to another CODEX_HOME; accounts were not mixed');
     }));
   } else if (event === 'PreToolUse') {
+    await repair(true);
     const result = await attempt(deps.guard ?? (async () => (await import('./loop-guard-hook.js')).guardCall(input, { env, host: 'codex' })));
     if (result?.verdict === 'deny') return { hookSpecificOutput: { hookEventName: event, permissionDecision: 'deny', permissionDecisionReason: result.reason } };
     if (result?.verdict === 'warn') return { hookSpecificOutput: { hookEventName: event, additionalContext: result.reason } };

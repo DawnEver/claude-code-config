@@ -10,8 +10,44 @@ import {
   checkPlugins, checkBridgeRevision, checkProtectedCodexCaches,
   checkMachineName,
   checkCodexShellEnv,
+  checkRetiredCodexRootKey,
   scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost, checkDashboardHost, checkChannelServer,
 } from './doctor.js';
+
+test('doctor reports a retired root Codex flag read-only and ignores nested user keys', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-retired-codex-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const configPath = path.join(dir, 'config.toml');
+  assert.deepEqual(checkRetiredCodexRootKey({ configPath }), []);
+  const nested = '[notice]\nwindows_wsl_setup_acknowledged = false\n';
+  fs.writeFileSync(configPath, nested);
+  assert.deepEqual(checkRetiredCodexRootKey({ configPath }), []);
+  const stale = 'windows_wsl_setup_acknowledged = true\n' + nested;
+  fs.writeFileSync(configPath, stale);
+  const [issue] = checkRetiredCodexRootKey({ configPath });
+  assert.equal(issue.level, 'FAIL');
+  assert.match(issue.detail, /setup\.js/);
+  assert.equal(fs.readFileSync(configPath, 'utf8'), stale);
+});
+
+test('doctor warns about unidentified or dead cache lock owners without changing the lock', async t => {
+  const { checkPluginCacheLock } = await import('./doctor.js');
+  const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-cache-lock-'));
+  t.after(() => fs.rmSync(codexHome, { recursive: true, force: true }));
+  const lock = path.join(codexHome, '.tmp', 'cc-config-plugin-update.lock');
+  assert.deepEqual(checkPluginCacheLock({ codexHome }), []);
+  fs.mkdirSync(path.dirname(lock));
+  fs.writeFileSync(lock, '');
+  assert.equal(checkPluginCacheLock({ codexHome })[0].level, 'WARN');
+  assert.equal(fs.readFileSync(lock, 'utf8'), '');
+  const owner = JSON.stringify({ pid: 12345, token: '11111111-2222-4333-8444-555555555555', startedAt: '2026-10-23T10:00:00.000Z' });
+  fs.writeFileSync(lock, owner);
+  assert.deepEqual(checkPluginCacheLock({ codexHome, isAlive: () => true }), []);
+  const [issue] = checkPluginCacheLock({ codexHome, isAlive: () => false });
+  assert.equal(issue.level, 'WARN');
+  assert.match(issue.detail, /OS handles/);
+  assert.equal(fs.readFileSync(lock, 'utf8'), owner);
+});
 
 test('doctor detects native updates that leave a cache root but delete its protected contents', t => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-protected-'));

@@ -6,7 +6,6 @@ allow_login_shell = true
 
 cli_auth_credentials_store = "file"
 mcp_oauth_credentials_store = "auto"
-windows_wsl_setup_acknowledged = false
 check_for_update_on_startup = true
 web_search = "cached"
 project_doc_fallback_filenames = [

@@ -43,9 +43,9 @@ entries in inline TOML: native sources accumulate rather than override one anoth
 
 | Native event | Behavior |
 | --- | --- |
-| SessionStart startup | Shared short startup lease, sync before importing checks, then heal, doctor, report-only cache audit and optional collector ensure |
-| SessionStart resume/fork | Heal/check without moving the checkout; compact context belongs to REM's native hook |
-| PreToolUse | Thread-scoped transactional loop guard; unknown execution identity fails open |
+| SessionStart startup | Shared short startup lease, sync before importing checks, then heal, protected-cache repair, doctor, report-only cache audit and optional collector ensure |
+| SessionStart resume/fork | Heal/repair/check without moving the checkout; compact context belongs to REM's native hook |
+| PreToolUse | Bounded shallow protected-cache recovery, then thread-scoped transactional loop guard; unknown execution identity fails open |
 | PermissionRequest | Best-effort native OS notice; never answers or relaxes approval policy |
 | PreToolUse input-request tools | Input-needed notice when the native tool-hook path exposes the question; never fabricates an answer |
 | SessionEnd | Read-only cc-config dirty/upstream reminder under a single short budget; local last-reminder record, stderr and best-effort OS notice |
@@ -72,6 +72,22 @@ Native plugin updates need separate protection: the vendor CLI can remove old ca
 contents even when it leaves a directory behind. Use the explicit preservation updater
 in [setup.md](setup.md#codex-native-hooks-and-active-home). Its validated snapshot is
 machine-local; doctor checks protected files, not merely version-directory existence.
+Native app-server startup can remove old cache versions too. Preservation-only repair
+runs before startup diagnostics and before tool dispatch, without installing, enabling,
+deleting or overwriting plugins. Before-tool checks are shallow and use a one-second
+checkpoint budget; budget expiry defers recovery without skipping the guard. Deep-only
+losses require startup/full repair or doctor's complete check. No background repair
+process is detached, and vendor cleanup still cannot be made atomic by these hooks.
+Missing files are staged and exclusively published rather than copied partially into
+an active cache. Lock records contain PID/token/time; doctor warns about unknown or
+inactive owners but never steals a lock. Establish actual OS handle ownership before
+maintenance, then quarantine only a confirmed ownerless lock reversibly. File age alone
+is not proof that its writer stopped. Individual OS I/O is not hard-preemptible by the
+before-tool checkpoint budget.
+
+Codex's retired root `windows_wsl_setup_acknowledged` setting is filtered from the
+machine-local composed file, not rewritten in the shared payload. Doctor fails when
+the active local config still contains that ignored flag; recomposition removes it.
 
 `CODEX_HOME` is preserved and resolved consistently for setup, launch, hooks and usage. Run
 setup for an explicitly selected home before using it. One machine collector owns one home;

@@ -11,7 +11,28 @@ import {
   LOCAL_SECTION_PREFIXES,
   CODEX_TOML_START_MARKER,
   CODEX_TOML_END_MARKER,
+  withoutRetiredCodexRootKey,
 } from './codex-config-compose.mjs';
+
+test('local composition omits the retired root WSL flag without changing nested keys or string data', () => {
+  const key = 'windows_wsl_setup_acknowledged';
+  const head = `# root cleanup\n${key} = false # ignored by native Codex\nmessage = '''\n${key} = false\n'''\n[tui]\n${key} = true\n`;
+  const localSections = `[notice]\n${key} = false\n[hooks.state.test]\nenabled = true\n`;
+  const out = composeCodexConfig({ head, localSections });
+  assert.ok(!out.includes(`${key} = false # ignored`));
+  assert.ok(out.includes(`message = '''\n${key} = false\n'''`));
+  assert.ok(out.includes(`[tui]\n${key} = true`));
+  assert.ok(out.includes(localSections.trim()));
+  assert.equal(composeCodexConfig({ head: out }), out);
+});
+
+test('retired root filtering recognizes quoted keys but preserves nested inline data and comments', () => {
+  const key = 'windows_wsl_setup_acknowledged';
+  for (const quoted of [key, `"${key}"`, `'${key}'`])
+    assert.equal(withoutRetiredCodexRootKey(`${quoted} = false\nmodel = "x"\n`), 'model = "x"\n');
+  const data = `# ''' is only a comment\nvalue = { ${key} = false }\ntext = "${key} = true"\n`;
+  assert.equal(withoutRetiredCodexRootKey(data + `${key} = false\n`), data);
+});
 
 const SAMPLE = `sandbox_mode = "danger-full-access"
 model = "gpt-5.6-sol"

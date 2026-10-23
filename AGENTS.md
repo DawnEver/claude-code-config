@@ -137,7 +137,7 @@ Telegram + remote control on the same live session, per-machine bridge in
 Setup merges the machine hooks in `scripts/setup/codex-hooks.mjs` into the active
 `CODEX_HOME`'s `hooks.json`; `scripts/hooks/codex-hook.mjs` owns the native machine
 entry point. User handlers and Codex trust remain user-owned. Startup, guard,
-notifications, execution observations and conservative cache audits are documented
+notifications, execution observations, protected-cache recovery and conservative cache audits are documented
 in `docs/operations.md`; the current source/deployment support matrix is
 `docs/codex-harness-audit.md`. Plugin lifecycle logic remains in cc-market.
 

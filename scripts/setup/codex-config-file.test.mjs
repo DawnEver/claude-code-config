@@ -30,6 +30,19 @@ test('per-home instruction path is projected locally without modifying the share
   assert.equal(fs.readFileSync(path.join(f.syncDir, 'codex_config.toml'), 'utf8'), payload);
 });
 
+test('obsolete root WSL flag is removed only from local projection, not the shared payload', () => {
+  const payload = 'windows_wsl_setup_acknowledged = false\nmodel = "x"\n[tui]\nwindows_wsl_setup_acknowledged = true\n';
+  const existingCodexConfig = '[hooks.state.test]\nenabled = true\n[notice]\nwindows_wsl_setup_acknowledged = false\n';
+  const f = fixture({ payload, existingCodexConfig });
+  composeCodexConfigFile({ ...f, readCache, shellEnv: {} });
+  const actual = fs.readFileSync(path.join(f.codexDir, 'config.toml'), 'utf8');
+  assert.equal(fs.readFileSync(path.join(f.syncDir, 'codex_config.toml'), 'utf8'), payload);
+  assert.ok(!actual.includes('windows_wsl_setup_acknowledged = false\nmodel'));
+  assert.ok(actual.includes('[tui]\nwindows_wsl_setup_acknowledged = true'));
+  assert.ok(actual.includes('[hooks.state.test]\nenabled = true'));
+  assert.ok(actual.includes('[notice]\nwindows_wsl_setup_acknowledged = false'));
+});
+
 const ENV_SETTINGS = JSON.stringify({
   providers: {
     deepseek: { codexApiKeyEnv: 'DEEPSEEK_API_KEY' },

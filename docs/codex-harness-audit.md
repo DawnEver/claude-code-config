@@ -167,13 +167,15 @@ boundaries, not missing wiring disguised as parity.
 
 The local release also passed its full JS suite and the cc-academia Ruff/pytest gates
 using an existing Python 3.13 interpreter and an off-repository environment. Python 3.15
-was not forced past the native dependency's supported ABI. No remote push or paid model
-probe was performed.
+was not forced past the native dependency's supported ABI. Those release checks made
+no remote push or model request; the later approved live probe is recorded below.
 
-Latest full implementation verification: cc-config **705 passed / 1 skipped**, cc-market
-**1104 passed / 1 skipped**, zero JS failures. Public-hygiene and whitespace checks passed.
-Doctor has zero failures and an execution-observation warning until the new native hook
-events actually run after normal review/trust; one event never certifies another event.
+Latest full implementation verification: cc-config **732 passed / 1 skipped**, cc-market
+**1119 passed / 1 skipped**, zero JS failures. The latest full root rerun includes
+Windows batch multiline rejection. Public-hygiene and whitespace checks passed.
+Machine-hook entry observations now cover all four managed events after normal runtime
+approval paths. These receipts prove invocation, not successful enforcement, visual
+notification delivery or acceptance of every source change on every native surface.
 
 ## Remaining gaps and acceptance priority
 
@@ -192,17 +194,23 @@ Read-only follow-up checks on this host established:
   reads this runtime's machine/agent environment and emits a nonempty provenance stamp.
   This establishes the local contract, not remote Forge authentication/write access.
 
-No model request, credential change, remote issue/PR creation or pairing was performed.
+Those readiness checks made no model request or credential change. A subsequent normally
+approved read-only Fabric-to-Codex task in an isolated temporary directory returned the
+exact requested `HARNESS_OK` text. It did not resume an existing thread or bypass trust.
+This proves that native task path, not every API provider or the full review workflow.
+No remote issue/PR creation, remote push or pairing was performed.
 
 ### Acceptance priorities
 
 | Priority | Gap | Next acceptance or deliberate boundary |
 | --- | --- | --- |
-| P0 | Native permission-hook execution not observed | Startup, tool-use and shutdown entry invocations have now been observed; PermissionRequest still needs a real supported approval request. Receipts prove entry invocation, not successful lifecycle completion or acceptance of changed source. Review `/hooks` without bypassing trust. |
-| P0 | Mixed-host runtime acceptance | Both hosts now have matching core plugin versions installed. Existing sessions can still retain old bundles; fresh-session lifecycle/gate acceptance remains required. |
+| P0 | Durable marketplace source and activation | Local v3.1.3 is released, but the persistent native marketplace still uses the Git source while the updater overrides it only per invocation. Resident native reconciliation and cache deletion were observed; two installation attempts failed. Cache presence and invocation-local readback are not durable activation evidence. Choose one durable source before further installation, then verify a fresh default-context session. No remote push was performed. |
+| P0 | Fabric Windows executable paths | Controlled fixtures reproduced space-path failures and shell interpretation of `&`. The correction passed the v3.1.3 release gate, but deployment is incomplete: do not assume the active Fabric runtime contains it. Root batch launchers now reject multiline arguments rather than silently truncate them; use a native executable or stdin for multiline input. |
+| P1 | Approval notification acceptance | Entry observations now include PermissionRequest as well as startup, tool-use and shutdown. User-visible delivery and each supported surface still need acceptance; receipts do not establish successful lifecycle completion or every source revision. |
+| P0 | Mixed-host runtime acceptance | Earlier v3.1.2 cache comparisons matched across both hosts, but that does not establish current activation after native reconciliation. Claude remains on the previous release; Codex v3.1.3 installation is incomplete and its effective runtime version is unverified. Fresh-session lifecycle/gate acceptance remains required. |
 | P1 | Live lifecycle/provider acceptance | Exercise recall, automatic compact restoration, REM/review coordination, approval/input notices and real OS delivery. Paid Fabric/provider probes require separate approval/authentication. |
 | P1 | External worktree policy | Current Forge machine/agent/branch provenance is locally verified. Automatic lane allocation/locking remains the owner's policy; no absent session gate is inferred from historical prose. |
-| P1 | Native cache-update atomicity | Snapshot restoration protects missing files after each call, but cannot eliminate the vendor's deletion window; use a closed-client maintenance window for uninterrupted imports. |
+| P1 | Native cache-cleanup atomicity | Native startup can delete old versions too. Preservation-only lifecycle recovery reduces persistent loss but cannot eliminate the vendor's deletion window; use a closed-client maintenance window for uninterrupted imports. |
 | P2 | Concurrent homes/accounts | One explicit home per machine collector is supported, not simultaneous multi-seat discovery or aggregated account presence. |
 | P2 | Native surfaces and editor integration | CLI/editor/app behavior and official remote pairing are not all live-validated. VS Code provider switching remains Claude-specific, not a Codex extension switcher. |
 | Boundary | Limited automatic observability | Arbitrary shell memory reads, exact window presence, actual subscription monetary cost, and no-rollout ephemeral sessions cannot be inferred completely from current inputs. |
@@ -256,7 +264,27 @@ the full catalog has no count capacity, the injected hot index is bounded, and
 feedback entries are exempt from stale short-term eviction. Active skill references
 no longer instruct agents to enforce the retired 20-entry cap or advisory threshold.
 
-A read-only shell command explicitly requested the normal approval path on this
-surface, but still produced no PermissionRequest execution receipt. That probe does
-not establish native UI coverage or user-visible notification delivery; normal
-supported-session trust and approval acceptance remain outstanding.
+A first read-only shell approval probe did not immediately produce a PermissionRequest
+receipt; subsequent normal runtime activity did. Neither observation proves native UI
+coverage or user-visible notification delivery.
+
+The approved native task also exposed two real startup incidents. Native Codex ignored
+the retired root `windows_wsl_setup_acknowledged` key; the template no longer includes
+it, local composition filters it without editing the shared head, and doctor detects
+recurrence. A subsequent app-server initialization reported no retired-setting warning.
+
+Native cleanup removed 41 snapshot-protected old-cache paths. A concurrent deletion then
+interrupted replacement-snapshot preparation with `ESRCH`. The updater now retains the
+previous validated recovery source even on preparation failure. Preservation-only native
+hook recovery repairs missing files before startup diagnostics and checks shallow losses
+before tools. Restored files are staged then published exclusively, never partially
+written into a live cache or substituted for a concurrent survivor. This is per-file
+publication safety, not atomic version installation or control over vendor deletion.
+
+A legacy empty lock prevented recovery until read-only Windows Restart Manager checks,
+calibrated against a known live Node handle, established that no process held it. It was
+then reversibly quarantined, not deleted or stolen from a live process. New lock records
+include PID/token/time; doctor warns about unknown or inactive owners and never reclaims
+them automatically. Full inspection subsequently found no missing protected files.
+Healthy quick recovery checks measured 319–360 ms on this host. Their one-second budget
+limits scheduled validation/copy work; an individual OS I/O call cannot be preempted.
