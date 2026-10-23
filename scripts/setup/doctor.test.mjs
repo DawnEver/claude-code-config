@@ -542,3 +542,13 @@ test('checkLinks: a repo-root payload copy (different inode) or a missing one is
   const repo = checkLinks({ repoRoot, syncDir }).filter((f) => f.title.startsWith('repo:')).map((f) => `${f.id} ${f.title.split(' ')[1]}`);
   assert.deepEqual(repo.sort(), ['link-dest-missing private-markers', 'link-detached trusted-origins']);
 });
+
+test('checkLinks: unavailable cross-volume repo mirrors are not failures, detached copies still are', () => {
+  const syncDir = tmp(), repoRoot = tmp();
+  fs.writeFileSync(path.join(syncDir, 'private-markers'), 'marker');
+  fs.writeFileSync(path.join(syncDir, 'trusted-origins'), 'origin');
+  fs.writeFileSync(path.join(repoRoot, 'trusted-origins'), 'detached');
+  const repo = checkLinks({ repoRoot, syncDir, sameVolume: () => false }).filter(f => f.title.startsWith('repo:'));
+  assert.deepEqual(repo.map(f => f.id), ['link-detached']);
+  assert.match(repo[0].title, /trusted-origins/);
+});

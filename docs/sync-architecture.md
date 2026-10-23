@@ -78,7 +78,9 @@ the cloud file, not at the repo name: the cloud file is what a sync-down replace
 name is healed from it by one rule (`healSyncLink`), and a symlink host's `~/.claude` must not
 depend on where the checkout (or a worktree of it) sits. Across volumes no hard link is
 possible and a copy would be the detached state itself, so setup only reports it. doctor
-FAILs a repo name that is missing (`link-dest-missing`) or a copy (`link-detached`);
+  FAILs a same-volume repo name that is missing (`link-dest-missing`) or an existing
+  detached copy (`link-detached`). An absent cross-volume mirror is intentionally
+  unsupported, not a failure; the host's actual config links are still checked;
 `check-links` re-links it at SessionStart, including the 2026-10-18 cloud-detached case.
 
 The template `claude_settings.template.json` is public and generic; the payload

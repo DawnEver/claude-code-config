@@ -170,8 +170,9 @@ using an existing Python 3.13 interpreter and an off-repository environment. Pyt
 was not forced past the native dependency's supported ABI. Those release checks made
 no remote push or model request; the later approved live probe is recorded below.
 
-Latest full root verification: cc-config **734 passed / 1 skipped**, including
-Windows batch multiline rejection and default-context activation drift checks.
+Latest full root verification: cc-config **753 passed / 1 skipped**, including
+Windows batch multiline rejection, default-context activation drift checks and
+the cross-volume repo-mirror doctor regression.
 Pre-upstream-merge cc-market verification was **1119 passed / 1 skipped**; the merged
 release result is recorded under acceptance priorities below. Zero JS failures.
 Public-hygiene and whitespace checks passed.
@@ -214,15 +215,25 @@ rewriting history, including upstream retirement of traceme. The combined source
 locally released as **v3.1.4** (`5d2ac36`), with **1057 JS tests passed / 1 skipped**.
 The earlier 1119-test count above belongs to the pre-merge release, including the
 retired plugin. No permanent local marketplace pin was introduced: both repositories
-should continue following upstream. Remote publication awaits explicit approval;
-the deployment failures recorded below have not yet been resolved or revalidated.
+should continue following upstream. Following explicit publication approval, both
+repositories' main branches and the v3.1.4 tag were pushed without force. The root
+also incorporated new upstream setup/trusted-repo changes (752 tests passed / 1
+skipped before the cross-volume doctor follow-up).
+
+Published-source deployment now passes default-context native registration and
+payload checks for all five Codex targets: REM 2.1.3, sharp-review 2.1.4, Fabric
+1.1.4, evolve 1.1.3 and cc-latex 1.1.3. Claude's four installed core plugins were
+updated to the corresponding versions; previous active cache directories remain.
+Across the two hosts, 362 runtime files matched the release source byte-for-byte.
+This closes the unpublished-source installation failure, not already-running
+sessions' module reload or user-visible lifecycle acceptance.
 
 | Priority | Gap | Next acceptance or deliberate boundary |
 | --- | --- | --- |
-| P0 | Durable marketplace source and activation | Local v3.1.3 is released, but the persistent native marketplace still uses the Git source while the updater overrides it only per invocation. Resident native reconciliation and cache deletion were observed; two installation attempts failed. Cache presence and invocation-local readback are not durable activation evidence. Choose one durable source before further installation, then verify a fresh default-context session. No remote push was performed. |
-| P0 | Fabric Windows executable paths | Controlled fixtures reproduced space-path failures and shell interpretation of `&`. The correction passed the v3.1.3 release gate, but deployment is incomplete: do not assume the active Fabric runtime contains it. Root batch launchers now reject multiline arguments rather than silently truncate them; use a native executable or stdin for multiline input. |
+| Resolved | Durable marketplace source and installation | Both repositories and v3.1.4 are published. Native Git marketplace refresh and default-context registration/payload validation pass; no permanent local pin was introduced. Loaded modules in existing sessions remain a separate acceptance item. |
+| Installed | Fabric Windows executable paths | Safe-launch correction is installed as Fabric 1.1.4 on both hosts and matches source bytes. Existing sessions need normal reload before assuming their server uses it. Root batch launchers reject multiline arguments rather than silently truncate them; use a native executable or stdin for multiline input. |
 | P1 | Approval notification acceptance | Entry observations now include PermissionRequest as well as startup, tool-use and shutdown. User-visible delivery and each supported surface still need acceptance; receipts do not establish successful lifecycle completion or every source revision. |
-| P0 | Mixed-host runtime acceptance | Earlier v3.1.2 cache comparisons matched across both hosts, but that does not establish current activation after native reconciliation. Claude remains on the previous release; Codex v3.1.3 installation is incomplete and its effective runtime version is unverified. Fresh-session lifecycle/gate acceptance remains required. |
+| P1 | Mixed-host runtime acceptance | Installation and default-context checks now pass for the published release. Existing sessions may retain previous bundles. Fresh-session lifecycle/gate acceptance remains required; installation does not prove current-session reload. |
 | P1 | Live lifecycle/provider acceptance | Exercise recall, automatic compact restoration, REM/review coordination, approval/input notices and real OS delivery. Paid Fabric/provider probes require separate approval/authentication. |
 | Deferred | External worktree policy | Out of this iteration's scope by user decision. Current Forge machine/agent/branch provenance is locally verified. Automatic lane allocation/locking remains the owner's policy; no absent session gate is inferred from historical prose. |
 | P1 | Native cache-cleanup atomicity | Native startup can delete old versions too. Preservation-only lifecycle recovery reduces persistent loss but cannot eliminate the vendor's deletion window; use a closed-client maintenance window for uninterrupted imports. |

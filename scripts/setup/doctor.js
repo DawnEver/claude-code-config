@@ -222,7 +222,7 @@ export function linkedTo(src, dest) {
 // a cloud client that replaces the synced file breaks that link, and from then on this host
 // reads and writes a private copy — every edit made here or synced in from another host is
 // silently lost to the other side.
-export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}) {
+export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir(), sameVolume: volume = sameVolume } = {}) {
   const out = [];
   const tables = [
     { label: 'claude', base: claudeDir, links: CLAUDE_LINKS },
@@ -239,6 +239,9 @@ export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}
         out.push(finding('FAIL', 'link-src-missing', `${label}: ${link.dest} -> missing source`,
           `expected at ${src}`));
       } else if (!fs.existsSync(dest)) {
+        // setup deliberately omits optional repo mirrors across volumes: copying
+        // would create a second source of truth. Existing detached copies still fail.
+        if (label === 'repo' && !volume(src, base)) continue;
         out.push(finding('FAIL', 'link-dest-missing', `${label}: ${link.dest} is not linked`,
           `${dest} does not exist — run ${'node ~/.claude/scripts/setup/setup.js --replace'}`));
       } else if (link.base === 'sync' && link.type === 'file' && !linkedTo(src, dest)) {
