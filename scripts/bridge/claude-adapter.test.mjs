@@ -360,6 +360,8 @@ test('a question in a Telegram-started turn waits for the Telegram answer', asyn
       options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }]);
     assert.equal(questions[0].answerable, true);
     assert.equal(r.a.statusSnapshot('s').state, 'waiting-input');
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: Date.now() - 1000 });
+    assert.equal(r.a.statusSnapshot('s').state, 'waiting-input', 'a late async PostToolUse does not end the wait');
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 'other'), false, 'wrong session');
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 's'), true);
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false, 'answered once');

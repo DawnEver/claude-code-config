@@ -157,8 +157,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
-                        "async": true
+                        "timeout": 10
                     }
                 ]
             }

@@ -332,7 +332,7 @@ export class ClaudeAdapter extends EventEmitter {
     if (!n.inbound) { n.queued.push(...queued); return; }
     for (const q of queued) n.peer.notify('inbound', q);
     n.remoteTurn = true;
-    n.activity = 'running';
+    n.activity = 'running'; n.stateAt = this.now();
     this.#emitStatus(next);
   }
 
@@ -358,7 +358,7 @@ export class ClaudeAdapter extends EventEmitter {
     }));
     if (!questions.length) return { answers: null };
     const ref = crypto.randomBytes(12).toString('hex');
-    s.activity = 'waiting-input';
+    s.activity = 'waiting-input'; s.stateAt = this.now();
     this.#emitStatus(id);
     if (!(p.wait === true && s.remoteTurn)) {
       s.localQuestion = true;   // its answer, given in the terminal, is mirrored by PostToolUse
@@ -428,7 +428,7 @@ export class ClaudeAdapter extends EventEmitter {
     s.queued = [];
     s.sent = new Set();
     s.remoteTurn = true;
-    s.activity = 'running';
+    s.activity = 'running'; s.stateAt = this.now();
     this.#emitStatus(id);
     return deliver;
   }
@@ -465,7 +465,7 @@ export class ClaudeAdapter extends EventEmitter {
     }
     s.peer.notify('inbound', { text, user: user ?? '' });
     s.remoteTurn = true;
-    s.activity = 'running';
+    s.activity = 'running'; s.stateAt = this.now();
     this.#emitStatus(id);
   }
 
@@ -486,7 +486,7 @@ export class ClaudeAdapter extends EventEmitter {
     if (!q || !answers || q.questions.some((x) => !answers[x.id]?.length)) return false;
     s.questions.delete(ref);
     q.resolve({ answers: Object.fromEntries(q.questions.map((x) => [x.question, [].concat(answers[x.id]).map(String).join(', ')])) });
-    s.activity = 'running';
+    s.activity = 'running'; s.stateAt = this.now();
     this.#emitStatus(id);
     return true;
   }
