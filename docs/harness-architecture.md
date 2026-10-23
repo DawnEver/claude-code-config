@@ -184,10 +184,11 @@ No bot accounts: they multiply credentials and lose layer 1. Instead:
   be normalized by consumers. `scripts/shared/session-identity.mjs` now supplies that
   distinction, and `sessionEnv()` prefers native root lineage over inherited stale launcher
   IDs. This does not inject a dynamic ID through a static config file or prove an external
-  consumer adopted the helper. Historical notes about lab-commons' `lab-session` commit-msg
-  gate, `Lab-Session:` trailers and ONE-SESSION-ONE-PR were **not revalidated against the
-  current downstream implementation** in the 2026-10-23 audit. They are not evidence that
-  a current Codex commit must fail. `Claude-Session:` is prose.
+  consumer adopted the helper. The inspected lab-commons Forge contract uses machine,
+  agent and branch, not `LAB_SESSION`; its provenance tests and installed runtime consumer
+  were verified locally in the 2026-10-23 audit. A session commit gate, `Lab-Session:`
+  trailers or ONE-SESSION-ONE-PR enforcement would be a separate downstream policy, not
+  an implemented requirement here. `Claude-Session:` is prose.
 - **Env contract:** the same paths export `HARNESS_MACHINE` and `HARNESS_AGENT`
   (`claude`|`codex`) for other tools (e.g. lab-commons' forge) to read. No machine name →
   nothing is injected. `setup-vscode.js` (Claude in VS Code) carries no provenance.

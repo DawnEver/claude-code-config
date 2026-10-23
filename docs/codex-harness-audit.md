@@ -101,7 +101,8 @@ portable. Both surfaces require normal native trust review and actual runtime ac
 | Monetary cost | Partial | Codex tokens are parsed; Codex does not provide Claude's `cost-state` entries, so actual Codex session-cost rows are not supplied by this implementation. | `scripts/usage/transcripts.mjs`, [usage.md](usage.md) |
 | Usage delivery and SQL | Available with dashboard deployment | Metadata batches require dashboard configuration/host token and deployed D1. Cursor advances after acceptance; SQL endpoint restricts requests to read-only queries. This is not a local-only feature. | `scripts/usage/push.mjs`, `query.mjs`, `scripts/dashboard/usage-store.mjs` |
 | Branch/worktree isolation | External policy, host-independent | Git works for both agents. cc-config documents when separate worktrees are needed; it does not automatically allocate or lock them for every concurrent session. Stronger family workflows belong to lab-commons. | [harness architecture §3](harness-architecture.md#3-entities-and-sources-of-truth) |
-| Forge, integration gates and one-session-one-PR | External, consumer contract not verified | Owned by lab-commons, not by the config sync repo. Machine env and native Codex IDs exist; whether an external gate requires or normalizes `LAB_SESSION` must be verified in that consumer. The architecture's historical gate description is not current acceptance evidence. | [harness architecture §8b](harness-architecture.md#8b-identity-and-provenance), `scripts/shared/machine.mjs` |
+| Forge provenance | Available; local consumer verified | The installed lab-commons consumer reads `HARNESS_MACHINE`/`HARNESS_AGENT` and the current branch. Three owner-source tests pass, and the installed consumer produces provenance from this runtime environment. No remote issue/PR was written. | [harness architecture §8b](harness-architecture.md#8b-identity-and-provenance), `scripts/shared/machine.mjs` |
+| Session commit gates and one-session-one-PR | Not an inspected downstream contract | Current lab-commons source does not require `LAB_SESSION` or native Codex session IDs for Forge provenance. Adding a session gate is a separate owner policy, not repair of a missing Codex environment variable. | `lab_commons.dev.forgework.provenance`, [harness architecture §8b](harness-architecture.md#8b-identity-and-provenance) |
 | Official remote control | External; not proven by this audit | The Codex feature flag is enabled in the template. This repo does not provision/pair it or prove that every remote client interoperates with bridge subscriptions. The architecture's prototype inference is not a current live acceptance test. | `codex_config.template.toml`, [harness architecture §11](harness-architecture.md#11-prototype-findings-2026-10-01-codex-cli-01571-claude-code-21286-win11) |
 
 ## Verification and remaining acceptance work
@@ -119,8 +120,11 @@ whether Codex supplies a dynamic ID or whether one launcher env can reach every 
 
 The adjacent lab-commons checkout's `src/` and `tests/` contained no matches for
 `LAB_SESSION`, `CODEX_THREAD_ID` or `CODEX_SESSION_ID` in this audit. Therefore the historical
-claim in harness architecture §8b that its current commit gate refuses a missing
-`LAB_SESSION` was not established; do not diagnose a present commit failure from that prose.
+claim that its current commit gate refuses a missing `LAB_SESSION` was not established;
+do not diagnose a present commit failure from that prose. A follow-up inspected owner
+revision `4e4467d`: Forge's implemented contract is machine, agent and branch, with no
+session gate. All three provenance tests passed using a valid existing interpreter;
+the installed consumer also imports and produces provenance in this runtime environment.
 
 ### Tests
 
@@ -155,8 +159,9 @@ the historical counts above are not a live activation certificate for the new ch
 
 Local release and Codex cache installation are complete. Outstanding acceptance: review
 native hook trust; prove execution on each supported
-CLI/editor/app surface; authenticate Fabric/providers before paid review probes; and verify
-external forge consumers. Conservative cache reporting, one active collector home,
+CLI/editor/app surface; and obtain approval for live Fabric/provider review probes.
+Native login and local Forge-consumer checks are now verified separately below.
+Conservative cache reporting, one active collector home,
 bounded Stop scheduling and incomplete arbitrary-shell memory observability are deliberate
 boundaries, not missing wiring disguised as parity.
 
@@ -172,12 +177,31 @@ events actually run after normal review/trust; one event never certifies another
 
 ## Remaining gaps and acceptance priority
 
+### Local runtime readiness
+
+Read-only follow-up checks on this host established:
+
+- Fabric's actual MCP `list_providers` and `codex_status` tools respond. Catalogue
+  enumeration is not proof that every API provider has a working key or model.
+- Native Codex reports installed and authenticated; native Claude reports logged in.
+  These are login checks, not successful inference or quota-availability checks.
+- Fabric's pinned interpreter imports `ai_lab.call`; its protocol version matches
+  Fabric's version 2. An installed Fabric backend subprocess correctly rejects a
+  malformed request before provider connection, without creating a usage ledger.
+- Three lab-commons owner-source provenance tests pass. The installed consumer also
+  reads this runtime's machine/agent environment and emits a nonempty provenance stamp.
+  This establishes the local contract, not remote Forge authentication/write access.
+
+No model request, credential change, remote issue/PR creation or pairing was performed.
+
+### Acceptance priorities
+
 | Priority | Gap | Next acceptance or deliberate boundary |
 | --- | --- | --- |
 | P0 | Native permission-hook execution not observed | Startup, tool-use and shutdown entry invocations have now been observed; PermissionRequest still needs a real supported approval request. Receipts prove entry invocation, not successful lifecycle completion or acceptance of changed source. Review `/hooks` without bypassing trust. |
 | P0 | Mixed-host runtime acceptance | Both hosts now have matching core plugin versions installed. Existing sessions can still retain old bundles; fresh-session lifecycle/gate acceptance remains required. |
 | P1 | Live lifecycle/provider acceptance | Exercise recall, automatic compact restoration, REM/review coordination, approval/input notices and real OS delivery. Paid Fabric/provider probes require separate approval/authentication. |
-| P1 | External identity and worktree policy | Forge/commit gates must adopt native identity in their owning repo; automatic lane allocation/locking is not enforced here. |
+| P1 | External worktree policy | Current Forge machine/agent/branch provenance is locally verified. Automatic lane allocation/locking remains the owner's policy; no absent session gate is inferred from historical prose. |
 | P1 | Native cache-update atomicity | Snapshot restoration protects missing files after each call, but cannot eliminate the vendor's deletion window; use a closed-client maintenance window for uninterrupted imports. |
 | P2 | Concurrent homes/accounts | One explicit home per machine collector is supported, not simultaneous multi-seat discovery or aggregated account presence. |
 | P2 | Native surfaces and editor integration | CLI/editor/app behavior and official remote pairing are not all live-validated. VS Code provider switching remains Claude-specific, not a Codex extension switcher. |
