@@ -333,8 +333,8 @@ export async function updateCodexPlugins({ codexHome = resolveCodexHome(), marke
     fs.writeFileSync(pending, backup + '\n', { flag: 'wx', mode: 0o600 });
     try { fs.renameSync(pending, pointer); }
     finally { if (exists(pending)) fs.unlinkSync(pending); }
-    const readRegistrations = async () => {
-      try { return await registrations(run, nativeArgs, env); }
+    const readRegistrations = async (args = nativeArgs) => {
+      try { return await registrations(run, args, env); }
       finally { restored.push(...restore(home, data)); }
     };
     const before = await readRegistrations();
@@ -357,6 +357,15 @@ export async function updateCodexPlugins({ codexHome = resolveCodexHome(), marke
     const after = updated.length ? await readRegistrations() : before;
     for (const name of names) requirePayload(market, home, name, targets.get(name));
     const disabled = names.filter(name => requireRegistration(after, name, targets.get(name)).enabled === false);
+    // A command-local source override is not persistent activation. Read the same
+    // default context a fresh client will use, with protection still published.
+    const persistent = await readRegistrations([]);
+    for (const name of names) {
+      const entry = requireRegistration(persistent, name, targets.get(name));
+      if ((entry.enabled === false) !== disabled.includes(name))
+        throw new Error(`Plugin ${name} enablement differs in the default native context`);
+      requirePayload(market, home, name, targets.get(name));
+    }
     const { conflicts } = inspectProtectedPluginCaches(home);
     return { backup, updated, skipped, restored, ...(disabled.length ? { disabled } : {}), ...(conflicts ? { conflicts } : {}) };
   } finally {

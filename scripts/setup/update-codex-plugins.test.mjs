@@ -54,6 +54,34 @@ function fixture(t) {
   return { root, codexHome, marketplaceRoot, version, native, install, register };
 }
 
+test('temporary marketplace readback cannot certify persistent activation', async t => {
+  const f = fixture(t);
+  const native = f.native();
+  await assert.rejects(updateCodexPlugins({ ...f, names: ['rem'], run: async (command, args, options) => {
+    if (args.includes('list') && !args.includes('-c')) return {
+      status: 0, stdout: JSON.stringify({ installed: [{ pluginId: 'rem@cc-market', installed: true, enabled: true, version: '1.0.0' }] }),
+    };
+    return native(command, args, options);
+  } }), /not registered at the expected version/);
+  assert.deepEqual(inspectProtectedPluginCaches(f.codexHome).missing, []);
+});
+
+test('default-context readback preserves cache protection and rejects enablement drift', async t => {
+  const f = fixture(t);
+  const native = f.native();
+  await assert.rejects(updateCodexPlugins({ ...f, names: ['rem'], run: async (command, args, options) => {
+    const result = await native(command, args, options);
+    if (args.includes('list') && !args.includes('-c')) {
+      fs.rmSync(f.version('rem', '1.0.0'), { recursive: true });
+      const data = JSON.parse(result.stdout);
+      data.installed[0].enabled = false;
+      return { ...result, stdout: JSON.stringify(data) };
+    }
+    return result;
+  } }), /enablement differs/);
+  assert.deepEqual(inspectProtectedPluginCaches(f.codexHome).missing, []);
+});
+
 test('native cleanup is restored after EACH add and snapshots remain unchanged', async t => {
   const f = fixture(t), calls = [];
   const result = await updateCodexPlugins({ ...f, names: ['rem', 'sharp-review'], run: f.native((command, args, options) => {
@@ -293,7 +321,7 @@ test('native list cleanup cannot delete references before the preservation snaps
     }
     return native(command, args, options);
   } });
-  assert.equal(reads, 2);
+  assert.equal(reads, 3);
   assert.deepEqual(result.updated, ['sharp-review']);
   assert.equal(fs.readFileSync(path.join(f.version('rem', '1.0.0'), 'old.txt'), 'utf8'), 'rem:original bytes');
   assert.equal(fs.existsSync(path.join(f.version('rem', '2.0.0'), '.codex-plugin', 'plugin.json')), true);

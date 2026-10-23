@@ -45,7 +45,10 @@ sequentially with an invocation-only local catalogue override, and restores miss
 after each call and on failure. Surviving bytes are never overwritten. Existing target
 versions are skipped only after payload and native registration checks; partial or orphaned
 targets fail explicitly and require deliberate reconciliation or a new release, not an
-in-place reinstall. Native additions also require payload/registration readback. Registered
+in-place reinstall. Native additions also require payload/registration readback, including
+a final read without command-local marketplace overrides. Version or enablement drift
+in that default context fails the update; this does not certify an already-running
+client's loaded modules. Registered
 disabled current targets remain disabled; upgrading a registered disabled older version
 fails before any add because native add would enable it. Exclude that plugin or make a
 deliberate native activation decision first. Native list does not distinguish an uninstalled
