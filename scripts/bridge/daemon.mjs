@@ -535,9 +535,13 @@ export class Bridge {
     this.#save(s);
   }
 
-  /** The human spoke in the Topic: what was there is read, and a mention has done its job. */
+  /**
+   * The human acted in the Topic (wrote, or tapped an answer): what was there is read, and a
+   * mention has done its job — the standing one is deleted, a pending one never fires.
+   */
   #seen(s) {
     s.unread = 0;
+    clearTimeout(s.nudge); s.nudge = null;
     this.#clearMention(s);
     this.#save(s);
   }
@@ -697,6 +701,7 @@ export class Bridge {
   async #answer(id, value, from, message) {
     const x = this.questions.get(id);
     this.questions.delete(id);
+    this.#seen(x.session);
     x.group.answers[x.question.id] = [value];
     if (message) this.telegram.editMessageText(message.chat.id, message.message_id,
       `${message.text ?? ''}\n-> ${value} by ${from.username ?? from.id}`).catch(() => {});
@@ -827,6 +832,7 @@ export class Bridge {
     if (allowed && a && matches) {
       const yes = m[2] === 'y';
       this.approvals.delete(m[1]);
+      this.#seen(a.session);
       let ok;
       try { ok = await this.hosts.get(a.agent)?.answerApproval(a.ref, yes, a.session.id); }
       catch { note = 'submission uncertain; check locally'; }

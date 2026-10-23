@@ -757,6 +757,28 @@ for (const agent of HOSTS) {
   });
 }
 
+test('a button answer is the human acting: it deletes the standing mention', async () => {
+  const r = make();
+  await live(r, 'claude', 'x');
+  await r.bridge.question('claude:x', { ref: 'ref1', questions: [QS[0]], answerable: true });
+  const post = r.telegram.sent.at(-1);
+  await until(() => r.telegram.sent.at(-1).text === 'waiting for you');
+  const nudge = r.telegram.sent.at(-1);
+  await r.bridge.handleUpdate(tap(post, ALICE, 1));
+  assert.equal(r.telegram.answers.at(-1), 'answered');
+  assert.deepEqual(r.telegram.deletedMessages, [[nudge.chatId, nudge.message_id]]);
+  assert.equal(r.bridge.dashboardSessions()[0].mention, false);
+});
+
+test('a button answer within the grace cancels the mention', async () => {
+  const r = make({ alertGraceMs: 40 });
+  await live(r, 'claude', 'x');
+  await r.bridge.question('claude:x', { ref: 'ref1', questions: [QS[0]], answerable: true });
+  await r.bridge.handleUpdate(tap(r.telegram.sent.at(-1), ALICE, 0));
+  await new Promise((done) => setTimeout(done, 80));
+  assert.equal(r.telegram.sent.some((m) => m.alert), false);
+});
+
 test('a question only answerable locally is posted without controls; replies stay prompts', async () => {
   const r = make();
   await live(r, 'claude', 'x');
