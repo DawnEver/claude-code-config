@@ -30,7 +30,7 @@ import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machin
 import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
-  CLAUDE_LINKS, getCodexLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
+  CLAUDE_LINKS, getCodexLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
 } from './setup.js';
 import { accountFile } from '../shared/seats.mjs';
 import { channelServerPath, channelServerState } from '../shared/channel-server.mjs';
@@ -90,17 +90,6 @@ export function compareKeySets(actual, template) {
   return {
     onlyInActual: a.filter((k) => !t.includes(k)),
     onlyInTemplate: t.filter((k) => !a.includes(k)),
-  };
-}
-
-/** permissions.allow / deny rule sets of two settings objects, as `allow:Rule` entries. */
-export function comparePermissionRules(actual, template) {
-  const rules = (s) => ['allow', 'deny'].flatMap((k) => (s?.permissions?.[k] ?? []).map((r) => `${k}:${r}`));
-  const a = rules(actual);
-  const t = rules(template);
-  return {
-    onlyInActual: a.filter((r) => !t.includes(r)),
-    onlyInTemplate: t.filter((r) => !a.includes(r)),
   };
 }
 
@@ -198,29 +187,14 @@ export function checkPayloadShape(syncDir, repoRoot = sourceDir, files = SYNC_PA
         out.push(finding('FAIL', 'payload-invalid-model', 'claude_settings.json has an invalid model preference',
           'model must be a non-empty model alias or ID when present'));
       }
-      live = { ...live }; template = { ...template };
-      delete live.model; delete template.model;
-      // Permission rules are policy shared by every host: a rule added only to the
-      // live payload never reaches a fresh install, so the template must carry it.
-      const rules = comparePermissionRules(live, template);
-      if (rules.onlyInActual.length || rules.onlyInTemplate.length) {
-        out.push(finding('WARN', 'payload-permission-drift',
-          'claude_settings.json permission rules differ from claude_settings.template.json',
-          [rules.onlyInActual.length && `only live: ${rules.onlyInActual.join(', ')}`,
-            rules.onlyInTemplate.length && `only template: ${rules.onlyInTemplate.join(', ')}`]
-            .filter(Boolean).join('; ') + ' — move generic rules into the template'));
-      }
     }
-    const { onlyInActual, onlyInTemplate } = compareKeySets(live, template);
+    // Only the template's shape is required: the payload is the user's own file and may
+    // carry personal keys the public template never will.
+    const { onlyInTemplate } = compareKeySets(live, template);
     if (onlyInTemplate.length) {
       out.push(finding('FAIL', 'payload-missing-key',
         `${name} is missing ${onlyInTemplate.length} key(s) its template declares`,
         `absent: ${onlyInTemplate.join(', ')} — code expecting the template's shape will not find them`));
-    }
-    if (onlyInActual.length) {
-      out.push(finding('WARN', 'payload-extra-key',
-        `${name} carries ${onlyInActual.length} key(s) the template lacks`,
-        `${onlyInActual.join(', ')} — a fresh install seeded from the template will not get these`));
     }
   }
   return out;
@@ -250,6 +224,8 @@ export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}
   const tables = [
     { label: 'claude', base: claudeDir, links: CLAUDE_LINKS },
     { label: 'codex', base: codexDir, links: getCodexLinks(repoRoot) },
+    // The repo-root mirror: the checkout's own hard link to each payload file.
+    { label: 'repo', base: repoRoot, links: repoMirrorLinks({ syncDir, repoRoot }) },
   ];
   for (const { label, base, links } of tables) {
     for (const link of links) {

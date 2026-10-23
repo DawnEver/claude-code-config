@@ -29,6 +29,9 @@ claude_env_settings.json
 claude_settings.json
 codex_config.toml
 private-markers
+trusted-origins
+# setup keeps a replaced private copy beside the name it re-linked
+/*.setup-bak
 models.json
 cc-market/
 system-prompt/dist/

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, comparePermissionRules, parseHookCommands,
+  looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, parseHookCommands,
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks, linkedTo,
   checkCodexPluginCache,
   checkPlugins, checkBridgeRevision,
@@ -126,26 +126,6 @@ test('compareKeySets reports drift in both directions', () => {
   assert.deepEqual(onlyInTemplate, ['c']);
 });
 
-test('comparePermissionRules reports allow/deny drift in both directions', () => {
-  const live = { permissions: { allow: ['Bash', 'Glob'], deny: ['Bash(sudo *)'] } };
-  const template = { permissions: { allow: ['Bash', 'Read'], deny: ['Bash(sudo *)', 'Bash(rm -rf *)'] } };
-  assert.deepEqual(comparePermissionRules(live, template), {
-    onlyInActual: ['allow:Glob'],
-    onlyInTemplate: ['allow:Read', 'deny:Bash(rm -rf *)'],
-  });
-  assert.deepEqual(comparePermissionRules({}, {}), { onlyInActual: [], onlyInTemplate: [] });
-});
-
-test('checkPayloadShape flags permission rules that drifted from the template', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-perm-'));
-  fs.writeFileSync(path.join(dir, 'claude_settings.template.json'),
-    JSON.stringify({ permissions: { allow: ['Bash'], deny: [] } }));
-  fs.writeFileSync(path.join(dir, 'claude_settings.json'),
-    JSON.stringify({ permissions: { allow: ['Bash', 'Glob'], deny: [] } }));
-  const ids = checkPayloadShape(dir, dir, ['claude_settings.json']).map((f) => f.id);
-  assert.deepEqual(ids, ['payload-permission-drift']);
-});
-
 // ── hook parsing ──
 
 test('parseHookCommands finds the script in each wired command', () => {
@@ -206,13 +186,11 @@ test('a payload missing a key its template declares is a FAIL', () => {
   assert.equal(out[0].id, 'payload-missing-key');
 });
 
-test('a live-only key is a WARN, not a failure — that is host tuning', () => {
+test('a live-only key is not reported — the payload is personal and may carry its own keys', () => {
   const live = tmp(); const repo = tmp();
   fs.writeFileSync(path.join(live, 'x.json'), '{"providers":{},"model":"opus"}');
   fs.writeFileSync(path.join(repo, 'x.template.json'), '{"providers":{}}');
-  const out = checkPayloadShape(live, repo, ['x.json']);
-  assert.equal(out.length, 1);
-  assert.equal(out[0].level, 'WARN');
+  assert.deepEqual(checkPayloadShape(live, repo, ['x.json']), []);
 });
 
 test('Claude CLI model preference is optional and does not mask real payload drift', () => {
@@ -223,8 +201,6 @@ test('Claude CLI model preference is optional and does not mask real payload dri
   assert.deepEqual(checkPayloadShape(live, repo, ['claude_settings.json']), []);
   fs.writeFileSync(file, '{"env":{}}');
   assert.deepEqual(checkPayloadShape(live, repo, ['claude_settings.json']), []);
-  fs.writeFileSync(file, '{"env":{},"model":"haiku","unexpected":true}');
-  assert.equal(checkPayloadShape(live, repo, ['claude_settings.json'])[0].id, 'payload-extra-key');
   fs.writeFileSync(file, '{"model":"haiku"}');
   assert.equal(checkPayloadShape(live, repo, ['claude_settings.json'])[0].id, 'payload-missing-key');
   fs.writeFileSync(file, '{"env":{},"model":42}');
@@ -494,4 +470,13 @@ test('rules-symbols: a rule naming a function or constant the code no longer has
     fs.writeFileSync(path.join(root, '.claude', 'rules', 'r.md'), 'Uses `migrateOrphanedWrappers()` and `WRAPPER_NAMES`.');
     assert.deepEqual(checkRuleSymbols(root, files), [], 'clean: no finding');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('checkLinks: a repo-root payload copy (different inode) or a missing one is flagged; the hard link is not', () => {
+  const syncDir = tmp(), repoRoot = tmp();
+  for (const f of ['claude_settings.json', 'trusted-origins', 'private-markers']) fs.writeFileSync(path.join(syncDir, f), f);
+  fs.linkSync(path.join(syncDir, 'claude_settings.json'), path.join(repoRoot, 'claude_settings.json'));
+  fs.copyFileSync(path.join(syncDir, 'trusted-origins'), path.join(repoRoot, 'trusted-origins'));
+  const repo = checkLinks({ repoRoot, syncDir }).filter((f) => f.title.startsWith('repo:')).map((f) => `${f.id} ${f.title.split(' ')[1]}`);
+  assert.deepEqual(repo.sort(), ['link-dest-missing private-markers', 'link-detached trusted-origins']);
 });
