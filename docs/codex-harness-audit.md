@@ -171,7 +171,7 @@ events actually run after normal review/trust; one event never certifies another
 
 | Priority | Gap | Next acceptance or deliberate boundary |
 | --- | --- | --- |
-| P0 | Native machine-hook execution not observed | Review `/hooks` in a fresh supported session; verify startup, guard, approval and shutdown separately. Installation and one event's receipt do not establish every hook's trust or execution. |
+| P0 | Native permission-hook execution not observed | Startup, tool-use and shutdown entry invocations have now been observed; PermissionRequest still needs a real supported approval request. Receipts prove entry invocation, not successful lifecycle completion or acceptance of changed source. Review `/hooks` without bypassing trust. |
 | P0 | Mixed-host plugin versions | This host's Codex bundles are updated; Claude caches were not. Update Claude REM/review before claiming parity for concurrent shared-project gates. |
 | P1 | Live lifecycle/provider acceptance | Exercise recall, automatic compact restoration, REM/review coordination, approval/input notices and real OS delivery. Paid Fabric/provider probes require separate approval/authentication. |
 | P1 | External identity and worktree policy | Forge/commit gates must adopt native identity in their owning repo; automatic lane allocation/locking is not enforced here. |
@@ -180,3 +180,18 @@ events actually run after normal review/trust; one event never certifies another
 | P2 | Native surfaces and editor integration | CLI/editor/app behavior and official remote pairing are not all live-validated. VS Code provider switching remains Claude-specific, not a Codex extension switcher. |
 | Boundary | Limited automatic observability | Arbitrary shell memory reads, exact window presence, actual subscription monetary cost, and no-rollout ephemeral sessions cannot be inferred completely from current inputs. |
 | Boundary | Bounded rather than immediate automation | REM/review can defer to the next ordinary Stop; shutdown reminders concern cc-config, not every project. Independent Telegram observation has no fabricated live-control endpoint, and reconnect/handoff is not a durable exactly-once outbox. |
+
+### Follow-up correctness audit
+
+Qualified native polling tools now share the same exemption policy as their bare
+names. Only known native namespaces are normalized; arbitrary provider suffixes
+remain guarded, and history retains the original full tool name. Native hook
+inspection also compares managed group constraints, so a changed matcher cannot
+reuse a previous receipt to falsely report a healthy installation.
+
+Claude's native updater refreshed its GitHub marketplace and reported REM 2.0.0
+as current despite the unpublished local release. It did not upgrade Claude's
+bundles. Old cache versions and the install registry were backed up before the
+attempt; no marketplace source replacement, remote push or trust bypass was used.
+Updating from the local release needs an explicitly scoped local marketplace
+workflow rather than assuming a cache checkout survives native refresh.

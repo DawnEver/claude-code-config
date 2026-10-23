@@ -54,6 +54,7 @@ const BASE_EXEMPT = [
   'EnterPlanMode',
   'ReportFindings',
   'write_stdin',
+  'wait',
   'wait_agent',
   'list_agents',
   'sleep',
@@ -174,7 +175,8 @@ function guardCall(payload, { env = process.env, host, settings, stateDir, now =
     const cfg = loadConfig(env, settings);
     const tool = payload.tool_name;
     const identity = sessionIdentity(env, payload, { host });
-    if (cfg.disable || !tool || cfg.exempt.has(tool) || !identity.threadId) return null;
+    const nativeTool = host === 'codex' ? tool?.replace(/^(?:functions|collaboration|clock)\./, '') : tool;
+    if (cfg.disable || !tool || cfg.exempt.has(tool) || cfg.exempt.has(nativeTool) || !identity.threadId) return null;
     const file = stateFile(`${identity.host}:${identity.threadId}`, stateDir);
     return transaction(file, () => {
       const res = evaluate(readState(file).entries, { tool, input: payload.tool_input, now }, cfg);

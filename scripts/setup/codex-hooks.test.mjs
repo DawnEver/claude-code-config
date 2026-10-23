@@ -37,6 +37,18 @@ test('foreign empty handler groups are preserved', t => {
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'hooks.json'))).hooks.Stop, [{ matcher: 'user-reserved', hooks: [] }]);
 });
 
+test('inspection rejects altered managed group execution constraints', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-group-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const options = { codexDir: dir, scriptsDir: '/scripts' };
+  installCodexHooks(options);
+  const file = path.join(dir, 'hooks.json');
+  const config = JSON.parse(fs.readFileSync(file));
+  config.hooks.PreToolUse[0].matcher = 'NeverMatchThisTool';
+  fs.writeFileSync(file, JSON.stringify(config));
+  assert.equal(inspectCodexHooks(options).installed, false);
+});
+
 test('the generated command executes literal metacharacter paths without interpreting them', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-argv-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

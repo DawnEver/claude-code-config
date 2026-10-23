@@ -69,7 +69,8 @@ export function inspectCodexHooks({ codexDir = path.join(os.homedir(), '.codex')
   let installed = false;
   try {
     installed = Object.entries(expected).every(([event, groups]) =>
-      JSON.stringify((config.hooks?.[event] ?? []).flatMap(g => g.hooks ?? []).filter(own)) === JSON.stringify(groups[0].hooks));
+      JSON.stringify((config.hooks?.[event] ?? []).filter(g => g.hooks?.some(own))
+        .map(g => ({ ...g, hooks: g.hooks.filter(own) }))) === JSON.stringify(groups));
   } catch { /* malformed user data is reported, never rewritten */ }
   const observed = {};
   for (const event of events) {

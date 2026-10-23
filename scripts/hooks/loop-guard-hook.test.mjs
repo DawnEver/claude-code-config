@@ -145,6 +145,17 @@ test('Codex polling tools are exempt', () => {
     assert.ok(loadConfig({}).exempt.has(name), name);
 });
 
+test('qualified native polling tools are exempt without exempting arbitrary providers', t => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'guard-qualified-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const call = tool_name => guardCall({ thread_id: 'qualified', tool_name, tool_input: {} },
+    { host: 'codex', env: {}, settings: {}, stateDir, now: NOW });
+  for (const name of ['functions.write_stdin', 'functions.wait', 'collaboration.wait_agent', 'clock.sleep'])
+    for (let i = 0; i < 6; i++) assert.equal(call(name), null, name);
+  assert.equal(readdirSync(stateDir).length, 0);
+  assert.equal(call('untrusted.write_stdin').verdict, 'ok');
+});
+
 test('guard state containing input fingerprints is stored privately', t => {
   const root = mkdtempSync(join(tmpdir(), 'guard-private-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
