@@ -69,6 +69,18 @@ These are small, hand-edited, rarely written concurrently, and contain no `.git`
 locks, and no atomic-rename storms. This is a workload a file-sync daemon actually
 handles correctly. **This is the only thing the cloud folder is responsible for.**
 
+**The checkout mirrors the payload.** With a sync dir outside the repo, setup hard-links
+every payload file (`SYNC_PAYLOAD_FILES` plus every `base: 'sync'` link source — one rule,
+`repoMirrorLinks()`, no per-file cases) to the same name at the repo root, gitignored, so the
+checkout shows the live personal payload. The cloud file stays the single source and the repo
+name is the same file record (same inode), never a copy. `~/.claude` links keep pointing at
+the cloud file, not at the repo name: the cloud file is what a sync-down replaces, so every
+name is healed from it by one rule (`healSyncLink`), and a symlink host's `~/.claude` must not
+depend on where the checkout (or a worktree of it) sits. Across volumes no hard link is
+possible and a copy would be the detached state itself, so setup only reports it. doctor
+FAILs a repo name that is missing (`link-dest-missing`) or a copy (`link-detached`);
+`check-links` re-links it at SessionStart, including the 2026-10-18 cloud-detached case.
+
 The template `claude_settings.template.json` is public and generic; the payload
 `claude_settings.json` is the owner's personal file. They are decoupled: doctor requires the
 payload to carry the template's keys, never to equal it, and nothing personal or
@@ -181,18 +193,23 @@ GitHub: DawnEver/claude-code-config
    ▼
 <repo>/                ← working tree + .git, NEVER cloud-synced
    ├── scripts/ skills/ system-prompt/ …      (Tier A)
-   └── models.json                            (Tier D, generated, gitignored)
+   ├── models.json                            (Tier D, generated, gitignored)
+   └── claude_settings.json claude_env_settings.json codex_config.toml
+       private-markers trusted-origins        (Tier B mirror: HARD LINKS to the payload, gitignored)
 
-<cloud>/Sync/cc-config/          ← sync payload, 3 files, no .git   (Tier B)
+<cloud>/Sync/cc-config/          ← sync payload, no .git   (Tier B, the single source)
    ├── claude_settings.json
    ├── claude_env_settings.json
-   └── codex_config.toml
+   ├── codex_config.toml
+   ├── private-markers           (optional)
+   └── trusted-origins           (optional)
 
 ~/.claude/                           ← real per-machine dir
    ├── sync-dir                              (Tier C: points at the payload dir)
    ├── claude_env_settings.local.json        (Tier C: API keys)
    ├── settings.json              -> <cloud>/Sync/cc-config/claude_settings.json
    ├── claude_env_settings.json   -> <cloud>/Sync/cc-config/claude_env_settings.json
+   ├── private-markers trusted-origins -> <cloud>/Sync/cc-config/…  (optional)
    ├── CLAUDE.md                  -> <repo>/GLOBAL-AGENTS.md
    ├── skills/ scripts/ output-styles/ system-prompt/  -> <repo>/…
    └── keybindings.json           -> <repo>/keybindings.json
@@ -293,8 +310,10 @@ override for the first machine. setup also warns when a Tier B file reappears in
 dir while a pointer is set, since gitignore guarantees git will never mention it.
 
 ### `.gitignore`
-Tier B files leave the repo dir, so their entries become vestigial. They stay: a
-no-cloud user (`syncDir === repoRoot`) still materializes them there.
+Every Tier B name is ignored at the repo root: with a sync dir they are the hard-link
+mirror, without one (`syncDir === repoRoot`) they are the payload itself. `/*.setup-bak`
+covers the private copy a re-link keeps. `setup.test.mjs` pins both (`git check-ignore`)
+and that none is tracked.
 
 ### Docs
 `AGENTS.md` §Architecture and `README.md` get the tier table and the `--sync-dir` step.

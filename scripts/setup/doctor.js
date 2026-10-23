@@ -30,7 +30,7 @@ import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machin
 import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
-  CLAUDE_LINKS, getCodexLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
+  CLAUDE_LINKS, getCodexLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
 } from './setup.js';
 import { accountFile } from '../shared/seats.mjs';
 import { channelServerPath, channelServerState } from '../shared/channel-server.mjs';
@@ -224,6 +224,8 @@ export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}
   const tables = [
     { label: 'claude', base: claudeDir, links: CLAUDE_LINKS },
     { label: 'codex', base: codexDir, links: getCodexLinks(repoRoot) },
+    // The repo-root mirror: the checkout's own hard link to each payload file.
+    { label: 'repo', base: repoRoot, links: repoMirrorLinks({ syncDir, repoRoot }) },
   ];
   for (const { label, base, links } of tables) {
     for (const link of links) {

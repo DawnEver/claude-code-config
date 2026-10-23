@@ -24,8 +24,9 @@ import {
   getSyncDir,
   linkSourceRoot,
   composeCodexConfigFile,
-  isHardLinked,
-  sameVolume,
+  healSyncLink,
+  repoMirrorLinks,
+  mirrorPayload,
 } from './setup.js';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 
@@ -33,28 +34,20 @@ import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 export const SETUP_FIX_CMD = 'node ~/.claude/scripts/setup/setup.js --replace';
 
 /**
- * Re-link the sync payload files a cloud client detached (2026-10-18). Without symlink rights
- * setup hard-links them, and a cloud client replaces the synced file on every download, which breaks
- * the link: the host then reads a private copy and never sees another host's edit.
- *   - sync copy at least as new as the private one: the change came from the cloud and nothing
- *     was edited here since the break, so re-linking loses nothing (the copy is kept as
- *     .setup-bak when it differs).
- *   - private copy newer: edited here after the break, on top of a stale base. Both sides hold
- *     something; merging is a human's call, so it is reported (doctor: link-detached) and left.
+ * Re-link the sync payload files a cloud client detached (2026-10-18), by healSyncLink's rule,
+ * in every table that names one: ~/.claude, each seat dir, and the repo-root mirror.
  * -> {repaired: [dest], conflicts: [dest]}
  */
 export function healSyncLinks({ syncDir = getSyncDir(), tables = [{ links: CLAUDE_LINKS, dir: claudeDir },
-  ...localSeats().filter((x) => fs.existsSync(x.dir)).map((x) => ({ links: SEAT_LINKS, dir: x.dir }))] } = {}) {
+  ...localSeats().filter((x) => fs.existsSync(x.dir)).map((x) => ({ links: SEAT_LINKS, dir: x.dir })),
+  { links: repoMirrorLinks({ syncDir, repoRoot: sourceDir }), dir: sourceDir }] } = {}) {
   const repaired = [], conflicts = [];
   for (const { links, dir } of tables) {
     for (const link of links.filter((l) => l.base === 'sync' && l.type === 'file')) {
-      const src = path.join(syncDir, link.src), dest = path.join(dir, link.dest);
-      let st;
-      try { st = fs.lstatSync(dest); } catch { continue; }   // missing: checkLinks re-links it
-      if (!fs.existsSync(src) || st.isSymbolicLink() || !st.isFile() || isHardLinked(src, dest) || !sameVolume(src, dir)) continue;
-      if (fs.statSync(src).mtimeMs >= st.mtimeMs) {
-        try { if (linkEntry(src, dest, link, true).status === 'link') repaired.push(dest); } catch { conflicts.push(dest); }
-      } else conflicts.push(dest);
+      const dest = path.join(dir, link.dest);
+      const r = healSyncLink(path.join(syncDir, link.src), dest, link);
+      if (r === 'repaired') repaired.push(dest);
+      else if (r === 'conflict') conflicts.push(dest);
     }
   }
   return { repaired, conflicts };
@@ -123,6 +116,13 @@ export function checkLinks() {
     for (const d of healed.conflicts) warnings.push(`${d}: detached from the sync dir and edited here since — reconcile it with the sync copy`);
   } catch (err) {
     warnings.push(`sync link heal: ${err.message}`);
+  }
+
+  // A missing repo-root mirror name (healSyncLinks above healed the detached ones).
+  try {
+    for (const n of mirrorPayload({ syncDir: getSyncDir(), repoRoot: sourceDir }).linked) repaired.push(`repo ${n} (hard link to the sync dir)`);
+  } catch (err) {
+    warnings.push(`repo mirror: ${err.message}`);
   }
 
   const check = (links, baseDir, label = '') => {

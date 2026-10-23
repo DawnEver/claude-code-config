@@ -471,3 +471,12 @@ test('rules-symbols: a rule naming a function or constant the code no longer has
     assert.deepEqual(checkRuleSymbols(root, files), [], 'clean: no finding');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('checkLinks: a repo-root payload copy (different inode) or a missing one is flagged; the hard link is not', () => {
+  const syncDir = tmp(), repoRoot = tmp();
+  for (const f of ['claude_settings.json', 'trusted-origins', 'private-markers']) fs.writeFileSync(path.join(syncDir, f), f);
+  fs.linkSync(path.join(syncDir, 'claude_settings.json'), path.join(repoRoot, 'claude_settings.json'));
+  fs.copyFileSync(path.join(syncDir, 'trusted-origins'), path.join(repoRoot, 'trusted-origins'));
+  const repo = checkLinks({ repoRoot, syncDir }).filter((f) => f.title.startsWith('repo:')).map((f) => `${f.id} ${f.title.split(' ')[1]}`);
+  assert.deepEqual(repo.sort(), ['link-dest-missing private-markers', 'link-detached trusted-origins']);
+});

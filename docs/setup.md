@@ -15,6 +15,12 @@ If `claude_settings.json` or `claude_env_settings.json` are missing, setup copie
 `.template.json` versions automatically. Fill in your API keys in
 `~/.claude/claude_env_settings.local.json`.
 
+With a sync dir (`--sync-dir`), every payload file is also **hard-linked into the repo root**
+under its own name (gitignored), so the checkout shows the live personal payload; the sync-dir
+file stays the single source and `~/.claude` links point at it. Setup logs this under
+`--- Repo mirror of the sync payload ---`; doctor flags a missing or copied repo name and
+SessionStart re-links it ([sync-architecture §3](sync-architecture.md)).
+
 Provisioning a Windows host without admin rights? `scripts/setup/bootstrap-windows.bat`
 installs Rust and Node.js LTS at user level and appends them to the user `PATH`. Run it from an
 ordinary (non-elevated) shell, then open a new one so the `PATH` change takes effect.
