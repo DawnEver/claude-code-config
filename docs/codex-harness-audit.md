@@ -207,6 +207,14 @@ and external collaboration expansion. They are not release blockers for this ite
 Existing startup, guard, identity, memory/review, bridge and plugin deployment remain
 in scope. Deployment and live acceptance gaps below must not be relabeled as complete.
 
+Release preparation follow-up: upstream cc-market changes were merged without
+rewriting history, including upstream retirement of traceme. The combined source is
+locally released as **v3.1.4** (`5d2ac36`), with **1057 JS tests passed / 1 skipped**.
+The earlier 1119-test count above belongs to the pre-merge release, including the
+retired plugin. No permanent local marketplace pin was introduced: both repositories
+should continue following upstream. Remote publication awaits explicit approval;
+the deployment failures recorded below have not yet been resolved or revalidated.
+
 | Priority | Gap | Next acceptance or deliberate boundary |
 | --- | --- | --- |
 | P0 | Durable marketplace source and activation | Local v3.1.3 is released, but the persistent native marketplace still uses the Git source while the updater overrides it only per invocation. Resident native reconciliation and cache deletion were observed; two installation attempts failed. Cache presence and invocation-local readback are not durable activation evidence. Choose one durable source before further installation, then verify a fresh default-context session. No remote push was performed. |
