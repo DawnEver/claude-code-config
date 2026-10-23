@@ -35,11 +35,22 @@ function cache() {
 test('prune deletes stale versions but never one a live process references', () => {
   const root = cache();
   try {
-    const removed = prune({ roots: [root], scan: () => `node ${root}/mp/fabric/0.2.20/scripts/mcp-server.mjs`, log: () => {} });
+    const removed = prune({ roots: [root], reportOnly: false, scan: () => `node ${root}/mp/fabric/0.2.20/scripts/mcp-server.mjs`, log: () => {} });
     assert.equal(removed, 1);
     assert.equal(existsSync(join(root, 'mp', 'fabric', '0.2.19')), false);
     assert.ok(existsSync(join(root, 'mp', 'fabric', '0.2.20')), 'live version kept');
     assert.ok(existsSync(join(root, 'mp', 'fabric', '0.2.21')), 'latest kept');
+  } finally { rmSync(join(root, '..'), { recursive: true, force: true }); }
+});
+
+test('automatic pruning only reports candidates, never deleting unknown lazy-loaded versions', () => {
+  const root = cache();
+  try {
+    const logs = [];
+    assert.equal(prune({ roots: [root], scan: () => 'codex app-server --listen unix:// --managed-daemon', log: m => logs.push(m) }), 0);
+    assert.ok(existsSync(join(root, 'mp', 'fabric', '0.2.19')));
+    assert.ok(logs.some(m => /candidate.*not removed/.test(m)));
+    assert.equal(prune({ roots: [root], reportOnly: false, scan: () => 'codex app-server --listen unix://', log: () => {} }), 0);
   } finally { rmSync(join(root, '..'), { recursive: true, force: true }); }
 });
 

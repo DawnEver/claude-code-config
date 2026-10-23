@@ -15,10 +15,18 @@ Telegram ─ dashboard bot ─ Mini App (public/) ─ GET /api/dashboard, Author
 ```
 
 **Optional, off by default.** Nothing here runs until a host is configured for it: the bridge
-needs `bridge.botToken`, the push needs the shared `bridge.dashboard.url` and this host's local
-`bridge.dashboard.hostToken`, and the statusLine records
+can run in telemetry-only mode without `bridge.botToken`; the push needs the shared
+`bridge.dashboard.url` and this host's local `bridge.dashboard.hostToken`, and the statusLine records
 quota only on a host that pushes (`recordsQuota` in `quota.mjs`). An unconfigured clone starts
 no daemon, loads no channel and writes no series.
+
+Telemetry-only mode runs the same native adapters, registry, account/resource collectors
+and pushers; it does not poll Telegram, create Topics or fake Telegram acknowledgements.
+The Mini App's own viewer authentication remains separate from host collection. One
+machine collector owns one explicitly resolved Codex home: a different home's launcher
+warns instead of replacing it. Historical Codex usage is assigned an opaque home-scoped
+unknown account, not whichever login happens to be current; live quota series are
+partitioned by observed account and home.
 
 | Layer | File | Owns |
 | --- | --- | --- |

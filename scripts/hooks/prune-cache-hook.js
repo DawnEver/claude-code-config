@@ -1,10 +1,10 @@
-// prune-cache-hook.js — prune stale cached plugin versions across ALL marketplaces.
-// Run on SessionStart to prevent version bloat.
+// prune-cache-hook.js — report stale cached plugin versions across ALL marketplaces.
+// Automatic runs never delete: a shared daemon's lazy references are not visible in argv.
 //
 // Keep the latest version of each plugin plus every version a running process references
 // (Claude sessions and their MCP servers load plugin code from the cache by path, often
 // lazily: deleting a version a live server still imports from breaks it mid-session).
-// The process scan runs synchronously, and only when there is something to delete — rare,
+// The process scan runs synchronously, and only when there are stale candidates — rare,
 // right after a plugin update. A failed scan deletes nothing: an extra directory on disk
 // costs nothing, a deleted live one breaks a session.
 
@@ -13,10 +13,11 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
 import { isMain } from '../shared/is-main.mjs';
+import { resolveCodexHome } from '../shared/codex-home.mjs';
 
 const CACHE_ROOTS = [
   join(homedir(), '.claude', 'plugins', 'cache'),
-  join(homedir(), '.codex', 'plugins', 'cache'),
+  join(resolveCodexHome(), 'plugins', 'cache'),
 ];
 const VERSION = /^\d+\.\d+\.\d+$/;
 
@@ -48,7 +49,7 @@ export function staleVersions(versions, isLive) {
 /** Every running process's command line mentioning a plugin cache; throws on failure. */
 function scanProcesses() {
   if (process.platform === 'win32') {
-    const ps = "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*plugins*cache*' } | ForEach-Object { $_.CommandLine }";
+    const ps = "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*plugins*cache*' -or $_.Name -eq 'codex.exe' } | ForEach-Object { $_.CommandLine }";
     return execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
       { encoding: 'utf8', timeout: 15000, maxBuffer: 8 << 20, windowsHide: true });
   }
@@ -65,7 +66,7 @@ function subdirs(dir) {
   return readdirSync(dir).filter((name) => statSync(join(dir, name)).isDirectory());
 }
 
-export function prune({ roots = CACHE_ROOTS, scan = scanProcesses, log = (m) => console.error(m) } = {}) {
+export function prune({ roots = CACHE_ROOTS, scan = scanProcesses, reportOnly = true, log = (m) => console.error(m) } = {}) {
   const plugins = [];
   for (const root of roots) {
     if (!existsSync(root)) continue;
@@ -77,15 +78,21 @@ export function prune({ roots = CACHE_ROOTS, scan = scanProcesses, log = (m) => 
   }
   if (!plugins.length) return 0;
 
-  let live;
-  try { live = liveVersions(scan()); } catch (e) {
+  let live, processes;
+  try { processes = scan(); live = liveVersions(processes); } catch (e) {
     log(`[prune-cache-hook] process scan failed, nothing pruned: ${e.message}`);
     return 0;
   }
   let removed = 0;
+  // A daemon can retain plugin paths for lazy loading without naming them in its argv.
+  const unknownOwnership = /\bcodex(?:\.exe)?["']?\s+app-server\b/i.test(processes);
   for (const { dir, key, versions } of plugins) {
     for (const old of staleVersions(versions, (v) => live.has(`${key}/${v}`))) {
       const oldDir = join(dir, old);
+      if (reportOnly || unknownOwnership) {
+        log(`[prune-cache-hook] candidate ${key}@${old} not removed (${unknownOwnership ? 'Codex daemon ownership unknown' : 'report-only'})`);
+        continue;
+      }
       try {
         const files = countFiles(oldDir);
         rmSync(oldDir, { recursive: true, force: true });

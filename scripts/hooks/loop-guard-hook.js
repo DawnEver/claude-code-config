@@ -12,9 +12,8 @@
 // `permissionDecision: "deny"`, which reaches the model as a tool error and forces
 // it to change approach or report the blocker.
 //
-// Every knob is configurable — see DEFAULTS below. Override per host through the
-// `env` block of claude_settings.json, e.g.
-//   "CLAUDE_LOOP_GUARD_DENY_AT": "6", "CLAUDE_LOOP_GUARD_DISABLE": "1".
+// Shared knobs live at harness.loopGuard in the merged env registry. Explicit
+// HARNESS_LOOP_GUARD_* env wins, then existing CLAUDE_LOOP_GUARD_* overrides.
 //
 // Fails open: any parse/IO problem exits 0 with no output, so a bug here can never
 // wedge a session.
@@ -24,6 +23,8 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
+import { ENV_SETTINGS_PATH, readMergedEnvSettings } from '../shared/config.mjs';
+import { sessionIdentity } from '../shared/session-identity.mjs';
 
 /** Every knob, with its env override. Counts read as "this call is the Nth such call". */
 const DEFAULTS = {
@@ -52,6 +53,12 @@ const BASE_EXEMPT = [
   'ExitPlanMode',
   'EnterPlanMode',
   'ReportFindings',
+  'write_stdin',
+  'wait_agent',
+  'list_agents',
+  'sleep',
+  'request_user_input',
+  'request_user_input_async',
 ];
 
 const num = (raw, fallback) => {
@@ -61,19 +68,21 @@ const num = (raw, fallback) => {
 const bool = (raw) => raw === '1' || String(raw).toLowerCase() === 'true';
 
 /** Resolve configuration from an env bag — defaults when unset or malformed. */
-function loadConfig(env = process.env) {
+function loadConfig(env = process.env, settings = {}) {
+  // Explicit host-neutral env > legacy Claude env > merged shared/local config > defaults.
+  const value = (key, suffix) => env[`HARNESS_LOOP_GUARD_${suffix}`] ?? env[`CLAUDE_LOOP_GUARD_${suffix}`] ?? settings[key];
   const cfg = {
-    warnAt: num(env.CLAUDE_LOOP_GUARD_WARN_AT, DEFAULTS.warnAt),
-    denyAt: num(env.CLAUDE_LOOP_GUARD_DENY_AT, DEFAULTS.denyAt),
-    similarWarnAt: num(env.CLAUDE_LOOP_GUARD_SIMILAR_WARN_AT, DEFAULTS.similarWarnAt),
-    similarDenyAt: num(env.CLAUDE_LOOP_GUARD_SIMILAR_DENY_AT, DEFAULTS.similarDenyAt),
-    similarThreshold: num(env.CLAUDE_LOOP_GUARD_SIMILAR_THRESHOLD, DEFAULTS.similarThreshold),
-    windowMinutes: num(env.CLAUDE_LOOP_GUARD_WINDOW_MINUTES, DEFAULTS.windowMinutes),
-    maxEntries: num(env.CLAUDE_LOOP_GUARD_MAX_ENTRIES, DEFAULTS.maxEntries),
-    disable: bool(env.CLAUDE_LOOP_GUARD_DISABLE),
+    warnAt: num(value('warnAt', 'WARN_AT'), DEFAULTS.warnAt),
+    denyAt: num(value('denyAt', 'DENY_AT'), DEFAULTS.denyAt),
+    similarWarnAt: num(value('similarWarnAt', 'SIMILAR_WARN_AT'), DEFAULTS.similarWarnAt),
+    similarDenyAt: num(value('similarDenyAt', 'SIMILAR_DENY_AT'), DEFAULTS.similarDenyAt),
+    similarThreshold: num(value('similarThreshold', 'SIMILAR_THRESHOLD'), DEFAULTS.similarThreshold),
+    windowMinutes: num(value('windowMinutes', 'WINDOW_MINUTES'), DEFAULTS.windowMinutes),
+    maxEntries: num(value('maxEntries', 'MAX_ENTRIES'), DEFAULTS.maxEntries),
+    disable: bool(value('disable', 'DISABLE')),
     exempt: new Set([
       ...BASE_EXEMPT,
-      ...String(env.CLAUDE_LOOP_GUARD_EXEMPT || '')
+      ...String(value('exempt', 'EXEMPT') || '')
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
@@ -86,9 +95,8 @@ function loadConfig(env = process.env) {
   return cfg;
 }
 
-function stateFile(sessionId) {
-  const safe = String(sessionId || 'unknown').replace(/[^\w.-]/g, '_');
-  return path.join(os.tmpdir(), 'claude-loop-guard', `${safe}.json`);
+function stateFile(scope, dir = path.join(os.tmpdir(), `harness-loop-guard-${process.getuid?.() ?? 'user'}`)) {
+  return path.join(dir, `${crypto.createHash('sha256').update(scope).digest('hex')}.json`);
 }
 
 /** Stable, whitespace-insensitive rendering of a tool input. */
@@ -132,12 +140,48 @@ function readState(file) {
 }
 
 function writeState(file, state) {
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(state));
-  } catch {
-    /* fail open */
+  const tmp = `${file}.${process.pid}.tmp`;
+  try { fs.writeFileSync(tmp, JSON.stringify(state), { flag: 'wx', mode: 0o600 }); fs.renameSync(tmp, file); }
+  finally { try { fs.unlinkSync(tmp); } catch { /* renamed or absent */ } }
+}
+
+/** A short exclusive transaction. Contention or stale/unknown ownership fails open. */
+function transaction(file, fn) {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') fs.chmodSync(path.dirname(file), 0o700);
+  const lock = `${file}.lock`;
+  let fd;
+  for (let attempt = 0; attempt < 600; attempt++) {
+    try { fd = fs.openSync(lock, 'wx', 0o600); fs.writeFileSync(fd, String(process.pid)); break; }
+    catch (e) {
+      if (e.code !== 'EEXIST') return null;
+      // Never break another invocation's lock by PID. Between reading an old
+      // owner and unlinking, that owner can release and a new one can acquire:
+      // deleting the replacement lock loses updates. Abandoned locks fail open;
+      // state is per transient execution thread, not a shared security boundary.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    }
   }
+  if (fd === undefined) return null;
+  try { return fn(); }
+  finally { fs.closeSync(fd); try { fs.unlinkSync(lock); } catch { /* already gone */ } }
+}
+
+/** Execute one scoped guard transaction. No native thread identity means no shared-parent guess. */
+function guardCall(payload, { env = process.env, host, settings, stateDir, now = Date.now() } = {}) {
+  try {
+    if (settings === undefined) settings = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.harness?.loopGuard ?? {};
+    const cfg = loadConfig(env, settings);
+    const tool = payload.tool_name;
+    const identity = sessionIdentity(env, payload, { host });
+    if (cfg.disable || !tool || cfg.exempt.has(tool) || !identity.threadId) return null;
+    const file = stateFile(`${identity.host}:${identity.threadId}`, stateDir);
+    return transaction(file, () => {
+      const res = evaluate(readState(file).entries, { tool, input: payload.tool_input, now }, cfg);
+      writeState(file, { entries: res.entries });
+      return res;
+    });
+  } catch { return null; }
 }
 
 /**
@@ -220,21 +264,15 @@ function evaluate(entries, { tool, input, now }, cfg = loadConfig()) {
   return { verdict: 'ok', entry, entries: next };
 }
 
-function main(raw, env = process.env) {
+function main(raw, env = process.env, options = {}) {
   let payload;
   try {
     payload = JSON.parse(raw);
   } catch {
     return; // fail open
   }
-  const cfg = loadConfig(env);
-  const tool = payload.tool_name;
-  if (cfg.disable || !tool || cfg.exempt.has(tool)) return;
-
-  const file = stateFile(payload.session_id);
-  const state = readState(file);
-  const res = evaluate(state.entries, { tool, input: payload.tool_input, now: Date.now() }, cfg);
-  writeState(file, { entries: res.entries });
+  const res = guardCall(payload, { ...options, env });
+  if (!res) return;
 
   if (res.verdict === 'deny') {
     process.stdout.write(
@@ -264,7 +302,7 @@ if (isMain(import.meta.url)) {
   process.stdin.on('data', (c) => (raw += c));
   process.stdin.on('end', () => {
     try {
-      main(raw);
+      main(raw, process.env, { host: process.argv.includes('--host') ? process.argv[process.argv.indexOf('--host') + 1] : undefined });
     } catch {
       /* fail open */
     }
@@ -273,4 +311,4 @@ if (isMain(import.meta.url)) {
   process.stdin.on('error', () => process.exit(0));
 }
 
-export { evaluate, loadConfig, normalize, jaccard, trigrams, DEFAULTS, BASE_EXEMPT, main };
+export { evaluate, loadConfig, normalize, jaccard, trigrams, DEFAULTS, BASE_EXEMPT, main, guardCall };

@@ -7,6 +7,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { execFileSync, spawn } from 'child_process';
+import { isMain } from '../shared/is-main.mjs';
 
 // ── Native OS notification ──
 // Windows/Linux support clicking the notification to open VS Code at the
@@ -16,6 +17,12 @@ import { execFileSync, spawn } from 'child_process';
 
 function xmlEscape(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// XML escaping is not PowerShell escaping. Keep all user/project text out of
+// expandable PowerShell strings, including $() and backticks in directory names.
+export function powershellXmlData(xml) {
+  return `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(xml, 'utf8').toString('base64')}'))`;
 }
 
 function getVscodeUri(workspaceRoot) {
@@ -28,7 +35,7 @@ function getVscodeUri(workspaceRoot) {
   return encodeURI(`vscode://file/${p}`);
 }
 
-function sendNativeNotification(title, message, workspaceRoot, enableSound) {
+export function sendNativeNotification(title, message, workspaceRoot, enableSound) {
   const platform = os.platform();
   if (platform === 'darwin') {
     // macOS 26+ breaks both AppleScript 'display notification' and
@@ -56,10 +63,7 @@ function sendNativeNotification(title, message, workspaceRoot, enableSound) {
       ? `activationType="protocol" launch="${xmlEscape(vscodeUri)}"`
       : 'activationType="background"';
     const audioSilent = enableSound ? 'false' : 'true';
-    const psScript = `
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-$template = @"
+    const xmlTemplate = `
 <toast ${toastLaunch} duration="long">
   <visual><binding template="ToastGeneric">
     <text>${xmlEscape(title)}</text>
@@ -67,10 +71,13 @@ $template = @"
   </binding></visual>
   <audio src="ms-winsoundevent:Notification.Default" silent="${audioSilent}" />
 </toast>
-"@
+`;
+    const psScript = `
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
 try {
   $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-  $xml.LoadXml($template)
+  $xml.LoadXml(${powershellXmlData(xmlTemplate)})
   $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
   [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Microsoft.Windows.Shell.RunDialog").Show($toast)
   Start-Sleep -Milliseconds 2000
@@ -168,8 +175,7 @@ fi`;
 
 // ── Main ──
 
-// Parse CLI args
-const args = process.argv.slice(2);
+export function main(args = process.argv.slice(2)) {
 let isUserPrompt = false;
 let enableOpen = false;
 let enableSound = true;
@@ -254,3 +260,6 @@ if (hookEvent === 'completed') {
   message = `Waiting for your response in: ${projectName}`;
 }
 sendNativeNotification(title, message, workspaceRoot, enableSound);
+}
+
+if (isMain(import.meta.url)) main();

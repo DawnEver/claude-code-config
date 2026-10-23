@@ -1,15 +1,17 @@
 # Hooks, health check and memory
 
-What runs on its own once setup is done. All hook scripts live in `scripts/hooks/` and are wired
-in `claude_settings.json`; `doctor.js` lives in `scripts/setup/` because it is also a setup-time
-command.
+What runs on its own once setup is done. The repository's user hook scripts live in
+`scripts/hooks/` and are wired in **Claude's** `claude_settings.json`; `doctor.js` lives in
+`scripts/setup/` because it is also a setup-time command. That wiring is not automatically
+translated into Codex settings. Codex has its own setup-managed native `hooks.json`;
+plugin hooks remain a separate, bundled integration.
 
 ## Hooks
 
 | Event | Script | Purpose |
 |---|---|---|
 | `SessionStart` | `sync-hook.js --pull` | Fast-forwards this checkout onto its upstream. Startup only, silent when current, never fatal |
-| `SessionStart` | `prune-cache-hook.js` | Prunes stale plugin cache entries |
+| `SessionStart` | `prune-cache-hook.js` | Reports stale cache candidates; automatic deletion is disabled |
 | `SessionStart` | `setup-check-hook.js` | Verifies/heals `~/.claude` links via `scripts/setup/check-links.js` |
 | `SessionStart` | `doctor.js --hook` | Reports failing invariants only (silent when healthy) |
 | `SessionEnd` | `sync-hook.js --remind` | Reports uncommitted files / unpushed commits. Pushing stays explicit |
@@ -19,12 +21,63 @@ command.
 | `statusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 
 The bridge hooks (`bridge-hook.js`) are documented in [`bridge.md`](bridge.md). The REM hook
-gates on session depth (>= 3 stops, >= 2 min) and runs `/rem`; state is in
-`.claude/.rem-state.json`.
+gates on session depth (>= 3 stops, >= 2 min) and requests `/rem` on Claude; state is in
+`.claude/.rem-state.json`. The updated Codex bundle requests bounded native continuation;
+completion requires an explicit matching acknowledgement after successful work.
 
-Codex has no SessionStart hook, so `codex.js` runs the same link self-heal at startup.
+Codex supports both plugin and native machine hooks. The launcher retains its pre-import
+checkpoint, while the separately installed native dispatcher supplies checks, protection,
+notifications and reminders. This is explicit host-specific wiring, not wholesale
+translation of Claude settings. See the [support matrix](codex-harness-audit.md).
 
 ## Syncing this repo across hosts
+
+### Codex native machine hooks
+
+Setup idempotently merges only reserved `cc-config:` handlers into the active Codex
+home's `hooks.json`, preserving unrelated handlers (including empty user groups).
+It never changes trust. Use `/hooks` to review new definitions. Do not duplicate these
+entries in inline TOML: native sources accumulate rather than override one another.
+
+`scripts/hooks/codex-hook.mjs` is the single machine-hook entry:
+
+| Native event | Behavior |
+| --- | --- |
+| SessionStart startup | Shared short startup lease, sync before importing checks, then heal, doctor, report-only cache audit and optional collector ensure |
+| SessionStart resume/fork | Heal/check without moving the checkout; compact context belongs to REM's native hook |
+| PreToolUse | Thread-scoped transactional loop guard; unknown execution identity fails open |
+| PermissionRequest | Best-effort native OS notice; never answers or relaxes approval policy |
+| PreToolUse input-request tools | Input-needed notice when the native tool-hook path exposes the question; never fabricates an answer |
+| SessionEnd | Read-only cc-config dirty/upstream reminder under a single short budget; local last-reminder record, stderr and best-effort OS notice |
+
+Completion notices use Codex `notify` (`agent-turn-complete`), not early Stop callbacks.
+An explicit shared-head `notify` remains user-owned. Notification bodies omit prompt and
+answer text; Windows XML is decoded as data, not interpolated PowerShell code.
+
+Doctor distinguishes missing/drifted definitions and per-event execution observations.
+One observed SessionStart does not certify PreToolUse, trust or successful enforcement.
+Diagnostic receipts and cache reports live under the active home's `harness-hooks/`,
+contain no raw hook payload, and are not another source of session truth.
+
+Loop guard configuration can be set in shared/local `harness.loopGuard` (`warnAt`, `denyAt`,
+`similarWarnAt`, `similarDenyAt`, `similarThreshold`, `windowMinutes`, `maxEntries`, `disable`,
+`exempt`). Precedence is `HARNESS_LOOP_GUARD_*`, existing `CLAUDE_LOOP_GUARD_*`, merged
+configuration, then defaults. This explicit file read works when daemon env is unrelated to
+the launcher. Hosted tools outside native tool hooks remain outside the guard's coverage.
+
+Optional `harness.notifications` supports `enabled`, `sound`, and `open`. Cache audits write
+daily candidate reports without deleting old versions a daemon may still lazily load.
+
+Native plugin updates need separate protection: the vendor CLI can remove old cache
+contents even when it leaves a directory behind. Use the explicit preservation updater
+in [setup.md](setup.md#codex-native-hooks-and-active-home). Its validated snapshot is
+machine-local; doctor checks protected files, not merely version-directory existence.
+
+`CODEX_HOME` is preserved and resolved consistently for setup, launch, hooks and usage. Run
+setup for an explicitly selected home before using it. One machine collector owns one home;
+another home's launch warns instead of silently replacing the collector or mixing accounts.
+
+### Startup synchronization
 
 Tracked content travels by `git pull`/`push` — see [`sync-architecture.md`](sync-architecture.md).
 `sync-hook.js` automates only the **inbound** half: it fast-forwards at session start and refuses
@@ -64,8 +117,8 @@ reader to ignore it.
 
 | Path | Purpose | Loaded | Git |
 |---|---|---|---|
-| `.claude/rules/` | Distilled rule files | Every session | Tracked |
-| `.claude/rules/MEMORY.md` | Generated index of memory entries | Every session | Gitignored (device-local) |
+| `.claude/rules/` | Distilled rule files | Claude natively; Codex through REM startup/compact injection | Tracked |
+| `.claude/rules/MEMORY.md` | Generated index of memory entries | Same rule-loading path | Gitignored (device-local) |
 | `.claude/memory/YYYY/MM/DD/<topic>.md` | Append-only memory archive | On demand via index | Tracked |
 | `.claude/memory/YYYY/MM/DD/_meta.json` | Access metadata | — | Gitignored (device-local) |
 

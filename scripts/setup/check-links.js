@@ -2,8 +2,8 @@
 // Shared link-health check over the links setup.js maintains (both ~/.claude
 // and ~/.codex). Used by the Claude Code SessionStart hook
 // (scripts/hooks/setup-check-hook.js) and by the Codex launcher
-// (scripts/runtime/codex.js — Codex has no session-start hook mechanism, so
-// the launcher is its checkpoint).
+// (scripts/runtime/codex.js — this repo uses the launcher as Codex's checkpoint;
+// Claude's user hook settings are not projected into Codex).
 //
 // Auto-repairs the lossless cases (missing dest -> re-link; claude-hud config
 // symlink -> hard link; a sync payload file whose link a cloud client broke, see
@@ -11,6 +11,7 @@
 // never touched. See setup-check-hook.js header.
 import fs from 'fs';
 import path from 'path';
+import { installCodexHooks } from './codex-hooks.mjs';
 import {
   sourceDir,
   claudeDir,
@@ -152,6 +153,14 @@ export function checkLinks() {
   for (const { alias, dir } of localSeats()) if (fs.existsSync(dir)) check(SEAT_LINKS, dir, `seat ${alias}: `);
   fs.mkdirSync(path.join(codexDir, 'skills'), { recursive: true });
   check(getCodexLinks(), codexDir);
+
+  try {
+    const result = installCodexHooks({ codexDir, scriptsDir: path.join(claudeDir, 'scripts') });
+    if (result.changed) {
+      repaired.push('Codex native hooks');
+      warnings.push('Codex hook definitions changed; review/trust them with /hooks');
+    }
+  } catch (error) { warnings.push(`Codex hooks: ${error.message}`); }
 
   return { repaired, warnings };
 }

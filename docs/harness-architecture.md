@@ -5,7 +5,9 @@ projects, and many tasks per machine, cross-platform, across Claude Code and Cod
 How config reaches each machine is a separate concern — see
 [`sync-architecture.md`](sync-architecture.md).
 
-Status: design only (2026-10-01). Decision record:
+Status: design and implementation record, with historical statements qualified below.
+For current Codex support and boundaries, see
+[`codex-harness-audit.md`](codex-harness-audit.md) (2026-10-23). Decision record:
 `.claude/memory/2026/10/01/harness-session-bridge-design.md`.
 
 ## 1. Goal and requirements
@@ -80,8 +82,11 @@ All three attach to the same running session:
 | Claude | channels (custom channel plugin) | hooks + transcript |
 
 Codex's TUI is itself a client of a shared local app-server daemon, so the bridge is one
-more client. Claude has no such daemon; injection goes through channels. Remote Control
-is Claude-only: it cannot drive a Codex session.
+more client. Claude has no such daemon; injection goes through channels. Claude's remote
+surface does not drive Codex. Codex has its own experimental `remote-control start|pair`
+commands (verified with the installed CLI's help); provisioning and cross-client live
+acceptance are not performed by this repo. Independent embedded Codex sessions have
+observation-only bridge coverage, not an interchangeable live-control endpoint.
 
 ## 5. Telegram topology
 
@@ -172,12 +177,17 @@ No bot accounts: they multiply credentials and lose layer 1. Instead:
   fabric takeover or a nested launcher shares it. It is the vendor's own conversation id, so a
   resume keeps it (`scripts/shared/vendor-session.mjs`): a fresh Claude launch is pinned with
   `--session-id <LAB_SESSION>`, `--resume <id>`/`--continue` and `codex resume <id>|--last` reuse the
-  resumed id; a launcher UUID is only the fallback (fresh Codex, the bare `--resume` picker). lab-commons' `lab-session` commit-msg row
-  writes it as the `Lab-Session:` trailer (the agent never does) and refuses an agent commit
-  without it; `forge pr create` and pre-push of a new `pr/*` admit one open PR per session
-  (ONE-SESSION-ONE-PR). It is never in `codexShellEnv()`: a static file would give every
-  session one id, so a Codex command run in a shared daemon the launcher env never reaches has
-  none, and its commit is refused rather than misattributed. `Claude-Session:` is prose.
+  resumed id; a launcher UUID is only the fallback (fresh Codex, the bare `--resume` picker).
+  It is never in `codexShellEnv()`: a static file would give every session one id. A shared
+  daemon need not inherit the launcher's `LAB_SESSION`, but Codex supplies native dynamic
+  identity (`CODEX_THREAD_ID`, `CODEX_SESSION_ID`); thread and parent-session meanings must
+  be normalized by consumers. `scripts/shared/session-identity.mjs` now supplies that
+  distinction, and `sessionEnv()` prefers native root lineage over inherited stale launcher
+  IDs. This does not inject a dynamic ID through a static config file or prove an external
+  consumer adopted the helper. Historical notes about lab-commons' `lab-session` commit-msg
+  gate, `Lab-Session:` trailers and ONE-SESSION-ONE-PR were **not revalidated against the
+  current downstream implementation** in the 2026-10-23 audit. They are not evidence that
+  a current Codex commit must fail. `Claude-Session:` is prose.
 - **Env contract:** the same paths export `HARNESS_MACHINE` and `HARNESS_AGENT`
   (`claude`|`codex`) for other tools (e.g. lab-commons' forge) to read. No machine name →
   nothing is injected. `setup-vscode.js` (Claude in VS Code) carries no provenance.

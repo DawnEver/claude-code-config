@@ -22,7 +22,7 @@ const CATALOG_FLAG = `model_catalog_json=${join(homedir(), '.codex', 'models.jso
 
 const CODEX_STRIP_KEYS = [
   'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_API_KEY', 'OPENAI_BASE_URL',
-  'CODEX_HOME', 'CODEX_NON_INTERACTIVE', 'CODEX_CA_CERTIFICATE',
+  'CODEX_NON_INTERACTIVE', 'CODEX_CA_CERTIFICATE',
 ];
 
 function fixture() {
@@ -46,6 +46,13 @@ test('default Codex (provider=null) leaves env untouched beyond strip sets and a
   for (const k of CODEX_STRIP_KEYS) {
     if (before[k] != null) assert.equal(env[k], undefined, `${k} should be stripped from parent env`);
   }
+});
+
+test('explicit Codex home reaches vendor process and scopes its provider model catalogue', () => {
+  const customHome = join(tmpdir(), 'codex-custom-home');
+  const { env, args } = invoke(RULES, {}, { baseEnv: { CODEX_HOME: customHome } });
+  assert.equal(env.CODEX_HOME, customHome);
+  assert.ok(args.includes(`model_catalog_json=${join(customHome, 'models.json')}`));
 });
 
 // The catalogue comes from the provider cache, the key from the credential store: both injected.
@@ -133,7 +140,7 @@ test('bridge: interactive official TUI attaches to the shared daemon', () => {
 
 test('bridge: non-TUI subcommands, an explicit --remote, or no bot token stay untouched', () => {
   const { shared, local } = bridgeFixture('123:abc');
-  for (const extraArgs of [['exec', 'hi'], ['app-server', 'daemon', 'version'], ['--remote', 'ws://h:1']]) {
+  for (const extraArgs of [['exec', 'hi'], ['app-server', 'daemon', 'version'], ['--remote', 'ws://h:1'], ['--no-daemon'], ['--no-daemon', 'resume', '--last'], ['--model', 'x', 'exec', 'hi']]) {
     assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs, envSettingsPath: shared, localPath: local }).args, extraArgs);
   }
   const none = bridgeFixture(null);

@@ -11,7 +11,6 @@ import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { syncBeforeLaunch } from './startup-sync.mjs';
-import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 
 // Synchronize before importing repo-owned implementation modules: git may
 // replace them during a fast-forward. The host must launch with the new config,
@@ -20,13 +19,14 @@ const sync = syncBeforeLaunch();
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
 const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { accountFile, configDir },
-  { channelServerPath, ensureChannelServer }, { readBridgeConfig }] = await Promise.all([
+  { channelServerPath, ensureChannelServer }, { readBridgeConfig }, { ENV_SETTINGS_PATH }] = await Promise.all([
   import('./cc-launcher.mjs'),
   import('./win-spawn.mjs'),
   import('../shared/claude-defaults.mjs'),
   import('../shared/seats.mjs'),
   import('../shared/channel-server.mjs'),
   import('../bridge/context.mjs'),
+  import('../shared/config.mjs'),
 ]);
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -69,7 +69,8 @@ try { applyGlobalDefaults(accountFile(configDir(env))); } catch { /* ignore */ }
 // The bridge channel's MCP registration can vanish with a recreated `.claude.json`, and the
 // session would then run unbridged without a word. Best-effort, like the line above.
 try {
-  if (readBridgeConfig().botToken && ensureChannelServer(accountFile(configDir(env)), channelServerPath(REPO_ROOT))) {
+  const bridge = readBridgeConfig();
+  if ((bridge.botToken || bridge.dashboard) && ensureChannelServer(accountFile(configDir(env)), channelServerPath(REPO_ROOT))) {
     console.log('[cc] Registered the session-bridge channel server for this config dir');
   }
 } catch { /* ignore */ }

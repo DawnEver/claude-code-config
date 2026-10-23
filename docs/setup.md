@@ -12,8 +12,43 @@ overwrite (`--replace` / `-r` does). Claude links `skills/` as one directory. Co
 `./skills/<name>` into `~/.codex/skills/<name>`.
 
 If `claude_settings.json` or `claude_env_settings.json` are missing, setup copies the
-`.template.json` versions automatically. Fill in your API keys in
-`~/.claude/claude_env_settings.local.json`.
+`.template.json` versions automatically. Provider keys belong in the credential store
+([providers.md](providers.md)); the machine-local JSON holds non-key overrides and
+transport secrets, never the cloud-synced payload.
+
+### Codex native hooks and active home
+
+Setup preserves unrelated entries while merging reserved machine handlers into
+`hooks.json` in `CODEX_HOME` (default `~/.codex`). Review new definitions with `/hooks`;
+trust is never automatically granted. Doctor reports missing/drifted definitions and
+per-event execution observations separately. See [operations.md](operations.md) for
+startup ordering, guard preferences, completion notices and shutdown reminders.
+
+Select a custom `CODEX_HOME` before running setup and keep it for the intended launcher.
+Hooks, prompt links, models, credentials and rollout sources resolve through that active
+home. The machine collector refuses a different home while one is already running;
+it does not guess other account directories or silently combine accounts.
+
+Updating plugin source is not activation of an installed cache. REM/review changes require
+the normal cc-market release/update lifecycle and a fresh trusted host session. Never
+overwrite a live cached plugin version in place to make an unreleased change appear active.
+
+After an explicitly approved local release, update through the preservation wrapper:
+
+```sh
+node scripts/setup/update-codex-plugins.mjs ./cc-market rem sharp-review fabric evolve cc-latex
+```
+
+Native `codex plugin add` can delete old cache contents even while leaving their version
+directory present. The wrapper snapshots protected versions first, invokes native add
+sequentially with an invocation-only local catalogue override, and restores missing files
+after each call and on failure. Surviving bytes are never overwritten; existing target
+versions are skipped. Doctor detects missing protected files and reports byte differences
+without assuming that a difference proves corruption. No updater runs automatically from
+setup, a hook or a launcher, and no hook-trust bypass or push is performed.
+Snapshot restoration cannot make the vendor's delete/reinstall window atomic. If
+uninterrupted lazy imports are required, schedule an update after old clients have closed;
+the updater never kills them to manufacture that condition.
 
 Provisioning a Windows host without admin rights? `scripts/setup/bootstrap-windows.bat`
 installs Rust and Node.js LTS at user level and appends them to the user `PATH`. Run it from an
@@ -37,9 +72,11 @@ so they apply however Codex was started (including the shared app-server daemon)
    (`<NAME>` unique per host; `--init-sync-dir` only on the very first host).
    This links the payload, including the shared `private-markers` denylist, and sets the
    public-hygiene pre-commit hook.
-3. Fill in this host's secrets in `~/.claude/claude_env_settings.local.json` (API keys; and for
+3. Configure provider keys through the credential store and this host's transport secrets
+   in `~/.claude/claude_env_settings.local.json` (for
    the bridge, a bot of its own — [`bridge.md`](bridge.md) § Setup steps 2–3, 6).
-   Re-run setup: with a bot token it installs the bridge service and registers the channel.
+   Re-run setup: with a bot token or valid dashboard configuration it installs the collector
+   service and registers the channel; telemetry-only mode never polls or writes Telegram.
 4. `npm run doctor` must report no FAIL. Its WARNs name what this host still lacks:
    `machine-name`, `private-markers-missing`, `bridge-host`.
 

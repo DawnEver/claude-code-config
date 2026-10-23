@@ -9,6 +9,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'node:url';
 
 import {
   sharedHeadOf,
@@ -20,6 +21,12 @@ import {
 import { codexView, generateModelProvidersBlock } from './inject-codex-providers.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { codexShellEnv } from '../shared/machine.mjs';
+
+/** Project only this repo's known prompt link; arbitrary user paths remain untouched. */
+export function withCodexHome(head, codexDir) {
+  return head.replace(/^(\s*model_instructions_file\s*=\s*)["']~\/\.codex\/system-prompt\/codex-base\.md["'](\s*(?:#.*)?)$/m,
+    (_, key, comment) => `${key}${JSON.stringify(path.join(codexDir, 'system-prompt', 'codex-base.md'))}${comment}`);
+}
 
 /**
  * Write atomically: a crash mid-write must not leave a truncated config, and a reader
@@ -34,6 +41,13 @@ export function writeFileAtomic(target, content) {
     fs.rmSync(tmp, { force: true });
     throw err;
   }
+}
+
+/** Native completion notifications are machine-local; an explicit user notify wins. */
+export function withCodexNotify(head, script = fileURLToPath(new URL('../hooks/codex-hook.mjs', import.meta.url))) {
+  const preamble = splitCodexConfig(head).preamble;
+  if (/^\s*notify\s*=/m.test(preamble)) return head;
+  return `notify = ${JSON.stringify([process.execPath, script, '--notify'])}\n${head}`;
 }
 
 /**
@@ -127,7 +141,7 @@ export function composeCodexConfigFile({ syncDir, envSettingsPath, codexDir, she
     }
   }
 
-  const next = composeCodexConfig({ head: withShellEnvSet(head, shellEnv), providersBlock, localSections: localText });
+  const next = composeCodexConfig({ head: withShellEnvSet(withCodexNotify(withCodexHome(head, codexDir)), shellEnv), providersBlock, localSections: localText });
 
   fs.mkdirSync(codexDir, { recursive: true });
   if (before && before.isSymbolicLink()) fs.unlinkSync(target);

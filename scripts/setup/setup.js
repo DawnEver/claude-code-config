@@ -9,7 +9,9 @@ import { installCliWrappers } from './install-cli-wrappers.js';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 import { refreshProviderCache } from './provider-setup.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
+import { installCodexHooks } from './codex-hooks.mjs';
 import { isMain } from '../shared/is-main.mjs';
+import { resolveCodexHome } from '../shared/codex-home.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 import { planService, runAction, SERVICE_NAME } from '../bridge/install-service.mjs';
 import { isValidMachineName, readMachineName, writeMachineName, MACHINE_FIX_CMD } from '../shared/machine.mjs';
@@ -26,7 +28,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const sourceDir = path.resolve(__dirname, '../..');
 export const claudeDir = path.join(os.homedir(), '.claude');
-export const codexDir = path.join(os.homedir(), '.codex');
+export const codexDir = resolveCodexHome();
 
 // Directory holding the cloud-synced config payload. Defaults to the repo itself, so a
 // single-machine install needs no configuration and behaves exactly as it did before
@@ -703,6 +705,12 @@ export function setup(options = {}) {
   }
 
   // Install standalone wrappers; shell profiles are deliberately not required.
+  console.log('\n--- Codex native hooks ---');
+  try {
+    const hooks = installCodexHooks({ codexDir, scriptsDir: path.join(claudeDir, 'scripts') });
+    console.log(`OK    Codex hooks ${hooks.changed ? 'updated' : 'unchanged'}; review/trust new definitions with /hooks (never auto-trusted)`);
+  } catch (err) { console.log(`ERR   Codex hooks: ${err.message}`); counters.errors++; }
+
   console.log('\n--- CLI Wrappers ---');
   installCliWrappers(claudeDir);
 
@@ -712,12 +720,12 @@ export function setup(options = {}) {
     console.log('OK    git core.hooksPath -> .githooks (public-hygiene pre-commit)');
   } catch { /* not a git checkout: nothing to gate */ }
 
-  // The session bridge (docs/bridge.md) runs only where this machine has its own bot token.
+  // Collectors can run with dashboard credentials alone; Telegram is an optional transport.
   const bridge = readBridgeConfig({
     sharedPath: path.join(claudeDir, 'claude_env_settings.json'),
     localPath: path.join(claudeDir, 'claude_env_settings.local.json'),
   });
-  if (bridge.botToken) {
+  if (bridge.botToken || bridge.dashboard) {
     console.log('\n--- Session bridge ---');
     if (runAction('install', planService())) console.log(`OK    ${SERVICE_NAME} service installed`);
     else { console.log(`ERR   ${SERVICE_NAME} service install failed - see docs/bridge.md`); counters.errors++; }

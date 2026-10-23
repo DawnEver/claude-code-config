@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluate, loadConfig, normalize, jaccard, DEFAULTS } from './loop-guard-hook.js';
+import { evaluate, loadConfig, normalize, jaccard, DEFAULTS, guardCall } from './loop-guard-hook.js';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const NOW = 1_700_000_000_000;
 const bash = (command) => ({ tool: 'Bash', input: { command }, now: NOW });
@@ -111,4 +116,57 @@ test('a deny carries an actionable reason', () => {
 test('jaccard is 1 for identical sets and 0 for disjoint ones', () => {
   assert.equal(jaccard(new Set(['abc']), new Set(['abc'])), 1);
   assert.equal(jaccard(new Set(['abc']), new Set(['xyz'])), 0);
+});
+
+test('shared config works without launcher env; explicit env has defined precedence', () => {
+  const shared = { warnAt: 2, denyAt: 3, disable: true, exempt: ['local_wait'] };
+  assert.equal(loadConfig({}, shared).denyAt, 3);
+  assert.equal(loadConfig({}, shared).disable, true);
+  assert.ok(loadConfig({}, shared).exempt.has('local_wait'));
+  assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DENY_AT: '8', CLAUDE_LOOP_GUARD_DENY_AT: '6', HARNESS_LOOP_GUARD_DISABLE: 'false' }, shared).denyAt, 8);
+  assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DISABLE: 'false' }, shared).disable, false);
+});
+
+test('Codex sibling threads do not count against each other and unknown identity fails open', (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'guard-thread-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const payload = { session_id: 'root', tool_name: 'Bash', tool_input: { command: 'npm test' } };
+  const call = thread => guardCall(payload, { host: 'codex', env: thread ? { CODEX_THREAD_ID: thread } : {}, settings: {}, stateDir, now: NOW });
+  assert.equal(call('a').verdict, 'ok');
+  assert.equal(call('a').verdict, 'ok');
+  assert.equal(call('b').verdict, 'ok');
+  assert.equal(call('a').verdict, 'warn');
+  assert.equal(call(null), null);
+  assert.equal(readdirSync(stateDir).length, 2);
+});
+
+test('Codex polling tools are exempt', () => {
+  for (const name of ['write_stdin', 'wait_agent', 'list_agents', 'sleep', 'request_user_input', 'request_user_input_async'])
+    assert.ok(loadConfig({}).exempt.has(name), name);
+});
+
+test('guard state containing input fingerprints is stored privately', t => {
+  const root = mkdtempSync(join(tmpdir(), 'guard-private-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const stateDir = join(root, 'state');
+  assert.equal(guardCall({ session_id: 'private', tool_name: 'Bash', tool_input: { command: 'read data' } },
+    { env: {}, settings: {}, stateDir }).verdict, 'ok');
+  const file = join(stateDir, readdirSync(stateDir)[0]);
+  assert.ok(readFileSync(file, 'utf8').includes('entries'));
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(stateDir).mode & 0o777, 0o700);
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+  }
+});
+
+test('parallel hook processes preserve the complete read-modify-write transaction', async (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'guard-parallel-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const module = new URL('./loop-guard-hook.js', import.meta.url).href;
+  const code = `import {guardCall} from ${JSON.stringify(module)}; guardCall({session_id:'s',tool_name:'Bash',tool_input:{command:'same'}},{env:{},settings:{},stateDir:process.argv[1]});`;
+  const run = promisify(execFile);
+  await Promise.all(Array.from({ length: 8 }, () => run(process.execPath, ['--input-type=module', '-e', code, stateDir])));
+  const files = readdirSync(stateDir);
+  assert.equal(files.length, 1);
+  assert.equal(JSON.parse(readFileSync(join(stateDir, files[0]), 'utf8')).entries.length, 8);
 });

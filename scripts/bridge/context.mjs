@@ -43,7 +43,7 @@ export function bridgeSourceRevision(repoRoot = fileURLToPath(new URL('../../', 
  * (`cli`, `vscode`, `exec`, `appServer`, `unknown`) or an object source's key (`custom`,
  * `subAgent`).
  */
-export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli'] };
+export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli', 'vscode'] };
 
 const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
 

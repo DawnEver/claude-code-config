@@ -85,7 +85,7 @@ other hosts' dead paths forever. So the file is split by owner:
 | --- | --- | --- |
 | preamble + `[tui]`, `[plugins.*]`, `[features]`, … | human | **Tier B**, the sync payload |
 | `[model_providers.*]` between the setup-managed markers | `claude_env_settings.json` | Tier D, regenerated |
-| `[projects.*]`, `[hooks.*]`, `[notice]` | Codex itself | **Tier C**, machine-only |
+| `[projects.*]`, `[hooks.state.*]`, `[notice]` | Codex itself | **Tier C**, machine-only |
 | `shell_environment_policy.set` provenance keys (merged into the head's table if any) | `~/.claude/machine.json` + git `user.name` | per-host only, regenerated (harness §8b) |
 
 `~/.codex/config.toml` is therefore **a real file composed per host**, not a symlink into
@@ -103,6 +103,8 @@ See `scripts/setup/codex-config-compose.mjs`.
 | --- | --- |
 | `~/.claude/claude_env_settings.local.json` | **all API keys**, per-host overrides |
 | `~/.claude/sync-dir` | pointer to this machine's sync directory (see §4) |
+| active `CODEX_HOME` / `~/.codex/hooks.json` | native machine-hook definitions, merged by setup; trust remains Codex-owned |
+| active Codex home's `harness-hooks/` | per-event execution observations, report-only cache audit and last shutdown reminder |
 | `~/.claude/settings.local.json`, `.claude/rules/MEMORY.md`, `_meta.json` | per-device generated/local state |
 
 `~/.claude` is a real per-machine directory; only specific children are links into the
@@ -256,8 +258,8 @@ cached in the host process. Only after sync completes do the launchers
 dynamically import their repo-owned modules and read provider configuration.
 Claude's child process inherits `CC_CONFIG_STARTUP_SYNCED=1`, so its subsequent
 SessionStart hook does not fetch twice; a direct `claude` launch has no marker
-and updates normally. Codex has no SessionStart hook, so the setup-installed
-`codc` and `cods` executables perform this on every launch without shell-profile
+and updates normally. Claude's user SessionStart settings are not projected into Codex;
+the setup-installed `codc` and `cods` executables perform this on every launch without shell-profile
 configuration; these are the guaranteed synchronized Codex entry points.
 Offline, dirty, ahead, and diverged states remain non-destructive
 fail-open cases, while a successful fast-forward invokes `checkLinks()` to

@@ -55,3 +55,14 @@ test('ensure is a no-op when current, starts when absent, replaces stale source'
     assert.equal(await ensureDaemon({ ...opts, configured: () => false }), 'unconfigured');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a live collector for another Codex home is not silently replaced or attributed to this home', async () => {
+  const dir = tmp();
+  try {
+    const runtimeFile = path.join(dir, 'runtime.json');
+    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 7, codexHome: path.join(dir, 'one'), sourceRevision: 'old' }));
+    const result = await ensureDaemon({ runtimeFile, configured: () => true, codexHome: path.join(dir, 'two'),
+      alive: () => true, stale: () => false, kill: () => assert.fail('replaced another home'), start: () => assert.fail('started duplicate collector') });
+    assert.equal(result, 'different-home');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

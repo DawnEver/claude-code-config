@@ -14,6 +14,7 @@ import { claudeTranscript, codexTranscript } from './transcripts.mjs';
 import { gitContext, repoNameFromUrl } from '../bridge/context.mjs';
 import { aliasOf, baseDir, readAccount } from '../shared/seats.mjs';
 import { claudeAccountKey, codexAccountKey } from '../bridge/quota.mjs';
+import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 
@@ -32,7 +33,7 @@ async function* walk(dir, depth) {
  * `~/.claude-<alias>` seat dir) and Codex's sessions. A projects dir reached twice (a seat dir
  * that links it back to the base) is read once.
  */
-export function sources(home = os.homedir(), { codexEmail = () => null, machine = 'host' } = {}) {
+export function sources(home = os.homedir(), { machine = 'host', codexHome = resolveCodexHome({ home }) } = {}) {
   const out = [];
   const seen = new Set();
   const dirs = [baseDir(home)];
@@ -48,7 +49,10 @@ export function sources(home = os.homedir(), { codexEmail = () => null, machine 
       account: () => claudeAccountKey(readAccount(dir, home), `${machine}/${seat ?? 'base'}`) });
   }
   for (const d of ['sessions', 'archived_sessions']) {
-    out.push({ agent: 'codex', root: path.join(home, '.codex', d), depth: 4, seat: null, account: () => codexAccountKey(codexEmail(), machine) });
+    out.push({ agent: 'codex', root: path.join(codexHome, d), depth: 4, seat: null,
+      // A current app-server login does not prove who owned a historical rollout.
+      // The verified rollout schema has no authoritative account field: keep it unknown.
+      account: () => codexAccountKey(null, `${machine}/home-${codexHomeKey(codexHome)}`) });
   }
   return out;
 }

@@ -10,6 +10,48 @@ const M = 60000, H = 60 * M;
 const isCard = m => m.replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('status:');
 const HOSTS = ['codex', 'claude'];
 
+test('telemetry-only registry keeps sessions and activity without any Telegram calls or confirmed Topic', async () => {
+  const host = fakeHost('codex');
+  host.statusSnapshot = () => ({ state: 'running' });
+  let at = 1000;
+  const bridge = new Bridge({ telegram: new Proxy({}, { get: () => () => assert.fail('Telegram called in telemetry mode') }),
+    adapters: [host], config: baseConfig, machine: 'test', telegramEnabled: false, now: () => at,
+    resolveContext: () => ({ project: 'proj', branch: 'main' }) });
+  await bridge.sessionUp('codex', { id: 'local', cwd: '/proj' });
+  at = 2000;
+  await bridge.prompt('codex:local', 'do work');
+  await bridge.notice('codex:local', 'working');
+  const [session] = bridge.dashboardSessions();
+  assert.equal(session.topic, null);
+  assert.equal(session.status, 'working');
+  assert.equal(Date.parse(session.lastActivityAt), at);
+});
+
+test('standalone session cards clearly distinguish observation from remote control', async () => {
+  const r = make();
+  r.hosts.codex.statusSnapshot = () => ({ state: 'unknown', observationOnly: true });
+  await live(r, 'codex', 'local');
+  assert.match(r.telegram.sent.find(isCard).text, /^Observation only \(local TUI controls\)/);
+  r.hosts.codex.statusSnapshot = () => ({ state: 'idle' });
+  await r.bridge.updateStatus('codex:local');
+  assert.match(r.telegram.edits.at(-1).text, /^Idle/);
+});
+
+test('commentary is posted before the final and sends log acknowledgement only after success', async () => {
+  const r = make();
+  await up(r, 'codex', 'live');
+  r.hosts.codex.emit('message', { id: 'live', turnId: 'T', itemId: 'a', text: 'Inspecting the local session' });
+  await settle();
+  assert.ok(texts(r.telegram).includes('Inspecting the local session'));
+  assert.ok(r.logs.some(m => m.includes('send acknowledged codex:live') && /messages=\d/.test(m)));
+  const acknowledgements = r.logs.filter(m => m.includes('send acknowledged')).length;
+  r.telegram.sendMessage = async () => { throw new Error('transport failed (outcome uncertain)'); };
+  r.hosts.codex.emit('message', { id: 'live', text: 'Next update' });
+  await settle();
+  assert.equal(r.logs.filter(m => m.includes('send acknowledged')).length, acknowledgements);
+  assert.ok(r.logs.some(m => m.includes('outcome uncertain')));
+});
+
 test('one status card follows native state and authenticates refresh', async () => {
   const r = make();
   let state = 'idle';

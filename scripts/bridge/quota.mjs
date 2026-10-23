@@ -191,7 +191,7 @@ function claudeGroups(dirs, seats, machine) {
  * quota data or a seat problem. `key` (agent + email + org) lets the dashboard merge one
  * account reported by several hosts. Times are epoch ms.
  */
-export function accountModels({ machine, seats, codexAccount, claude = [], codex, codexResetCredits = null, extra = null, now }) {
+export function accountModels({ machine, seats, codexAccount, claude = [], codex, codexFallback = machine, codexResetCredits = null, extra = null, now }) {
   const scheduled = (s) => (s ? { at: s.at ?? null, url: s.url ?? null } : null);
   const out = [];
   for (const g of claudeGroups(claude, seats, machine)) {
@@ -206,7 +206,7 @@ export function accountModels({ machine, seats, codexAccount, claude = [], codex
   if (codex || codexAccount) {
     const expiries = (Array.isArray(codexResetCredits?.credits) ? codexResetCredits.credits : [])
       .map((c) => (c?.expiresAt > 0 ? c.expiresAt * 1000 : null)).filter((x) => x === null || x > now);
-    out.push({ key: codexAccountKey(codexAccount?.email, machine), agent: 'codex', label: null,
+    out.push({ key: codexAccountKey(codexAccount?.email, codexFallback), agent: 'codex', label: null,
       email: codexAccount?.email ?? null, detail: codexAccount?.plan ? planName(codexAccount.plan) : null, problems: [],
       at: codex?.at ?? null, windows: windowModels(codex, now),
       resetCredits: codexResetCredits?.availableCount > 0 ? { count: codexResetCredits.availableCount, expiries } : null,
@@ -232,10 +232,10 @@ export function accountFor(session, accounts) {
  * `extraEveryMs` (the push runs every few seconds), refreshed in the background.
  */
 export class AccountReader {
-  constructor({ machine, codexQuota = () => null, codexAccount = () => null, codexSeriesFile = null, log = () => {}, now = Date.now,
+  constructor({ machine, codexQuota = () => null, codexAccount = () => null, codexSeriesFile = null, codexFallback = machine, log = () => {}, now = Date.now,
     extraResets = () => fetchExtraResets({ log }), extraEveryMs = 30 * 60000,
     sources = { seats: () => readSeats(), claude: readClaudeDirs } }) {
-    Object.assign(this, { machine, codexQuota, codexAccount, codexSeriesFile, now, extraResets, extraEveryMs, sources });
+    Object.assign(this, { machine, codexQuota, codexAccount, codexSeriesFile, codexFallback, now, extraResets, extraEveryMs, sources });
     this.extra = { at: -Infinity, value: null, pending: null };
   }
 
@@ -247,10 +247,12 @@ export class AccountReader {
         .finally(() => { this.extra.at = this.now(); this.extra.pending = null; });
     }
     const cx = this.codexQuota();
-    if (cx && this.codexSeriesFile) recordSample(this.codexSeriesFile, codexWindows(cx.limits), cx.at);
+    const account = this.codexAccount();
+    const seriesFile = typeof this.codexSeriesFile === 'function' ? this.codexSeriesFile(account) : this.codexSeriesFile;
+    if (cx && seriesFile) recordSample(seriesFile, codexWindows(cx.limits), cx.at);
     const seats = this.sources.seats();
-    const codex = cx ? quotaOf(this.codexSeriesFile ? readSeries(this.codexSeriesFile) : [{ from: cx.at, at: cx.at, windows: codexWindows(cx.limits) }]) : null;
-    return accountModels({ machine: this.machine, seats, codexAccount: this.codexAccount(), codexResetCredits: cx?.resetCredits ?? null,
+    const codex = cx ? quotaOf(seriesFile ? readSeries(seriesFile) : [{ from: cx.at, at: cx.at, windows: codexWindows(cx.limits) }]) : null;
+    return accountModels({ machine: this.machine, seats, codexAccount: account, codexFallback: this.codexFallback, codexResetCredits: cx?.resetCredits ?? null,
       claude: this.sources.claude(seats, this.machine), codex, extra: this.extra.value, now });
   }
 }

@@ -20,6 +20,12 @@ const models = ({ account = ME, quota = null, dirs, seats = SEATS, machine = 'm1
   accountModels({ machine, seats, now: NOW, claude: dirs ?? [{ alias: null, account, quota }], ...o });
 const problems = (o) => models(o).flatMap((a) => a.problems);
 
+test('unknown Codex accounts remain home-scoped instead of merging unrelated homes', () => {
+  const one = models({ codexAccount: { email: null, plan: 'plus' }, codexFallback: 'host/home-one' }).find(a => a.agent === 'codex');
+  const two = models({ codexAccount: { email: null, plan: 'plus' }, codexFallback: 'host/home-two' }).find(a => a.agent === 'codex');
+  assert.notEqual(one.key, two.key);
+});
+
 test('windowView: the average pace since opening, null too early; junk or past reset is null', () => {
   // 5h window, 4h elapsed, 80% used -> 20%/h.
   assert.equal(Math.round(windowView({ used: 80, resetsAt: NOW + H, windowMs: 5 * H, at: NOW }).perHour), 20);

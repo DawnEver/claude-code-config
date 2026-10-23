@@ -140,7 +140,7 @@ export function isMainSession(thread, sources = BRIDGE_DEFAULTS.codexSources) {
 }
 
 export class CodexAdapter extends EventEmitter {
-  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000, sources = BRIDGE_DEFAULTS.codexSources } = {}) {
+  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000, sources = BRIDGE_DEFAULTS.codexSources, localObserver = null } = {}) {
     super();
     this.sources = sources;
     this.agent = 'codex';
@@ -160,6 +160,10 @@ export class CodexAdapter extends EventEmitter {
     this.questions = new Map();   // key -> { rpcId, threadId, answerable, submitted? } (item/tool/requestUserInput)
     this.quota = null;            // { limits: RateLimitSnapshot, at, resetCredits } for the dashboard's quota (quota.mjs)
     this.account = null;          // { email, plan } of the ChatGPT login, for the same report
+    this.localObserver = localObserver;
+    this.loadedIds = new Set(); // Retained across outages: never mirror shared threads twice.
+    for (const kind of ['up', 'down', 'prompt', 'message', 'notice', 'progress', 'final', 'status', 'warn'])
+      localObserver?.on(kind, e => this.emit(kind, e));
   }
 
   /** Attach to the daemon. Resolves false (no throw) when it is not running. */
@@ -198,26 +202,40 @@ export class CodexAdapter extends EventEmitter {
 
   /** Reconcile subscriptions with the daemon's loaded threads. */
   async refresh() {
-    if (!this.rpc) return;
+    try { await this.#refreshShared(); }
+    finally {
+      for (const id of [...this.threads.keys(), ...this.pending, ...this.skipped, ...this.released.keys()]) this.loadedIds.add(id);
+      await this.localObserver?.refresh(this.loadedIds);
+    }
+  }
+
+  async #refreshShared() {
+    const rpc = this.rpc;
+    if (!rpc) return;
     // Account quota: pushed on change, re-read every few minutes as a backstop.
     if (!this.quota || this.now() - this.quota.at >= QUOTA_REFRESH_MS) {
-      const a = (await this.rpc.request('account/read', {}).catch(() => null))?.account;
+      const a = (await rpc.request('account/read', {}).catch(() => null))?.account;
+      if (this.rpc !== rpc) return;
       this.account = a?.type === 'chatgpt' ? { email: a.email ?? null, plan: a.planType ?? null } : a ? { email: null, plan: a.type } : null;
-      const r = await this.rpc.request('account/rateLimits/read', {}).catch(() => null);
+      const r = await rpc.request('account/rateLimits/read', {}).catch(() => null);
+      if (this.rpc !== rpc) return;
       if (isCodexBucket(r?.rateLimits)) this.quota = { limits: r.rateLimits, at: this.now(), resetCredits: r.rateLimitResetCredits ?? null };
     }
     const ids = new Set();
     let cursor = null;
     do {
-      const r = await this.rpc.request('thread/loaded/list', cursor ? { cursor } : {});
+      const r = await rpc.request('thread/loaded/list', cursor ? { cursor } : {});
+      if (this.rpc !== rpc) return;
       for (const id of r.data ?? []) ids.add(id);
       cursor = r.nextCursor;
     } while (cursor);
+    this.loadedIds = ids;
     for (const id of [...this.threads.keys()]) if (!ids.has(id)) this.#drop(id);
     for (const id of [...this.released.keys()]) if (!ids.has(id)) this.released.delete(id);
     const now = this.now();
     for (const [id, th] of [...this.threads]) if (th.idleSince !== null && now - th.idleSince >= IDLE_RELEASE_MS) this.#release(id, th.updatedAt);
     for (const id of ids) {
+      if (this.rpc !== rpc) return;
       if (this.threads.has(id)) continue;
       if (this.released.has(id)) {
         const read = (await this.rpc?.request('thread/read', { threadId: id }).catch(() => null))?.thread;
@@ -283,6 +301,7 @@ export class CodexAdapter extends EventEmitter {
       status: th.status ?? null,
       activeTurnId: running?.id ?? null,
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
+      deliveredMessages: new Set(),
       idleSince: th.status?.type === 'idle' ? this.now() : null,
       updatedAt: th.updatedAt ?? 0,
     };
@@ -290,6 +309,7 @@ export class CodexAdapter extends EventEmitter {
     // Back from release: what ran since it went quiet replays (updatedAt is seconds).
     const since = released === undefined ? this.connectedAt : released * 1000;
     this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, name: th.name ?? null, backlog: backlogSince(th.turns, since) });
+    this.emit('status', { id: threadId }); // Refresh an existing observation-only card on RPC takeover.
   }
 
   /** A non-main thread: never subscribed again; `dismiss` lets the daemon close any Topic it has. */
@@ -331,7 +351,7 @@ export class CodexAdapter extends EventEmitter {
         break;
       case 'turn/started':
         if (th) {
-          th.activeTurnId = p.turn?.id ?? null; th.agentMessages.clear();
+          th.activeTurnId = p.turn?.id ?? null; th.agentMessages.clear(); th.deliveredMessages.clear();
           this.emit('status', { id: p.threadId });
         }
         break;
@@ -354,6 +374,11 @@ export class CodexAdapter extends EventEmitter {
         if (item.type === 'agentMessage' && th && (!th.activeTurnId || !p.turnId || th.activeTurnId === p.turnId)) {
           const previous = th.agentMessages.get(item.id);
           th.agentMessages.set(item.id, { ...previous, ...item, text: item.text ?? previous?.text ?? '' });
+          const completed = th.agentMessages.get(item.id);
+          if (completed.phase === 'commentary' && completed.id && completed.text?.trim() && !th.deliveredMessages.has(completed.id)) {
+            th.deliveredMessages.add(completed.id);
+            this.emit('message', { id: p.threadId, turnId: p.turnId ?? null, itemId: completed.id, text: completed.text });
+          }
         }
         const line = progressLine(item);
         if (line) this.emit('progress', { id: p.threadId, text: line });
@@ -366,8 +391,8 @@ export class CodexAdapter extends EventEmitter {
         const ids = new Set(snapshot.map((item) => item.id));
         // A completed snapshot repairs missed notifications and wins over partial deltas.
         const items = [...snapshot, ...[...(th?.agentMessages.values() ?? [])].filter((item) => !ids.has(item.id))];
-        const text = finalText(items);
-        if (th) { th.activeTurnId = null; th.agentMessages.clear(); }
+        const text = finalText(items.filter((item) => !th?.deliveredMessages.has(item.id)));
+        if (th) { th.activeTurnId = null; th.agentMessages.clear(); th.deliveredMessages.clear(); }
         this.emit('final', { id: p.threadId, turnId: p.turn?.id ?? null, status, text });
         if (th) this.emit('status', { id: p.threadId });
         break;
@@ -394,6 +419,7 @@ export class CodexAdapter extends EventEmitter {
         // Subscribe at once instead of waiting for the next poll; the backlog covers any
         // turn that still slipped in first.
         const id = p.thread?.id;
+        if (id) this.loadedIds.add(id); // Also exclude threads born while the rollout scan awaits disk I/O.
         if (id && !isMainSession(p.thread, this.sources)) { this.#dismiss(id); break; }
         if (id && !this.threads.has(id) && !p.thread.ephemeral) {
           this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
@@ -462,6 +488,7 @@ export class CodexAdapter extends EventEmitter {
 
   /** Inject user text: `turn/steer` mid-turn, `turn/start` when idle. */
   async inject(threadId, text, _user, { images = [] } = {}) {
+    if (!this.threads.has(threadId) && this.localObserver?.has(threadId)) throw this.localObserver.controlError(threadId);
     if (!this.rpc) throw new Error('codex app-server not connected');
     const th = this.threads.get(threadId);
     if (!th) throw new Error('codex thread not loaded');
@@ -478,6 +505,7 @@ export class CodexAdapter extends EventEmitter {
   }
 
   async interrupt(threadId) {
+    if (!this.threads.has(threadId) && this.localObserver?.has(threadId)) throw this.localObserver.controlError(threadId);
     const th = this.threads.get(threadId);
     if (!this.rpc || !th?.activeTurnId) return false;
     await this.rpc.request('turn/interrupt', { threadId, turnId: th.activeTurnId });
@@ -485,6 +513,7 @@ export class CodexAdapter extends EventEmitter {
   }
 
   status(threadId) {
+    if (!this.threads.has(threadId) && this.localObserver?.has(threadId)) return this.localObserver.controlError(threadId).message;
     const th = this.threads.get(threadId);
     if (!th) return 'not loaded';
     return th.activeTurnId ? `turn in progress (${th.activeTurnId})` : 'idle';
@@ -497,6 +526,7 @@ export class CodexAdapter extends EventEmitter {
    */
   statusSnapshot(threadId) {
     const th = this.threads.get(threadId);
+    if (!th && this.localObserver?.has(threadId)) return this.localObserver.statusSnapshot(threadId);
     if (!this.rpc || !th) return { state: 'disconnected' };
     const st = th.status;
     if (st?.type === 'active') {

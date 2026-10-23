@@ -1,7 +1,9 @@
 # Session bridge: Telegram <-> live sessions
 
-Per-machine daemon that mirrors every live Claude Code and Codex session on this machine
-into Telegram, and injects your replies back into the **same** session. Why it is shaped
+Per-machine daemon that mirrors supported Claude Code and Codex sessions on this machine
+into Telegram, and injects your replies back into the **same** session where its live
+transport supports control. Independent Codex rollouts have an explicitly read-only
+fallback, described below. Why it is shaped
 this way: [`harness-architecture.md`](harness-architecture.md) §4-7. This page is the
 single description of how it works. Pushes, verdicts and issues are
 not mirrored: git and the forge own them.
@@ -15,7 +17,7 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs  (one per machine, o
 ## One model for both hosts
 
 Each host adapter turns its host's protocol into the same events — `up {id, cwd, branch?,
-backlog[]}`, `prompt {id, text, turnId?}`, `progress {id, text}`,
+backlog[]}`, `prompt {id, text, turnId?}`, `message {id, text, turnId?, itemId?}`, `progress {id, text}`,
 `final {id, text, turnId?, status?}`, `approval {id, ref, summary, answerable}`, `down {id}`
 — and offers the same interface: `inject`, `status`, `answerApproval`, and `interrupt` where
 the host has one (Codex only). `daemon.mjs` has no host-specific branch; everything below
@@ -26,7 +28,7 @@ holds for Claude and Codex alike.
 and is never mirrored:
 
 - Codex (`codex-adapter.mjs`, from the Thread fields): main iff `parentThreadId` is null
-  and the source kind is in `bridge.codexSources` (default `["cli"]`). The kind is a string
+  and the source kind is in `bridge.codexSources` (default `["cli", "vscode"]`). The kind is a string
   `source` itself (`cli`, `vscode`, `exec`, `appServer`, `unknown`) or an object source's
   key (`custom`, `subAgent`); a missing source is `unknown`. Note that the shared-daemon TUI
   (`codc`) currently reports `vscode`. A user fork (`forkedFromId`, no parent) counts by its
@@ -105,11 +107,15 @@ and is never mirrored:
 
 ### Codex
 
-Start sessions with `codc`. A plain `codex` TUI runs its own embedded app-server, which the
-bridge cannot see; with `bridge.botToken` set, `codc` adds `--remote unix://` to every
+Start sessions with `codc` for the full launcher checkpoints. Do not equate a `codex`
+process with a shared-daemon thread: older sessions and explicit `--no-daemon` sessions
+can use an embedded app-server. Current CLI documentation describes shared-daemon mode
+as the default ([CLI reference](https://developers.openai.com/codex/cli/reference));
+the actual connection, not the executable name, determines control support.
+With `bridge.botToken` set, `codc` adds `--remote unix://` to every
 interactive launch (bare, a prompt, `resume`, `fork`) so the TUI attaches to the shared
 app-server daemon. `exec` and other non-interactive subcommands, an explicit `--remote`,
-and third-party providers (`cods`, whose overrides the daemon would not apply) are left as
+an explicit `--no-daemon`, and third-party providers (`cods`, whose overrides the daemon would not apply) are left as
 they are.
 
 - Live sessions = loaded threads (`thread/loaded/list`, polled every 15 s plus `thread/started`)
@@ -120,12 +126,58 @@ they are.
   watched with `thread/read`; it comes back up, with what ran meanwhile, once it is active or
   updated again.
   `thread/resume` also yields the backlog: turns that started after the bridge connected.
-- Output: prompts, one `working…` message per turn edited in place with compact progress
-  lines (throttled to one edit per 3 s), then the final agent message.
+- Output: prompts, completed commentary immediately as separate messages, status-card
+  edits reflecting the native thread state, then the final agent
+  message. Already-forwarded commentary is excluded from that final aggregate. A completed
+  turn snapshot still repairs missing agent items; reasoning and shell output stay local.
 - Inject: `turn/start` when idle, `turn/steer {expectedTurnId}` mid-turn; `/interrupt` =
   `turn/interrupt`.
 - `codex app-server proxy` relays bytes to the control socket, which speaks **WebSocket**;
   JSON-RPC rides text frames (`ws-stream.mjs`; Node's `WebSocket` needs a URL, not a stream).
+
+#### Independent local sessions: visible, not remotely controllable
+
+`codex-local.mjs` supplements the RPC adapter with bounded incremental reads of persisted
+rollouts under the default `~/.codex/sessions`. Recent main-session conversation or tool
+activity registers an **observation-only** session and creates a Topic with an explicit
+notice. New user/assistant text is mirrored, including completed commentary, without
+forwarding reasoning, tool arguments/output or injected instruction context. Initial
+discovery does not dump old conversation text into Telegram.
+
+- Shared loaded thread IDs, ephemeral threads without rollouts, and subagents are not
+  mirrored by this fallback. RPC ownership wins, including during a temporary connection
+  outage; it must not create a duplicate writer or Topic.
+- The status card says **Observation only (local TUI controls)**. Recent rollout activity
+  is not proof of an open window or a PID-to-thread mapping. An observation expires after
+  ten quiet minutes and returns on fresh activity. Rollout buffering can delay discovery.
+- Reply, approval and interrupt are not fabricated: independent sessions have no shared
+  live-control endpoint. An attempted reply/interrupt explains that it requires the local
+  TUI. To enable full control, **stop that TUI first**, then `codc resume <thread-id>`.
+  The bridge never resumes an independent session behind the user's back.
+- No-rollout/ephemeral sessions, custom Codex homes and unsupported transcript schema
+  changes remain outside this fallback. It is a tested compatibility reader, not a
+  promise that transcripts are a stable upstream API.
+- Switching an already-observed thread to RPC preserves its Topic and refreshes its
+  control status. It does not replay the entire resumed backlog into that existing
+  Topic: the polling/subscription handoff is not an exactly-once history transfer.
+  Consult native history for messages in that boundary window.
+
+#### If a local message is missing
+
+1. Identify the native thread, not just a `codex.exe` process. Main shared threads have
+   an `up codex:<id>` log; independent persisted sessions can be observation-only.
+2. Check routing by **origin repository name**, not the checkout directory name. An
+   absent `bridge.projects.<origin-name>` mapping uses `fallbackChatId`; without either,
+   the log says the session is not mirrored. Messages are silent, not push notifications.
+3. Inspect `~/.claude/bridge/daemon.log`: `send attempt` identifies session, project,
+   project/fallback route and Topic; `send acknowledged` records Telegram message IDs.
+   An attempt alone is not a delivery receipt. Transport failure can leave outcome
+   uncertain; do not blindly resend or recreate Topics and risk duplicates.
+4. Check `bridge.codexSources`: both `cli` and `vscode` are normally needed. Doctor warns
+   when a configured bridge excludes `vscode`; an explicit restriction is still honored.
+5. Run `npm run doctor`. This checks configuration/source invariants, not end-to-end
+   Telegram delivery. Reconnect replay is bounded by the adapter's connection/activity
+   boundary, not a durable exactly-once outbox; native history remains authoritative.
 
 ### Claude
 
@@ -228,7 +280,7 @@ Requires Anthropic auth: on a third-party provider (`ccds`) Claude Code drops ch
      "projects": { "claude-code-config": { "chatId": -1002222222222 } },
      "idleCloseMinutes": 30,
      "deleteClosedAfterHours": 24,
-     "codexSources": ["cli"]
+     "codexSources": ["cli", "vscode"]
    }
    ```
    The tunables default as shown (`BRIDGE_DEFAULTS` in `scripts/bridge/context.mjs`);
@@ -359,6 +411,21 @@ name) and process ids. They are never mirrored to Telegram and never part of the
 payload; do not paste them into shared places unredacted.
 
 ## Acceptance baseline (2026-10-02)
+
+### Discovery repair verification (2026-10-23)
+
+- Full repository suite: 651 passed, one skipped, zero failed. Doctor and public-hygiene
+  checks passed. Focused regression tests cover source defaults, explicit no-daemon
+  launches, live commentary, acknowledged/uncertain sends, local rollout privacy,
+  shared ownership races, observation-only controls and RPC disconnect during refresh.
+- On the affected host, the daemon's existing source reload discovered an additional
+  recently active main rollout and received a Telegram acknowledgement for its
+  observation-only notice in the project Topic. No user TUI was killed or resumed into
+  a second server, and no synthetic outbound test message or paid model probe was used.
+- This does not certify independent-session remote injection, all Codex homes, exact
+  process presence or lossless reconnect/handoff delivery; those boundaries are above.
+
+The following baseline is historical, not a replacement for the current repair checks.
 
 Evidence levels are deliberately separate: **automated** means a named fixture exercised
 the behavior, **live** means an observed native-host/Telegram result, **unverified** means
@@ -517,7 +584,8 @@ same account in two Teams. Each seat is declared once, in the top-level `seats` 
 Each mirrored live session has one editable, pinned status card: it is the Topic's first
 message, which Telegram pins itself; only a card re-sent later is pinned explicitly. It shows one state
 line and the check time, e.g. `Working · since 14:02` / `Checked 14:05`; the Topic title
-already names the session, and the evidence source is not shown. Native transitions update it; the refresh
+already names the session. Independent Codex rollouts explicitly show observation-only
+instead of a native control state. Native transitions update it; the refresh
 button or `/status` rereads the adapter snapshot without starting a model turn.
 Pinning failures do not block the card or conversation. Raw tool/search/edit progress
 is suppressed for both current adapters; final answers and approvals remain visible.

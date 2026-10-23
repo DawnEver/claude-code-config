@@ -12,18 +12,22 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { syncBeforeLaunch } from './startup-sync.mjs';
-import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 
-// Codex has no SessionStart hook. Always synchronize before loading repo-owned
-// modules or reading the shared provider config.
-const sync = syncBeforeLaunch();
+// Claude's user SessionStart wiring is not projected into Codex. Synchronize here,
+// before loading repo-owned modules or reading the shared provider config.
+const sync = syncBeforeLaunch({ env: { ...process.env, CC_CONFIG_STARTUP_SYNCED: '' },
+  stampFile: join(homedir(), '.claude', '.harness-startup-sync') });
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
-const [{ buildCodexInvocation }, { prepareSpawn }, { checkLinks, SETUP_FIX_CMD }] = await Promise.all([
+const [{ buildCodexInvocation }, { prepareSpawn }, { checkLinks, SETUP_FIX_CMD },
+  { ENV_SETTINGS_PATH }, { resolveCodexHome }] = await Promise.all([
   import('./codex-launcher.mjs'),
   import('./win-spawn.mjs'),
   import('../setup/check-links.js'),
+  import('../shared/config.mjs'),
+  import('../shared/codex-home.mjs'),
 ]);
+const activeCodexHome = resolveCodexHome();
 
 // Read the shared registry through the link setup already materialized, not a repo-relative
 // path: claude_env_settings.json lives in the sync payload, which may sit outside the repo.
@@ -36,7 +40,7 @@ const envSettingsPath = ENV_SETTINGS_PATH;
 // Throttle the link-health check: the links point into the sync payload's cloud folder, where
 // a cold-cache `stat` per link costs 150-300 ms (measured). The check matters after a cloud
 // sync-down or a pull, not on every TUI launch: a pull always runs it; otherwise at most daily.
-const LINK_CHECK_STAMP = join(homedir(), '.codex', '.link-check');
+const LINK_CHECK_STAMP = join(activeCodexHome, '.link-check');
 const LINK_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 function isLinkCheckFresh() {
   try {
@@ -53,8 +57,8 @@ function touchLinkCheckStamp() {
   }
 }
 
-// Codex has no session-start hook, so the launcher doubles as the link-health
-// checkpoint (Claude Code's side is scripts/hooks/setup-check-hook.js).
+// This repo wires Codex's link-health checkpoint into the launcher, not a Codex
+// hook (Claude Code's side is scripts/hooks/setup-check-hook.js).
 if (sync.pulled > 0 || !isLinkCheckFresh()) {
   try {
     const { repaired, warnings } = checkLinks();
@@ -66,10 +70,11 @@ if (sync.pulled > 0 || !isLinkCheckFresh()) {
   }
 }
 
-// Same reason: the launcher is Codex's only place to start the session bridge.
+// Ensure the bridge at this managed Codex entry point; plugin hooks are separate.
 try {
   const { ensureDaemon } = await import('../bridge/ensure.mjs');
-  await ensureDaemon();
+  if (await ensureDaemon() === 'different-home')
+    console.error('[harness] The machine collector belongs to another CODEX_HOME; accounts were not mixed.');
 } catch {
   // The bridge must never block a launch.
 }

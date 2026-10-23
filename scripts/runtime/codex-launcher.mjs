@@ -10,7 +10,6 @@
 // `--model` CLI flag (no env var exists).
 
 import { existsSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
@@ -20,6 +19,7 @@ import { resolveProvider } from '../shared/provider-projection.mjs';
 import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
 import { sessionEnv } from '../shared/machine.mjs';
 import { codexSession } from '../shared/vendor-session.mjs';
+import { resolveCodexHome } from '../shared/codex-home.mjs';
 
 // Subcommands that open the interactive TUI; every other subcommand (exec, app-server, ...)
 // is non-interactive and must not be redirected. A bare positional is the TUI's prompt.
@@ -29,9 +29,18 @@ const NON_TUI_SUBCOMMANDS = new Set(['exec', 'e', 'review', 'login', 'logout', '
   'delete', 'migrate-rollouts', 'unarchive', 'cloud', 'exec-server', 'features', 'agents', 'help']);
 
 function isInteractiveTui(args) {
+  if (args.includes('--no-daemon')) return false;
   if (args.includes('--remote') || args.some((a) => a.startsWith('--remote='))) return false;
   if (args.some((a) => a === '-h' || a === '--help' || a === '-V' || a === '--version')) return false;
-  const first = args.find((a) => !a.startsWith('-'));
+  // Option values are not subcommands (e.g. `--model x exec prompt`).
+  const takesValue = new Set(['--config', '-c', '--model', '-m', '--profile', '-p', '--cd', '-C',
+    '--image', '-i', '--add-dir', '--sandbox', '-s', '--ask-for-approval', '-a', '--enable', '--disable']);
+  let first;
+  for (let i = 0; i < args.length; i++) {
+    if (takesValue.has(args[i])) { i++; continue; }
+    if (args[i] === '--') { first = args[i + 1]; break; }
+    if (!args[i].startsWith('-')) { first = args[i]; break; }
+  }
   return first === undefined || TUI_SUBCOMMANDS.has(first) || !NON_TUI_SUBCOMMANDS.has(first);
 }
 
@@ -41,7 +50,7 @@ function isInteractiveTui(args) {
 // openai_base_url=… instead.
 const CODEX_STRIP_KEYS = [
   'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_API_KEY', 'OPENAI_BASE_URL',
-  'CODEX_HOME', 'CODEX_NON_INTERACTIVE', 'CODEX_CA_CERTIFICATE',
+  'CODEX_NON_INTERACTIVE', 'CODEX_CA_CERTIFICATE',
 ];
 
 /**
@@ -81,7 +90,7 @@ export function buildCodexInvocation({
   readCache = () => readProviderCache(),
   fetchKey = fetchStoredKey,
   baseEnv = process.env,
-  codexHome = baseEnv.CODEX_HOME || join(homedir(), '.codex'),
+  codexHome = resolveCodexHome({ env: baseEnv }),
 }) {
   // Provenance (HARNESS_*, GIT_COMMITTER_NAME) is NOT injected here: Codex may run
   // commands in a shared daemon this env never reaches. setup writes it into
@@ -90,13 +99,15 @@ export function buildCodexInvocation({
   // run in a shared daemon this env never reaches has none, and lab-commons refuses its commit.
   // A resumed thread keeps its id (`codex resume <id>` / `--last`, vendor-session.mjs).
   const env = { ...baseEnv, ...sessionEnv(baseEnv, codexSession(extraArgs, { codexHome })) };
+  env.CODEX_HOME = codexHome;
   for (const k of PROVIDER_KEYS) delete env[k];
   for (const k of CODEX_STRIP_KEYS) delete env[k];
 
   if (!provider || provider === 'codex') {
     // With the session bridge configured, an interactive TUI attaches to the shared
     // app-server daemon; a TUI on its own embedded server is invisible to the bridge.
-    const attach = readBridgeConfig({ sharedPath: envSettingsPath, localPath }).botToken
+    const bridge = readBridgeConfig({ sharedPath: envSettingsPath, localPath });
+    const attach = (bridge.botToken || bridge.dashboard)
       && isInteractiveTui(extraArgs) ? ['--remote', 'unix://'] : [];
     return { env, args: [...attach, ...extraArgs], provider: null, available: [], error: null };
   }
@@ -125,7 +136,7 @@ export function buildCodexInvocation({
   // model_catalog_json is scoped HERE (per-provider) rather than globally so plain `codex`
   // keeps OpenAI's built-in model list; it must be absolute (applied on startup, no `~`).
   const args = ['--config', `model_provider=${provider}`,
-    '--config', `model_catalog_json=${join(homedir(), '.codex', 'models.json')}`];
+    '--config', `model_catalog_json=${join(codexHome, 'models.json')}`];
   const models = row.models || {};
   if (models.codex || models.base) args.push('--model', codexModel(models));
 

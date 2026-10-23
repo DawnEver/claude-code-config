@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import { claudeTranscript, codexTranscript } from './transcripts.mjs';
-import { UsageScanner } from './scan.mjs';
+import { UsageScanner, sources } from './scan.mjs';
 import { HourlyResources, UsagePush, quotaRows } from './push.mjs';
 import { table } from './query.mjs';
 import { parseUsageBatch, readOnlySql, USAGE_SCHEMA_VERSION } from '../shared/usage-schema.mjs';
@@ -15,6 +15,19 @@ import { newHostToken } from '../dashboard/auth.mjs';
 import { bindUsageDb } from '../dashboard/deploy.mjs';
 
 const T0 = Date.parse('2026-10-20T10:00:00Z');
+
+test('explicit homes scope Codex transcript roots and unknown-account attribution', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-homes-'));
+  try {
+    const one = sources(home, { codexHome: path.join(home, 'one'), machine: 'host' }).filter(s => s.agent === 'codex');
+    const two = sources(home, { codexHome: path.join(home, 'two'), machine: 'host' }).filter(s => s.agent === 'codex');
+    assert.equal(one.length, 2);
+    assert.equal(one[0].root, path.join(home, 'one', 'sessions'));
+    assert.equal(one[1].root, path.join(home, 'one', 'archived_sessions'));
+    assert.notEqual(one[0].account(), two[0].account());
+    assert.doesNotMatch(one[0].account(), /usage-homes/);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
 const iso = (dt) => new Date(T0 + dt).toISOString();
 const jsonl = (entries) => entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
 
@@ -88,6 +101,28 @@ test('codex rollout without records: token_count counted when the running total 
   assert.equal(r.turns[0].calls, 2);
   assert.equal(r.turns[0].input, 200);
   assert.equal(r.turns[0].origin, 'system', 'no user message: not a human turn');
+});
+
+test('a collector login change never relabels historical Codex turns as the currently signed-in account', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-account-switch-'));
+  try {
+    const codexHome = path.join(home, 'custom');
+    fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(codexHome, 'sessions', 'history.jsonl'), jsonl([
+      codexMeta,
+      { timestamp: iso(10), type: 'event_msg', payload: { type: 'task_started', turn_id: 'T1' } },
+      { timestamp: iso(11), type: 'turn_context', payload: { turn_id: 'T1', model: 'gpt-6' } },
+      { timestamp: iso(20), type: 'token_usage_record', payload: { turn_id: 'T1', usage: usage(100, 0, 5, 0) } },
+    ]));
+    const collect = email => new UsageScanner({ cursorFile: path.join(home, `${email}.cursor`), project: () => 'repo',
+      sources: () => sources(home, { codexHome, machine: 'host', codexEmail: () => email }) }).collect();
+    const before = await collect('one@example.com');
+    const after = await collect('two@example.com');
+    assert.equal(before.turns.length, 1);
+    assert.deepEqual(before.turns.map(t => t.account), after.turns.map(t => t.account));
+    assert.match(before.turns[0].account, /^codex:host\/home-[0-9a-f]{16}$/);
+    assert.doesNotMatch(before.turns[0].account, /example\.com/);
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 function tmpdir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'usage-test-')); }

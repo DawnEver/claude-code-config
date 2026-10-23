@@ -8,9 +8,27 @@ import {
   writeFileAtomic,
   localSectionsForThisHost,
   composeCodexConfigFile,
+  withCodexNotify,
 } from './codex-config-file.mjs';
 
+test('native notify is projected into the local preamble, never overrides user configuration', () => {
+  const out = withCodexNotify('model = "x"\n[tui]\ntheme = "x"\n', '/scripts/codex-hook.mjs');
+  assert.match(out, /^notify = \[/);
+  assert.match(out, /"--notify"/);
+  const user = 'notify = ["my-notifier"]\n[tui]\ntheme = "x"\n';
+  assert.equal(withCodexNotify(user), user);
+});
+
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `codex-cfg-${p}-`));
+
+test('per-home instruction path is projected locally without modifying the shared head', () => {
+  const payload = 'model_instructions_file = "~/.codex/system-prompt/codex-base.md"\n';
+  const f = fixture({ payload });
+  composeCodexConfigFile({ ...f, readCache, shellEnv: {} });
+  const actual = fs.readFileSync(path.join(f.codexDir, 'config.toml'), 'utf8');
+  assert.ok(actual.includes(JSON.stringify(path.join(f.codexDir, 'system-prompt', 'codex-base.md'))));
+  assert.equal(fs.readFileSync(path.join(f.syncDir, 'codex_config.toml'), 'utf8'), payload);
+});
 
 const ENV_SETTINGS = JSON.stringify({
   providers: {

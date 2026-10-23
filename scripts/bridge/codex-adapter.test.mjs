@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { CodexAdapter, progressLine, probeDaemon, backlogSince, isMainSession } from './codex-adapter.mjs';
 
 /** Fake app-server behind the adapter's transport interface. */
@@ -49,6 +50,68 @@ function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
 }
 
 const tick = () => new Promise((r) => setImmediate(r));
+
+test('local observation runs without a shared daemon and never starts a parallel native turn', async () => {
+  const local = new EventEmitter();
+  local.has = id => id === 'local';
+  local.statusSnapshot = () => ({ state: 'unknown', observationOnly: true });
+  local.controlError = () => new Error('observation-only: use local TUI; stop before codc resume local');
+  local.refresh = async excluded => {
+    assert.deepEqual([...excluded], []);
+    local.emit('up', { id: 'local', cwd: '/work', backlog: [] });
+  };
+  const a = new CodexAdapter({ probe: async () => null, localObserver: local });
+  const ups = [];
+  a.on('up', e => ups.push(e));
+  assert.equal(await a.start(), false);
+  await a.refresh();
+  assert.equal(ups[0].id, 'local');
+  assert.equal(a.statusSnapshot('local').observationOnly, true);
+  await assert.rejects(a.inject('local', 'go'), /stop before codc resume/);
+  await assert.rejects(a.interrupt('local'), /observation-only/);
+  assert.equal(a.rpc, null);
+});
+
+test('all loaded IDs stay excluded from local discovery, also during an RPC outage', async () => {
+  const local = new EventEmitter();
+  const excluded = [];
+  local.refresh = async ids => excluded.push([...ids]);
+  const srv = fakeAppServer({ loaded: ['main', 'ephemeral'], threads: { ephemeral: { ephemeral: true } } });
+  const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({}), localObserver: local });
+  await a.start(); await a.refresh();
+  srv.transport.close();
+  await a.refresh();
+  assert.deepEqual(excluded, [['main', 'ephemeral'], ['main', 'ephemeral']]);
+});
+
+test('disconnect during quota refresh cannot dereference a cleared RPC peer', async () => {
+  const srv = fakeAppServer();
+  const send = srv.transport.send;
+  srv.transport.send = s => {
+    if (JSON.parse(s).method === 'account/read') { srv.transport.close(); return; }
+    send(s);
+  };
+  const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({}) });
+  await a.start();
+  await assert.doesNotReject(a.refresh());
+  assert.equal(a.rpc, null);
+});
+
+test('a shared thread born during local scanning is immediately excluded and refreshes native status', async () => {
+  const local = new EventEmitter();
+  let scan;
+  local.refresh = async ids => { scan = ids; };
+  const srv = fakeAppServer({ loaded: [] });
+  const a = new CodexAdapter({ connect: () => srv.transport, probe: async () => ({}), localObserver: local });
+  const statuses = [];
+  a.on('status', e => statuses.push(e.id));
+  await a.start(); await a.refresh();
+  srv.push('thread/started', { thread: { id: 'new', source: 'vscode' } });
+  assert.equal(scan.has('new'), true, 'the exclusion Set stays live while filesystem reads await');
+  await tick(); await tick();
+  assert.ok(statuses.includes('new'), 'takeover updates an existing observation-only card');
+  a.stop();
+});
 
 async function started(opts) {
   const srv = fakeAppServer(opts);
@@ -206,18 +269,22 @@ test('backlog keeps every message paragraph, commentary included, without duplic
   ] }], 0)[0].text, 'I will inspect\n\nFirst paragraph\n\nSecond paragraph');
 });
 
-test('live turn keeps every message item in order, commentary included', async () => {
-  const { a, srv } = await started(); const finals = [];
+test('live commentary is delivered once before turn completion, not repeated in the final', async () => {
+  const { a, srv } = await started(); const finals = [], messages = [];
   a.on('final', (f) => finals.push(f));
+  a.on('message', (m) => messages.push(m));
   srv.push('turn/started', { threadId: 't1', turn: { id: 't' } });
   for (const item of [
     { type: 'agentMessage', id: 'a', phase: 'final_answer', text: 'First paragraph' },
     { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' },
     { type: 'agentMessage', id: 'b', phase: 'final_answer', text: 'Second paragraph' },
     { type: 'agentMessage', id: 'c', phase: 'commentary', text: 'working' },
+    { type: 'agentMessage', id: 'c', phase: 'commentary', text: 'working' },
   ]) srv.push('item/completed', { threadId: 't1', turnId: 't', item });
+  assert.deepEqual(messages, [{ id: 't1', turnId: 't', itemId: 'c', text: 'working' }]);
+  assert.deepEqual(finals, []);
   srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed' } });
-  assert.equal(finals[0].text, 'First paragraph\n\nSecond paragraph\n\nworking');
+  assert.equal(finals[0].text, 'First paragraph\n\nSecond paragraph');
 });
 
 test('completed turn snapshot supplies lost items and replaces partial streamed text once', async () => {
@@ -524,10 +591,11 @@ test('integration: real codex app-server answers initialize and thread/loaded/li
   } finally { a.stop(); }
 });
 
-test('isMainSession: top-level threads whose source kind is allowed (default cli only)', () => {
+test('isMainSession: defaults include shared-daemon vscode and cli, never subagents', () => {
   assert.equal(isMainSession({ source: 'cli' }), true);
+  assert.equal(isMainSession({ source: 'vscode' }), true);
   assert.equal(isMainSession({ source: 'cli', forkedFromId: 'x' }), true, 'a user fork counts by its source');
-  for (const source of ['vscode', 'appServer', 'exec', 'unknown', { custom: 'ide' }, undefined]) {
+  for (const source of ['appServer', 'exec', 'unknown', { custom: 'ide' }, undefined]) {
     assert.equal(isMainSession({ source }), false, JSON.stringify(source));
   }
   assert.equal(isMainSession({ source: 'cli', parentThreadId: 'p' }), false);

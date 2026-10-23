@@ -25,6 +25,8 @@ import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
+import { inspectCodexHooks } from './codex-hooks.mjs';
+import { inspectProtectedPluginCaches } from './update-codex-plugins.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
@@ -314,7 +316,7 @@ export function checkPlugins(settings, home = HOME) {
 // This catches retired plugins (a plugin removed from its marketplace)
 // without treating disabled-but-still-available plugins as orphans.
 export function checkCodexPluginCache(repoRoot = sourceDir, home = HOME) {
-  const cache = path.join(home, '.codex', 'plugins', 'cache', 'cc-market');
+  const cache = path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'plugins', 'cache', 'cc-market');
   const manifest = path.join(repoRoot, 'cc-market', '.agents', 'plugins', 'marketplace.json');
   if (!fs.existsSync(cache) || !fs.existsSync(manifest)) return [];
   let known;
@@ -503,7 +505,7 @@ export function checkMachineName(file = MACHINE_PATH) {
 // setup (Codex may run commands in a shared daemon no launcher env reaches). A host that
 // was named after its last setup run silently tags nothing, so check the composed file
 // actually carries this machine's name. No config file = no Codex here = nothing to check.
-export function checkCodexShellEnv({ machine = readMachineName(), configPath = path.join(HOME, '.codex', 'config.toml') } = {}) {
+export function checkCodexShellEnv({ machine = readMachineName(), configPath = path.join(codexDir, 'config.toml') } = {}) {
   if (!machine) return [];
   let text;
   try { text = fs.readFileSync(configPath, 'utf8'); } catch { return []; }
@@ -519,7 +521,10 @@ export function checkBridgeHost({ sharedPath = path.join(HOME, '.claude', 'claud
   localPath = path.join(HOME, '.claude', 'claude_env_settings.local.json') } = {}) {
   const b = readBridgeConfig({ sharedPath, localPath });
   const fleetBridged = b.fallbackChatId || Object.keys(b.projects).length;
-  if (!fleetBridged || b.botToken) return [];
+  if (b.botToken) return b.codexSources.includes('vscode') ? [] : [finding('WARN', 'bridge-codex-sources',
+    'bridge.codexSources excludes vscode; shared-daemon Codex TUI sessions can be silently filtered out',
+    'include both cli and vscode unless this source exclusion is intentional (docs/bridge.md)')];
+  if (!fleetBridged) return [];
   return [finding('WARN', 'bridge-host', 'the fleet runs a session bridge but this host has no bot token; its sessions are not in Telegram',
     'create a bot for this machine and set bridge.botToken in ~/.claude/claude_env_settings.local.json, then run setup (docs/bridge.md § Setup)')];
 }
@@ -588,6 +593,8 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPlugins(settings, home),
     ...checkCodexPluginCache(repoRoot, home),
     ...checkHygiene(repoRoot),
+    ...checkNativeCodexHooks({ codexHome: home === HOME ? codexDir : path.join(home, '.codex'), scriptsDir: path.join(home, '.claude', 'scripts') }),
+    ...checkProtectedCodexCaches({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
     ...checkRuleSymbols(repoRoot),
     ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers'),
       requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
@@ -599,8 +606,33 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
       localPath: path.join(home, '.claude', 'claude_env_settings.local.json'), machine: readMachineName(path.join(home, '.claude', 'machine.json')) }),
     ...checkChannelServer({ home }),
     ...checkCodexShellEnv({ machine: readMachineName(path.join(home, '.claude', 'machine.json')),
-      configPath: path.join(home, '.codex', 'config.toml') }),
+      configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
   ];
+}
+
+export function checkNativeCodexHooks({ codexHome = codexDir, scriptsDir = path.join(claudeDir, 'scripts') } = {}) {
+  const state = inspectCodexHooks({ codexDir: codexHome, scriptsDir });
+  if (!state.installed) return [finding('FAIL', 'codex-native-hooks', 'Codex native machine hooks are missing or drifted',
+    'run setup, preserve user hooks, then review the new definitions with /hooks; trust is never bypassed')];
+  if (!state.executed) return [finding('WARN', 'codex-native-hooks', 'Codex hooks are installed but execution of these definitions has not been observed',
+    `not observed: ${Object.entries(state.events ?? {}).filter(([, v]) => !v.executed).map(([name]) => name).join(', ')}; review/trust with /hooks; one event never certifies another event's execution`)];
+  return [];
+}
+
+export function checkProtectedCodexCaches({ codexHome = codexDir } = {}) {
+  try {
+    const state = inspectProtectedPluginCaches(codexHome);
+    if (state.missing.length) return [finding('FAIL', 'codex-protected-cache',
+      `${state.missing.length} snapshot-protected plugin cache path(s) disappeared after a native update`,
+      'restore missing files from the validated backup using update-codex-plugins.mjs; do not overwrite surviving files or restart a parallel session')];
+    if (state.conflicts?.length) return [finding('WARN', 'codex-protected-cache',
+      'existing plugin cache bytes differ from the update snapshot; they were not overwritten',
+      'review the preserved backup and current files; a difference is not proof of corruption')];
+    return [];
+  } catch {
+    return [finding('WARN', 'codex-protected-cache', 'protected plugin backup metadata is unreadable or escapes its owned home',
+      'review the machine-local backup pointer; no files were restored, deleted or overwritten by doctor')];
+  }
 }
 
 const MARK = { FAIL: 'FAIL ', WARN: 'WARN ', OK: 'OK   ' };

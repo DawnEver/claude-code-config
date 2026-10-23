@@ -9,6 +9,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { randomUUID } from 'crypto';
+import { sessionIdentity } from './session-identity.mjs';
 
 export const MACHINE_PATH = path.join(os.homedir(), '.claude', 'machine.json');
 export const MACHINE_FIX_CMD = 'node scripts/setup/setup.js --machine <NAME>';
@@ -33,15 +34,13 @@ export function writeMachineName(name, file = MACHINE_PATH) {
   fs.writeFileSync(file, JSON.stringify({ name }, null, 2) + '\n');
 }
 
-/** `git config --global user.name`, or null when git or the setting is unavailable. */
-export function readGitUserName() {
-  try {
-    const out = execFileSync('git', ['config', '--global', 'user.name'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
+/** Prefer a configured global name; otherwise use Git's effective author identity.
+ * Reading it never edits the user's profile, email or author environment. */
+export function readGitUserName(run = execFileSync) {
+  const options = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true };
+  try { const name = run('git', ['config', '--global', 'user.name'], options).trim(); if (name) return name; } catch { /* no global setting */ }
+  try { return /^(.+) <[^<>]*> \d+ [+-]\d+$/.exec(run('git', ['var', 'GIT_AUTHOR_IDENT'], options).trim())?.[1] || null; }
+  catch { return null; }
 }
 
 /**
@@ -61,18 +60,17 @@ export function provenanceEnv({ machine, agent, userName, env = process.env }) {
   return out;
 }
 
-/** The env var carrying the session id: lab-commons' commit-msg hook stamps it as `Lab-Session:`. */
+/** Vendor-neutral root lineage for consumers; native execution identity remains separate. */
 export const SESSION_ENV = 'LAB_SESSION';
 
 /**
- * ONE id per agent session, vendor-neutral, stable across a resume. In order: an id already in
- * `env` (a subagent, a fabric takeover, a nested launcher inherits its parent's); the vendor's own
- * conversation id `vendorId` (vendor-session.mjs reads it from the launch args); else a fresh UUID.
- * lab-commons refuses an agent commit without it (ONE-SESSION-ONE-PR). Never in codexShellEnv: a
+ * Native runtime lineage wins over a launcher fallback. Outside a runtime, preserve an
+ * inherited id, the resumed vendor id, or issue a launcher UUID for a fresh conversation.
+ * Never in codexShellEnv: a
  * static config.toml would give every session the same id.
  */
 export function sessionEnv(env = process.env, vendorId = null) {
-  return { [SESSION_ENV]: env[SESSION_ENV] || vendorId || randomUUID() };
+  return { [SESSION_ENV]: sessionIdentity(env).sessionId || vendorId || randomUUID() };
 }
 
 /**

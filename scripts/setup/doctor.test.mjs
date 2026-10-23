@@ -7,11 +7,32 @@ import {
   looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, comparePermissionRules, parseHookCommands,
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks, linkedTo,
   checkCodexPluginCache,
-  checkPlugins, checkBridgeRevision,
+  checkPlugins, checkBridgeRevision, checkProtectedCodexCaches,
   checkMachineName,
   checkCodexShellEnv,
   scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost, checkDashboardHost, checkChannelServer,
 } from './doctor.js';
+
+test('doctor detects native updates that leave a cache root but delete its protected contents', t => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-protected-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  assert.deepEqual(checkProtectedCodexCaches({ codexHome: home }), []);
+  const backup = path.join(home, '.tmp', 'cc-config-plugin-backup-fixture');
+  const old = path.join(backup, 'rem', '1.0.0');
+  fs.mkdirSync(old, { recursive: true });
+  fs.writeFileSync(path.join(old, 'hook.js'), 'original');
+  fs.writeFileSync(path.join(backup, 'snapshot.json'), JSON.stringify([{ name: 'rem', versions: ['1.0.0'] }]));
+  fs.writeFileSync(path.join(home, '.tmp', 'cc-config-plugin-backup-pointer'), backup);
+  const target = path.join(home, 'plugins', 'cache', 'cc-market', 'rem', '1.0.0');
+  fs.mkdirSync(target, { recursive: true });
+  assert.equal(checkProtectedCodexCaches({ codexHome: home })[0].level, 'FAIL');
+  fs.writeFileSync(path.join(target, 'hook.js'), 'different surviving bytes');
+  assert.equal(checkProtectedCodexCaches({ codexHome: home })[0].level, 'WARN');
+  fs.writeFileSync(path.join(target, 'hook.js'), 'original');
+  assert.deepEqual(checkProtectedCodexCaches({ codexHome: home }), []);
+  fs.writeFileSync(path.join(home, '.tmp', 'cc-config-plugin-backup-pointer'), path.dirname(home));
+  assert.equal(checkProtectedCodexCaches({ codexHome: home })[0].level, 'WARN');
+});
 import { CLAUDE_LINKS } from './setup.js';
 
 test('checkBridgeRevision is read-only and distinguishes inactive, unknown, current and stale code', () => {
@@ -457,6 +478,11 @@ test('checkBridgeHost: WARN when the fleet runs a bridge and this host has no bo
   assert.equal(w.id, 'bridge-host');
   fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '1:abc' } }));
   assert.deepEqual(checkBridgeHost({ sharedPath, localPath }), []);
+  fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { codexSources: ['cli'] } }));
+  const [sources] = checkBridgeHost({ sharedPath, localPath });
+  assert.equal(sources.id, 'bridge-codex-sources');
+  assert.equal(sources.level, 'WARN');
+  assert.match(sources.title, /vscode/);
 });
 
 test('checkPublicHygiene: the real tracked tree is clean', () => {

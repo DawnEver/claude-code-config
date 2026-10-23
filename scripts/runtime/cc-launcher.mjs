@@ -103,7 +103,8 @@ export function buildClaudeInvocation({
   if (!provider || provider === 'claude') {
     // A machine with its own bot token runs the session bridge (docs/bridge.md), so every
     // official session loads its channel. Third-party providers lack channels entirely.
-    const channel = readBridgeConfig({ sharedPath: envSettingsPath, localPath }).botToken
+    const bridge = readBridgeConfig({ sharedPath: envSettingsPath, localPath });
+    const channel = (bridge.botToken || bridge.dashboard)
       && !extraArgs.includes(BRIDGE_CHANNEL_ARGS[0]) ? BRIDGE_CHANNEL_ARGS : [];
     return { env, args: [...channel, ...extraArgs], provider: null, available: [], error: null, seat, seatMatch };
   }

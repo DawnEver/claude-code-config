@@ -18,6 +18,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'node:url';
 import { isMain } from '../shared/is-main.mjs';
+import { resolveCodexHome } from '../shared/codex-home.mjs';
 import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE, bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
 
 export const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
@@ -55,8 +56,8 @@ function spawnDaemon() {
   spawn(process.execPath, [DAEMON, '--log', log], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
 
-/** @returns {'unconfigured'|'running'|'started'|'restarted'} */
-export async function ensureDaemon({ runtimeFile = RUNTIME_FILE, configured = () => !!readBridgeConfig().botToken,
+/** @returns {'unconfigured'|'running'|'started'|'restarted'|'different-home'} */
+export async function ensureDaemon({ runtimeFile = RUNTIME_FILE, configured = () => { const c = readBridgeConfig(); return !!(c.botToken || c.dashboard); }, codexHome = resolveCodexHome(),
   revision = bridgeSourceRevision, configRevision = bridgeConfigRevision, alive = isAlive, stale = predatesBoot, kill = (pid) => process.kill(pid), start = spawnDaemon,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   if (!configured()) return 'unconfigured';
@@ -64,6 +65,9 @@ export async function ensureDaemon({ runtimeFile = RUNTIME_FILE, configured = ()
   try { rt = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { /* not running */ }
   const pid = rt?.pid;
   if (pid && alive(pid) && !stale(runtimeFile)) {
+    const runningHome = rt.codexHome ?? resolveCodexHome({ env: {} });
+    const key = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+    if (key(runningHome) !== key(codexHome)) return 'different-home';
     // The daemon reads its config once: a config change replaces it like a source change.
     if (rt.sourceRevision === revision() && rt.configRevision === configRevision()) return 'running';
     try { kill(pid); } catch { /* already gone */ }

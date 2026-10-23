@@ -68,11 +68,15 @@ export function claudeSession(args, { configDir, cwd }) {
 }
 
 /** Codex's thread id for `args`: `resume <id>`, or `resume --last` read from the sessions dir; else null. */
+export function codexRolloutId(file) {
+  const name = String(file ?? '').split(/[\\/]/).at(-1);
+  return /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(name)?.[1] ?? null;
+}
+
 export function codexSession(args, { codexHome }) {
   if (args[0] !== 'resume') return null;
   const id = args.slice(1).find((a) => !a.startsWith('-'));
   if (id) return id;
   if (!args.includes('--last')) return null;
-  const rollout = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
-  return newest(join(codexHome, 'sessions'), (n) => n.match(rollout)?.[1] ?? null, true);
+  return newest(join(codexHome, 'sessions'), codexRolloutId, true);
 }

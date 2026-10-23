@@ -5,10 +5,22 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   isValidMachineName, readMachineName, writeMachineName, provenanceEnv, codexShellEnv,
-  sessionEnv, SESSION_ENV,
+  sessionEnv, SESSION_ENV, readGitUserName,
 } from './machine.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'machine-'));
+
+test('provenance can use Git effective identity without writing a global user profile', () => {
+  const calls = [];
+  const name = readGitUserName((_git, args) => {
+    calls.push(args);
+    if (args[0] === 'config') throw new Error('unset');
+    return 'Developer <developer@example.com> 123456 +0000\n';
+  });
+  assert.equal(name, 'Developer');
+  assert.deepEqual(calls, [['config', '--global', 'user.name'], ['var', 'GIT_AUTHOR_IDENT']]);
+  assert.equal(readGitUserName(() => { throw new Error('no git'); }), null);
+});
 
 test('isValidMachineName: [A-Za-z0-9-]+ only', () => {
   for (const ok of ['host-c', 'host-a', 'host-d']) assert.equal(isValidMachineName(ok), true);
@@ -74,4 +86,9 @@ test('sessionEnv: issues one fresh id per session, independent of the machine na
 
 test('sessionEnv: a child launched inside a session inherits its id (codex/ccds under ccc alike)', () => {
   assert.deepEqual(sessionEnv({ LAB_SESSION: 'outer-session-1' }), { LAB_SESSION: 'outer-session-1' });
+});
+
+test('sessionEnv: native Codex lineage replaces stale launcher IDs without inventing an ID', () => {
+  assert.deepEqual(sessionEnv({ CODEX_SESSION_ID: 'root', CODEX_THREAD_ID: 'child', LAB_SESSION: 'stale' }), { LAB_SESSION: 'root' });
+  assert.deepEqual(sessionEnv({ CODEX_THREAD_ID: 'main' }), { LAB_SESSION: 'main' });
 });

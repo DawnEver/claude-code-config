@@ -6,7 +6,7 @@
 // claude-adapter.mjs), which all emit the same events (#wire subscribes to exactly these):
 //   up {id, cwd, branch?, seat?, name?, backlog[]}, down {id}, dismiss {id} (not a main session),
 //   superseded {id, from}, name {id, name}, status {id},
-//   prompt {id, text, turnId?}, progress {id, text}, final {id, text, turnId?, status?},
+//   prompt {id, text, turnId?}, message {id, text, turnId?, itemId?}, progress {id, text}, final {id, text, turnId?, status?},
 //   notice {id, text, alert?}, approval {id, ref, summary, answerable}, approval-resolved {ref, id?},
 //   question {id, ref, answerable, questions[{id, header, question, options|null, isOther, isSecret}]},
 //   question-resolved {ref, id?}, warn (text)
@@ -33,6 +33,8 @@ import { isMain } from '../shared/is-main.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
 import { CodexAdapter } from './codex-adapter.mjs';
+import { CodexLocalObserver } from './codex-local.mjs';
+import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
@@ -93,8 +95,9 @@ export class Bridge {
    */
   constructor({ telegram, adapters = [], config, machine, resolveContext = gitContext,
     topicCacheFile = null, log = () => {}, now = Date.now, alertGraceMs = ALERT_GRACE_MS,
-    uploadsDir = path.join(BRIDGE_RUNTIME_DIR, 'uploads') }) {
+    uploadsDir = path.join(BRIDGE_RUNTIME_DIR, 'uploads'), telegramEnabled = true }) {
     Object.assign(this, { telegram, config, machine, resolveContext, log, now, alertGraceMs, uploadsDir });
+    this.telegramEnabled = telegramEnabled;
     this.hosts = new Map(adapters.map((a) => [a.agent, a]));
     this.sessions = new Map();   // key -> session (lifecycle.mjs record + routing fields)
     this.held = new Map();       // key -> live events that arrived during bring-up
@@ -115,7 +118,7 @@ export class Bridge {
     a.on('down', (e) => this.sessionDown(sessionKey(a.agent, e.id)));
     a.on('dismiss', (e) => this.dismiss(sessionKey(a.agent, e.id)));
     a.on('status', e => this.updateStatus(sessionKey(a.agent, e.id)).catch(err => this.#warnOnce('status-card', err.message)));
-    for (const kind of ['superseded', 'name', 'prompt', 'progress', 'final', 'notice', 'approval', 'question']) {
+    for (const kind of ['superseded', 'name', 'prompt', 'message', 'progress', 'final', 'notice', 'approval', 'question']) {
       a.on(kind, (e) => {
         const key = sessionKey(a.agent, e.id);
         const q = this.held.get(key);
@@ -148,6 +151,7 @@ export class Bridge {
     if (kind === 'name') return this.rename(key, e.name);
     if (kind === 'prompt') return this.prompt(key, e.text);
     if (kind === 'progress') return this.progress(key, e.text);
+    if (kind === 'message') return this.notice(key, e.text);
     if (kind === 'final') return this.final(key, e.text, e.status);
     if (kind === 'notice') return this.notice(key, e.text, e.alert);
     if (kind === 'question') return this.question(key, e);
@@ -155,6 +159,7 @@ export class Bridge {
   }
 
   chatFor(project) {
+    if (!this.telegramEnabled) return null;
     return this.config.projects[project]?.chatId ?? this.config.fallbackChatId ?? null;
   }
 
@@ -217,6 +222,7 @@ export class Bridge {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({
       id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null,
       unread: s.unread ?? 0, mention: !!s.mention,
+      ...(this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.observationOnly ? { observationOnly: true } : {}),
       status: statusCode(this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.state),
       lastActivityAt: new Date(s.lastActivity).toISOString(),
       topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed' } : null,
@@ -393,14 +399,14 @@ export class Bridge {
     if (!s.topicId || s.chatId == null || !host?.statusSnapshot ||
         (offline ? this.sessions.has(s.key) : this.sessions.get(s.key) !== s)) return;
     const topicId = s.topicId;
-    const { state } = offline ? { state: 'disconnected' } : host.statusSnapshot(s.id);
+    const { state, observationOnly } = offline ? { state: 'disconnected' } : host.statusSnapshot(s.id);
     // The Topic title already names the session; the card answers only "what is it doing,
     // since when, and how fresh is this".
     if (s.statusState !== state) { s.statusState = state; s.statusSince = this.now(); }
     // A mention says "you are needed, still": once the session runs again (handled at the
     // machine) or is gone, it is not, even before anything new is posted.
     if (s.mention && (state === 'running' || state === 'disconnected')) { this.#clearMention(s); this.#save(s); }
-    const content = `${STATUS[statusCode(state)].label} · since ${clock(s.statusSince)}`;
+    const content = `${observationOnly ? 'Observation only (local TUI controls)' : STATUS[statusCode(state)].label} · since ${clock(s.statusSince)}`;
     if (!force && s.statusText === content) return;
     const text = `${content}\nChecked ${clock(this.now())}`;
     s.statusRef ??= randomBytes(12).toString('hex');
@@ -475,9 +481,10 @@ export class Bridge {
       return [];
     }
     try {
-      this.log(`post ${s.title} [topic ${s.topicId}] (${text.length} chars)`);
+        this.log(`send attempt ${s.key} project=${s.project} route=${this.config.projects[s.project]?.chatId ? 'project' : 'fallback'} [topic ${s.topicId}] (${text.length} chars)`);
       const { fromHuman, ...send } = opts;
       const sent = await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId, ...send });
+        this.log(`send acknowledged ${s.key} [topic ${s.topicId}] messages=${sent.map(m => m.message_id).join(',') || 'none'}`);
       if (sent.length) this.#posted(s, { fromHuman, mention: send.alert?.length ? sent[0].message_id : null });
       return sent;
     } catch (e) {
@@ -497,8 +504,8 @@ export class Bridge {
    * silent; one that needs the human (`alert`) arms a nudge instead of mentioning at once.
    */
   #send(s, text, { alert, ...opts } = {}) {
-    if (s.chatId === null) return Promise.resolve([]);
     this.#activity(s);
+    if (s.chatId === null) return Promise.resolve([]);
     if (alert?.length) this.#nudgeLater(s);
     return this.#serial(s, () => this.#postNow(s, text, opts));
   }
@@ -555,6 +562,7 @@ export class Bridge {
   }
 
   #activity(s) {
+    if (s.chatId === null) { s.lastActivity = this.now(); return; }
     if (s.chatId !== null) this.#apply(s, onActivity(s, this.now())).catch(() => {});
   }
 
@@ -574,7 +582,8 @@ export class Bridge {
   /** One progress message per turn, edited in place and throttled. */
   async progress(key, line) {
     const s = this.sessions.get(key);
-    if (!s || s.chatId === null) return;
+    if (!s) return;
+    if (s.chatId === null) { this.#activity(s); return; }
     if (this.hosts.get(s.agent)?.statusSnapshot) { this.#activity(s); return this.updateStatus(key); }
     this.#activity(s);
     const p = s.progress ??= { lines: [], msgId: null, last: 0, timer: null };
@@ -860,7 +869,8 @@ export class Bridge {
 async function codexLoop(codex, log, signal, everyMs = 15000) {
   while (!signal.aborted) {
     try {
-      if (await codex.start()) await codex.refresh();
+      try { await codex.start(); }
+      finally { await codex.refresh(); } // Local discovery also works without the shared daemon.
     } catch (e) { log(`codex: ${e.message}`); }
     await new Promise((r) => setTimeout(r, everyMs));
   }
@@ -882,15 +892,18 @@ export async function main() {
   const config = readBridgeConfig();
   const machine = readMachineName();
   if (!machine) { log('no machine name (~/.claude/machine.json); run setup.js --machine <NAME>'); process.exit(1); }
-  if (!config.botToken) { log('no bridge.botToken in ~/.claude/claude_env_settings.local.json; see docs/bridge.md'); process.exit(1); }
-  if (!config.allowedUserIds.length) log('bridge.allowedUserIds is empty: inbound Telegram messages will all be dropped');
+  if (!config.botToken && !config.dashboard) { log('no Telegram or dashboard transport configured; see docs/bridge.md'); process.exit(1); }
+  if (config.botToken && !config.allowedUserIds.length) log('bridge.allowedUserIds is empty: inbound Telegram messages will all be dropped');
 
-  const telegram = new TelegramClient({ token: config.botToken, offsetFile: path.join(BRIDGE_RUNTIME_DIR, 'offset.json') });
+  const codexHome = resolveCodexHome();
+  const homeKey = codexHomeKey(codexHome);
+  const telegram = config.botToken ? new TelegramClient({ token: config.botToken, offsetFile: path.join(BRIDGE_RUNTIME_DIR, 'offset.json') }) : null;
   const claude = new ClaudeAdapter();
   const port = await claude.listen(0);
-  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, sourceRevision, configRevision: bridgeConfigRevision(config) }, null, 2));
-  const codex = new CodexAdapter({ sources: config.codexSources });
-  const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, topicCacheFile: path.join(BRIDGE_RUNTIME_DIR, 'topics.json') });
+  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, codexHome, sourceRevision, configRevision: bridgeConfigRevision(config) }, null, 2));
+  const codex = new CodexAdapter({ sources: config.codexSources, localObserver: new CodexLocalObserver({ sources: config.codexSources }) });
+  const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, telegramEnabled: !!telegram,
+    topicCacheFile: telegram ? path.join(BRIDGE_RUNTIME_DIR, 'topics.json') : null });
 
   const ac = new AbortController();
   const stop = () => {
@@ -923,7 +936,8 @@ export async function main() {
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
   if (config.dashboard) {
     const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
-      codexSeriesFile: path.join(BRIDGE_RUNTIME_DIR, 'codex-usage.jsonl') });
+      codexFallback: `${machine}/home-${homeKey}`,
+      codexSeriesFile: account => path.join(BRIDGE_RUNTIME_DIR, `codex-usage-${homeKey}-${createHash('sha256').update(account?.email ?? 'unknown').digest('hex').slice(0, 16)}.jsonl`) });
     // A dashboard edit is written to the settings file; the change check above then hands over.
     const onConfigChanges = (changes) => {
       const results = changes.map((c) => ({ id: c.id, ...applyConfigChange(c) }));
@@ -934,19 +948,24 @@ export async function main() {
     // The usage store (docs/usage.md): the transcripts' turns, each quota window, hourly load.
     let lastAccounts = [];
     const usage = new UsagePush({ url: config.dashboard.url, hostToken: config.dashboard.hostToken, machine, log, accounts: () => lastAccounts,
-      scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, 'usage-cursor.json'),
-        sources: () => usageSources(os.homedir(), { codexEmail: () => codex.account?.email ?? null, machine }) }) });
+      scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
+        sources: () => usageSources(os.homedir(), { machine, codexHome }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
-      sessions: (list) => bridge.dashboardSessions().map((s) => ({ ...s, account: accountFor(s, list) })),
+      sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list) })),
       accounts: () => (lastAccounts = accounts.read()),
       resources: () => { const r = resources.read(); usage.sample(r); return r; }, onConfigChanges });
     push.start();
     usage.start();
   }
   const sweep = (orphans) => (config.deleteClosedAfterHours > 0 ? bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`)) : null);
-  sweep(false);
-  setInterval(() => sweep(true), 3600000).unref();
-  await bridge.pollLoop(ac.signal);
+  if (telegram) {
+    sweep(false);
+    setInterval(() => sweep(true), 3600000).unref();
+    await bridge.pollLoop(ac.signal);
+  } else {
+    log('telemetry-only: Telegram disabled; native session/account collectors remain active');
+    await new Promise(resolve => ac.signal.addEventListener('abort', resolve, { once: true }));
+  }
 }
 
 if (isMain(import.meta.url)) main().catch((e) => { console.error(e); process.exit(1); });
