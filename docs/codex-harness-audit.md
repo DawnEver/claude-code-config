@@ -170,9 +170,11 @@ using an existing Python 3.13 interpreter and an off-repository environment. Pyt
 was not forced past the native dependency's supported ABI. Those release checks made
 no remote push or model request; the later approved live probe is recorded below.
 
-Latest full implementation verification: cc-config **732 passed / 1 skipped**, cc-market
-**1119 passed / 1 skipped**, zero JS failures. The latest full root rerun includes
-Windows batch multiline rejection. Public-hygiene and whitespace checks passed.
+Latest full root verification: cc-config **734 passed / 1 skipped**, including
+Windows batch multiline rejection and default-context activation drift checks.
+Pre-upstream-merge cc-market verification was **1119 passed / 1 skipped**; the merged
+release result is recorded under acceptance priorities below. Zero JS failures.
+Public-hygiene and whitespace checks passed.
 Machine-hook entry observations now cover all four managed events after normal runtime
 approval paths. These receipts prove invocation, not successful enforcement, visual
 notification delivery or acceptance of every source change on every native surface.
