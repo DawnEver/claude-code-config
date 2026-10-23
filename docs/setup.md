@@ -45,8 +45,12 @@ sequentially with an invocation-only local catalogue override, and restores miss
 after each call and on failure. Surviving bytes are never overwritten. Existing target
 versions are skipped only after payload and native registration checks; partial or orphaned
 targets fail explicitly and require deliberate reconciliation or a new release, not an
-in-place reinstall. Native additions also require payload/registration readback. Disabled
-plugins remain disabled and are reported as such. Doctor detects missing protected files
+in-place reinstall. Native additions also require payload/registration readback. Registered
+disabled current targets remain disabled; upgrading a registered disabled older version
+fails before any add because native add would enable it. Exclude that plugin or make a
+deliberate native activation decision first. Native list does not distinguish an uninstalled
+explicit disable from default uninstalled state: an explicit install follows native add's
+activation semantics. Doctor detects missing protected files
 and reports byte differences
 without assuming that a difference proves corruption. No updater runs automatically from
 setup, a hook or a launcher, and no hook-trust bypass or push is performed.

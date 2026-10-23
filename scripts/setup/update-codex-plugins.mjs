@@ -199,8 +199,13 @@ export async function updateCodexPlugins({ codexHome = resolveCodexHome(), marke
     const nativeArgs = ['-c', 'marketplaces.cc-market.source_type=local', '-c', `marketplaces.cc-market.source=${JSON.stringify(market)}`];
     const existing = names.filter(name => exists(owned(home, 'plugins', 'cache', 'cc-market', name, targets.get(name))));
     for (const name of existing) requirePayload(market, home, name, targets.get(name));
-    const before = existing.length ? await registrations(run, nativeArgs, env) : null;
+    const before = await registrations(run, nativeArgs, env);
     for (const name of existing) requireRegistration(before, name, targets.get(name));
+    for (const name of names) {
+      const installed = before.find(item => item.pluginId === `${name}@cc-market` && item.installed === true);
+      if (installed?.enabled === false && !existing.includes(name))
+        throw new Error(`Plugin ${name}@${installed.version} is disabled; native add would enable it. Enable it explicitly before upgrading, or leave it unchanged.`);
+    }
     const backup = fs.mkdtempSync(path.join(temp, PREFIX));
     for (const { name, versions } of snapshot) for (const version of versions) {
       const source = owned(home, 'plugins', 'cache', 'cc-market', name, version);

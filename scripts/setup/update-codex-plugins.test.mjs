@@ -19,7 +19,7 @@ function fixture(t) {
     fs.mkdirSync(version(name, '1.0.0'), { recursive: true });
     fs.writeFileSync(path.join(version(name, '1.0.0'), 'old.txt'), `${name}:original bytes`);
   }
-  const register = (name, enabled = true) => registered.set(name, { pluginId: `${name}@cc-market`, version: '2.0.0', installed: true, enabled });
+  const register = (name, enabled = true, version = '2.0.0') => registered.set(name, { pluginId: `${name}@cc-market`, version, installed: true, enabled });
   const install = name => {
     fs.cpSync(path.join(marketplaceRoot, name), version(name, '2.0.0'), { recursive: true });
     register(name);
@@ -137,6 +137,15 @@ test('a registered disabled target is preserved without enabling it', async t =>
   assert.deepEqual(result.disabled, ['rem']);
 });
 
+test('an older disabled registration blocks the entire update before any native add', async t => {
+  const f = fixture(t);
+  f.register('rem', false, '1.0.0');
+  await assert.rejects(updateCodexPlugins({ ...f, names: ['sharp-review', 'rem'], run: f.native(() => assert.fail('unexpected native add')) }), /disabled/i);
+  assert.equal(fs.existsSync(f.version('rem', '2.0.0')), false);
+  assert.equal(fs.existsSync(f.version('sharp-review', '2.0.0')), false);
+  assert.equal(fs.existsSync(path.join(f.codexHome, '.tmp', 'cc-config-plugin-backup-pointer')), false);
+});
+
 test('native add must register the installed version and readback retains local overrides', async t => {
   const f = fixture(t);
   const calls = [];
@@ -152,7 +161,7 @@ test('native add must register the installed version and readback retains local 
     }
     return run(command, args, options);
   } }), /registered|registration/i);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
 });
 
 test('source-only development metadata is not required in an immutable runtime cache', async t => {

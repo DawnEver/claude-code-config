@@ -30,8 +30,9 @@ matching execution receipt; a receipt is diagnostic evidence, not permission to 
 Review definitions with native `/hooks`; neither setup nor tests bypass that review.
 
 After explicit user approval, cc-market was locally released as **v3.1.0**, followed by
-the correctness patch **v3.1.1**, without a push. Native Codex installation/readback on
-this host confirms REM/sharp-review **2.1.1** and Fabric/evolve/cc-latex **1.1.1**.
+the correctness patch **v3.1.1** and runtime-guidance patch **v3.1.2**, without a push.
+Native Codex installation/readback on this host confirms REM/sharp-review **2.1.2**
+and Fabric/evolve/cc-latex **1.1.2**.
 Installed source was checked against the released tree.
 The local-source override applied only to the install invocation; the configured Git
 marketplace source remains unchanged. Other machines are not updated by an unpushed tag.
@@ -40,7 +41,7 @@ Existing sessions can still hold earlier cached code. Old code files were backed
 restored after native CLI cleanup, without overwriting surviving bytes. New supported
 host sessions and normal `/hooks` trust review remain required; provider-dependent live
 acceptance is separate. A subsequent native Claude update installed REM/sharp-review
-2.1.1 and Fabric/evolve 1.1.1 as enabled user plugins. Old Claude cache files were
+2.1.2 and Fabric/evolve 1.1.2 as enabled user plugins. Old Claude cache files were
 byte-verified unchanged; existing sessions still need restarting to load the new bundles.
 
 ## Configuration, startup and identity
@@ -164,8 +165,8 @@ using an existing Python 3.13 interpreter and an off-repository environment. Pyt
 was not forced past the native dependency's supported ABI. No remote push or paid model
 probe was performed.
 
-Latest full implementation verification: cc-config **704 passed / 1 skipped**, cc-market
-**1102 passed / 1 skipped**, zero JS failures. Public-hygiene and whitespace checks passed.
+Latest full implementation verification: cc-config **705 passed / 1 skipped**, cc-market
+**1104 passed / 1 skipped**, zero JS failures. Public-hygiene and whitespace checks passed.
 Doctor has zero failures and an execution-observation warning until the new native hook
 events actually run after normal review/trust; one event never certifies another event.
 
@@ -206,10 +207,13 @@ cannot advance reviewed hashes.
 
 The cache updater now checks source payload presence and native registration before
 skipping an occupied immutable version and after native installation. A partial or
-orphaned target fails explicitly rather than being called updated; a disabled plugin
-remains disabled. Deployed Claude/Codex bundles were compared with all **554** tracked
+orphaned target fails explicitly rather than being called updated. Registered disabled
+targets stay disabled, and an older disabled installation blocks the whole update before
+any add; native add's enablement is not silently treated as an update. Native list cannot
+distinguish explicit disable from default state before a plugin is installed.
+Deployed Claude/Codex bundles were compared with all **556** tracked
 source files across their installed plugins, with no differences.
-Each host's installed REM/review cache also passed **120 offline tests**, including
+Each host's installed REM/review cache also passed **122 offline tests**, including
 actual subprocess continuation coordination, recall, memo/compact restoration and
 failed-write handling. Those executions used temporary fixture projects and do not
 stand in for native trust review or a live provider acceptance test.
@@ -217,8 +221,18 @@ stand in for native trust review or a live provider acceptance test.
 Claude's native updater initially refreshed its GitHub marketplace and reported
 REM 2.0.0 as current despite the unpublished local release. A subsequent update
 used invocation-only Git URL rewriting to fetch the local release through the
-same native updater. REM/sharp-review 2.1.1 and Fabric/evolve 1.1.1 were read back
+same native updater. REM/sharp-review 2.1.2 and Fabric/evolve 1.1.2 were read back
 as enabled. Old cache versions and the install registry were backed up first;
 all protected old files remained byte-identical. No persisted marketplace source
 replacement, remote push or trust bypass was used. A manual checkout in the cache
 is not sufficient because native refresh replaces it.
+
+Runtime REM guidance was also reconciled with the implemented retention policy:
+the full catalog has no count capacity, the injected hot index is bounded, and
+feedback entries are exempt from stale short-term eviction. Active skill references
+no longer instruct agents to enforce the retired 20-entry cap or advisory threshold.
+
+A read-only shell command explicitly requested the normal approval path on this
+surface, but still produced no PermissionRequest execution receipt. That probe does
+not establish native UI coverage or user-visible notification delivery; normal
+supported-session trust and approval acceptance remain outstanding.
