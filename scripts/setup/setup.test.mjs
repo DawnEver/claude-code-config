@@ -14,7 +14,10 @@ import {
   CLAUDE_LINKS,
   CODEX_LINKS,
   SEAT_LINKS,
+  repoMirrorLinks,
+  mirrorPayload,
 } from './setup.js';
+import { execFileSync } from 'child_process';
 import { SYNC_PAYLOAD_FILES, readSyncDirPointer } from '../shared/sync-dir.mjs';
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `setup-${p}-`));
@@ -77,7 +80,7 @@ test('exactly the payload files are marked base:sync', () => {
   const sync = [...CLAUDE_LINKS, ...CODEX_LINKS].filter(l => l.base === 'sync');
   assert.deepEqual(sync.filter(l => !l.optional).map(l => l.src).sort(), ['claude_env_settings.json', 'claude_settings.json']);
   // Private payload is synced but optional: a plain clone has none.
-  assert.deepEqual(sync.filter(l => l.optional).map(l => l.src), ['private-markers']);
+  assert.deepEqual(sync.filter(l => l.optional).map(l => l.src), ['private-markers', 'trusted-origins']);
   // codex_config.toml is intentionally NOT a link — it is composed per host.
   assert.equal([...CODEX_LINKS].some(l => l.src === 'codex_config.toml'), false);
 });
@@ -300,4 +303,53 @@ test('a seat dir links what Claude Code reads from its config dir, and the base 
   assert.deepEqual(SEAT_LINKS.map((l) => l.dest).sort(), ['CLAUDE.md', 'keybindings.json', 'output-styles', 'plugins', 'settings.json', 'skills']);
   const plugins = SEAT_LINKS.find((l) => l.dest === 'plugins');
   assert.equal(linkSourceRoot(plugins, { repoRoot: '/repo', syncDir: '/payload', claudeRoot: '/home/u/.claude' }), '/home/u/.claude');
+});
+
+// ── the repo-root mirror of the payload ──────────────────────────────────────
+
+test('repoMirrorLinks: every payload file, and only with a sync dir outside the repo', () => {
+  const names = repoMirrorLinks({ syncDir: '/payload', repoRoot: '/repo' }).map((l) => l.dest).sort();
+  const expected = [...new Set([...SYNC_PAYLOAD_FILES, ...CLAUDE_LINKS.filter((l) => l.base === 'sync').map((l) => l.src)])].sort();
+  assert.deepEqual(names, expected);
+  assert.ok(names.includes('trusted-origins') && names.includes('codex_config.toml'));
+  assert.deepEqual(repoMirrorLinks({ syncDir: '/repo', repoRoot: '/repo' }), [], 'no sync dir: the repo IS the payload');
+});
+
+test('mirrorPayload: hard-links each payload file into the repo root (same inode, never a copy)', () => {
+  const syncDir = tmp('sync'), repoRoot = tmp('repo');
+  fs.writeFileSync(path.join(syncDir, 'claude_settings.json'), '{"a":1}');
+  fs.writeFileSync(path.join(syncDir, 'trusted-origins'), 'x');
+  const r = mirrorPayload({ syncDir, repoRoot });
+  for (const f of ['claude_settings.json', 'trusted-origins']) {
+    assert.equal(fs.statSync(path.join(syncDir, f)).ino, fs.statSync(path.join(repoRoot, f)).ino, f);
+  }
+  assert.ok(!fs.existsSync(path.join(repoRoot, 'private-markers')), 'absent optional source: nothing created');
+  assert.deepEqual(r.linked.sort(), ['claude_settings.json', 'trusted-origins']);
+  assert.deepEqual(mirrorPayload({ syncDir, repoRoot }).linked, [], 'idempotent');
+});
+
+test('mirrorPayload: a detached repo copy is re-linked; one edited since is a conflict, left alone', () => {
+  const syncDir = tmp('sync'), repoRoot = tmp('repo');
+  const src = path.join(syncDir, 'claude_settings.json'), dest = path.join(repoRoot, 'claude_settings.json');
+  fs.writeFileSync(src, 'new'); fs.writeFileSync(dest, 'old');
+  const t = new Date(Date.now() - 60000); fs.utimesSync(dest, t, t);
+  assert.deepEqual(mirrorPayload({ syncDir, repoRoot }).linked, ['claude_settings.json']);
+  assert.equal(fs.statSync(src).ino, fs.statSync(dest).ino);
+  // Planted control: the repo copy is the NEWER one.
+  const src2 = path.join(syncDir, 'trusted-origins'), dest2 = path.join(repoRoot, 'trusted-origins');
+  fs.writeFileSync(src2, 'a'); fs.utimesSync(src2, t, t); fs.writeFileSync(dest2, 'local');
+  assert.deepEqual(mirrorPayload({ syncDir, repoRoot }).conflicts, ['trusted-origins']);
+  assert.equal(fs.readFileSync(dest2, 'utf8'), 'local');
+});
+
+test('every payload name at the repo root is gitignored and none is tracked', () => {
+  const repo = path.resolve(import.meta.dirname, '../..');
+  const names = repoMirrorLinks({ syncDir: '/payload', repoRoot: repo }).map((l) => l.dest);
+  for (const n of [...names, `${names[0]}.setup-bak`]) {
+    assert.doesNotThrow(() => execFileSync('git', ['check-ignore', '-q', '--no-index', n], { cwd: repo }), `${n} not ignored`);
+  }
+  // Planted control: a tracked file is not ignored.
+  assert.throws(() => execFileSync('git', ['check-ignore', '-q', '--no-index', 'package.json'], { cwd: repo, stdio: 'pipe' }));
+  const tracked = execFileSync('git', ['ls-files', '--', ...names], { cwd: repo, encoding: 'utf8' });
+  assert.equal(tracked.trim(), '');
 });

@@ -20,6 +20,7 @@ import { readBridgeConfig } from '../bridge/context.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { resolveProvider } from '../shared/provider-projection.mjs';
 import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
+import { repoAutoModeArgs } from './repo-automode.mjs';
 
 export const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
 
@@ -60,6 +61,7 @@ export function withClaudeSession(env, extraArgs, { configDir, cwd }) {
  *   provider: string|null,
  *   available: string[],
  *   error: string|null,
+ *   notice?: string,  one line on whether the repo autoMode fragment was loaded
  * }}
  */
 export function buildClaudeInvocation({
@@ -78,6 +80,8 @@ export function buildClaudeInvocation({
   // false: project everything but the key (setup-vscode writes the env into a settings file,
   // and a key is never written to a file).
   withKey = true,
+  // The launch repo's .claude/automode.json for a trusted origin (repo-automode.mjs).
+  repoSettings = repoAutoModeArgs,
 }) {
   const env = { ...process.env };
   for (const k of PROVIDER_KEYS) delete env[k];
@@ -99,6 +103,9 @@ export function buildClaudeInvocation({
     if (dir !== baseDir(home)) env.CLAUDE_CONFIG_DIR = dir;
   }
   ({ extraArgs } = withClaudeSession(env, extraArgs, { configDir: env.CLAUDE_CONFIG_DIR || baseDir(home), cwd }));
+  const repo = repoSettings({ cwd, home, extraArgs });
+  const notice = repo.notice;
+  extraArgs = [...repo.args, ...extraArgs];
 
   if (!provider || provider === 'claude') {
     // A machine with its own bot token runs the session bridge (docs/bridge.md), so every
@@ -106,7 +113,7 @@ export function buildClaudeInvocation({
     const bridge = readBridgeConfig({ sharedPath: envSettingsPath, localPath });
     const channel = (bridge.botToken || bridge.dashboard)
       && !extraArgs.includes(BRIDGE_CHANNEL_ARGS[0]) ? BRIDGE_CHANNEL_ARGS : [];
-    return { env, args: [...channel, ...extraArgs], provider: null, available: [], error: null, seat, seatMatch };
+    return { env, args: [...channel, ...extraArgs], provider: null, available: [], error: null, seat, seatMatch, notice };
   }
 
   if (!existsSync(envSettingsPath)) {
@@ -144,5 +151,5 @@ export function buildClaudeInvocation({
     env.CLAUDE_CODE_SUBAGENT_MODEL = m.subagent ?? m.base;
   }
 
-  return { env, args: [...extraArgs], provider, available, error: null };
+  return { env, args: [...extraArgs], provider, available, error: null, notice };
 }

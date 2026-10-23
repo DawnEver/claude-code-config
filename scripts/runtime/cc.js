@@ -48,7 +48,7 @@ const seatAt = argv.findIndex((a) => a === '--seat' || a === '-s');
 const seat = seatAt === -1 ? null : argv.splice(seatAt, 2)[1] ?? '';
 const extraArgs = argv;
 
-const { env, args, error, seat: resolvedSeat, seatMatch } = buildClaudeInvocation({
+const { env, args, error, seat: resolvedSeat, seatMatch, notice } = buildClaudeInvocation({
   provider: provider || null,
   extraArgs,
   envSettingsPath,
@@ -63,6 +63,8 @@ if (error) {
 // Anything short of the exact alias says what it resolved to, before the session starts.
 if (seatMatch && (seatMatch !== 'exact' || resolvedSeat !== seat)) console.log(`[cc] seat "${seat}" matched ${resolvedSeat} (${seatMatch})`);
 console.log(provider ? `[cc] Using provider: ${provider}` : `[cc] Using Claude (official subscription${resolvedSeat ? `, seat ${resolvedSeat}` : ''})`);
+
+if (notice) console.log(notice);
 
 // Best-effort: a UI preference must never block a launch.
 try { applyGlobalDefaults(accountFile(configDir(env))); } catch { /* ignore */ }
