@@ -42,13 +42,28 @@ node scripts/setup/update-codex-plugins.mjs ./cc-market rem sharp-review fabric 
 Native `codex plugin add` can delete old cache contents even while leaving their version
 directory present. The wrapper snapshots protected versions first, invokes native add
 sequentially with an invocation-only local catalogue override, and restores missing files
-after each call and on failure. Surviving bytes are never overwritten; existing target
-versions are skipped. Doctor detects missing protected files and reports byte differences
+after each call and on failure. Surviving bytes are never overwritten. Existing target
+versions are skipped only after payload and native registration checks; partial or orphaned
+targets fail explicitly and require deliberate reconciliation or a new release, not an
+in-place reinstall. Native additions also require payload/registration readback. Disabled
+plugins remain disabled and are reported as such. Doctor detects missing protected files
+and reports byte differences
 without assuming that a difference proves corruption. No updater runs automatically from
 setup, a hook or a launcher, and no hook-trust bypass or push is performed.
 Snapshot restoration cannot make the vendor's delete/reinstall window atomic. If
 uninterrupted lazy imports are required, schedule an update after old clients have closed;
 the updater never kills them to manufacture that condition.
+
+For Claude, the native updater refreshes its marketplace before resolving a plugin.
+Checking out a local tag inside that cache does not select an unpublished release.
+After explicit local-release/update approval, a process-scoped Git `url.<local-file-URL>.insteadOf`
+rule can redirect only the cc-market GitHub URL to the released local repository while
+running `claude plugin update <name>@cc-market --scope user --json`. Supply the rule
+through the child environment's `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>` and
+`GIT_CONFIG_VALUE_<n>` (preserving any existing entries), never global Git config or
+shared marketplace settings. Back up installed registries and old cache files first,
+validate the native result and byte-check protected versions afterward. This does not
+reload existing sessions or grant hook trust. Prefer a closed-client maintenance window.
 
 Provisioning a Windows host without admin rights? `scripts/setup/bootstrap-windows.bat`
 installs Rust and Node.js LTS at user level and appends them to the user `PATH`. Run it from an

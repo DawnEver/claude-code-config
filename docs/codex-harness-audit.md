@@ -29,17 +29,19 @@ Doctor distinguishes missing/drifted definitions from installed definitions with
 matching execution receipt; a receipt is diagnostic evidence, not permission to trust a hook.
 Review definitions with native `/hooks`; neither setup nor tests bypass that review.
 
-After explicit user approval, cc-market was locally released as **v3.1.0** without a push.
-Native Codex installation/readback on this host confirms REM/sharp-review **2.1.0** and
-Fabric/evolve/cc-latex **1.1.0**. Installed source was checked against the released tree.
+After explicit user approval, cc-market was locally released as **v3.1.0**, followed by
+the correctness patch **v3.1.1**, without a push. Native Codex installation/readback on
+this host confirms REM/sharp-review **2.1.1** and Fabric/evolve/cc-latex **1.1.1**.
+Installed source was checked against the released tree.
 The local-source override applied only to the install invocation; the configured Git
 marketplace source remains unchanged. Other machines are not updated by an unpushed tag.
 
 Existing sessions can still hold earlier cached code. Old code files were backed up and
 restored after native CLI cleanup, without overwriting surviving bytes. New supported
 host sessions and normal `/hooks` trust review remain required; provider-dependent live
-acceptance is separate. Claude's installed caches were not upgraded by this Codex-local
-update, so mixed-host gate parity requires updating those bundles too.
+acceptance is separate. A subsequent native Claude update installed REM/sharp-review
+2.1.1 and Fabric/evolve 1.1.1 as enabled user plugins. Old Claude cache files were
+byte-verified unchanged; existing sessions still need restarting to load the new bundles.
 
 ## Configuration, startup and identity
 
@@ -162,8 +164,8 @@ using an existing Python 3.13 interpreter and an off-repository environment. Pyt
 was not forced past the native dependency's supported ABI. No remote push or paid model
 probe was performed.
 
-Final implementation verification: cc-config **697 passed / 1 skipped**, cc-market
-**1088 passed / 1 skipped**, zero JS failures. Public-hygiene and whitespace checks passed.
+Latest full implementation verification: cc-config **704 passed / 1 skipped**, cc-market
+**1102 passed / 1 skipped**, zero JS failures. Public-hygiene and whitespace checks passed.
 Doctor has zero failures and an execution-observation warning until the new native hook
 events actually run after normal review/trust; one event never certifies another event.
 
@@ -172,7 +174,7 @@ events actually run after normal review/trust; one event never certifies another
 | Priority | Gap | Next acceptance or deliberate boundary |
 | --- | --- | --- |
 | P0 | Native permission-hook execution not observed | Startup, tool-use and shutdown entry invocations have now been observed; PermissionRequest still needs a real supported approval request. Receipts prove entry invocation, not successful lifecycle completion or acceptance of changed source. Review `/hooks` without bypassing trust. |
-| P0 | Mixed-host plugin versions | This host's Codex bundles are updated; Claude caches were not. Update Claude REM/review before claiming parity for concurrent shared-project gates. |
+| P0 | Mixed-host runtime acceptance | Both hosts now have matching core plugin versions installed. Existing sessions can still retain old bundles; fresh-session lifecycle/gate acceptance remains required. |
 | P1 | Live lifecycle/provider acceptance | Exercise recall, automatic compact restoration, REM/review coordination, approval/input notices and real OS delivery. Paid Fabric/provider probes require separate approval/authentication. |
 | P1 | External identity and worktree policy | Forge/commit gates must adopt native identity in their owning repo; automatic lane allocation/locking is not enforced here. |
 | P1 | Native cache-update atomicity | Snapshot restoration protects missing files after each call, but cannot eliminate the vendor's deletion window; use a closed-client maintenance window for uninterrupted imports. |
@@ -189,9 +191,34 @@ remain guarded, and history retains the original full tool name. Native hook
 inspection also compares managed group constraints, so a changed matcher cannot
 reuse a previous receipt to falsely report a healthy installation.
 
-Claude's native updater refreshed its GitHub marketplace and reported REM 2.0.0
-as current despite the unpublished local release. It did not upgrade Claude's
-bundles. Old cache versions and the install registry were backed up before the
-attempt; no marketplace source replacement, remote push or trust bypass was used.
-Updating from the local release needs an explicitly scoped local marketplace
-workflow rather than assuming a cache checkout survives native refresh.
+The plugin follow-up found that parent `session_id` was still used for REM/review
+state despite the machine guard's execution-thread contract. Plugin gates now
+normalize native thread/agent IDs and rollout UUIDs before environment fallback;
+unknown Codex execution identity cannot claim a parent slot. The regression suite
+uses actual hook subprocesses sharing one temporary project, not just pure helpers.
+Counters and acknowledgements remain per execution thread, while unexpired REM/review
+reservations exclude other lifecycle continuations across the whole checkout. Deferred
+work is reconsidered at an ordinary Stop after completion or expiry. An expired review
+lease cannot credit successful reviewed hashes, even if its old token still matches.
+Failed claim writes cannot dispatch a continuation; failed acknowledgement writes
+cannot report completion. Review output to stdout without persisted findings also
+cannot advance reviewed hashes.
+
+The cache updater now checks source payload presence and native registration before
+skipping an occupied immutable version and after native installation. A partial or
+orphaned target fails explicitly rather than being called updated; a disabled plugin
+remains disabled. Deployed Claude/Codex bundles were compared with all **554** tracked
+source files across their installed plugins, with no differences.
+Each host's installed REM/review cache also passed **120 offline tests**, including
+actual subprocess continuation coordination, recall, memo/compact restoration and
+failed-write handling. Those executions used temporary fixture projects and do not
+stand in for native trust review or a live provider acceptance test.
+
+Claude's native updater initially refreshed its GitHub marketplace and reported
+REM 2.0.0 as current despite the unpublished local release. A subsequent update
+used invocation-only Git URL rewriting to fetch the local release through the
+same native updater. REM/sharp-review 2.1.1 and Fabric/evolve 1.1.1 were read back
+as enabled. Old cache versions and the install registry were backed up first;
+all protected old files remained byte-identical. No persisted marketplace source
+replacement, remote push or trust bypass was used. A manual checkout in the cache
+is not sufficient because native refresh replaces it.

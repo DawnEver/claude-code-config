@@ -123,5 +123,5 @@ reader to ignore it.
 | `.claude/memory/YYYY/MM/DD/_meta.json` | Access metadata | — | Gitignored (device-local) |
 
 The index is bounded, not capped: the injected hot set is the long-term entries plus the newest
-60 short-term ones. At 400 catalogue entries a **crystallize** is recommended — a user-gated step
+15 short-term ones. At 400 catalogue entries a **crystallize** is recommended — a user-gated step
 inside `/rem` that distills memory into `.claude/rules/`. Memory files are never deleted.

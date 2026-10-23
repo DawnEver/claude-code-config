@@ -128,6 +128,44 @@ function nativeRun(command, args, { env }) {
     encoding: 'utf8', timeout: 120000 });
 }
 
+// Source files are an inventory, not replacement bytes: an occupied version is immutable.
+const DEV_ONLY = new Set(['.git', '.claude', 'node_modules', 'tests', '__pycache__', '.pytest_cache', '.ruff_cache', '.venv', '_meta.json', '.DS_Store']);
+function requirePayload(market, home, name, version) {
+  const source = owned(market, name);
+  const target = owned(home, 'plugins', 'cache', 'cc-market', name, version);
+  const fail = detail => { throw new Error(`Plugin ${name}@${version} cache is incomplete (${detail}); existing versions are immutable. Close clients and reconcile explicitly or release a new version.`); };
+  let manifest;
+  try { manifest = JSON.parse(fs.readFileSync(owned(home, path.relative(home, path.join(target, '.codex-plugin', 'plugin.json'))), 'utf8')); }
+  catch { fail('missing or invalid native manifest'); }
+  if (manifest?.name !== name || manifest?.version !== version) fail('native manifest name/version mismatch');
+  const walk = (from, to) => {
+    owned(market, path.relative(market, from));
+    owned(home, path.relative(home, to));
+    const stat = fs.statSync(from), actual = fs.statSync(to, { throwIfNoEntry: false });
+    if (stat.isDirectory()) {
+      if (!actual?.isDirectory()) fail(`missing directory ${path.relative(target, to)}`);
+      for (const entry of fs.readdirSync(from)) if (!DEV_ONLY.has(entry)) walk(path.join(from, entry), path.join(to, entry));
+    } else if (!stat.isFile() || !actual?.isFile()) fail(`missing file ${path.relative(target, to)}`);
+  };
+  walk(source, target);
+}
+
+async function registrations(run, args, env) {
+  const result = await run('codex', [...args, 'plugin', 'list', '--marketplace', 'cc-market', '--json'], { env });
+  if (result?.error) throw result.error;
+  if (result?.status !== 0) throw new Error('Unable to verify native plugin registration');
+  let data;
+  try { data = JSON.parse(result.stdout); } catch { throw new Error('Invalid native plugin registration response'); }
+  if (!Array.isArray(data?.installed)) throw new Error('Invalid native plugin registration response');
+  return data.installed;
+}
+
+function requireRegistration(installed, name, version) {
+  const entry = installed.find(item => item.pluginId === `${name}@cc-market` && item.installed === true && item.version === version);
+  if (!entry) throw new Error(`Plugin ${name}@${version} cache is not registered at the expected version; existing versions are immutable. Close clients and reconcile explicitly or release a new version.`);
+  return entry;
+}
+
 /** Back up first; restore after each native add and on failure. No trust bypass or model calls. */
 export async function updateCodexPlugins({ codexHome = resolveCodexHome(), marketplaceRoot, names, run = nativeRun } = {}) {
   if (!Array.isArray(names) || !names.length) throw new Error('At least one plugin name is required');
@@ -157,6 +195,12 @@ export async function updateCodexPlugins({ codexHome = resolveCodexHome(), marke
       if (manifest.name !== name) throw new Error('Plugin manifest name does not match selector');
       return [name, valid(manifest.version, VERSION, 'version')];
     }));
+    const env = { ...process.env, CODEX_HOME: home };
+    const nativeArgs = ['-c', 'marketplaces.cc-market.source_type=local', '-c', `marketplaces.cc-market.source=${JSON.stringify(market)}`];
+    const existing = names.filter(name => exists(owned(home, 'plugins', 'cache', 'cc-market', name, targets.get(name))));
+    for (const name of existing) requirePayload(market, home, name, targets.get(name));
+    const before = existing.length ? await registrations(run, nativeArgs, env) : null;
+    for (const name of existing) requireRegistration(before, name, targets.get(name));
     const backup = fs.mkdtempSync(path.join(temp, PREFIX));
     for (const { name, versions } of snapshot) for (const version of versions) {
       const source = owned(home, 'plugins', 'cache', 'cc-market', name, version);
@@ -171,20 +215,21 @@ export async function updateCodexPlugins({ codexHome = resolveCodexHome(), marke
     fs.writeFileSync(pending, backup + '\n', { flag: 'wx', mode: 0o600 });
     try { fs.renameSync(pending, pointer); }
     finally { if (exists(pending)) fs.unlinkSync(pending); }
-    const env = { ...process.env, CODEX_HOME: home };
     for (const name of names) {
       if (exists(owned(home, 'plugins', 'cache', 'cc-market', name, targets.get(name)))) { skipped.push(name); continue; }
       let result;
       try {
-        result = await run('codex', ['-c', 'marketplaces.cc-market.source_type=local', '-c',
-          `marketplaces.cc-market.source=${JSON.stringify(market)}`, 'plugin', 'add', `${name}@cc-market`, '--json'], { env });
+        result = await run('codex', [...nativeArgs, 'plugin', 'add', `${name}@cc-market`, '--json'], { env });
       } finally { restored.push(...restore(home, data)); }
       if (result?.error) throw result.error;
       if (result?.status != null && result.status !== 0) throw new Error(`codex plugin add ${name} failed: ${String(result.stderr ?? '').trim() || result.status}`);
       updated.push(name);
     }
+    for (const name of names) requirePayload(market, home, name, targets.get(name));
+    const after = updated.length ? await registrations(run, nativeArgs, env) : before;
+    const disabled = names.filter(name => requireRegistration(after, name, targets.get(name)).enabled === false);
     const { conflicts } = inspectProtectedPluginCaches(home);
-    return { backup, updated, skipped, restored, ...(conflicts ? { conflicts } : {}) };
+    return { backup, updated, skipped, restored, ...(disabled.length ? { disabled } : {}), ...(conflicts ? { conflicts } : {}) };
   } finally {
     try { if (data) restore(home, data); }
     finally { fs.closeSync(fd); fs.unlinkSync(lock); }
