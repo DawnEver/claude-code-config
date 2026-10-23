@@ -191,7 +191,7 @@ export class ClaudeAdapter extends EventEmitter {
           const bad = () => Object.assign(new Error('bad kind'), { code: -32602 });
           if (!['prompt', 'final', 'answer', 'activity'].includes(p.kind)) throw bad();
           if (p.kind === 'activity' && !STATES.has(p.state)) throw bad();
-          const r = this.#mirror({ ...ids(p), retry: p.retry === true, ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
+          const r = this.#mirror({ ...ids(p), retry: p.retry === true, ...(Number.isFinite(p.at) ? { at: p.at } : {}), ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
             ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? ''),
             ...(Array.isArray(p.texts) ? { texts: p.texts.map(String) } : {}) });
           return { ok: true, routed: r !== false, ...(Array.isArray(r) ? { deliver: r } : {}) };
@@ -387,8 +387,12 @@ export class ClaudeAdapter extends EventEmitter {
     if (m.retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
     this.#learnTranscript(id, m.transcriptPath);
     const s = this.sessions.get(id);
-    s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
-    this.#emitStatus(id);
+    // Async hooks may land out of order: a state stamped earlier never overwrites a later one.
+    if (!(m.at < s.stateAt)) {
+      s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
+      if (Number.isFinite(m.at)) s.stateAt = m.at;
+      this.#emitStatus(id);
+    }
     if (m.kind === 'activity') {
       // A Notification saying what it waits for; a channel permission request already posted it.
       if (m.text.trim() && !(m.state === 'waiting-approval' && s.approvals.size)) this.emit('notice', { id, text: m.text, alert: true });

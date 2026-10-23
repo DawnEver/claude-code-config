@@ -297,6 +297,23 @@ test('inject and status report a disconnected channel; there is no interrupt', a
   assert.equal(a.interrupt, undefined);
 });
 
+test('an async hook stamped earlier never overwrites a later state', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's' });
+    const state = () => r.a.statusSnapshot('s').state;
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'waiting-approval', at: 200 });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: 100 });
+    assert.equal(state(), 'waiting-approval', 'a PreToolUse landing after its permission prompt');
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: 300 });
+    assert.equal(state(), 'running');
+    await r.hook({ sessionId: 's', kind: 'final', texts: ['done'], at: 400 });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: 350 });
+    assert.equal(state(), 'idle', 'a late PostToolUse does not reopen a finished turn');
+  } finally { await r.a.close(); }
+});
+
 test('hook activity drives the state machine; only the channel closing takes the session down', async () => {
   const r = await rig();
   try {

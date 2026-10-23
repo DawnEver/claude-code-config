@@ -63,7 +63,8 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
-                        "timeout": 10
+                        "timeout": 10,
+                        "async": true
                     },
                     {
                         "type": "command",
@@ -78,7 +79,8 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/bridge/ensure.mjs",
-                        "timeout": 10
+                        "timeout": 10,
+                        "async": true
                     }
                 ]
             }
@@ -88,7 +90,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/notify-hook.js"
+                        "command": "node ~/.claude/scripts/hooks/notify-hook.js",
+                        "async": true
                     }
                 ]
             },
@@ -98,7 +101,8 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 10,
+                        "async": true
                     }
                 ]
             }
@@ -141,7 +145,8 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 10,
+                        "async": true
                     }
                 ]
             }
@@ -152,7 +157,8 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 10,
+                        "async": true
                     }
                 ]
             }
@@ -174,7 +180,8 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 10,
+                        "async": true
                     }
                 ]
             }
@@ -186,7 +193,8 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 10,
+                        "async": true
                     }
                 ]
             }

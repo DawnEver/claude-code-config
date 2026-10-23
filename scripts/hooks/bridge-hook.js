@@ -193,6 +193,8 @@ const spoolable = (call) => call.kind !== 'activity' || Boolean(call.text);
 const ownClaude = () => nearestClaude(process.ppid, processTable({ timeoutMs: TIMEOUT_MS }));
 
 async function main() {
+  // Most entries run async, so calls can reach the daemon out of order: the stamp orders them.
+  const at = Date.now();
   if (!fs.existsSync(RUNTIME_FILE)) return;
   let raw = '';
   for await (const c of process.stdin) raw += c;
@@ -210,8 +212,9 @@ async function main() {
     if (r?.answers && typeof r.answers === 'object') await new Promise((done) => process.stdout.write(JSON.stringify(answerOutput(payload.tool_input, r.answers)), done));
     return;
   }
-  const call = withTranscript(mirrorFor(payload));
-  if (!call) return;
+  const mirror = withTranscript(mirrorFor(payload));
+  if (!mirror) return;
+  const call = { ...mirror, at };
   // No session matched: after /clear or /resume the id is new. Retry naming this hook's own
   // claude process (the one owning the channel). Looked up only now — a process-table query is
   // slow, so never for the per-tool activity calls — and never from CLAUDE_PID, which a nested

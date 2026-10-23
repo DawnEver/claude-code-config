@@ -65,7 +65,10 @@ Telegram + remote control on the same live session, per-machine bridge in
   session bridge's Telegram Topic; PreToolUse + PostToolUse + Notification drive the
   bridge's Claude state machine; PreToolUse(AskUserQuestion) relays the question and, in a
   Telegram-started turn, waits up to 10 min for the answer; silent no-op unless the bridge
-  daemon runs — `docs/bridge.md`),
+  daemon runs — `docs/bridge.md`). Every entry runs `async` except Stop (it injects queued
+  Telegram messages) and PreToolUse(AskUserQuestion) (it returns the answer); each call
+  carries an `at` stamp so the daemon never lets an older state overwrite a newer one,
+
   `setup-check-hook.js` (SessionStart: verifies/heals setup links — recreates missing links,
   converts claude-hud config symlink→hard link, warns on drifted plain files with the
   `--replace` fix command; shared logic in `scripts/setup/check-links.js`, also run by
