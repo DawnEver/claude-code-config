@@ -202,6 +202,11 @@ No remote issue/PR creation, remote push or pairing was performed.
 
 ### Acceptance priorities
 
+Closeout scope: the user deferred multi-home/account aggregation, editor integration,
+and external collaboration expansion. They are not release blockers for this iteration.
+Existing startup, guard, identity, memory/review, bridge and plugin deployment remain
+in scope. Deployment and live acceptance gaps below must not be relabeled as complete.
+
 | Priority | Gap | Next acceptance or deliberate boundary |
 | --- | --- | --- |
 | P0 | Durable marketplace source and activation | Local v3.1.3 is released, but the persistent native marketplace still uses the Git source while the updater overrides it only per invocation. Resident native reconciliation and cache deletion were observed; two installation attempts failed. Cache presence and invocation-local readback are not durable activation evidence. Choose one durable source before further installation, then verify a fresh default-context session. No remote push was performed. |
@@ -209,10 +214,10 @@ No remote issue/PR creation, remote push or pairing was performed.
 | P1 | Approval notification acceptance | Entry observations now include PermissionRequest as well as startup, tool-use and shutdown. User-visible delivery and each supported surface still need acceptance; receipts do not establish successful lifecycle completion or every source revision. |
 | P0 | Mixed-host runtime acceptance | Earlier v3.1.2 cache comparisons matched across both hosts, but that does not establish current activation after native reconciliation. Claude remains on the previous release; Codex v3.1.3 installation is incomplete and its effective runtime version is unverified. Fresh-session lifecycle/gate acceptance remains required. |
 | P1 | Live lifecycle/provider acceptance | Exercise recall, automatic compact restoration, REM/review coordination, approval/input notices and real OS delivery. Paid Fabric/provider probes require separate approval/authentication. |
-| P1 | External worktree policy | Current Forge machine/agent/branch provenance is locally verified. Automatic lane allocation/locking remains the owner's policy; no absent session gate is inferred from historical prose. |
+| Deferred | External worktree policy | Out of this iteration's scope by user decision. Current Forge machine/agent/branch provenance is locally verified. Automatic lane allocation/locking remains the owner's policy; no absent session gate is inferred from historical prose. |
 | P1 | Native cache-cleanup atomicity | Native startup can delete old versions too. Preservation-only lifecycle recovery reduces persistent loss but cannot eliminate the vendor's deletion window; use a closed-client maintenance window for uninterrupted imports. |
-| P2 | Concurrent homes/accounts | One explicit home per machine collector is supported, not simultaneous multi-seat discovery or aggregated account presence. |
-| P2 | Native surfaces and editor integration | CLI/editor/app behavior and official remote pairing are not all live-validated. VS Code provider switching remains Claude-specific, not a Codex extension switcher. |
+| Deferred | Concurrent homes/accounts | Out of this iteration's scope by user decision. One explicit home per machine collector is supported, not simultaneous multi-seat discovery or aggregated account presence. |
+| Deferred | Editor integration and external remote pairing | Out of this iteration's scope by user decision. VS Code provider switching remains Claude-specific, not a Codex extension switcher. Existing local CLI lifecycle acceptance is still required. |
 | Boundary | Limited automatic observability | Arbitrary shell memory reads, exact window presence, actual subscription monetary cost, and no-rollout ephemeral sessions cannot be inferred completely from current inputs. |
 | Boundary | Bounded rather than immediate automation | REM/review can defer to the next ordinary Stop; shutdown reminders concern cc-config, not every project. Independent Telegram observation has no fabricated live-control endpoint, and reconnect/handoff is not a durable exactly-once outbox. |
 
