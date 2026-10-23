@@ -64,6 +64,10 @@ export const CLAUDE_LINKS = [
   // fleet host guards against the same names, and never git — a committed list of private
   // names would be the leak itself. Optional: a plain clone has none and never seeds one.
   { src: 'private-markers', dest: 'private-markers', type: 'file', base: 'sync', optional: true },
+  // The owner's trust list: repo origins (globs) whose .claude/automode.json the Claude
+  // launcher passes with --settings (scripts/runtime/repo-automode.mjs). Personal, so it
+  // rides the payload, never git; absent = no repo is trusted.
+  { src: 'trusted-origins', dest: 'trusted-origins', type: 'file', base: 'sync', optional: true },
 ];
 
 // A seat dir (~/.claude-<alias>, scripts/shared/seats.mjs) owns only its login and state:

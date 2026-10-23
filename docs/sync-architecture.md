@@ -55,7 +55,7 @@ files, `GLOBAL-AGENTS.md`, `keybindings.json`, `AGENTS.md`, `README.md`.
 
 Transport: `git pull` / `git push`. Nothing else.
 
-### Tier B — the sync payload (3 files, plus the optional denylist)
+### Tier B — the sync payload (3 files, plus the optional denylist and trust list)
 
 | File | Why it can't be in git | Why it must be shared |
 | --- | --- | --- |
@@ -63,10 +63,16 @@ Transport: `git pull` / `git push`. Nothing else.
 | `claude_env_settings.json` | non-secret host config (provider projection rules, seats, bridge) | one projection for the `cc*` and `cods` launchers; the catalogue itself is ai-lab's (`docs/providers.md`) |
 | `codex_config.toml` | host-tuned Codex config (model, sandbox, TUI) | same — **but only its hand-edited head**, see below |
 | `private-markers` (optional) | the owner's private names; committing the list would be the leak | every host's public-hygiene guards must see the same names |
+| `trusted-origins` (optional) | the owner's trust list of repo origins; it names private hosts and orgs | every host must load the same repos' auto-mode rules |
 
 These are small, hand-edited, rarely written concurrently, and contain no `.git`, no
 locks, and no atomic-rename storms. This is a workload a file-sync daemon actually
 handles correctly. **This is the only thing the cloud folder is responsible for.**
+
+The template `claude_settings.template.json` is public and generic; the payload
+`claude_settings.json` is the owner's personal file. They are decoupled: doctor requires the
+payload to carry the template's keys, never to equal it, and nothing personal or
+project-specific goes into the template (`scripts/setup/settings-template.test.mjs`).
 
 #### `codex_config.toml` is not one file, it is three
 

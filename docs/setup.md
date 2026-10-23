@@ -19,6 +19,25 @@ Provisioning a Windows host without admin rights? `scripts/setup/bootstrap-windo
 installs Rust and Node.js LTS at user level and appends them to the user `PATH`. Run it from an
 ordinary (non-elevated) shell, then open a new one so the `PATH` change takes effect.
 
+## Auto-mode rules: three layers
+
+Claude Code reads `autoMode` only from user settings, managed settings and `--settings` —
+never from a repo's `.claude/settings*.json`. Arrays from these scopes concatenate, so a
+`--settings` fragment ADDS rows to the user's (measured with
+`claude --settings <f> auto-mode config`). Each layer has one owner:
+
+| Layer | Where | Holds |
+| --- | --- | --- |
+| public mechanism | `scripts/runtime/repo-automode.mjs`, called by `buildClaudeInvocation` for every `ccc` / `ccds` launch | nothing personal; the template's `autoMode` is absent, i.e. the built-in defaults |
+| personal trust | `~/.claude/trusted-origins` (sync payload, optional) | one origin glob per line, `#` comments; `*` stays inside a path segment, `**` crosses: `git.example.com/my-org/*` |
+| repo declaration | `<repo>/.claude/automode.json` | `{ "autoMode": { "allow": [...], "environment": [...] } }` — that key only |
+
+At launch the repo is the git toplevel of the current directory; its `origin` is normalized to
+`host/path` (no scheme, user, port or `.git`). The fragment is passed as
+`--settings <fragment>` only when that key matches a trusted glob; otherwise nothing is passed
+and the launcher prints one line naming why (not a repo, no fragment, no origin, untrusted
+origin, a fragment with other keys, or an explicit `--settings`). Codex has no auto mode.
+
 ## Host identity (`--machine`)
 
 `--machine <NAME>` writes `~/.claude/machine.json` (machine-local, never synced; names match

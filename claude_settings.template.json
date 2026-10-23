@@ -249,22 +249,5 @@
     "remoteControlAtStartup": true,
     "inputNeededNotifEnabled": true,
     "agentPushNotifEnabled": true,
-    "skipAutoPermissionPrompt": true,
-    "autoMode": {
-        "environment": [
-            "$defaults",
-            "Source control: <forge-host>/<org> and every repo under it are the user's own trusted remotes; integrate/main is the team integration branch, main is the release branch",
-            "Forge hosts (<machine>, ...) and their lab-commons checkouts belong to the user"
-        ],
-        "allow": [
-            "$defaults",
-            "The integrator merging a PR into integrate/main locally with git merge --no-ff and pushing it, when the merge message carries a Break-Glass: <reason> trailer (user ruling 2026-10-21: always allowed)",
-            "Installing lab-commons git hook shims into a repo's own .git/hooks via `python -m lab_commons.dev.hook_install --install`",
-            "Deleting agent worktrees under .claude/worktrees/ (rm -rf .claude/worktrees/*, git worktree remove, git worktree prune)",
-            "Reading forge state and opening PRs: `python -m lab_commons.dev.forge queue|status|pr ...`",
-            "Closing a PR whose head is already merged into its base (verified with git merge-base --is-ancestor), with a comment naming why, and then deleting its branch through `python -m lab_commons.dev.branchprune delete` (user ruling 2026-10-22: always allowed)",
-            "Editing a forge request issue's body to correct a malformed field (e.g. a short sha to the full 40-hex sha) so the forge can serve it",
-            "Installing a missing JMAG material card into the local JMAG library (user ruling 2026-10-13)"
-        ]
-    }
+    "skipAutoPermissionPrompt": true
 }
