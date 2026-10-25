@@ -1,44 +1,37 @@
-// Every launch path runs the agent through ai-lab's ONE session launcher, `ai-lab-session <claude|codex> [args]`
+// Every launch path runs the agent through ai-lab's ONE session launcher, `<python> -m ai_lab.session <claude|codex> [args]`
 // (PLAN-a-short-robust-toolchain P4): it mints or inherits LAB_SESSION; cc-config issues none.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { SESSION_LAUNCHER, sessionSpawn } from './session-launcher.mjs';
+import { SESSION_MODULE, sessionSpawn } from './session-launcher.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const exe = (platform) => (platform === 'win32' ? `${SESSION_LAUNCHER}.exe` : SESSION_LAUNCHER);
+const python = join(tmpdir(), 'venv', 'python.exe');
+const has = () => true;
 
-function venv({ withLauncher = true, platform = process.platform } = {}) {
-  const bin = join(mkdtempSync(join(tmpdir(), 'session-launcher-')), platform === 'win32' ? 'Scripts' : 'bin');
-  mkdirSync(bin, { recursive: true });
-  const python = join(bin, platform === 'win32' ? 'python.exe' : 'python');
-  writeFileSync(python, '');
-  if (withLauncher) writeFileSync(join(bin, exe(platform)), '');
-  return { bin, python };
-}
-
-test('the agent runs through ai-lab-session beside the provider cache\'s ai-lab interpreter', () => {
-  for (const platform of ['win32', 'linux']) {
-    const { bin, python } = venv({ platform });
-    assert.deepEqual(sessionSpawn('claude', ['-c', 'x'], { python, platform }), { command: join(bin, exe(platform)), args: ['claude', '-c', 'x'] });
-    assert.deepEqual(sessionSpawn('codex', [], { python, platform }).args, ['codex']);
-  }
+test('the agent runs as `<recorded python> -m ai_lab.session <agent> ...`', () => {
+  assert.deepEqual(sessionSpawn('claude', ['-c', 'x'], { python, probe: has }),
+    { command: python, args: ['-m', SESSION_MODULE, 'claude', '-c', 'x'] });
+  assert.equal(SESSION_MODULE, 'ai_lab.session');
+  assert.deepEqual(sessionSpawn('codex', [], { python, probe: has }).args, ['-m', 'ai_lab.session', 'codex']);
 });
 
-test('planted: an ai-lab without ai-lab-session, or no recorded interpreter, refuses naming setup', () => {
-  const { python } = venv({ withLauncher: false });
-  assert.match(sessionSpawn('claude', [], { python }).error, /ai-lab-session.*not installed beside.*setup/s);
-  assert.match(sessionSpawn('claude', [], { python: null }).error, /no ai-lab interpreter recorded.*setup/s);
+test('planted: an ai-lab without ai_lab.session, or no recorded interpreter, refuses naming upgrade and setup', () => {
+  assert.match(sessionSpawn('claude', [], { python, probe: () => false }).error, /cannot import ai_lab.session.*upgrade ai-lab.*setup/s);
+  assert.match(sessionSpawn('claude', [], { python: null, probe: has }).error, /no ai-lab interpreter recorded.*setup/s);
 });
 
-test('an agent ai-lab-session does not run is refused by name', () => {
-  const { python } = venv();
-  assert.match(sessionSpawn('gemini', [], { python }).error, /gemini/);
+test('the default probe refuses an interpreter that does not exist', () => {
+  assert.match(sessionSpawn('claude', [], { python: join(tmpdir(), 'no-such-python.exe') }).error, /cannot import/);
+});
+
+test('an agent ai_lab.session does not run is refused by name', () => {
+  assert.match(sessionSpawn('gemini', [], { python, probe: has }).error, /gemini/);
 });
 
 test('cc.js and codex.js spawn through sessionSpawn; no file spawns claude or codex directly', () => {

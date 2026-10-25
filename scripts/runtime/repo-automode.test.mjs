@@ -87,7 +87,7 @@ test('readTrustList: one glob per line, # comments dropped, absent file = []', (
 });
 
 // (iv) One function: buildClaudeInvocation is the only builder of claude args, cc.js the only
-// spawner of claude (through ai-lab-session, session-launcher.test.mjs), and the builder calls
+// spawner of claude (through ai_lab.session, session-launcher.test.mjs), and the builder calls
 // repoAutoModeArgs. Codex has no autoMode.
 test('every Claude launch routes through repoAutoModeArgs', () => {
   const launcher = readFileSync(join(here, 'cc-launcher.mjs'), 'utf8');

@@ -94,7 +94,7 @@ export function buildCodexInvocation({
   // Provenance (HARNESS_*, GIT_COMMITTER_NAME) is NOT injected here: Codex may run
   // commands in a shared daemon this env never reaches. setup writes it into
   // ~/.codex/config.toml [shell_environment_policy.set] instead — see codexShellEnv().
-  // The session id is ai-lab-session's (codex.js spawns through it, so it rides that env; config.toml
+  // The session id is ai_lab.session's (codex.js spawns through it, so it rides that env; config.toml
   // cannot carry a per-session value). A `resume --last` it cannot read is resolved here (vendor-session.mjs).
   extraArgs = codexResumeArgs(extraArgs, { codexHome });
   const env = { ...baseEnv };

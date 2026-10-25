@@ -1,5 +1,5 @@
 // `--continue` and `resume --last` name no id, so the launcher resolves them to the transcript they would take and
-// hands ai-lab-session `--resume <id>` / `resume <id>`: a continued conversation keeps its LAB_SESSION.
+// hands ai_lab.session `--resume <id>` / `resume <id>`: a continued conversation keeps its LAB_SESSION.
 
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
@@ -57,7 +57,7 @@ test('codex: resume --last becomes resume <the newest rollout>; resume <id> and 
   assert.deepEqual(codexResumeArgs(['resume', '--last'], { codexHome: codexHome([]) }), ['resume', '--last']);
 });
 
-test('the launchers resolve the continuation and issue no LAB_SESSION of their own (ai-lab-session does)', () => {
+test('the launchers resolve the continuation and issue no LAB_SESSION of their own (ai_lab.session does)', () => {
   const home = mkdtempSync(join(tmpdir(), 'vs-home-'));
   claudeDir('/w', [A, B], join(home, '.claude'));
   const claude = buildClaudeInvocation({ provider: null, extraArgs: ['-c'], envSettingsPath: '/nonexistent', home, cwd: '/w',

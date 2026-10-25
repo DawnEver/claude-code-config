@@ -84,7 +84,7 @@ export function buildClaudeInvocation({
     if (!existsSync(dir)) return fail(`no seat dir ${dir}: add seat ${seat} for this machine to \`seats\` in claude_env_settings.json, then run setup`);
     if (dir !== baseDir(home)) env.CLAUDE_CONFIG_DIR = dir;
   }
-  // The session id is ai-lab-session's (cc.js spawns through it); a `--continue` it cannot read is resolved here.
+  // The session id is ai_lab.session's (cc.js spawns through it); a `--continue` it cannot read is resolved here.
   extraArgs = claudeResumeArgs(extraArgs, { configDir: env.CLAUDE_CONFIG_DIR || baseDir(home), cwd });
   const repo = repoSettings({ cwd, home, extraArgs });
   const notice = repo.notice;

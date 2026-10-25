@@ -1,6 +1,6 @@
 // vendor-session.mjs — resolve a continuation the launch args name without an id, so LAB_SESSION survives it.
 //
-// LAB_SESSION is ONE id per agent session, minted or inherited by ai-lab's `ai-lab-session` launcher, which every
+// LAB_SESSION is ONE id per agent session, minted or inherited by ai-lab's `ai_lab.session` launcher, which every
 // launch path runs the agent through (PLAN-a-short-robust-toolchain P4). It reads the vendor's conversation id from
 // the args it is handed (`--resume <id>`, `--session-id <id>`, `codex resume <id>`) and pins a fresh Claude
 // conversation itself. What it cannot read is a continuation with no id, so the launcher resolves it first:
