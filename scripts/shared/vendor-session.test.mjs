@@ -1,19 +1,19 @@
-// LAB_SESSION is the vendor's conversation id, stable across a resume; an inherited id still wins.
+// `--continue` and `resume --last` name no id, so the launcher resolves them to the transcript they would take and
+// hands ai-lab-session `--resume <id>` / `resume <id>`: a continued conversation keeps its LAB_SESSION.
 
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { claudeProjectSlug, claudeSession, codexSession } from './vendor-session.mjs';
-import { withClaudeSession } from '../runtime/cc-launcher.mjs';
+import { claudeProjectSlug, claudeResumeArgs, codexResumeArgs } from './vendor-session.mjs';
+import { buildClaudeInvocation } from '../runtime/cc-launcher.mjs';
 import { buildCodexInvocation } from '../runtime/codex-launcher.mjs';
 
 const A = '11111111-2222-4333-8444-555555555555';
 const B = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
-function claudeDir(cwd, ids) {
-  const configDir = mkdtempSync(join(tmpdir(), 'vs-claude-'));
+function claudeDir(cwd, ids, configDir = mkdtempSync(join(tmpdir(), 'vs-claude-'))) {
   const dir = join(configDir, 'projects', claudeProjectSlug(cwd));
   mkdirSync(dir, { recursive: true });
   ids.forEach((id, i) => {
@@ -24,66 +24,48 @@ function claudeDir(cwd, ids) {
   return configDir;
 }
 
-const launch = (env, args, seams) => {
-  const out = withClaudeSession(env, args, seams);
-  return { id: env.LAB_SESSION, args: out.extraArgs };
-};
-
-test('fresh Claude session: a new id, pinned as Claude\'s own with --session-id', () => {
-  const seams = { configDir: claudeDir('/w', []), cwd: '/w' };
-  const one = launch({}, [], seams);
-  const two = launch({}, [], seams);
-  assert.notEqual(one.id, two.id);
-  assert.deepEqual(one.args, ['--session-id', one.id]);
-});
-
-test('resumed Claude session keeps the id it was pinned to (planted control: a fresh launch gets another)', () => {
-  const seams = { configDir: claudeDir('/w', []), cwd: '/w' };
-  const first = launch({}, [], seams);
-  const resumed = launch({}, ['--resume', first.id], seams);
-  assert.equal(resumed.id, first.id);
-  assert.deepEqual(resumed.args, ['--resume', first.id], 'a resume is never re-pinned');
-  assert.equal(launch({}, ['--resume', A, '--fork-session'], seams).id, A, 'a fork carries the original');
-  assert.notEqual(launch({}, [], seams).id, first.id);
-});
-
-test('--continue takes the cwd\'s newest transcript id (planted control: another cwd has none)', () => {
-  const configDir = claudeDir('C:\\work\\repo', [A, B]);
-  assert.equal(claudeSession(['--continue'], { configDir, cwd: 'C:\\work\\repo' }).id, B);
-  assert.equal(launch({}, ['-c'], { configDir, cwd: 'C:\\work\\repo' }).id, B);
-  assert.equal(claudeSession(['-c'], { configDir, cwd: 'C:\\elsewhere' }).id, null);
-});
-
-test('a child inherits its parent\'s id and is never pinned (planted control: without it, it is pinned)', () => {
-  const seams = { configDir: claudeDir('/w', [A]), cwd: '/w' };
-  assert.deepEqual(launch({ LAB_SESSION: 'outer-session-1' }, ['--resume', A], seams), { id: 'outer-session-1', args: ['--resume', A] });
-  assert.deepEqual(launch({ LAB_SESSION: 'outer-session-1' }, [], seams), { id: 'outer-session-1', args: [] });
-  assert.equal(launch({}, [], seams).args[0], '--session-id');
-});
-
-test('a claude command (no conversation) and the resume picker are never pinned', () => {
-  const seams = { configDir: claudeDir('/w', []), cwd: '/w' };
-  assert.deepEqual(launch({}, ['mcp', 'list'], seams).args, ['mcp', 'list']);
-  const picker = launch({}, ['--resume'], seams);
-  assert.deepEqual(picker.args, ['--resume']);
-  assert.ok(picker.id, 'the picker falls back to a launcher id');
-});
-
-test('codex: resume <id> and resume --last keep the thread id; a fresh launch falls back; a child inherits', () => {
-  const codexHome = mkdtempSync(join(tmpdir(), 'vs-codex-'));
-  const day = join(codexHome, 'sessions', '2026', '10', '21');
+function codexHome(ids) {
+  const home = mkdtempSync(join(tmpdir(), 'vs-codex-'));
+  const day = join(home, 'sessions', '2026', '10', '21');
   mkdirSync(day, { recursive: true });
-  for (const [i, id] of [A, B].entries()) {
+  ids.forEach((id, i) => {
     const file = join(day, `rollout-2026-10-21T10-0${i}-00-${id}.jsonl`);
     writeFileSync(file, '{}\n');
     utimesSync(file, 1000 + i, 1000 + i);
-  }
-  assert.equal(codexSession(['resume', A], { codexHome }), A);
-  assert.equal(codexSession(['resume', '--last'], { codexHome }), B);
-  assert.equal(codexSession([], { codexHome }), null);
-  const run = (baseEnv, extraArgs) => buildCodexInvocation({ provider: null, envSettingsPath: '/nonexistent', extraArgs, baseEnv, codexHome }).env.LAB_SESSION;
-  assert.equal(run({}, ['resume', A]), A);
-  assert.equal(run({ LAB_SESSION: 'outer-session-1' }, ['resume', A]), 'outer-session-1');
-  assert.ok(run({}, []));
-  assert.notEqual(run({}, []), A);
+  });
+  return home;
+}
+
+test('--continue / -c become --resume <the cwd\'s newest transcript> (planted control: another cwd keeps -c)', () => {
+  const configDir = claudeDir('C:\\work\\repo', [A, B]);
+  const seams = { configDir, cwd: 'C:\\work\\repo' };
+  assert.deepEqual(claudeResumeArgs(['--continue'], seams), ['--resume', B]);
+  assert.deepEqual(claudeResumeArgs(['-c', '--model', 'opus'], seams), ['--resume', B, '--model', 'opus']);
+  assert.deepEqual(claudeResumeArgs(['-c'], { configDir, cwd: 'C:\\elsewhere' }), ['-c']);
+});
+
+test('a named resume, the picker and a fresh launch pass through untouched', () => {
+  const seams = { configDir: claudeDir('/w', [A]), cwd: '/w' };
+  for (const args of [['--resume', A], ['--resume'], [], ['mcp', 'list']]) assert.deepEqual(claudeResumeArgs(args, seams), args);
+});
+
+test('codex: resume --last becomes resume <the newest rollout>; resume <id> and a fresh launch pass through', () => {
+  const home = codexHome([A, B]);
+  assert.deepEqual(codexResumeArgs(['resume', '--last'], { codexHome: home }), ['resume', B]);
+  assert.deepEqual(codexResumeArgs(['resume', A], { codexHome: home }), ['resume', A]);
+  assert.deepEqual(codexResumeArgs([], { codexHome: home }), []);
+  assert.deepEqual(codexResumeArgs(['resume', '--last'], { codexHome: codexHome([]) }), ['resume', '--last']);
+});
+
+test('the launchers resolve the continuation and issue no LAB_SESSION of their own (ai-lab-session does)', () => {
+  const home = mkdtempSync(join(tmpdir(), 'vs-home-'));
+  claudeDir('/w', [A, B], join(home, '.claude'));
+  const claude = buildClaudeInvocation({ provider: null, extraArgs: ['-c'], envSettingsPath: '/nonexistent', home, cwd: '/w',
+    machine: null, repoSettings: () => ({ args: [] }) });
+  assert.deepEqual(claude.args.slice(-2), ['--resume', B]);
+  assert.equal(claude.env.LAB_SESSION, process.env.LAB_SESSION);
+  const codex = buildCodexInvocation({ provider: null, extraArgs: ['resume', '--last'], envSettingsPath: '/nonexistent',
+    codexHome: codexHome([A, B]), baseEnv: {} });
+  assert.deepEqual(codex.args.slice(-2), ['resume', B]);
+  assert.equal(codex.env.LAB_SESSION, undefined);
 });

@@ -14,9 +14,6 @@ import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { fakeAiLab, writeCache } from '../shared/provider-cache-fixture.mjs';
 
-// These tests read the args the launcher builds; an inherited LAB_SESSION adds none, so they hold whether or not
-// the run itself is inside a session. Pinning a fresh session (--session-id) is vendor-session.test.mjs's.
-process.env.LAB_SESSION ||= 'test-inherited-session';
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'cc-launcher-'));
@@ -140,12 +137,6 @@ test('provenance: no machine name -> nothing injected', () => {
   const { env } = buildClaudeInvocation({ provider: null, envSettingsPath: '/nonexistent',
     machine: null, gitUserName: 'Me' });
   assert.equal(env.HARNESS_MACHINE, process.env.HARNESS_MACHINE);
-});
-
-test('session: every launch carries LAB_SESSION, with or without a machine name', () => {
-  const { env } = buildClaudeInvocation({ provider: null, envSettingsPath: '/nonexistent',
-    machine: null, gitUserName: 'Me' });
-  assert.ok(env.LAB_SESSION);
 });
 
 // ── session bridge channel (docs/bridge.md) ──

@@ -14,8 +14,8 @@ import os from 'os';
 import { baseDir, readSeats, resolveSeat, seatHome, seatsFor } from '../shared/seats.mjs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
-import { readMachineName, readGitUserName, provenanceEnv, sessionEnv, SESSION_ENV } from '../shared/machine.mjs';
-import { claudeSession } from '../shared/vendor-session.mjs';
+import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
+import { claudeResumeArgs } from '../shared/vendor-session.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { resolveProvider } from '../shared/provider-projection.mjs';
@@ -23,24 +23,6 @@ import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credentia
 import { repoAutoModeArgs } from './repo-automode.mjs';
 
 export const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
-
-// `claude <command>` runs no conversation, so it is never pinned with `--session-id` (`claude --help`, 2026-10-21).
-const CLAUDE_COMMANDS = new Set(['agents', 'attach', 'auth', 'auto-mode', 'doctor', 'gateway', 'import', 'install',
-  'logs', 'mcp', 'plugin', 'plugins', 'purge', 'respawn', 'rm', 'setup-token', 'stop', 'kill', 'ultrareview',
-  'update', 'upgrade']);
-
-/**
- * Set `env.LAB_SESSION` (inherited, else Claude's own conversation id, else a fresh UUID) and pin a fresh
- * conversation to it with `--session-id`, so a later `--resume <id>` keeps the same LAB_SESSION.
- */
-export function withClaudeSession(env, extraArgs, { configDir, cwd }) {
-  const inherited = env[SESSION_ENV];
-  const { id, pin } = claudeSession(extraArgs, { configDir, cwd });
-  Object.assign(env, sessionEnv(env, id));
-  const command = extraArgs[0] && CLAUDE_COMMANDS.has(extraArgs[0]);
-  if (!inherited && pin && !command) extraArgs = [...extraArgs, '--session-id', env[SESSION_ENV]];
-  return { extraArgs };
-}
 
 /**
  * Build the env + args for spawning the `claude` CLI with a given provider.
@@ -102,7 +84,8 @@ export function buildClaudeInvocation({
     if (!existsSync(dir)) return fail(`no seat dir ${dir}: add seat ${seat} for this machine to \`seats\` in claude_env_settings.json, then run setup`);
     if (dir !== baseDir(home)) env.CLAUDE_CONFIG_DIR = dir;
   }
-  ({ extraArgs } = withClaudeSession(env, extraArgs, { configDir: env.CLAUDE_CONFIG_DIR || baseDir(home), cwd }));
+  // The session id is ai-lab-session's (cc.js spawns through it); a `--continue` it cannot read is resolved here.
+  extraArgs = claudeResumeArgs(extraArgs, { configDir: env.CLAUDE_CONFIG_DIR || baseDir(home), cwd });
   const repo = repoSettings({ cwd, home, extraArgs });
   const notice = repo.notice;
   extraArgs = [...repo.args, ...extraArgs];

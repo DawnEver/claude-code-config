@@ -19,7 +19,7 @@ const sync = syncBeforeLaunch();
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
 const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { accountFile, configDir },
-  { channelServerPath, ensureChannelServer }, { readBridgeConfig }, { ENV_SETTINGS_PATH }] = await Promise.all([
+  { channelServerPath, ensureChannelServer }, { readBridgeConfig }, { ENV_SETTINGS_PATH }, { sessionSpawn }] = await Promise.all([
   import('./cc-launcher.mjs'),
   import('./win-spawn.mjs'),
   import('../shared/claude-defaults.mjs'),
@@ -27,6 +27,7 @@ const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { a
   import('../shared/channel-server.mjs'),
   import('../bridge/context.mjs'),
   import('../shared/config.mjs'),
+  import('../shared/session-launcher.mjs'),
 ]);
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -77,8 +78,14 @@ try {
   }
 } catch { /* ignore */ }
 
+// Claude runs through ai-lab's session launcher, which mints or inherits LAB_SESSION (session-launcher.mjs).
+const session = sessionSpawn('claude', args);
+if (session.error) {
+  console.error(`[cc] ${session.error}`);
+  process.exit(1);
+}
 // Not `shell: true`: that concatenates args unescaped, so any argument containing a space
-// or a cmd metacharacter is mangled. `prepareSpawn` resolves the npm shim and quotes for us.
-const launch = prepareSpawn('claude', args, { env });
+// or a cmd metacharacter is mangled. `prepareSpawn` quotes for us.
+const launch = prepareSpawn(session.command, session.args, { env });
 const child = spawn(launch.command, launch.args, { ...launch.options, env, stdio: 'inherit' });
 child.on('exit', code => process.exit(code ?? 0));

@@ -20,12 +20,13 @@ const sync = syncBeforeLaunch({ env: { ...process.env, CC_CONFIG_STARTUP_SYNCED:
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
 const [{ buildCodexInvocation }, { prepareSpawn }, { checkLinks, SETUP_FIX_CMD },
-  { ENV_SETTINGS_PATH }, { resolveCodexHome }] = await Promise.all([
+  { ENV_SETTINGS_PATH }, { resolveCodexHome }, { sessionSpawn }] = await Promise.all([
   import('./codex-launcher.mjs'),
   import('./win-spawn.mjs'),
   import('../setup/check-links.js'),
   import('../shared/config.mjs'),
   import('../shared/codex-home.mjs'),
+  import('../shared/session-launcher.mjs'),
 ]);
 const activeCodexHome = resolveCodexHome();
 
@@ -96,8 +97,14 @@ if (error) {
 
 console.log(provider ? `[codex] Using provider: ${provider}` : '[codex] Using default Codex');
 
+// Codex runs through ai-lab's session launcher, which mints or inherits LAB_SESSION (session-launcher.mjs).
+const session = sessionSpawn('codex', args);
+if (session.error) {
+  console.error(`[codex] ${session.error}`);
+  process.exit(1);
+}
 // Not `shell: true`: that concatenates args unescaped, so `cods exec "a prompt with spaces"`
-// reached Codex as separate words. `prepareSpawn` resolves the npm shim and quotes for us.
-const launch = prepareSpawn('codex', args, { env });
+// reached Codex as separate words. `prepareSpawn` quotes for us.
+const launch = prepareSpawn(session.command, session.args, { env });
 const child = spawn(launch.command, launch.args, { ...launch.options, env, stdio: 'inherit' });
 child.on('exit', code => process.exit(code ?? 0));
