@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   isValidMachineName, readMachineName, writeMachineName, provenanceEnv, codexShellEnv,
-  sessionEnv, SESSION_ENV, readGitUserName,
+  readGitUserName,
 } from './machine.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'machine-'));
@@ -77,18 +77,3 @@ test('codexShellEnv: fixed codex provenance, independent of the calling env', ()
   });
 });
 
-test('sessionEnv: issues one fresh id per session, independent of the machine name', () => {
-  const a = sessionEnv({}), b = sessionEnv({});
-  assert.equal(SESSION_ENV, 'LAB_SESSION');
-  assert.match(a.LAB_SESSION, /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/);
-  assert.notEqual(a.LAB_SESSION, b.LAB_SESSION);
-});
-
-test('sessionEnv: a child launched inside a session inherits its id (codex/ccds under ccc alike)', () => {
-  assert.deepEqual(sessionEnv({ LAB_SESSION: 'outer-session-1' }), { LAB_SESSION: 'outer-session-1' });
-});
-
-test('sessionEnv: native Codex lineage replaces stale launcher IDs without inventing an ID', () => {
-  assert.deepEqual(sessionEnv({ CODEX_SESSION_ID: 'root', CODEX_THREAD_ID: 'child', LAB_SESSION: 'stale' }), { LAB_SESSION: 'root' });
-  assert.deepEqual(sessionEnv({ CODEX_THREAD_ID: 'main' }), { LAB_SESSION: 'main' });
-});

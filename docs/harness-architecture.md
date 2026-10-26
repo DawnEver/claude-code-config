@@ -170,25 +170,23 @@ No bot accounts: they multiply credentials and lose layer 1. Instead:
     the shared head has one; never in the shared payload). Every Codex command tags,
     however Codex was started; a static file cannot see the caller's shell, so a user-set
     committer name is **not** preserved in Codex sessions. `codex-launcher.mjs` injects
-    only the session id (below). Doctor FAILs (`codex-provenance`) when a named host's composed config lacks
+    nothing; the session id is ai_lab.session's (below). Doctor FAILs (`codex-provenance`) when a named host's composed config lacks
     its machine name — re-run setup after `--machine`.
-- **Session (implemented):** every launcher (`ccc`, `ccds`, `codc`, ...) issues ONE
-  `LAB_SESSION` per session (`sessionEnv()`), kept when already inherited, so a subagent, a
-  fabric takeover or a nested launcher shares it. It is the vendor's own conversation id, so a
-  resume keeps it (`scripts/shared/vendor-session.mjs`): a fresh Claude launch is pinned with
-  `--session-id <LAB_SESSION>`, `--resume <id>`/`--continue` and `codex resume <id>|--last` reuse the
-  resumed id; a launcher UUID is only the fallback (fresh Codex, the bare `--resume` picker).
-  It is never in `codexShellEnv()`: a static file would give every session one id. A shared
-  daemon need not inherit the launcher's `LAB_SESSION`, but Codex supplies native dynamic
-  identity (`CODEX_THREAD_ID`, `CODEX_SESSION_ID`); thread and parent-session meanings must
-  be normalized by consumers. `scripts/shared/session-identity.mjs` now supplies that
-  distinction, and `sessionEnv()` prefers native root lineage over inherited stale launcher
-  IDs. This does not inject a dynamic ID through a static config file or prove an external
-  consumer adopted the helper. The inspected lab-commons Forge contract uses machine,
-  agent and branch, not `LAB_SESSION`; its provenance tests and installed runtime consumer
-  were verified locally in the 2026-10-23 audit. A session commit gate, `Lab-Session:`
-  trailers or ONE-SESSION-ONE-PR enforcement would be a separate downstream policy, not
-  an implemented requirement here. `Claude-Session:` is prose.
+- **Session (implemented):** every launcher (`ccc`, `ccds`, `codc`, ...) runs the agent through ai-lab's
+  ONE session launcher, `<recorded python> -m ai_lab.session <claude|codex> [args]` (`scripts/shared/session-launcher.mjs`;
+  PLAN-a-short-robust-toolchain P4), run by the interpreter setup recorded in the provider cache; no executable is looked up.
+  It issues ONE `LAB_SESSION` per session, kept when inherited (a subagent, a fabric takeover or a nested
+  launcher shares it, as does a runtime's own `CLAUDE_CODE_SESSION_ID` / `CODEX_SESSION_ID` /
+  `CODEX_THREAD_ID`), else the vendor's conversation id the args name (`--resume <id>`, `--session-id <id>`,
+  `codex resume <id>`), else a fresh UUID that pins a fresh Claude conversation with `--session-id`.
+  cc-config issues no session id; it only resolves the continuations ai_lab.session cannot read
+  (`scripts/shared/vendor-session.mjs`): `--continue` becomes `--resume <the cwd's newest transcript>` and
+  `codex resume --last` becomes `codex resume <the newest rollout>`. An interpreter that cannot import `ai_lab.session` refuses the
+  launch, naming the ai-lab upgrade and setup. The id is never in `codexShellEnv()`: a static file would give every session one id.
+  A shared daemon need not inherit it, but Codex supplies native dynamic identity (`CODEX_THREAD_ID`,
+  `CODEX_SESSION_ID`); `scripts/shared/session-identity.mjs` normalizes thread and root-session meanings for
+  consumers. The inspected lab-commons Forge contract uses machine, agent and branch, not `LAB_SESSION`;
+  `Lab-Session:` trailers are stamped downstream by dev-lab at commit-msg. `Claude-Session:` is prose.
 - **Env contract:** the same paths export `HARNESS_MACHINE` and `HARNESS_AGENT`
   (`claude`|`codex`) for other tools (e.g. lab-commons' forge) to read. No machine name →
   nothing is injected. `setup-vscode.js` (Claude in VS Code) carries no provenance.

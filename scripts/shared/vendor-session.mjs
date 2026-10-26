@@ -1,33 +1,20 @@
-// vendor-session.mjs — the vendor's own conversation id, read from the launch args, so LAB_SESSION survives a resume.
+// vendor-session.mjs — resolve a continuation the launch args name without an id, so LAB_SESSION survives it.
 //
-// LAB_SESSION is ONE id per agent session (machine.mjs sessionEnv). A launcher-issued UUID per launch gave a
-// resumed conversation a NEW id: its PR's notices and ONE-SESSION-ONE-PR saw a stranger. So the id is the
-// vendor's conversation id wherever the launcher can know it, and the UUID is only the fallback:
+// LAB_SESSION is ONE id per agent session, minted or inherited by ai-lab's `ai_lab.session` launcher, which every
+// launch path runs the agent through (PLAN-a-short-robust-toolchain P4). It reads the vendor's conversation id from
+// the args it is handed (`--resume <id>`, `--session-id <id>`, `codex resume <id>`) and pins a fresh Claude
+// conversation itself. What it cannot read is a continuation with no id, so the launcher resolves it first:
 //
-// Claude Code (https://code.claude.com/docs/en/cli-reference): `--resume <id>` keeps the original session id
-// (only `--fork-session` issues a new one -- the fork still carries the ORIGINAL's LAB_SESSION, which is the
-// chain to the first session); `--session-id <uuid>` names it; `--continue` takes the cwd's most recent
-// transcript, `<config dir>/projects/<cwd slug>/<id>.jsonl`. A FRESH launch is pinned: the launcher passes
-// `--session-id <LAB_SESSION>`, so Claude's id IS LAB_SESSION and a later `--resume <id>` finds it again.
-// A bare `--resume` (the picker) cannot be known at launch: fallback.
-//
-// Codex: `codex resume <id>` names the thread; `codex resume --last` takes the newest rollout,
-// `~/.codex/sessions/**/rollout-<stamp>-<id>.jsonl`. A fresh Codex launch has no id yet: fallback.
+// Claude Code (https://code.claude.com/docs/en/cli-reference): `--continue` takes the cwd's most recent transcript,
+// `<config dir>/projects/<cwd slug>/<id>.jsonl`; it is handed on as `--resume <id>`.
+// Codex: `codex resume --last` takes the newest rollout, `~/.codex/sessions/**/rollout-<stamp>-<id>.jsonl`; it is
+// handed on as `codex resume <id>`. Nothing found: the args pass through unchanged.
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function valueOf(args, names) {
-  for (let i = 0; i < args.length; i++) {
-    for (const name of names) {
-      if (args[i] === name && args[i + 1] && !args[i + 1].startsWith('-')) return args[i + 1];
-      if (args[i].startsWith(`${name}=`)) return args[i].slice(name.length + 1) || null;
-    }
-  }
-  return null;
-}
+const CONTINUE = new Set(['--continue', '-c']);
 
 /** Claude's project dir name for `cwd`: every character outside [A-Za-z0-9] becomes `-`. */
 export function claudeProjectSlug(cwd) {
@@ -52,31 +39,24 @@ function newest(dir, pick, deep) {
   return best?.id ?? null;
 }
 
-/**
- * Claude Code's conversation id for `args`: `{ id, pin }`. `id` is the resumed/named one, or null; `pin` is
- * true for a fresh launch, which the launcher pins with `--session-id`.
- */
-export function claudeSession(args, { configDir, cwd }) {
-  const named = valueOf(args, ['--session-id']) || valueOf(args, ['--resume', '-r']);
-  if (named) return { id: named, pin: false };
-  if (args.includes('--continue') || args.includes('-c')) {
-    const dir = join(configDir, 'projects', claudeProjectSlug(cwd));
-    return { id: newest(dir, (n) => (n.endsWith('.jsonl') && UUID.test(n.slice(0, -6)) ? n.slice(0, -6) : null), false), pin: false };
-  }
-  if (args.includes('--resume') || args.includes('-r')) return { id: null, pin: false };  // the picker
-  return { id: null, pin: true };
+/** `args` with `--continue` / `-c` replaced by `--resume <the cwd's newest transcript id>`; unchanged when none. */
+export function claudeResumeArgs(args, { configDir, cwd }) {
+  const at = args.findIndex((a) => CONTINUE.has(a));
+  if (at < 0) return args;
+  const dir = join(configDir, 'projects', claudeProjectSlug(cwd));
+  const id = newest(dir, (n) => (n.endsWith('.jsonl') && UUID.test(n.slice(0, -6)) ? n.slice(0, -6) : null), false);
+  return id ? [...args.slice(0, at), '--resume', id, ...args.slice(at + 1)] : args;
 }
 
-/** Codex's thread id for `args`: `resume <id>`, or `resume --last` read from the sessions dir; else null. */
+/** The thread id a rollout file name carries, or null. */
 export function codexRolloutId(file) {
   const name = String(file ?? '').split(/[\\/]/).at(-1);
   return /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(name)?.[1] ?? null;
 }
 
-export function codexSession(args, { codexHome }) {
-  if (args[0] !== 'resume') return null;
-  const id = args.slice(1).find((a) => !a.startsWith('-'));
-  if (id) return id;
-  if (!args.includes('--last')) return null;
-  return newest(join(codexHome, 'sessions'), codexRolloutId, true);
+/** `args` with `resume --last` replaced by `resume <the newest rollout's thread id>`; unchanged when none. */
+export function codexResumeArgs(args, { codexHome }) {
+  if (args[0] !== 'resume' || !args.includes('--last')) return args;
+  const id = newest(join(codexHome, 'sessions'), codexRolloutId, true);
+  return id ? ['resume', id, ...args.slice(1).filter((a) => a !== '--last')] : args;
 }

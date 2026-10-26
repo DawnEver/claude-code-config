@@ -17,8 +17,7 @@ import { readBridgeConfig } from '../bridge/context.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { resolveProvider } from '../shared/provider-projection.mjs';
 import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
-import { sessionEnv } from '../shared/machine.mjs';
-import { codexSession } from '../shared/vendor-session.mjs';
+import { codexResumeArgs } from '../shared/vendor-session.mjs';
 import { resolveCodexHome } from '../shared/codex-home.mjs';
 
 // Subcommands that open the interactive TUI; every other subcommand (exec, app-server, ...)
@@ -95,10 +94,10 @@ export function buildCodexInvocation({
   // Provenance (HARNESS_*, GIT_COMMITTER_NAME) is NOT injected here: Codex may run
   // commands in a shared daemon this env never reaches. setup writes it into
   // ~/.codex/config.toml [shell_environment_policy.set] instead — see codexShellEnv().
-  // The session id is per session, so it rides this env (config.toml cannot carry it); a command
-  // run in a shared daemon this env never reaches has none, and lab-commons refuses its commit.
-  // A resumed thread keeps its id (`codex resume <id>` / `--last`, vendor-session.mjs).
-  const env = { ...baseEnv, ...sessionEnv(baseEnv, codexSession(extraArgs, { codexHome })) };
+  // The session id is ai_lab.session's (codex.js spawns through it, so it rides that env; config.toml
+  // cannot carry a per-session value). A `resume --last` it cannot read is resolved here (vendor-session.mjs).
+  extraArgs = codexResumeArgs(extraArgs, { codexHome });
+  const env = { ...baseEnv };
   env.CODEX_HOME = codexHome;
   for (const k of PROVIDER_KEYS) delete env[k];
   for (const k of CODEX_STRIP_KEYS) delete env[k];

@@ -87,15 +87,16 @@ test('readTrustList: one glob per line, # comments dropped, absent file = []', (
 });
 
 // (iv) One function: buildClaudeInvocation is the only builder of claude args, cc.js the only
-// spawner of claude, and the builder calls repoAutoModeArgs. Codex has no autoMode.
+// spawner of claude (through ai_lab.session, session-launcher.test.mjs), and the builder calls
+// repoAutoModeArgs. Codex has no autoMode.
 test('every Claude launch routes through repoAutoModeArgs', () => {
   const launcher = readFileSync(join(here, 'cc-launcher.mjs'), 'utf8');
   assert.match(launcher, /repoSettings = repoAutoModeArgs/);
   assert.match(launcher, /repoSettings\(\{/);
   const cc = readFileSync(join(here, 'cc.js'), 'utf8');
   assert.match(cc, /buildClaudeInvocation\(/);
-  assert.match(cc, /prepareSpawn\('claude'/);
-  const spawners = execFileSync('git', ['grep', '-l', '-E', String.raw`(prepareSpawn|spawn\w*|execFile\w*)\(\s*['"]claude['"]`, '--', '*.js', '*.mjs'],
+  assert.match(cc, /sessionSpawn\('claude'/);
+  const spawners = execFileSync('git', ['grep', '-l', '-E', String.raw`(prepareSpawn|sessionSpawn|spawn\w*|execFile\w*)\(\s*['"]claude['"]`, '--', '*.js', '*.mjs', ':!*.test.mjs'],
     { cwd: join(here, '..', '..'), encoding: 'utf8' }).split(/\r?\n/).filter(Boolean);
   assert.deepEqual(spawners, ['scripts/runtime/cc.js'], 'a second claude spawner would bypass the repo autoMode gate');
 });

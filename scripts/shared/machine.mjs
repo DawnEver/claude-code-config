@@ -8,8 +8,6 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { randomUUID } from 'crypto';
-import { sessionIdentity } from './session-identity.mjs';
 
 export const MACHINE_PATH = path.join(os.homedir(), '.claude', 'machine.json');
 export const MACHINE_FIX_CMD = 'node scripts/setup/setup.js --machine <NAME>';
@@ -58,19 +56,6 @@ export function provenanceEnv({ machine, agent, userName, env = process.env }) {
   const userSet = env.GIT_COMMITTER_NAME && !env.HARNESS_AGENT;
   if (userName && !userSet) out.GIT_COMMITTER_NAME = `${userName} (${machine}/${agent})`;
   return out;
-}
-
-/** Vendor-neutral root lineage for consumers; native execution identity remains separate. */
-export const SESSION_ENV = 'LAB_SESSION';
-
-/**
- * Native runtime lineage wins over a launcher fallback. Outside a runtime, preserve an
- * inherited id, the resumed vendor id, or issue a launcher UUID for a fresh conversation.
- * Never in codexShellEnv: a
- * static config.toml would give every session the same id.
- */
-export function sessionEnv(env = process.env, vendorId = null) {
-  return { [SESSION_ENV]: sessionIdentity(env).sessionId || vendorId || randomUUID() };
 }
 
 /**

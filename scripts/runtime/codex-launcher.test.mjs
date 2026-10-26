@@ -112,11 +112,6 @@ test('provenance: the codex launcher injects nothing (config.toml shell_environm
   assert.equal(env.GIT_COMMITTER_NAME, process.env.GIT_COMMITTER_NAME);
 });
 
-test('session: the codex launcher issues LAB_SESSION (config.toml cannot: it is per session)', () => {
-  const { env } = buildCodexInvocation({ provider: null, envSettingsPath: '/nonexistent' });
-  assert.ok(env.LAB_SESSION);
-});
-
 // ── session bridge: the TUI must attach to the shared app-server (docs/bridge.md) ──
 
 function bridgeFixture(botToken) {
@@ -134,7 +129,8 @@ test('bridge: interactive official TUI attaches to the shared daemon', () => {
     ['--remote', 'unix://']);
   assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['fix the build'], envSettingsPath: shared, localPath: local }).args,
     ['--remote', 'unix://', 'fix the build']);
-  assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['resume', '--last'], envSettingsPath: shared, localPath: local }).args,
+  const codexHome = mkdtempSync(join(tmpdir(), 'codex-home-'));  // no rollout: `--last` stays for the TUI to pick
+  assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['resume', '--last'], envSettingsPath: shared, localPath: local, codexHome }).args,
     ['--remote', 'unix://', 'resume', '--last']);
 });
 
