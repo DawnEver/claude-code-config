@@ -65,7 +65,7 @@ let needsYouCard = store.get('dashboard.needsYouCard') === '1';
 const LOAD_MODES = [['detailed', 'Detailed'], ['compact', 'Compact'], ['off', 'Off']];
 let loadMode = LOAD_MODES.some(([m]) => m === store.get('dashboard.load')) ? store.get('dashboard.load') : 'detailed';
 // Usage (the store's report, docs/usage.md): fetched when its tab opens and every few minutes while open.
-const USAGE_RANGES = [7, 30, 90, 365];
+const USAGE_RANGES = [1, 7, 30, 90, 365];   // 1: the last 24 h, by hour
 const USAGE_EVERY_MS = 5 * 60000;
 let usageDays = USAGE_RANGES.includes(Number(store.get('dashboard.usageDays'))) ? Number(store.get('dashboard.usageDays')) : 30;
 let usage = null;        // {days, report, at} | {days, error, at}
@@ -612,7 +612,7 @@ function renderUsage() {
   box.replaceChildren();
   const range = el('div', 'usage-range');
   for (const d of USAGE_RANGES) {
-    const b = el('button', null, d === 365 ? '1y' : `${d}d`);
+    const b = el('button', null, d === 1 ? '24h' : d === 365 ? '1y' : `${d}d`);
     b.setAttribute('aria-pressed', String(d === usageDays));
     b.addEventListener('click', () => { usageDays = d; store.set('dashboard.usageDays', String(d)); renderUsage(); fetchUsage(true); });
     range.append(b);
@@ -637,7 +637,8 @@ function renderUsage() {
     chart.append(col);
   }
   const axis = el('div', 'usage-axis');
-  axis.append(el('span', null, v.days[0]?.day ?? ''), el('span', null, 'tokens per day · Claude / Codex'), el('span', null, v.days.at(-1)?.day ?? ''));
+  const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
+  axis.append(el('span', null, tick(v.days[0])), el('span', null, `tokens per ${v.unit} · Claude / Codex`), el('span', null, tick(v.days.at(-1))));
   box.append(totals, chart, axis, ...usageList('Projects', v.projects), ...usageList('Models', v.models), ...usageList('Machines', v.machines));
 }
 

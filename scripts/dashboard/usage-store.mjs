@@ -45,21 +45,26 @@ const TOKENS = 'SUM(input) AS input, SUM(cache_read) AS cache_read, SUM(cache_wr
 /**
  * The Usage tab's report over the last `days` days, by day on the viewer's clock (`tzOffsetMin`,
  * minutes east of UTC): per day and agent, and per project, model and machine over the range.
+ * `days: 1` is the last 24 hours instead, by hour (`unit: 'hour'`, `day` then 'YYYY-MM-DDTHH').
  * `active_ms` sums turn durations: agent time, so parallel sessions add up.
  */
 export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now() } = {}) {
   const off = tzOffsetMin * 60000;
-  const since = Math.floor((now + off) / 86400000 - days + 1) * 86400000 - off;
+  const unit = days === 1 ? 'hour' : 'day';
+  const ms = unit === 'hour' ? 3600000 : 86400000;
+  const buckets = unit === 'hour' ? 24 : days;
+  const since = Math.floor((now + off) / ms - buckets + 1) * ms - off;
+  const fmt = unit === 'hour' ? "strftime('%Y-%m-%dT%H', (started_at + ?) / 1000, 'unixepoch')" : "date((started_at + ?) / 1000, 'unixepoch')";
   const all = (sql, ...args) => db.prepare(sql).bind(...args).all().then((r) => r.results);
   const by = (col, limit) => all(`SELECT ${col} AS k, ${TOKENS}, SUM(ended_at - started_at) AS active_ms, COUNT(DISTINCT session) AS sessions, COUNT(*) AS turns
     FROM turns WHERE started_at >= ? GROUP BY ${col} ORDER BY SUM(input + cache_read + cache_write + output) DESC LIMIT ${limit}`, since);
   const [daily, projects, models, machines, cost] = await Promise.all([
-    all(`SELECT date((started_at + ?) / 1000, 'unixepoch') AS day, agent, ${TOKENS}, SUM(ended_at - started_at) AS active_ms, COUNT(*) AS turns
+    all(`SELECT ${fmt} AS day, agent, ${TOKENS}, SUM(ended_at - started_at) AS active_ms, COUNT(*) AS turns
       FROM turns WHERE started_at >= ? GROUP BY day, agent ORDER BY day`, off, since),
     by('project', 12), by('model', 12), by('machine', 12),
     all(`SELECT SUM(cost_usd) AS usd FROM session_costs WHERE session IN (SELECT DISTINCT session FROM turns WHERE started_at >= ?)`, since),
   ]);
-  return { days, since, daily, projects, models, machines, costUsd: cost[0]?.usd ?? null };
+  return { days, unit, since, daily, projects, models, machines, costUsd: cost[0]?.usd ?? null };
 }
 
 export const MAX_QUERY_ROWS = 5000;

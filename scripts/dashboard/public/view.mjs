@@ -355,16 +355,20 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
     tokens += tokensOf(d); active += d.active_ms ?? 0; turns += d.turns ?? 0;
     input += d.input ?? 0; cacheRead += d.cache_read ?? 0; cacheWrite += d.cache_write ?? 0;
   }
+  // A 24 h report is by hour ('YYYY-MM-DDTHH'), any other by day: every bucket of the range, empty ones too.
+  const hourly = report.unit === 'hour';
+  const ms = hourly ? 3600000 : 86400000;
   const days = [];
-  const today = Math.floor((now + tzOffsetMin * 60000) / 86400000);
-  for (let i = report.days - 1; i >= 0; i--) {
-    const day = new Date((today - i) * 86400000).toISOString().slice(0, 10);
+  const today = Math.floor((now + tzOffsetMin * 60000) / ms);
+  for (let i = (hourly ? 24 : report.days) - 1; i >= 0; i--) {
+    const day = new Date((today - i) * ms).toISOString().slice(0, hourly ? 13 : 10);
     days.push(byDay.get(day) ?? { day, claude: 0, codex: 0, active: 0 });
   }
   const max = Math.max(1, ...days.map((d) => d.claude + d.codex));
   const list = (rows) => rows.map((r) => ({ name: r.k ?? 'unknown', tokens: tokensOf(r), share: tokens ? tokensOf(r) / tokens : 0,
     active: r.active_ms ?? 0, turns: r.turns ?? 0, sessions: r.sessions ?? 0 }));
   return {
+    unit: hourly ? 'hour' : 'day',
     totals: { tokens, active, turns, costUsd: report.costUsd ?? null, cacheHit: input + cacheRead + cacheWrite ? cacheRead / (input + cacheRead + cacheWrite) : null },
     days: days.map((d) => ({ ...d, claudePct: (d.claude / max) * 100, codexPct: (d.codex / max) * 100 })),
     projects: list(report.projects ?? []), models: list(report.models ?? []), machines: list(report.machines ?? []),

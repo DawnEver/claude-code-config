@@ -55,7 +55,7 @@ Tokens mean the same on both hosts: `input` uncached, `cache_read`, `cache_write
 
 ## Reading it
 
-- **Mini App → Usage**: 7 d / 30 d / 90 d / 1 y. Totals (tokens, agent time, turns, cache hit,
+- **Mini App → Usage**: 24 h (by hour) / 7 d / 30 d / 90 d / 1 y. Totals (tokens, agent time, turns, cache hit,
   API value), tokens per day split by agent, and projects, models and machines ranked by
   tokens. Days are the viewer's own. Agent time sums turn durations, so parallel sessions add up.
 - **SQL**, from any host that pushes:

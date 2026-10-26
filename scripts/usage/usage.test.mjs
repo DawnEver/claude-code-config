@@ -274,6 +274,11 @@ test('store: report by the viewer\'s day; query is read-only and capped', async 
   const r = await report(db, { days: 7, tzOffsetMin: 60, now: Date.parse('2026-10-21T13:00:00Z') });
   assert.deepEqual(r.daily.map((d) => [d.day, d.agent, d.active_ms]), [['2026-10-21', 'claude', 600000], ['2026-10-21', 'codex', 60000]], '23:30 UTC is the 21st at UTC+1');
   assert.deepEqual(r.projects.map((p) => p.k), ['proj', 'other']);
+  const h = await report(db, { days: 1, tzOffsetMin: 60, now: Date.parse('2026-10-21T13:00:00Z') });
+  assert.equal(h.unit, 'hour');
+  assert.deepEqual(h.daily.map((d) => [d.day, d.agent]), [['2026-10-21T00', 'claude'], ['2026-10-21T13', 'codex']], '24 h by the viewer hour');
+  const old = await report(db, { days: 1, now: Date.parse('2026-10-22T13:00:00Z') });
+  assert.deepEqual(old.daily, [], 'older than 24 h is out');
   assert.equal(r.machines[0].k, 'host-a');
   const ok = await query(db, 'SELECT agent, COUNT(*) AS n FROM turns GROUP BY agent ORDER BY agent');
   assert.deepEqual(ok, { columns: ['agent', 'n'], rows: [['claude', 1], ['codex', 1]], truncated: false });
@@ -348,6 +353,11 @@ test('usage view: every day of the range, split by agent; ranked lists with shar
   assert.equal(v.projects[0].share, 1);
   assert.deepEqual([tokenText(950), tokenText(12345), tokenText(3.45e6), tokenText(0)], ['950', '12k', '3.5M', '0']);
   assert.deepEqual([hoursText(45 * 60000), hoursText(3.5 * 3600000), hoursText(0)], ['45m', '3.5h', '0']);
+  const hv = usageView({ days: 1, unit: 'hour', daily: [{ day: '2026-10-21T11', agent: 'claude', input: 5, cache_read: 0, cache_write: 0, output: 0, turns: 1 }] },
+    Date.parse('2026-10-21T12:30:00Z'));
+  assert.equal(hv.unit, 'hour');
+  assert.equal(hv.days.length, 24);
+  assert.deepEqual([hv.days[0].day, hv.days.at(-2).day, hv.days.at(-2).claude, hv.days.at(-1).day], ['2026-10-20T13', '2026-10-21T11', 5, '2026-10-21T12']);
   const masked = demoMasker().usage(report);
   assert.equal(masked.projects[0].k, 'project-a');
   assert.equal(masked.machines[0].k, 'Workstation 1');
