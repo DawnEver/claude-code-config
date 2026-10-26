@@ -12,11 +12,15 @@ const RES_COLS = ['machine', 'hour', 'samples', 'cpu_sum', 'cpu_max', 'mem_sum',
 const insert = (table, cols, conflict, update) => `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})
   ON CONFLICT (${conflict}) DO UPDATE SET ${update}`;
 
+const TURN_VALUES = TURN_COLS.filter((c) => !['agent', 'session', 'turn', 'model'].includes(c));
+
 const SQL = {
-  turn: insert('turns', TURN_COLS, 'agent, session, turn, model',
-    TURN_COLS.filter((c) => !['agent', 'session', 'turn', 'model'].includes(c)).map((c) => `${c} = excluded.${c}`).join(', ')),
+  // A re-sent turn that did not change is no write (nor a usage_hours trigger).
+  turn: insert('turns', TURN_COLS, 'agent, session, turn, model', `${TURN_VALUES.map((c) => `${c} = excluded.${c}`).join(', ')}
+  WHERE (${TURN_VALUES.map((c) => `turns.${c}`).join(', ')}) IS NOT (${TURN_VALUES.map((c) => `excluded.${c}`).join(', ')})`),
+  // updated_at is when the price last changed: the report's range test for a session.
   cost: insert('session_costs', ['agent', 'session', 'model', 'machine', 'cost_usd', 'updated_at'], 'agent, session, model',
-    'cost_usd = excluded.cost_usd, machine = excluded.machine, updated_at = excluded.updated_at'),
+    'cost_usd = excluded.cost_usd, machine = excluded.machine, updated_at = excluded.updated_at WHERE session_costs.cost_usd IS NOT excluded.cost_usd'),
   // Use only grows within a window: keep the highest reading.
   quota: insert('quota_windows', ['account', 'agent', 'span', 'window_start', 'window_ms', 'used', 'observed_at'], 'account, span, window_start',
     'used = MAX(used, excluded.used), observed_at = MAX(observed_at, excluded.observed_at)'),
@@ -40,13 +44,29 @@ export async function ingest(db, machine, batch, now = Date.now()) {
   return { turns: batch.turns.length, costs: batch.costs.length, quota: batch.quota.length, resources: batch.resources.length };
 }
 
-const TOKENS = 'SUM(input) AS input, SUM(cache_read) AS cache_read, SUM(cache_write) AS cache_write, SUM(output) AS output';
+const SUMS = ['input', 'cache_read', 'cache_write', 'output', 'active_ms', 'turns'];
+
+/** Rows summed by `keyOf` -> [{k, ...SUMS}], first-seen order. */
+function rollup(rows, keyOf, extra = () => ({})) {
+  const out = new Map();
+  for (const r of rows) {
+    const k = keyOf(r);
+    const acc = out.get(k) ?? { k, ...extra(r), ...Object.fromEntries(SUMS.map((c) => [c, 0])) };
+    for (const c of SUMS) acc[c] += r[c];
+    out.set(k, acc);
+  }
+  return [...out.values()];
+}
+
+const tokens = (r) => r.input + r.cache_read + r.cache_write + r.output;
 
 /**
  * The Usage tab's report over the last `days` days, by day on the viewer's clock (`tzOffsetMin`,
  * minutes east of UTC): per day and agent, and per project, model and machine over the range.
  * `days: 1` is the last 24 hours instead, by hour (`unit: 'hour'`, `day` then 'YYYY-MM-DDTHH').
  * `active_ms` sums turn durations: agent time, so parallel sessions add up.
+ * Reads usage_hours (UTC hours), never turns: a viewer off a whole-hour offset sees each hour
+ * under the local bucket its start falls in.
  */
 export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now() } = {}) {
   const off = tzOffsetMin * 60000;
@@ -54,17 +74,17 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now() 
   const ms = unit === 'hour' ? 3600000 : 86400000;
   const buckets = unit === 'hour' ? 24 : days;
   const since = Math.floor((now + off) / ms - buckets + 1) * ms - off;
-  const fmt = unit === 'hour' ? "strftime('%Y-%m-%dT%H', (started_at + ?) / 1000, 'unixepoch')" : "date((started_at + ?) / 1000, 'unixepoch')";
   const all = (sql, ...args) => db.prepare(sql).bind(...args).all().then((r) => r.results);
-  const by = (col, limit) => all(`SELECT ${col} AS k, ${TOKENS}, SUM(ended_at - started_at) AS active_ms, COUNT(DISTINCT session) AS sessions, COUNT(*) AS turns
-    FROM turns WHERE started_at >= ? GROUP BY ${col} ORDER BY SUM(input + cache_read + cache_write + output) DESC LIMIT ${limit}`, since);
-  const [daily, projects, models, machines, cost] = await Promise.all([
-    all(`SELECT ${fmt} AS day, agent, ${TOKENS}, SUM(ended_at - started_at) AS active_ms, COUNT(*) AS turns
-      FROM turns WHERE started_at >= ? GROUP BY day, agent ORDER BY day`, off, since),
-    by('project', 12), by('model', 12), by('machine', 12),
-    all(`SELECT SUM(cost_usd) AS usd FROM session_costs WHERE session IN (SELECT DISTINCT session FROM turns WHERE started_at >= ?)`, since),
+  const [hours, cost] = await Promise.all([
+    all('SELECT * FROM usage_hours WHERE hour > ?', since - 3600000),
+    all('SELECT SUM(cost_usd) AS usd FROM session_costs WHERE updated_at >= ?', since),
   ]);
-  return { days, unit, since, daily, projects, models, machines, costUsd: cost[0]?.usd ?? null };
+  const label = (hour) => new Date(Math.max(hour, since) + off).toISOString().slice(0, unit === 'hour' ? 13 : 10);
+  const daily = rollup(hours, (r) => `${label(r.hour)}|${r.agent}`, (r) => ({ day: label(r.hour), agent: r.agent }))
+    .map(({ k, ...r }) => r).sort((a, b) => a.day.localeCompare(b.day) || a.agent.localeCompare(b.agent));
+  const by = (col) => rollup(hours, (r) => r[col]).map((r) => ({ ...r, k: r.k === '' ? null : r.k }))
+    .sort((a, b) => tokens(b) - tokens(a)).slice(0, 12);
+  return { days, unit, since, daily, projects: by('project'), models: by('model'), machines: by('machine'), costUsd: cost[0]?.usd ?? null };
 }
 
 export const MAX_QUERY_ROWS = 5000;

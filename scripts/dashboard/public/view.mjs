@@ -366,7 +366,7 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
   }
   const max = Math.max(1, ...days.map((d) => d.claude + d.codex));
   const list = (rows) => rows.map((r) => ({ name: r.k ?? 'unknown', tokens: tokensOf(r), share: tokens ? tokensOf(r) / tokens : 0,
-    active: r.active_ms ?? 0, turns: r.turns ?? 0, sessions: r.sessions ?? 0 }));
+    active: r.active_ms ?? 0, turns: r.turns ?? 0 }));
   return {
     unit: hourly ? 'hour' : 'day',
     totals: { tokens, active, turns, costUsd: report.costUsd ?? null, cacheHit: input + cacheRead + cacheWrite ? cacheRead / (input + cacheRead + cacheWrite) : null },

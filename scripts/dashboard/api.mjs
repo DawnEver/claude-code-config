@@ -52,8 +52,7 @@ async function body(request, max) {
 export function createApi(config, { now = Date.now, log = () => {}, store = null, db = null } = {}) {
   const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000, now, store });
   const hits = new Map();   // client -> requests in the current minute
-  // The Usage tab's report per (days, tz), kept REPORT_TTL_MS: a year's report reads the whole
-  // table, and D1's free tier counts every row read.
+  // The Usage tab's report per (days, tz), kept REPORT_TTL_MS: polls of an open tab cost no reads.
   const reports = new Map();
   let window = null;
 

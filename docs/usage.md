@@ -48,10 +48,13 @@ Tokens mean the same on both hosts: `input` uncached, `cache_read`, `cache_write
 - First run: the whole backlog on disk, in rounds of about 2000 rows. About 3 min for 1.4 GB
   of transcripts; the parse yields between files, so the daemon keeps serving Telegram.
 - Size: about 300 rows a day per busy machine, about 50 MB a year. D1's free tier is 5 GB.
-- Budget (free tier: 100k rows written, 5M read a day): an active session's last turn is
-  rewritten each round, a few thousand writes a day per machine. A report reads the rows of
-  its range, so the Worker holds each range's report 5 min (`REPORT_TTL_MS`, api.mjs): a tab
-  left open on 1 y costs one read per 5 min, not one per poll.
+- Budget (free tier: 100k rows written, 5M read a day). D1 counts every row a query scans, so
+  no reader of the Usage tab scans `turns`: triggers roll each turn into `usage_hours` (one row
+  per UTC hour, agent, project, model and machine; `migrations/0002_usage_hours.sql`), and a
+  report reads only that and `session_costs` by `updated_at`. A re-sent turn that did not change
+  is no write. The Worker also holds each range's report 5 min (`REPORT_TTL_MS`, api.mjs).
+  Before the rollup, an open Usage tab read ~110k rows per report and spent the 5M in a day
+  (2026-10-26). Ad-hoc `npm run usage` queries over `turns` still scan what they touch.
 
 ## Reading it
 

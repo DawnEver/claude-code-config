@@ -289,6 +289,26 @@ test('store: report by the viewer\'s day; query is read-only and capped', async 
   assert.match(schema.rows[0][0], /uncached input tokens/, 'the schema explains itself');
 });
 
+test('store: usage_hours always equals turns grouped by hour, through grow, move, re-send and delete', async () => {
+  const db = fakeD1();
+  const empty = { turns: [], costs: [], quota: [], resources: [] };
+  const direct = () => db.sqlite.prepare(`SELECT started_at / 3600000 * 3600000 AS hour, agent, COALESCE(project, '') AS project, model, machine,
+    COUNT(*) AS turns, SUM(input) AS input, SUM(cache_read) AS cache_read, SUM(cache_write) AS cache_write, SUM(output) AS output,
+    SUM(ended_at - started_at) AS active_ms FROM turns GROUP BY 1, 2, 3, 4, 5 ORDER BY 1, 2, 3, 4, 5`).all().map((r) => ({ ...r }));
+  const rolled = () => db.sqlite.prepare('SELECT * FROM usage_hours ORDER BY 1, 2, 3, 4, 5').all().map((r) => ({ ...r }));
+  const step = async (turns, label) => { await ingest(db, 'host-a', { ...empty, turns }); assert.deepEqual(rolled(), direct(), label); };
+  await step([turnRow(), turnRow({ turn: 'p2', project: null })], 'insert');
+  await step([turnRow({ output: 500, ended_at: T0 + 120000 })], 'grow in place');
+  await step([turnRow({ output: 500, ended_at: T0 + 120000 })], 're-send unchanged');
+  await step([turnRow({ output: 500, ended_at: T0 + 120000, project: 'moved' })], 'move to another project');
+  await step([turnRow({ turn: 'p2', project: null, started_at: T0 + 7200000, ended_at: T0 + 7300000 })], 'move to another hour');
+  db.sqlite.exec("DELETE FROM turns WHERE turn = 'p1'");
+  assert.deepEqual(rolled(), direct(), 'delete');
+  const writes = db.sqlite.prepare('SELECT changes() AS n');
+  await ingest(db, 'host-a', { ...empty, turns: [turnRow({ turn: 'p2', project: null, started_at: T0 + 7200000, ended_at: T0 + 7300000 })] });
+  assert.equal(writes.get().n, 0, 'an unchanged turn is no write');
+});
+
 test('api: usage and query only for the host by its token; the store absent is a 503', async () => {
   const { token, hash } = await newHostToken();
   const config = { botId: 1, allowedUserIds: [1], hosts: { 'host-a': hash }, publicKey: '00', ttlSeconds: 60, initDataMaxAgeSeconds: 60, ratePerMinute: 1000 };

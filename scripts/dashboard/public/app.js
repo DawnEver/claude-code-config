@@ -601,7 +601,7 @@ function usageList(title, rows) {
     const share = el('i', 'share');
     share.style.width = `${Math.round(r.share * 100)}%`;
     row.append(el('span', 'n', r.name), el('span', 'm', `${hoursText(r.active)} · ${r.turns} turns`), el('b', null, tokenText(r.tokens)), share);
-    row.title = `${r.sessions} sessions · ${Math.round(r.share * 100)}% of the tokens`;
+    row.title = `${r.turns} turns · ${Math.round(r.share * 100)}% of the tokens`;
     box.append(row);
   }
   return [el('div', 'section-h', title), rows.length ? box : el('div', 'qrows empty', 'none')];
