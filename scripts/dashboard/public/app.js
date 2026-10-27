@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, resourceView, agentName, eventText, usageView, tokenText, hoursText } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyAge, sessionsOf, resourceView, agentName, eventText, usageView, tokenText, hoursText } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 
@@ -58,6 +58,10 @@ let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns
 document.body.classList.toggle('packed', packed);
 // Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) instead of status rows.
 let chatList = store.get('dashboard.chatList') === '1';
+// Tapping a session opens its Topic at the latest post, or at the first unread one.
+let openAt = store.get('dashboard.openAt') === 'first' ? 'first' : 'latest';
+// Per session, its `posted` count when this device last opened its Topic: what came before is read here.
+const topicSeen = (() => { try { return JSON.parse(store.get('dashboard.topicSeen')) ?? {}; } catch { return {}; } })();
 // The needs-you card above the tabs (#summary): off unless turned on here; the Events tab is the
 // notification. Not the #banner strip, which reports sign-in and gateway problems.
 let needsYouCard = store.get('dashboard.needsYouCard') === '1';
@@ -76,9 +80,25 @@ let configDirty = false;  // an edit typed but not saved
 tg?.ready();
 tg?.expand();
 
-function openTopic(url) {
+function openTopic(s) {
+  const url = topicTarget(s, topicSeen[s.id], openAt);
   tg?.HapticFeedback?.impactOccurred?.('light');
+  // What the Topic holds now is read on this device; only sessions still listed are kept.
+  const live = new Set(sessionsOf(snapshot).map((x) => x.id));
+  for (const id of Object.keys(topicSeen)) if (!live.has(id)) delete topicSeen[id];
+  topicSeen[s.id] = s.posted ?? 0;
+  store.set('dashboard.topicSeen', JSON.stringify(topicSeen));
   if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
+  render();
+}
+
+/** The @ and unread-count badges of a session, as Telegram draws them on a chat. */
+function badges(s) {
+  const out = [];
+  if (s.mention) { const at = el('span', 'badge at', '@'); at.title = 'a mention waits for you'; out.push(at); }
+  const n = unreadBadge(unreadHere(s, topicSeen[s.id]));
+  if (n) { const b = el('span', 'badge', n); b.title = 'messages since you last wrote in or opened this Topic'; out.push(b); }
+  return out;
 }
 
 /**
@@ -96,17 +116,17 @@ function sessionRow(s, opts = {}) {
   main.append(el('div', 'title', s.name ?? where));
   const sub = el('div', 'sub');
   sub.append(el('span', `agent ${s.agent}`, agentName(s.agent)));
-  const rest = [s.name && where, !inProject && withHost && s.hostId, !inProject && s.branch, stateAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
+  const rest = [s.name && where, !inProject && withHost && s.hostId, !inProject && s.branch, stateAge(s), replyAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
   sub.append(document.createTextNode(` · ${rest.join(' · ')}`));
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
   else if (s.seat) sub.append(document.createTextNode(` · ${s.seat}`));
   main.append(sub);
-  row.append(el('span', 'dot'), main, el('span', 'pill', STATUS_LABELS[status] ?? status));
+  row.append(el('span', 'dot'), main, ...badges(s), el('span', 'pill', STATUS_LABELS[status] ?? status));
   if (s.topic) {
     row.append(el('span', 'chev', '›'));
     row.title = 'Open Topic';
-    row.addEventListener('click', () => openTopic(s.topic.url));
+    row.addEventListener('click', () => openTopic(s));
   }
   return row;
 }
@@ -124,16 +144,14 @@ function chatRow(s, { withHost = false, inProject = false } = {}) {
   avatar.append(el('span', 'dot'));
   const body = el('div', 'main');
   const top = el('div', 'chat-top');
-  top.append(el('span', 'title', sessionLabel(s)), el('span', `chat-time${s.unread ? ' fresh' : ''}`, chatTime(s.lastActivityAt, Date.now(), timeFormat)));
+  const time = el('span', `chat-time${unreadHere(s, topicSeen[s.id]) ? ' fresh' : ''}`, chatTime(s.lastActivityAt, Date.now(), timeFormat));
+  top.append(el('span', 'title', sessionLabel(s)), time);
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
-  bottom.append(el('span', 'sub', [STATUS_LABELS[status] ?? status, ...where, s.topic?.closed && 'Topic closed'].filter(Boolean).join(' · ')));
-  if (s.mention) { const at = el('span', 'badge at', '@'); at.title = 'a mention waits for you'; bottom.append(at); }
-  const n = unreadBadge(s.unread);
-  if (n) { const b = el('span', 'badge', n); b.title = 'messages since you last wrote in this Topic'; bottom.append(b); }
+  bottom.append(el('span', 'sub', [STATUS_LABELS[status] ?? status, replyAge(s), ...where, s.topic?.closed && 'Topic closed'].filter(Boolean).join(' · ')), ...badges(s));
   body.append(top, bottom);
   row.append(avatar, body);
-  if (s.topic) { row.title = 'Open Topic'; row.addEventListener('click', () => openTopic(s.topic.url)); }
+  if (s.topic) { row.title = 'Open Topic'; row.addEventListener('click', () => openTopic(s)); }
   return row;
 }
 
@@ -543,6 +561,8 @@ const deviceToggles = () => [
     (v) => { needsYouCard = v; store.set('dashboard.needsYouCard', v ? '1' : '0'); }),
   deviceToggle('Sessions as a chat list (Telegram style): name, time, unread count and @ mentions', () => chatList,
     (v) => { chatList = v; store.set('dashboard.chatList', v ? '1' : '0'); }),
+  deviceToggle('Open a Topic at its first unread message instead of the latest', () => openAt === 'first',
+    (v) => { openAt = v ? 'first' : 'latest'; store.set('dashboard.openAt', openAt); }),
   ...(mock ? [] : [deviceToggle('Demo mode: mask machines, accounts, projects and ids on this device (config edits off)', () => demoOn, (v) => {
     demoOn = v;
     store.set('dashboard.demo', v ? '1' : '0');

@@ -66,8 +66,42 @@ export function stateAge(s, now = Date.now()) {
   const at = Date.parse(s.lastActivityAt);
   const word = s.stale ? null : ATTENTION.includes(s.status) ? 'waiting' : s.status === 'idle' || s.status === 'working' ? s.status : null;
   if (!word || !Number.isFinite(at)) return ago(s.lastActivityAt, now);
-  const m = Math.max(0, Math.floor((now - at) / 60000));
-  return `${word} ${m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`}`;
+  return `${word} ${span(now - at)}`;
+}
+
+/** A duration in its largest whole unit: <1m, 12m, 3h, 2d. */
+function span(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  return m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`;
+}
+
+/** How long ago the session last posted to its Topic, or null when it never did. */
+export function replyAge(s, now = Date.now()) {
+  const at = Date.parse(s.lastPostAt);
+  return Number.isFinite(at) ? `reply ${span(now - at)} ago` : null;
+}
+
+/**
+ * What is unread on this device: the host counts posts since the human spoke in the Topic, and
+ * `seen` is the session's `posted` count when this page last opened the Topic, so posts that were
+ * already there then are read here even if nobody wrote back.
+ */
+export function unreadHere(s, seen) {
+  const unread = s.unread ?? 0, posted = s.posted ?? 0;
+  return Number.isSafeInteger(seen) && seen <= posted ? Math.min(unread, posted - seen) : unread;
+}
+
+/**
+ * Where tapping a session opens its Topic: at the latest post (`to` 'latest'), or at the first
+ * unread one ('first') while everything the host counts is still unread here (once this page
+ * opened the Topic, the first post still unread is not known, so the latest stands in).
+ */
+export function topicTarget(s, seen, to = 'latest') {
+  const t = s.topic;
+  if (!t) return null;
+  const n = unreadHere(s, seen);
+  if (to === 'first' && n && n === s.unread && t.firstUnreadUrl) return t.firstUnreadUrl;
+  return t.latestUrl ?? t.url;
 }
 
 /**

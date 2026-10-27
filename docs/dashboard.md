@@ -85,6 +85,14 @@ no API, no authentication.
   name may echo its topic), and two counts per Topic: `unread`, the messages
   posted since the human last wrote there (a prompt typed at the machine counts as writing; reading
   without replying cannot be seen), and `mention`, while a `waiting for you` mention stands.
+  Also `posted` (a running count of posts), `lastPostAt` (shown as `reply 5m ago`), and two message
+  ids that become links opening the Topic at its first unread post (`firstUnreadUrl`) or its latest
+  (`latestUrl`).
+- **Unread on this device**: Telegram's own unread count is not visible to a bot. Opening a Topic from
+  the dashboard stores that session's `posted` in localStorage; the badge is `unread` less what was
+  already there then, so a Topic read without replying clears here. The badge and `@` show in both
+  views. Tapping opens the latest post; Config → This device can switch to the first unread one (the
+  latest stands in once this device has opened the Topic, since the first post still unread is then unknown).
 - **Chat list** (Config → This device): sessions drawn as Telegram lists chats: agent avatar with
   the status dot, name and time, status and where it runs, then the unread count and `@`. No message
   preview: it would put conversation content on Cloudflare. `lastActivityAt` is the bridge's last

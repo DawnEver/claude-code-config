@@ -23,6 +23,12 @@ export function newSession({ key, cached, now }) {
     // count of posts, and the standing "waiting for you" mention's message id (deleted once followed).
     unread: Number.isSafeInteger(cached?.unread) && cached.unread > 0 ? cached.unread : 0,
     mention: Number.isSafeInteger(cached?.mention) ? cached.mention : null,
+    // Where the dashboard opens the Topic: the first post not yet read and the latest one; and a
+    // running count of posts, so a page can tell what arrived since it last opened the Topic.
+    firstUnread: Number.isSafeInteger(cached?.firstUnread) ? cached.firstUnread : null,
+    lastPost: Number.isSafeInteger(cached?.lastPost) ? cached.lastPost : null,
+    posted: Number.isSafeInteger(cached?.posted) && cached.posted > 0 ? cached.posted : 0,
+    lastPostAt: Number.isSafeInteger(cached?.lastPostAt) ? cached.lastPostAt : null,
   };
 }
 
@@ -61,6 +67,7 @@ export function onTopicGone(s) {
   s.topicId = null;
   s.unread = 0;
   s.mention = null;   // its message went with the Topic
+  s.firstUnread = s.lastPost = null;
   s.state = 'open';
   s.closedAt = null;
   return ['create'];
@@ -78,5 +85,7 @@ export function cacheEntry(s, title) {
   if (!s.topicId) return null;
   return { topicId: s.topicId, title, ...(s.closedAt != null ? { closedAt: s.closedAt } : {}),
     ...(s.statusMessageId ? { statusMessageId: s.statusMessageId } : {}),
-    ...(s.unread ? { unread: s.unread } : {}), ...(s.mention ? { mention: s.mention } : {}) };
+    ...(s.unread ? { unread: s.unread } : {}), ...(s.mention ? { mention: s.mention } : {}),
+    ...(s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}),
+    ...(s.posted ? { posted: s.posted } : {}), ...(s.lastPostAt != null ? { lastPostAt: s.lastPostAt } : {}) };
 }

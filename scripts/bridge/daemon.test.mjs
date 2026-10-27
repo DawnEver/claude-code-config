@@ -902,7 +902,7 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   assert.equal(snap.quiet.topic, null, 'lazy Topic: none before activity');
   assert.equal(snap.busy.seat, 'team-a');
   assert.equal(snap.busy.status, 'unknown', 'a host without a snapshot is not guessed');
-  assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.telegram.sent[0].threadId, closed: false });
+  assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.telegram.sent[0].threadId, closed: false, lastPost: r.telegram.sent.at(-1).message_id });
   assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
   r.hosts.codex.statusSnapshot = () => null;
   assert.equal(r.bridge.dashboardSessions().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
@@ -939,6 +939,25 @@ test('unread counts what reached the Topic since the human spoke; a mention is d
   await r.bridge.handleUpdate(msg(ALICE, 'thanks', r.bridge.sessions.get('codex:x').topicId));
   assert.equal(r.bridge.dashboardSessions()[0].unread, 0);
   assert.ok(!('last' in r.bridge.dashboardSessions()[0]), 'no message text leaves the host');
+});
+
+test('the dashboard can open a Topic at its first unread post or its latest, and knows when it last posted', async () => {
+  const r = make();
+  await live(r, 'codex', 'x');
+  const first = r.bridge.dashboardSessions()[0];
+  assert.equal(first.topic.firstUnread, undefined, 'the prompt at the machine is read');
+  assert.equal(first.topic.lastPost, r.telegram.sent.at(-1).message_id);
+  r.hosts.codex.emit('final', { id: 'x', text: 'one' });
+  await until(() => r.telegram.sent.at(-1).text === 'one');
+  const one = r.telegram.sent.at(-1).message_id;
+  r.hosts.codex.emit('final', { id: 'x', text: 'two' });
+  await until(() => r.telegram.sent.at(-1).text === 'two');
+  const s = r.bridge.dashboardSessions()[0];
+  assert.deepEqual([s.topic.firstUnread, s.topic.lastPost, s.unread, s.posted], [one, r.telegram.sent.at(-1).message_id, 2, 2]);
+  assert.ok(Number.isFinite(Date.parse(s.lastPostAt)));
+  await r.bridge.handleUpdate(msg(ALICE, 'thanks', r.bridge.sessions.get('codex:x').topicId));
+  const read = r.bridge.dashboardSessions()[0];
+  assert.deepEqual([read.topic.firstUnread, read.unread, read.posted], [undefined, 0, 2], 'posted only grows');
 });
 
 test('a standing mention and the unread count survive a daemon restart', async () => {

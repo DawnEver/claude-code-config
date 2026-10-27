@@ -59,12 +59,18 @@ test('schema: whitelists fields, derives a Topic link, never forwards the chat i
   const p = parseHostPush(push({ sessions: [session({ cwd: '/home/u/x', token: 'secret' }), session({ id: 's2', topic: null, status: 'bogus' }),
     session({ agent: 'gpt' }), session()] }));
   assert.equal(p.sessions.length, 2, 'unknown agent and duplicate dropped');
-  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'mention', 'name', 'project', 'seat', 'status', 'topic', 'unread']);
+  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'lastPostAt', 'mention', 'name', 'posted', 'project', 'seat', 'status', 'topic', 'unread']);
   assert.deepEqual(p.sessions[0].topic, { url: 'https://t.me/c/1234567890/77', closed: false });
   assert.equal(p.sessions[1].status, 'unknown');
   assert.equal(p.sessions[1].topic, null);
   assert.equal(topicUrl(-999, 5), null, 'not a supergroup');
   assert.equal(topicUrl(-1001, 0), null);
+  assert.equal(topicUrl(-1001234567890, 77, 90), 'https://t.me/c/1234567890/77/90');
+  const at = parseHostPush(push({ sessions: [session({ posted: 4, lastPostAt: new Date(NOW).toISOString(),
+    topic: { chatId: -1001234567890, topicId: 77, closed: false, firstUnread: 88, lastPost: 90 } })] })).sessions[0];
+  assert.deepEqual(at.topic, { url: 'https://t.me/c/1234567890/77', closed: false,
+    firstUnreadUrl: 'https://t.me/c/1234567890/77/88', latestUrl: 'https://t.me/c/1234567890/77/90' });
+  assert.deepEqual([at.posted, at.lastPostAt], [4, new Date(NOW).toISOString()]);
   assert.equal(parseHostPush(push({ schemaVersion: 2 })), null);
   assert.equal(parseHostPush(push({ seq: 0 })), null);
   assert.equal(parseHostPush({ ...push(), sessions: Array.from({ length: MAX_SESSIONS + 5 }, (_, i) => session({ id: `s${i}` })) }).sessions.length, MAX_SESSIONS);
@@ -621,6 +627,16 @@ test('chat list: name over project, Telegram-style time and badges, machine load
   assert.equal(v.chatTime(new Date(2026, 9, 20, 9, 5).toISOString(), now), 'Tue');
   assert.equal(v.chatTime(new Date(2026, 8, 1).toISOString(), now), '1 Sep');
   assert.deepEqual([0, 5, 120].map(v.unreadBadge), ['', '5', '99+']);
+  const topic = { url: 'https://t.me/c/1/7', firstUnreadUrl: 'https://t.me/c/1/7/20', latestUrl: 'https://t.me/c/1/7/24' };
+  const s = { unread: 3, posted: 10, topic };
+  assert.deepEqual([v.unreadHere(s, undefined), v.unreadHere(s, 8), v.unreadHere(s, 10), v.unreadHere(s, 12)], [3, 2, 0, 3],
+    'opened on this device: what was there is read; a count from before a reset is ignored');
+  assert.equal(v.topicTarget(s, undefined), topic.latestUrl, 'latest by default');
+  assert.equal(v.topicTarget(s, undefined, 'first'), topic.firstUnreadUrl);
+  assert.equal(v.topicTarget(s, 8, 'first'), topic.latestUrl, 'the first post still unread here is not known');
+  assert.equal(v.topicTarget({ unread: 0, posted: 0, topic: { url: topic.url } }, undefined, 'first'), topic.url);
+  assert.equal(v.replyAge({ lastPostAt: new Date(now - 5 * 60000).toISOString() }, now), 'reply 5m ago');
+  assert.equal(v.replyAge({ lastPostAt: null }, now), null);
   const GB = 1024 ** 3;
   const r = v.resourceView({ cpu: 40, cores: 32, cpuModel: 'Intel Core i9-13900K', mem: { used: 8 * GB, total: 32 * GB, type: 'DDR5' },
     gpus: [{ name: 'NVIDIA GeForce RTX 3060', util: 1, memUsed: 1.4 * GB, memTotal: 12 * GB }] });

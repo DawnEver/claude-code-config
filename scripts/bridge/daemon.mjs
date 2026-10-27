@@ -221,11 +221,13 @@ export class Bridge {
   dashboardSessions() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({
       id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null,
-      unread: s.unread ?? 0, mention: !!s.mention,
+      unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
+      lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
       ...(this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.observationOnly ? { observationOnly: true } : {}),
       status: statusCode(this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.state),
       lastActivityAt: new Date(s.lastActivity).toISOString(),
-      topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed' } : null,
+      topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed',
+        ...(s.unread && s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}) } : null,
     }));
   }
 
@@ -485,7 +487,7 @@ export class Bridge {
       const { fromHuman, ...send } = opts;
       const sent = await this.telegram.sendMessage(s.chatId, text, { threadId: s.topicId, ...send });
         this.log(`send acknowledged ${s.key} [topic ${s.topicId}] messages=${sent.map(m => m.message_id).join(',') || 'none'}`);
-      if (sent.length) this.#posted(s, { fromHuman, mention: send.alert?.length ? sent[0].message_id : null });
+      if (sent.length) this.#posted(s, { fromHuman, mention: send.alert?.length ? sent[0].message_id : null, ids: sent.map((m) => m.message_id) });
       return sent;
     } catch (e) {
       // Telegram-side drift (Topic deleted or closed by hand): repair once, then resend.
@@ -533,12 +535,21 @@ export class Bridge {
    * machine). A mention is not counted: it is the @, and stands only until something follows
    * it, then it is deleted, so neither Telegram nor the dashboard keeps an @ for a request that
    * has moved on. Both are saved with the Topic, so a daemon restart can still delete the mention.
-   * Counts only, never text.
+   * Counts and message ids only, never text: the ids let the dashboard open the Topic at the
+   * first unread post or at the latest one.
    */
-  #posted(s, { fromHuman = false, mention = null } = {}) {
+  #posted(s, { fromHuman = false, mention = null, ids = [] } = {}) {
     this.#clearMention(s);
-    if (mention) s.mention = mention;   // the mention itself is not a message to read: it is the @
-    else s.unread = fromHuman ? 0 : s.unread + 1;
+    if (mention) { s.mention = mention; this.#save(s); return; }   // the mention itself is not a message to read: it is the @
+    const valid = ids.filter(Number.isSafeInteger);
+    if (valid.length) s.lastPost = valid.at(-1);
+    if (fromHuman) { s.unread = 0; s.firstUnread = null; }
+    else {
+      if (!s.unread) s.firstUnread = valid[0] ?? null;
+      s.unread += 1;
+      s.posted = (s.posted ?? 0) + 1;
+      s.lastPostAt = this.now();
+    }
     this.#save(s);
   }
 
@@ -548,6 +559,7 @@ export class Bridge {
    */
   #seen(s) {
     s.unread = 0;
+    s.firstUnread = null;
     clearTimeout(s.nudge); s.nudge = null;
     this.#clearMention(s);
     this.#save(s);

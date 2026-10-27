@@ -16,25 +16,36 @@ export const isHostId = (id) => isValidMachineName(id) && id.length <= 64;
 
 const text = (v, max = 128) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 
-/** A Telegram link only for a private supergroup Topic (`-100<id>`), the only kind the bridge uses. */
-export function topicUrl(chatId, topicId) {
+/**
+ * A Telegram link only for a private supergroup Topic (`-100<id>`), the only kind the bridge uses;
+ * with `messageId` it opens the Topic at that message.
+ */
+export function topicUrl(chatId, topicId, messageId = null) {
   const m = /^-100(\d{1,15})$/.exec(String(chatId));
-  return m && Number.isSafeInteger(topicId) && topicId > 0 ? `https://t.me/c/${m[1]}/${topicId}` : null;
+  if (!m || !Number.isSafeInteger(topicId) || topicId <= 0) return null;
+  return `https://t.me/c/${m[1]}/${topicId}${Number.isSafeInteger(messageId) && messageId > 0 ? `/${messageId}` : ''}`;
 }
+
+const iso = (v) => { const at = Date.parse(v); return Number.isFinite(at) ? new Date(at).toISOString() : null; };
+
+/** `{ [key]: link }` opening the Topic at message `t[field]`, or {} when there is none. */
+const atMessage = (t, field, key) => (Number.isSafeInteger(t[field]) && t[field] > 0 ? { [key]: topicUrl(t.chatId, t.topicId, t[field]) } : {});
 
 function parseSession(s) {
   if (!s || typeof s !== 'object') return null;
   const id = text(s.id, 128);
   if (!id || !AGENTS.includes(s.agent)) return null;
-  const at = Date.parse(s.lastActivityAt);
   const t = s.topic;
   const url = t && topicUrl(t.chatId, t.topicId);
   return {
     id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
     unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,
-    lastActivityAt: Number.isFinite(at) ? new Date(at).toISOString() : null,
-    topic: url ? { url, closed: t.closed === true } : null,
+    // Posts to the Topic ever (a running count: a page keeps what it has seen) and when the last one came.
+    posted: num(s.posted, 0, Number.MAX_SAFE_INTEGER) ?? 0, lastPostAt: iso(s.lastPostAt),
+    lastActivityAt: iso(s.lastActivityAt),
+    // The Topic, and the same Topic opened at its first unread post and at its latest post.
+    topic: url ? { url, closed: t.closed === true, ...atMessage(t, 'firstUnread', 'firstUnreadUrl'), ...atMessage(t, 'lastPost', 'latestUrl') } : null,
   };
 }
 

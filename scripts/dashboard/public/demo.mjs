@@ -74,7 +74,9 @@ export function demoMasker() {
     // Structured fields first: they fix the numbering the free text then reuses.
     const hosts = (snap.hosts ?? []).map((h) => ({ ...h, id: host(h.id),
       sessions: (h.sessions ?? []).map((s) => ({ ...s, id: session(s.id), name: sessionTitle(s.name), hostId: host(s.hostId), project: project(s.project),
-        branch: branch(s.branch), seat: seat(s.seat), account: account(s.account), topic: s.topic && { ...s.topic, url: topicUrl(s.topic.url) } })),
+        branch: branch(s.branch), seat: seat(s.seat), account: account(s.account), topic: s.topic && { ...s.topic, url: topicUrl(s.topic.url),
+          ...(s.topic.firstUnreadUrl ? { firstUnreadUrl: topicUrl(s.topic.firstUnreadUrl) } : {}),
+          ...(s.topic.latestUrl ? { latestUrl: topicUrl(s.topic.latestUrl) } : {}) } })),
       config: h.config && { ...h.config,
         editable: Object.fromEntries(Object.entries(h.config.editable ?? {}).map(([k, v]) => [configKey(k), v])),
         localOverrides: (h.config.localOverrides ?? []).map(configKey) } }));
