@@ -103,6 +103,7 @@ if (session.error) {
   console.error(`[codex] ${session.error}`);
   process.exit(1);
 }
+if (session.notice) console.error(`[codex] ${session.notice}`);
 // Not `shell: true`: that concatenates args unescaped, so `cods exec "a prompt with spaces"`
 // reached Codex as separate words. `prepareSpawn` quotes for us.
 const launch = prepareSpawn(session.command, session.args, { env });

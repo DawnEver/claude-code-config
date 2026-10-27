@@ -19,14 +19,16 @@ function hasModule(python, run = spawnSync) {
 }
 
 /**
- * The spawn of `agent` with `args` through the session launcher: `{ command, args }`, or `{ error }` naming the
- * remedy when no ai-lab interpreter is recorded or its ai-lab lacks the module.
+ * The spawn of `agent` with `args`: `{ command, args }` through the session launcher, else -- no ai-lab interpreter
+ * recorded, or its ai-lab lacks the module -- the agent itself with a `notice` naming the remedy. The session id is
+ * an addition to a launch, never its precondition: a stale ai-lab costs the LAB_SESSION, not the session.
  */
 export function sessionSpawn(agent, args, { python = recordedPython(), probe = hasModule } = {}) {
   if (!AGENTS.has(agent)) return { error: `${SESSION_MODULE} runs ${[...AGENTS].join(' or ')}, not ${agent}` };
-  if (!python) return { error: `no ai-lab interpreter recorded in the provider cache; run \`${SETUP_REMEDY}\`` };
-  if (!probe(python)) {
-    return { error: `${python} cannot import ${SESSION_MODULE} (an older ai-lab); upgrade ai-lab and run \`${SETUP_REMEDY}\`` };
+  const why = !python ? 'no ai-lab interpreter recorded in the provider cache'
+    : !probe(python) ? `${python} cannot import ${SESSION_MODULE} (an older ai-lab)` : null;
+  if (why) {
+    return { command: agent, args, notice: `${why}; running ${agent} without a lab session -- upgrade ai-lab and run \`${SETUP_REMEDY}\`` };
   }
   return { command: python, args: ['-m', SESSION_MODULE, agent, ...args] };
 }

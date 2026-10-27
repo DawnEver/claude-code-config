@@ -84,6 +84,7 @@ if (session.error) {
   console.error(`[cc] ${session.error}`);
   process.exit(1);
 }
+if (session.notice) console.error(`[cc] ${session.notice}`);
 // Not `shell: true`: that concatenates args unescaped, so any argument containing a space
 // or a cmd metacharacter is mangled. `prepareSpawn` quotes for us.
 const launch = prepareSpawn(session.command, session.args, { env });

@@ -21,13 +21,19 @@ test('the agent runs as `<recorded python> -m ai_lab.session <agent> ...`', () =
   assert.deepEqual(sessionSpawn('codex', [], { python, probe: has }).args, ['-m', 'ai_lab.session', 'codex']);
 });
 
-test('planted: an ai-lab without ai_lab.session, or no recorded interpreter, refuses naming upgrade and setup', () => {
-  assert.match(sessionSpawn('claude', [], { python, probe: () => false }).error, /cannot import ai_lab.session.*upgrade ai-lab.*setup/s);
-  assert.match(sessionSpawn('claude', [], { python: null, probe: has }).error, /no ai-lab interpreter recorded.*setup/s);
+test('planted: an ai-lab without ai_lab.session, or no recorded interpreter, still launches the agent, saying why', () => {
+  const old = sessionSpawn('claude', ['-c', 'x'], { python, probe: () => false });
+  assert.deepEqual([old.command, old.args, old.error], ['claude', ['-c', 'x'], undefined]);
+  assert.match(old.notice, /cannot import ai_lab.session.*without a lab session.*upgrade ai-lab.*setup/s);
+  const none = sessionSpawn('codex', [], { python: null, probe: has });
+  assert.deepEqual([none.command, none.args], ['codex', []]);
+  assert.match(none.notice, /no ai-lab interpreter recorded.*without a lab session.*setup/s);
 });
 
-test('the default probe refuses an interpreter that does not exist', () => {
-  assert.match(sessionSpawn('claude', [], { python: join(tmpdir(), 'no-such-python.exe') }).error, /cannot import/);
+test('the default probe treats an interpreter that does not exist as no ai-lab', () => {
+  const run = sessionSpawn('claude', [], { python: join(tmpdir(), 'no-such-python.exe') });
+  assert.equal(run.command, 'claude');
+  assert.match(run.notice, /cannot import/);
 });
 
 test('an agent ai_lab.session does not run is refused by name', () => {
