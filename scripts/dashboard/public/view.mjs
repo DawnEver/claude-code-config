@@ -75,10 +75,16 @@ function span(ms) {
   return m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`;
 }
 
-/** How long ago the session last posted to its Topic, or null when it never did. */
-export function replyAge(s, now = Date.now()) {
+/**
+ * When the session last posted to its Topic, or null when it never did: `style` 'ago' (reply 5m ago)
+ * or 'clock', the 24h time (reply 14:05; a weekday or date before it when not today).
+ */
+export function replyTime(s, now = Date.now(), style = 'ago') {
   const at = Date.parse(s.lastPostAt);
-  return Number.isFinite(at) ? `reply ${span(now - at)} ago` : null;
+  if (!Number.isFinite(at)) return null;
+  if (style !== 'clock') return `reply ${span(now - at)} ago`;
+  const hm = formatTime(at, { clock: '24', date: 'off' }), day = chatTime(s.lastPostAt, now, { clock: '24' });
+  return `reply ${day === hm ? hm : `${day} ${hm}`}`;
 }
 
 /**

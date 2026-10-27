@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyAge, sessionsOf, resourceView, agentName, eventText, usageView, tokenText, hoursText } from './view.mjs';
+import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, agentName, eventText, usageView, tokenText, hoursText } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 
@@ -60,6 +60,8 @@ document.body.classList.toggle('packed', packed);
 let chatList = store.get('dashboard.chatList') === '1';
 // Tapping a session opens its Topic at the latest post, or at the first unread one.
 let openAt = store.get('dashboard.openAt') === 'first' ? 'first' : 'latest';
+// The last reply as how long ago ('ago') or its 24h clock time ('clock').
+let replyStyle = store.get('dashboard.replyStyle') === 'clock' ? 'clock' : 'ago';
 // Per session, its `posted` count when this device last opened its Topic: what came before is read here.
 const topicSeen = (() => { try { return JSON.parse(store.get('dashboard.topicSeen')) ?? {}; } catch { return {}; } })();
 // The needs-you card above the tabs (#summary): off unless turned on here; the Events tab is the
@@ -116,7 +118,7 @@ function sessionRow(s, opts = {}) {
   main.append(el('div', 'title', s.name ?? where));
   const sub = el('div', 'sub');
   sub.append(el('span', `agent ${s.agent}`, agentName(s.agent)));
-  const rest = [s.name && where, !inProject && withHost && s.hostId, !inProject && s.branch, stateAge(s), replyAge(s), s.topic?.closed && 'Topic closed'].filter(Boolean);
+  const rest = [s.name && where, !inProject && withHost && s.hostId, !inProject && s.branch, stateAge(s), replyTime(s, Date.now(), replyStyle), s.topic?.closed && 'Topic closed'].filter(Boolean);
   sub.append(document.createTextNode(` · ${rest.join(' · ')}`));
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
@@ -148,7 +150,7 @@ function chatRow(s, { withHost = false, inProject = false } = {}) {
   top.append(el('span', 'title', sessionLabel(s)), time);
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
-  bottom.append(el('span', 'sub', [STATUS_LABELS[status] ?? status, replyAge(s), ...where, s.topic?.closed && 'Topic closed'].filter(Boolean).join(' · ')), ...badges(s));
+  bottom.append(el('span', 'sub', [STATUS_LABELS[status] ?? status, replyTime(s, Date.now(), replyStyle), ...where, s.topic?.closed && 'Topic closed'].filter(Boolean).join(' · ')), ...badges(s));
   body.append(top, bottom);
   row.append(avatar, body);
   if (s.topic) { row.title = 'Open Topic'; row.addEventListener('click', () => openTopic(s)); }
@@ -563,6 +565,8 @@ const deviceToggles = () => [
     (v) => { chatList = v; store.set('dashboard.chatList', v ? '1' : '0'); }),
   deviceToggle('Open a Topic at its first unread message instead of the latest', () => openAt === 'first',
     (v) => { openAt = v ? 'first' : 'latest'; store.set('dashboard.openAt', openAt); }),
+  deviceToggle('Last reply as its time (24h, e.g. 14:05) instead of how long ago', () => replyStyle === 'clock',
+    (v) => { replyStyle = v ? 'clock' : 'ago'; store.set('dashboard.replyStyle', replyStyle); }),
   ...(mock ? [] : [deviceToggle('Demo mode: mask machines, accounts, projects and ids on this device (config edits off)', () => demoOn, (v) => {
     demoOn = v;
     store.set('dashboard.demo', v ? '1' : '0');

@@ -635,8 +635,10 @@ test('chat list: name over project, Telegram-style time and badges, machine load
   assert.equal(v.topicTarget(s, undefined, 'first'), topic.firstUnreadUrl);
   assert.equal(v.topicTarget(s, 8, 'first'), topic.latestUrl, 'the first post still unread here is not known');
   assert.equal(v.topicTarget({ unread: 0, posted: 0, topic: { url: topic.url } }, undefined, 'first'), topic.url);
-  assert.equal(v.replyAge({ lastPostAt: new Date(now - 5 * 60000).toISOString() }, now), 'reply 5m ago');
-  assert.equal(v.replyAge({ lastPostAt: null }, now), null);
+  assert.equal(v.replyTime({ lastPostAt: new Date(now - 5 * 60000).toISOString() }, now), 'reply 5m ago');
+  assert.equal(v.replyTime({ lastPostAt: new Date(2026, 9, 22, 9, 5).toISOString() }, now, 'clock'), 'reply 09:05');
+  assert.equal(v.replyTime({ lastPostAt: new Date(2026, 9, 20, 21, 5).toISOString() }, now, 'clock'), 'reply Tue 21:05', 'before today: the day too');
+  assert.equal(v.replyTime({ lastPostAt: null }, now), null);
   const GB = 1024 ** 3;
   const r = v.resourceView({ cpu: 40, cores: 32, cpuModel: 'Intel Core i9-13900K', mem: { used: 8 * GB, total: 32 * GB, type: 'DDR5' },
     gpus: [{ name: 'NVIDIA GeForce RTX 3060', util: 1, memUsed: 1.4 * GB, memTotal: 12 * GB }] });

@@ -85,7 +85,7 @@ no API, no authentication.
   name may echo its topic), and two counts per Topic: `unread`, the messages
   posted since the human last wrote there (a prompt typed at the machine counts as writing; reading
   without replying cannot be seen), and `mention`, while a `waiting for you` mention stands.
-  Also `posted` (a running count of posts), `lastPostAt` (shown as `reply 5m ago`), and two message
+  Also `posted` (a running count of posts), `lastPostAt` (shown as `reply 5m ago`, or as `reply 14:05` in 24h time — Config → This device), and two message
   ids that become links opening the Topic at its first unread post (`firstUnreadUrl`) or its latest
   (`latestUrl`).
 - **Unread on this device**: Telegram's own unread count is not visible to a bot. Opening a Topic from
