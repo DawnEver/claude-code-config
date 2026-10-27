@@ -93,7 +93,7 @@ no API, no authentication.
   already there then, so a Topic read without replying clears here. The badge and `@` show in both
   views. Tapping opens the latest post; Config → This device can switch to the first unread one (the
   latest stands in once this device has opened the Topic, since the first post still unread is then unknown).
-- **Chat list** (Config → This device): sessions drawn as Telegram lists chats: agent avatar with
+- **Chat list** (default; Config → This device turns it off): sessions drawn as Telegram lists chats: agent avatar with
   the status dot, name and time, status and where it runs, then the unread count and `@`. No message
   preview: it would put conversation content on Cloudflare. `lastActivityAt` is the bridge's last
   mirrored activity (a session with no group configured stays at its `up` time).

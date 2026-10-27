@@ -955,9 +955,12 @@ test('the dashboard can open a Topic at its first unread post or its latest, and
   const s = r.bridge.dashboardSessions()[0];
   assert.deepEqual([s.topic.firstUnread, s.topic.lastPost, s.unread, s.posted], [one, r.telegram.sent.at(-1).message_id, 2, 2]);
   assert.ok(Number.isFinite(Date.parse(s.lastPostAt)));
-  await r.bridge.handleUpdate(msg(ALICE, 'thanks', r.bridge.sessions.get('codex:x').topicId));
+  const thanks = msg(ALICE, 'thanks', r.bridge.sessions.get('codex:x').topicId);
+  thanks.message.message_id = 9999;
+  await r.bridge.handleUpdate(thanks);
   const read = r.bridge.dashboardSessions()[0];
   assert.deepEqual([read.topic.firstUnread, read.unread, read.posted], [undefined, 0, 2], 'posted only grows');
+  assert.equal(read.topic.lastPost, 9999, 'a message the human wrote in the Topic is the latest');
 });
 
 test('a standing mention and the unread count survive a daemon restart', async () => {

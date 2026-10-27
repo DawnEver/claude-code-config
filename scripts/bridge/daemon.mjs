@@ -557,7 +557,8 @@ export class Bridge {
    * The human acted in the Topic (wrote, or tapped an answer): what was there is read, and a
    * mention has done its job — the standing one is deleted, a pending one never fires.
    */
-  #seen(s) {
+  #seen(s, messageId = null) {
+    if (Number.isSafeInteger(messageId) && messageId > (s.lastPost ?? 0)) s.lastPost = messageId;   // the human's message is the latest
     s.unread = 0;
     s.firstUnread = null;
     clearTimeout(s.nudge); s.nudge = null;
@@ -751,7 +752,7 @@ export class Bridge {
     if (!m.is_topic_message) return;
     const s = this.#sessionAt(m.chat.id, m.message_thread_id);
     if (!s || s.state === 'ended') return;
-    this.#seen(s);
+    this.#seen(s, m.message_id);
     const host = this.hosts.get(s.agent);
     let text = (m.text ?? m.caption ?? '').trim();
     const attachment = m.document ?? m.photo?.at(-1);

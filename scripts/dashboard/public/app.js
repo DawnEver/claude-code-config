@@ -56,8 +56,8 @@ const timeFormat = { clock: store.get('dashboard.clock') === '12' ? '12' : '24',
 let deployed = null;   // the live version from /api/health: {commit, id, at}
 let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns, not aligned rows
 document.body.classList.toggle('packed', packed);
-// Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) instead of status rows.
-let chatList = store.get('dashboard.chatList') === '1';
+// Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) unless status rows are chosen.
+let chatList = store.get('dashboard.chatList') !== '0';
 // Tapping a session opens its Topic at the latest post, or at the first unread one.
 let openAt = store.get('dashboard.openAt') === 'first' ? 'first' : 'latest';
 // The last reply as how long ago ('ago') or its 24h clock time ('clock').
