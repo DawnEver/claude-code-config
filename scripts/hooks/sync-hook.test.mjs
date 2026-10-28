@@ -318,3 +318,26 @@ test('integration: only a dependency change asks for a venv sync', () => {
   assert.equal(depsChanged(b, `${base}..${code}`), false);
   assert.equal(depsChanged(b, `${code}..${lock}`), true);
 });
+
+test('integration: a dependency change leaves ai-lab where it is and hands the update off', () => {
+  const cfg = fixture();
+  const lab = fixture();
+  fs.writeFileSync(path.join(lab.a, 'uv.lock'), 'lock\n');
+  git(lab.a, 'add', '.'); git(lab.a, 'commit', '--quiet', '-m', 'relock'); git(lab.a, 'push', '--quiet');
+  const before = git(lab.b, 'rev-parse', 'HEAD');
+  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, tempHome());
+  assert.match(notice, /\[ai-lab\] not updated: the update changes its dependencies; updating in the background/);
+  assert.equal(git(lab.b, 'rev-parse', 'HEAD'), before, 'tree, venv and cache stay consistent until the detached run');
+});
+
+test('integration: a failed background update is reported and retried, a running one is not doubled', () => {
+  const cfg = fixture();
+  const lab = fixture();
+  const home = tempHome();
+  const state = path.join(home.HOME, '.claude', 'ai-lab-update.json');
+  fs.mkdirSync(path.dirname(state), { recursive: true });
+  fs.writeFileSync(state, JSON.stringify({ pid: 1, at: Date.now() }));
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, home), /still running in the background/);
+  fs.writeFileSync(state, JSON.stringify({ error: 'uv sync failed (ENOENT)', at: Date.now() }));
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, home), /last dependency update failed: uv sync failed \(ENOENT\); updating in the background/);
+});
