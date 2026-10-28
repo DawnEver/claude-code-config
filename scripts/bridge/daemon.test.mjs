@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { EventEmitter } from 'events';
-import { Bridge, cardDetail, topicTitle } from './daemon.mjs';
+import { Bridge, cardDetail, cardWho, topicTitle } from './daemon.mjs';
 
 const M = 60000, H = 60 * M;
 const isCard = m => m.replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('status:');
@@ -60,7 +60,7 @@ test('one status card follows native state and authenticates refresh', async () 
   const card = r.telegram.sent.find(m => isCard(m));
   assert.ok(card);
   assert.deepEqual(r.telegram.pinned, [], 'Telegram pins a Topic\'s first message itself');
-  assert.match(card.text, /^Idle · since \d\d:\d\d\nChecked \d\d:\d\d$/);
+  assert.match(card.text, /^Idle · since \d\d:\d\d · \w+ on \S+\nChecked \d\d:\d\d$/);
   state = 'running';
   r.hosts.codex.emit('status', { id: 'card' });
   await settle();
@@ -1001,6 +1001,11 @@ for (const [how, act] of [
     assert.equal(r.telegram.sent.length, posts, 'nothing new was posted');
   });
 }
+
+test('cardWho: agent, seat when set, machine — the part the pin bar shows', () => {
+  assert.equal(cardWho({ agent: 'claude', seat: 'w' }, 'm'), 'claude w on m');
+  assert.equal(cardWho({ agent: 'codex', seat: null }, 'm'), 'codex on m');
+});
 
 test('cardDetail: the pinned card names the account and its use, and the machine load', () => {
   const accounts = [{ key: 'k', agent: 'claude', aliases: ['w'], email: 'a@example.com', windows: [{ k: '5h', used: 40.4 }, { k: '7d', used: 12 }] }];

@@ -690,6 +690,6 @@ test('accountSessions: the sessions on one account across hosts, most urgent fir
     { id: 'a', sessions: [{ id: '1', account: 'k', status: 'running', project: 'p' }, { id: '2', account: 'x', status: 'running' }] },
     { id: 'b', sessions: [{ id: '3', account: 'k', status: 'waiting', project: 'q' }] }] };
   const got = accountSessions(snap, 'k');
-  assert.deepEqual(got.map((s) => [s.id, s.host]).sort(), [['1', 'a'], ['3', 'b']]);
+  assert.deepEqual(got.map((s) => [s.id, s.hostId]).sort(), [['1', 'a'], ['3', 'b']]);
   assert.equal(accountSessions(snap, 'none').length, 0);
 });

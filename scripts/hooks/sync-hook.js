@@ -1,5 +1,13 @@
 #!/usr/bin/env node
-// sync-hook.js — keep the cc-config working tree current across hosts.
+// sync-hook.js — keep the cc-config and ai-lab working trees current across hosts.
+//
+// ai-lab rides the same fast-forward as cc-config: its checkout is the git tree around the
+// interpreter the provider cache records (an editable install, so the pull is the update). A
+// pull that moved it re-syncs the venv when the lock changed and refreshes the provider cache,
+// which is otherwise stale against the new ai-lab.
+//
+// Local work is never mixed with upstream: a tree with uncommitted edits to tracked files, or
+// with commits its upstream lacks, is left exactly as it is and the notice names the command.
 //
 // Two modes, wired to two hook events in claude_settings.json:
 //   --pull    SessionStart: fast-forward the repo onto its upstream, so a
@@ -50,10 +58,23 @@ export function repoRootFrom(modulePath) {
 // escape hatch for a repo laid out differently (and for the integration tests).
 export const REPO = process.env.CLAUDE_SYNC_REPO || repoRootFrom(fileURLToPath(import.meta.url));
 
-function git(args, { timeout = LOCAL_TIMEOUT_MS, allowFail = false } = {}) {
+/** The ai-lab checkout to keep current, or null: `$CLAUDE_SYNC_AI_LAB` ('' disables), else the
+ * work tree around the provider cache's recorded interpreter (`<ai-lab>/.venv/...`). */
+export async function aiLabRepo(env = process.env) {
+  if (env.CLAUDE_SYNC_AI_LAB !== undefined) return env.CLAUDE_SYNC_AI_LAB || null;
+  try {
+    const { recordedPython } = await import('../shared/provider-cache.mjs');
+    const python = recordedPython();
+    if (!python || !fs.existsSync(python)) return null;
+    const top = git(['rev-parse', '--show-toplevel'], { cwd: path.dirname(python), allowFail: true });
+    return top && path.resolve(top) !== path.resolve(REPO) ? path.resolve(top) : null;
+  } catch { return null; }
+}
+
+function git(args, { cwd = REPO, timeout = LOCAL_TIMEOUT_MS, allowFail = false } = {}) {
   try {
     return execFileSync('git', ['-c', 'core.quotepath=false', ...args], {
-      cwd: REPO,
+      cwd,
       encoding: 'utf8',
       timeout,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -68,18 +89,19 @@ function git(args, { timeout = LOCAL_TIMEOUT_MS, allowFail = false } = {}) {
 
 // `.git` is a directory in a normal clone and a file in a linked worktree;
 // either way it means this is a repo.
-const isRepo = () => fs.existsSync(path.join(REPO, '.git'));
+const isRepo = (repo = REPO) => fs.existsSync(path.join(repo, '.git'));
 
 // The upstream commit, or null when the branch has no upstream configured —
 // normal on a freshly cloned host, and not an error.
-function upstreamCommit() {
-  return git(['rev-parse', '--verify', '--quiet', '@{u}'], { allowFail: true });
+function upstreamCommit(cwd = REPO) {
+  return git(['rev-parse', '--verify', '--quiet', '@{u}'], { cwd, allowFail: true });
 }
 
-function count(...args) {
-  const n = Number(git(['rev-list', '--count', ...args], { allowFail: true }));
+function countIn(cwd, ...args) {
+  const n = Number(git(['rev-list', '--count', ...args], { cwd, allowFail: true }));
   return Number.isFinite(n) ? n : 0;
 }
+const count = (...args) => countIn(REPO, ...args);
 
 // Commits on HEAD that no remote has: the upstream range when one is set,
 // otherwise "not reachable from any remote ref" — which is what a host with no
@@ -93,14 +115,21 @@ function dirtyCount() {
   return out ? out.split('\n').filter(Boolean).length : 0;
 }
 
-/** Pull-mode notice, or null when there is nothing worth saying. */
-export function formatPull(result) {
+/** Pull-mode notice for one repo, or null when there is nothing worth saying. */
+export function formatPull(result, label = 'cc-config') {
   if (!result) return null;                       // already current, or skipped
   const { pulled, note } = result;
-  if (note) return `[cc-config] not updated: ${note}`;
-  if (pulled > 0 && result.repairError) return `[cc-config] fast-forwarded ${pulled} commit(s), but setup repair failed: ${result.repairError}`;
-  if (pulled > 0) return `[cc-config] fast-forwarded ${pulled} commit(s) from upstream`;
+  if (note) return `[${label}] not updated: ${note}`;
+  if (pulled > 0 && result.repairError) return `[${label}] fast-forwarded ${pulled} commit(s), but setup repair failed: ${result.repairError}`;
+  if (pulled > 0) return `[${label}] fast-forwarded ${pulled} commit(s) from upstream`;
   return null;
+}
+
+/** Why uncommitted edits keep a behind tree where it is, or null when there are none. */
+export function localChangesNote(dirty, behind, repo) {
+  return dirty > 0
+    ? `${dirty} local change(s), ${behind} commit(s) behind — commit or stash, then: git -C "${repo}" pull --ff-only`
+    : null;
 }
 
 /** Reminder notice, or null when the tree is clean and fully pushed. */
@@ -143,52 +172,76 @@ export function formatMergeFailure(err) {
 
 // ── modes ──
 
-export async function runPull() {
-  if (!isRepo()) return null;
+/**
+ * Fast-forward `repo` onto its upstream, or say why not. `afterPull(range)` runs only when the
+ * tree moved; its error string (or throw) is reported as `repairError`.
+ */
+export async function pullRepo(repo, { afterPull = null } = {}) {
+  if (!repo || !isRepo(repo)) return null;
+  const g = (args, opts = {}) => git(args, { cwd: repo, ...opts });
 
   // A held index.lock means another git process (another session, a background
   // fetch) is mid-write. That is transient and expected — stay quiet.
-  const gitDir = git(['rev-parse', '--git-dir'], { allowFail: true });
+  const gitDir = g(['rev-parse', '--git-dir'], { allowFail: true });
   if (!gitDir) return null;
-  if (fs.existsSync(path.join(path.resolve(REPO, gitDir), 'index.lock'))) return null;
+  if (fs.existsSync(path.join(path.resolve(repo, gitDir), 'index.lock'))) return null;
 
   // Network step, isolated and bounded. Offline, no remote, or an auth prompt
   // all land here and are all normal.
   try {
-    git(['fetch', '--quiet', '--no-tags'], { timeout: FETCH_TIMEOUT_MS });
+    g(['fetch', '--quiet', '--no-tags'], { timeout: FETCH_TIMEOUT_MS });
   } catch {
     return null;
   }
 
-  const up = upstreamCommit();
-  if (!up || up === git(['rev-parse', 'HEAD'], { allowFail: true })) return null;
+  const up = upstreamCommit(repo);
+  const head = g(['rev-parse', 'HEAD'], { allowFail: true });
+  if (!up || up === head) return null;
 
-  const behind = count(`HEAD..${up}`);
-  const ahead = count(`${up}..HEAD`);
+  const behind = countIn(repo, `HEAD..${up}`);
+  const ahead = countIn(repo, `${up}..HEAD`);
 
   // Local commits the upstream lacks: ff-only would refuse, and merging or
   // rebasing unattended is exactly what must not happen here. Report only.
   if (ahead > 0) return { pulled: 0, note: `${ahead} unpushed commit(s) — needs a manual merge or push` };
 
+  // Uncommitted edits to tracked files: git would carry non-overlapping ones across the merge,
+  // and the session would then run upstream code interleaved with half-finished local work.
+  // Leave the tree alone. Untracked files are not edits; git refuses to overwrite one anyway.
+  const status = g(['status', '--porcelain', '--untracked-files=no'], { allowFail: true });
+  const local = localChangesNote(status ? status.split('\n').filter(Boolean).length : 0, behind, repo);
+  if (local) return { pulled: 0, note: local };
+
   try {
-    git(['merge', '--ff-only', up], { timeout: MERGE_TIMEOUT_MS });
+    g(['merge', '--ff-only', up], { timeout: MERGE_TIMEOUT_MS });
   } catch (err) {
     return { pulled: 0, note: formatMergeFailure(err) };
   }
 
-  // A pull replaces inodes, which breaks the hard link claude-hud requires
-  // (docs/sync-architecture.md §10). SessionStart also runs setup-check-hook,
-  // but hook order within an event is not guaranteed, so repair here too.
   let repairError = null;
-  try {
-    const { checkLinks } = await import('../setup/check-links.js');
-    checkLinks();
-  } catch (err) {
-    repairError = err?.message || String(err);
-  }
-
+  try { repairError = (await afterPull?.(`${head}..${up}`)) || null; } catch (err) { repairError = err?.message || String(err); }
   return { pulled: behind, repairError };
 }
+
+// A pull replaces inodes, which breaks the hard link claude-hud requires
+// (docs/sync-architecture.md §10). SessionStart also runs setup-check-hook,
+// but hook order within an event is not guaranteed, so repair here too.
+export const runPull = () => pullRepo(REPO, {
+  afterPull: async () => { (await import('../setup/check-links.js')).checkLinks(); return null; },
+});
+
+/** Fast-forward ai-lab; a moved tree re-syncs the venv when the lock changed, then the provider cache. */
+export const runAiLabPull = (repo) => pullRepo(repo, {
+  afterPull: async (range) => {
+    if (git(['diff', '--name-only', range, '--', 'pyproject.toml', 'uv.lock'], { cwd: repo, allowFail: true })) {
+      try {
+        execFileSync('uv', ['sync', '--frozen', '--quiet'], { cwd: repo, timeout: 50000, stdio: 'ignore', windowsHide: true });
+      } catch (err) { return `uv sync failed (${err.code || err.message}) — run: uv sync --project "${repo}"`; }
+    }
+    const cache = (await import('../setup/provider-setup.mjs')).refreshProviderCache();
+    return cache.error ? `provider cache refresh failed: ${cache.error} — run: node scripts/setup/setup.js` : null;
+  },
+});
 
 function runRemind() {
   if (!isRepo()) return null;
@@ -237,6 +290,7 @@ async function main() {
   const payload = await readPayload();
   let notice = null;
   let syncResult = null;
+  let aiLabResult = null;
 
   if (mode === '--pull') {
     // Provider launchers already run this hook before loading any repo-owned
@@ -245,7 +299,9 @@ async function main() {
     // launches have no marker and still update here.
     if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') {
       syncResult = await runPull();
-      notice = formatPull(syncResult);
+      const aiLab = await aiLabRepo();
+      aiLabResult = aiLab ? await runAiLabPull(aiLab) : null;
+      notice = [formatPull(syncResult), formatPull(aiLabResult, 'ai-lab')].filter(Boolean).join('\n') || null;
       // SessionStart hooks run in parallel, so ensure.mjs may already have (re)started the
       // bridge from the pre-pull tree; ensure again so the pulled code serves this session.
       if (syncResult?.pulled > 0) {
@@ -260,9 +316,10 @@ async function main() {
   }
 
   // Silent when there is nothing to report.
-  if (notice || syncResult?.pulled > 0) process.stdout.write(JSON.stringify({
+  if (notice || syncResult?.pulled > 0 || aiLabResult?.pulled > 0) process.stdout.write(JSON.stringify({
     ...(notice ? { systemMessage: notice } : {}),
     ccConfigSync: syncResult,
+    ...(aiLabResult ? { aiLabSync: aiLabResult } : {}),
   }));
 }
 

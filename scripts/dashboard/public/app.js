@@ -152,7 +152,12 @@ function chatRow(s, { withHost = false, inProject = false } = {}) {
   top.append(el('span', 'title', sessionLabel(s)), time);
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
-  bottom.append(el('span', 'sub', [STATUS_LABELS[status] ?? status, replyTime(s, Date.now(), replyStyle), ...where, s.topic?.closed && 'Topic closed'].filter(Boolean).join(' · ')), ...badges(s));
+  const sub = el('span', 'sub', [STATUS_LABELS[status] ?? status, replyTime(s, Date.now(), replyStyle), ...where, s.topic?.closed && 'Topic closed'].filter(Boolean).join(' · '));
+  // The account the session spends, as on the Quota tab (observation-only sessions have none).
+  const q = s.account && accounts.get(s.account);
+  if (q) sub.append(document.createTextNode(' · '), acctTag(q));
+  else if (s.seat) sub.append(document.createTextNode(` · ${s.seat}`));
+  bottom.append(sub, ...badges(s));
   body.append(top, bottom);
   row.append(avatar, body);
   if (s.topic) { row.title = 'Open Topic'; row.addEventListener('click', () => openTopic(s)); }
@@ -270,10 +275,13 @@ function quotaDetail(q) {
     box.append(note);
   }
   const using = accountSessions(snapshot, q.key);
-  box.append(el('div', 'note', using.length ? `In use by ${using.length} session${using.length === 1 ? '' : 's'}:` : 'No session uses this account now'));
-  for (const s of using) {
-    const status = displayStatus(s);
-    box.append(el('div', 'sub', `${sessionLabel(s)}${s.branch ? ` · ${s.branch}` : ''} · ${s.host} · ${STATUS_LABELS[status] ?? status}`));
+  // The same rows as the Sessions tab (status, host, branch; a tap opens the Topic), not a text list.
+  box.append(el('div', 'note', using.length ? `In use by ${using.length} session${using.length === 1 ? '' : 's'}` : 'No session uses this account now'));
+  if (using.length) {
+    const list = el('div', 'waiting');
+    for (const s of using) list.append(sessionRow(s, { withHost: true }));
+    list.addEventListener('click', (e) => e.stopPropagation());
+    box.append(list);
   }
   return box;
 }

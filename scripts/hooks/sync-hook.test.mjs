@@ -133,14 +133,14 @@ function fixture() {
 }
 
 /** Run the hook as a separate process, as the harness would. */
-function runHook(repo, mode, payload = {}) {
+function runHook(repo, mode, payload = {}, aiLab = '') {
   // A session started by a provider launcher exports the already-synced marker;
   // inherited here it would make every --pull a no-op.
   const { CC_CONFIG_STARTUP_SYNCED: _launcherMarker, ...env } = process.env;
   const raw = execFileSync(process.execPath, [path.join(HERE, 'sync-hook.js'), mode], {
     cwd: repo, encoding: 'utf8', input: JSON.stringify(payload),
     stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-    env: { ...env, ...IDENT, CLAUDE_SYNC_REPO: repo },
+    env: { ...env, ...IDENT, CLAUDE_SYNC_REPO: repo, CLAUDE_SYNC_AI_LAB: aiLab },
   }).trim();
   return raw ? JSON.parse(raw).systemMessage : null;
 }
@@ -196,7 +196,7 @@ test('integration: conflicting dirty work is preserved and blocks the update', (
 
   const before = git(b, 'rev-parse', 'HEAD');
   const notice = runHook(b, '--pull', { source: 'startup' });
-  assert.match(notice, /not updated: git refused the update/);
+  assert.match(notice, /not updated: 1 local change.*1 commit.*behind/);
   assert.equal(git(b, 'rev-parse', 'HEAD'), before);
   assert.equal(readText(path.join(b, 'shared.txt')), 'local uncommitted work\n');
 });
@@ -233,4 +233,60 @@ test('integration: the reminder reports real uncommitted work', () => {
 
   fs.writeFileSync(path.join(b, 'scratch.txt'), 'wip\n');
   assert.match(runHook(b, '--remind'), /1 uncommitted file/);
+});
+
+test('integration: non-conflicting local edits also keep the tree where it is', () => {
+  const { a, b } = fixture();
+  fs.writeFileSync(path.join(a, 'mine.txt'), 'base\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '--quiet', '-m', 'base');
+  git(a, 'push', '--quiet');
+  runHook(b, '--pull', { source: 'startup' });
+
+  fs.writeFileSync(path.join(b, 'mine.txt'), 'local edit\n');
+  fs.writeFileSync(path.join(a, 'other.txt'), 'upstream\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '--quiet', '-m', 'other');
+  git(a, 'push', '--quiet');
+
+  assert.match(runHook(b, '--pull', { source: 'startup' }), /local change\(s\).*pull --ff-only/);
+  assert.ok(!fs.existsSync(path.join(b, 'other.txt')), 'upstream must not be applied over local work');
+  assert.equal(readText(path.join(b, 'mine.txt')), 'local edit\n');
+});
+
+test('integration: an untracked file alone does not block the update', () => {
+  const { a, b } = fixture();
+  fs.writeFileSync(path.join(b, 'scratch.txt'), 'wip\n');
+  fs.writeFileSync(path.join(a, 'from-a.txt'), 'hello\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '--quiet', '-m', 'from a');
+  git(a, 'push', '--quiet');
+  assert.match(runHook(b, '--pull', { source: 'startup' }), /fast-forwarded 1 commit/);
+});
+
+test('integration: ai-lab is fast-forwarded by the same pull, labelled as itself', () => {
+  const cfg = fixture();
+  const lab = fixture();
+  fs.writeFileSync(path.join(lab.a, 'lab.txt'), 'new\n');
+  git(lab.a, 'add', '.');
+  git(lab.a, 'commit', '--quiet', '-m', 'lab change');
+  git(lab.a, 'push', '--quiet');
+
+  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, lab.b);
+  assert.match(notice, /\[ai-lab\] fast-forwarded 1 commit/);
+  assert.equal(readText(path.join(lab.b, 'lab.txt')), 'new\n');
+});
+
+test('integration: ai-lab with local edits is reported, not touched', () => {
+  const cfg = fixture();
+  const lab = fixture();
+  fs.writeFileSync(path.join(lab.a, 'f.txt'), 'base\n');
+  git(lab.a, 'add', '.'); git(lab.a, 'commit', '--quiet', '-m', 'base'); git(lab.a, 'push', '--quiet');
+  runHook(lab.b, '--pull', { source: 'startup' });
+  fs.writeFileSync(path.join(lab.b, 'f.txt'), 'wip\n');
+  git(lab.a, 'commit', '--allow-empty', '--quiet', '-m', 'more'); git(lab.a, 'push', '--quiet');
+
+  const before = git(lab.b, 'rev-parse', 'HEAD');
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b), /\[ai-lab\] not updated: 1 local change/);
+  assert.equal(git(lab.b, 'rev-parse', 'HEAD'), before);
 });

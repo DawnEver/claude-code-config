@@ -70,6 +70,9 @@ const GB = 1024 ** 3;
  * use) and this machine's load. Either is left out when unknown; observation-only sessions have
  * no account (quota.mjs accountFor).
  */
+/** The card's identity: agent, its Claude seat when not the default, the machine. */
+export const cardWho = ({ agent, seat }, machine) => `${agent}${seat ? ` ${seat}` : ''} on ${machine}`;
+
 export function cardDetail(s, { accounts = [], resources = null } = {}) {
   const lines = [];
   const a = accounts.find(x => x.key === accountFor(s, accounts));
@@ -430,10 +433,12 @@ export class Bridge {
     // A mention says "you are needed, still": once the session runs again (handled at the
     // machine) or is gone, it is not, even before anything new is posted.
     if (s.mention && (state === 'running' || state === 'disconnected')) { this.#clearMention(s); this.#save(s); }
-    const content = `${observationOnly ? 'Observation only (local TUI controls)' : STATUS[statusCode(state)].label} · since ${clock(s.statusSince)}`;
+    // Telegram's pin bar shows only the start of the first line: state, then who runs it where.
+    const who = { agent: s.agent.split(':')[0], seat: s.seat ?? null };
+    const content = `${observationOnly ? 'Observation only (local TUI controls)' : STATUS[statusCode(state)].label} · since ${clock(s.statusSince)} · ${cardWho(who, this.machine)}`;
     if (!force && s.statusText === content) return;
     // Account and load ride along whenever the card is redrawn (a state change or Refresh), never on their own.
-    const detail = offline ? [] : cardDetail({ agent: s.agent.split(':')[0], seat: s.seat ?? null }, this.cardFacts());
+    const detail = offline ? [] : cardDetail(who, this.cardFacts());
     const text = [content, ...detail, `Checked ${clock(this.now())}`].join('\n');
     s.statusRef ??= randomBytes(12).toString('hex');
     const replyMarkup = { inline_keyboard: offline ? [] : [[{ text: 'Refresh status', callback_data: `status:${s.statusRef}` }]] };
