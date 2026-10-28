@@ -9,7 +9,7 @@ import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
-import { ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, eventText, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
+import { accountSessions, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, eventText, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -683,4 +683,13 @@ test('usage report: for an allowlisted viewer, held REPORT_TTL_MS per range so a
   g.tick(REPORT_TTL_MS);
   await g.req('/api/usage?days=30', await asViewer(ALICE));
   assert.ok(reads > again, 'expired: read again');
+});
+
+test('accountSessions: the sessions on one account across hosts, most urgent first', () => {
+  const snap = { hosts: [
+    { id: 'a', sessions: [{ id: '1', account: 'k', status: 'running', project: 'p' }, { id: '2', account: 'x', status: 'running' }] },
+    { id: 'b', sessions: [{ id: '3', account: 'k', status: 'waiting', project: 'q' }] }] };
+  const got = accountSessions(snap, 'k');
+  assert.deepEqual(got.map((s) => [s.id, s.host]).sort(), [['1', 'a'], ['3', 'b']]);
+  assert.equal(accountSessions(snap, 'none').length, 0);
 });

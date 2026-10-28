@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { EventEmitter } from 'events';
-import { Bridge, topicTitle } from './daemon.mjs';
+import { Bridge, cardDetail, topicTitle } from './daemon.mjs';
 
 const M = 60000, H = 60 * M;
 const isCard = m => m.replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('status:');
@@ -1001,3 +1001,11 @@ for (const [how, act] of [
     assert.equal(r.telegram.sent.length, posts, 'nothing new was posted');
   });
 }
+
+test('cardDetail: the pinned card names the account and its use, and the machine load', () => {
+  const accounts = [{ key: 'k', agent: 'claude', aliases: ['w'], email: 'a@example.com', windows: [{ k: '5h', used: 40.4 }, { k: '7d', used: 12 }] }];
+  const resources = { cpu: 30, mem: { used: 8 * 1024 ** 3, total: 32 * 1024 ** 3 }, gpus: [{ util: 5, memUsed: 1024 ** 3, memTotal: 24 * 1024 ** 3 }] };
+  assert.deepEqual(cardDetail({ agent: 'claude', seat: 'w' }, { accounts, resources }),
+    ['Account: a@example.com · used 5h 40% · 7d 12%', 'Machine: CPU 30% · RAM 8.0/32 GB · GPU 5% 1.0/24 GB']);
+  assert.deepEqual(cardDetail({ agent: 'codex', seat: null }, { accounts }), []);
+});

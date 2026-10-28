@@ -28,7 +28,11 @@ export function sessionsOf(snapshot) {
   return snapshot.hosts.flatMap((h) => h.sessions);
 }
 
-export const sortSessions = (sessions) => [...sessions].sort((a, b) =>
+/** The sessions running on one account (one budget: on any host), most urgent first, each with its host. */
+export const accountSessions = (snapshot, key) =>
+  sortSessions(snapshot.hosts.flatMap((h) => h.sessions.filter((s) => s.account === key).map((s) => ({ ...s, host: h.id }))));
+
+export const sortSessions =(sessions) => [...sessions].sort((a, b) =>
   (RANK[displayStatus(a)] ?? 9) - (RANK[displayStatus(b)] ?? 9) || String(a.project).localeCompare(String(b.project)));
 
 /** Distinct host and project values, and how many sessions each status chip holds. */

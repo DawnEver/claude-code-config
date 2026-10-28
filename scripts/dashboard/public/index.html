@@ -17,7 +17,7 @@
     --t1: 16px; --t2: 14px; --t3: 12px;
   }
   * { box-sizing: border-box; min-width: 0; }
-  html, body { overflow-x: hidden; }
+  html, body { overflow-x: clip; }   /* clip, not hidden: hidden makes body a scroll box and breaks the sticky tab bar */
   body { margin: 0; padding: 12px 12px calc(16px + env(safe-area-inset-bottom)); font: 15px/1.35 -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
@@ -103,8 +103,12 @@
 
   /* Quota: one card per account. */
   /* Tabs: one question per view; the needs-you card above covers both. */
-  .tabs { display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content; }
-  .tabs button { position: relative; border: 0; border-radius: 9px; padding: 7px 16px; font: inherit; font-size: var(--t2); font-weight: 600;
+  .tabs { display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content;
+    max-width: 100%; box-sizing: border-box; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  /* Pinned (this device, default): the tab bar stays at the top while the page scrolls. */
+  .pin-tabs .tabs { position: sticky; top: 0; z-index: 5; box-shadow: 0 2px 6px color-mix(in srgb, var(--fg) 12%, transparent); }
+  .tabs button { flex: none; white-space: nowrap; position: relative; border: 0; border-radius: 9px; padding: 7px 16px; font: inherit; font-size: var(--t2); font-weight: 600;
     background: none; color: var(--hint); cursor: pointer; }
   .tabs button b { font-weight: 600; margin-left: 4px; opacity: .7; }
   .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px color-mix(in srgb, var(--fg) 15%, transparent); }

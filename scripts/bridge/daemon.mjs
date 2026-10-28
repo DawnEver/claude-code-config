@@ -63,6 +63,28 @@ const statusCode = (state) => STATUS_CODES[state] ?? 'unknown';
 /** A session name as its host reports it, or null: one line, bounded. */
 export const sessionName = (v) => { const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; return t ? t.slice(0, 200) : null; };
 const clock = t => new Date(t).toTimeString().slice(0, 5);
+const GB = 1024 ** 3;
+
+/**
+ * The pinned card's facts beyond the state: the account the session spends (who, each window's
+ * use) and this machine's load. Either is left out when unknown; observation-only sessions have
+ * no account (quota.mjs accountFor).
+ */
+export function cardDetail(s, { accounts = [], resources = null } = {}) {
+  const lines = [];
+  const a = accounts.find(x => x.key === accountFor(s, accounts));
+  if (a) {
+    const used = a.windows.map(w => `${w.k} ${Math.round(w.used)}%`).join(' · ');
+    lines.push(`Account: ${a.email ?? a.label ?? a.agent}${used ? ` · used ${used}` : ''}`);
+  }
+  if (resources) {
+    const r = [resources.cpu != null && `CPU ${resources.cpu}%`,
+      resources.mem?.total && `RAM ${(resources.mem.used / GB).toFixed(1)}/${(resources.mem.total / GB).toFixed(0)} GB`,
+      ...(resources.gpus ?? []).map(g => `GPU ${g.util}% ${(g.memUsed / GB).toFixed(1)}/${(g.memTotal / GB).toFixed(0)} GB`)].filter(Boolean);
+    if (r.length) lines.push(`Machine: ${r.join(' · ')}`);
+  }
+  return lines;
+}
 
 /**
  * `[name | ]machine | [project |] branch | agent[ · suffix]`: the session's own name (Claude's
@@ -95,8 +117,8 @@ export class Bridge {
    */
   constructor({ telegram, adapters = [], config, machine, resolveContext = gitContext,
     topicCacheFile = null, log = () => {}, now = Date.now, alertGraceMs = ALERT_GRACE_MS,
-    uploadsDir = path.join(BRIDGE_RUNTIME_DIR, 'uploads'), telegramEnabled = true }) {
-    Object.assign(this, { telegram, config, machine, resolveContext, log, now, alertGraceMs, uploadsDir });
+    uploadsDir = path.join(BRIDGE_RUNTIME_DIR, 'uploads'), telegramEnabled = true, cardFacts = () => ({}) }) {
+    Object.assign(this, { telegram, config, machine, resolveContext, log, now, alertGraceMs, uploadsDir, cardFacts });
     this.telegramEnabled = telegramEnabled;
     this.hosts = new Map(adapters.map((a) => [a.agent, a]));
     this.sessions = new Map();   // key -> session (lifecycle.mjs record + routing fields)
@@ -410,7 +432,9 @@ export class Bridge {
     if (s.mention && (state === 'running' || state === 'disconnected')) { this.#clearMention(s); this.#save(s); }
     const content = `${observationOnly ? 'Observation only (local TUI controls)' : STATUS[statusCode(state)].label} · since ${clock(s.statusSince)}`;
     if (!force && s.statusText === content) return;
-    const text = `${content}\nChecked ${clock(this.now())}`;
+    // Account and load ride along whenever the card is redrawn (a state change or Refresh), never on their own.
+    const detail = offline ? [] : cardDetail({ agent: s.agent.split(':')[0], seat: s.seat ?? null }, this.cardFacts());
+    const text = [content, ...detail, `Checked ${clock(this.now())}`].join('\n');
     s.statusRef ??= randomBytes(12).toString('hex');
     const replyMarkup = { inline_keyboard: offline ? [] : [[{ text: 'Refresh status', callback_data: `status:${s.statusRef}` }]] };
     if (s.statusMessageId) {
@@ -915,7 +939,11 @@ export async function main() {
   const port = await claude.listen(0);
   writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, codexHome, sourceRevision, configRevision: bridgeConfigRevision(config) }, null, 2));
   const codex = new CodexAdapter({ sources: config.codexSources, localObserver: new CodexLocalObserver({ sources: config.codexSources }) });
-  const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, telegramEnabled: !!telegram,
+  // The pinned card's account and load: the dashboard push's last reading, else a sample of its own.
+  const resources = new ResourceReader();
+  let lastAccounts = [], lastResources = null;
+  const cardFacts = () => ({ accounts: lastAccounts, resources: config.dashboard ? lastResources : resources.read() });
+  const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, telegramEnabled: !!telegram, cardFacts,
     topicCacheFile: telegram ? path.join(BRIDGE_RUNTIME_DIR, 'topics.json') : null });
 
   const ac = new AbortController();
@@ -957,16 +985,14 @@ export async function main() {
       for (const r of results) log(`dashboard: config ${changes.find((c) => c.id === r.id).key} ${r.ok ? 'applied' : `refused (${r.error})`}`);
       return results;
     };
-    const resources = new ResourceReader();
     // The usage store (docs/usage.md): the transcripts' turns, each quota window, hourly load.
-    let lastAccounts = [];
     const usage = new UsagePush({ url: config.dashboard.url, hostToken: config.dashboard.hostToken, machine, log, accounts: () => lastAccounts,
       scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
         sources: () => usageSources(os.homedir(), { machine, codexHome }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list) })),
       accounts: () => (lastAccounts = accounts.read()),
-      resources: () => { const r = resources.read(); usage.sample(r); return r; }, onConfigChanges });
+      resources: () => { const r = (lastResources = resources.read()); usage.sample(r); return r; }, onConfigChanges });
     push.start();
     usage.start();
   }

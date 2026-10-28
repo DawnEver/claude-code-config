@@ -2,7 +2,7 @@
 // with the raw Telegram initData (the gateway verifies it); never reads initDataUnsafe for
 // anything but display. All data is rendered with textContent, never as HTML.
 
-import { GROUPS, STATUS_LABELS, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, agentName, eventText, usageView, tokenText, hoursText } from './view.mjs';
+import { GROUPS, STATUS_LABELS, accountSessions, ago, applyFilters, attention, countdown, displayStatus, filterOptions, quotaAlerts, alertKey, unreadEvents, quotaView, stats, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, stateAge, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, agentName, eventText, usageView, tokenText, hoursText } from './view.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 
@@ -56,6 +56,8 @@ const timeFormat = { clock: store.get('dashboard.clock') === '12' ? '12' : '24',
 let deployed = null;   // the live version from /api/health: {commit, id, at}
 let packed = store.get('dashboard.packed') !== '0';   // hosts in packed columns, not aligned rows
 document.body.classList.toggle('packed', packed);
+let pinTabs = store.get('dashboard.pinTabs') !== '0';   // tab bar sticks to the top while the page scrolls
+document.body.classList.toggle('pin-tabs', pinTabs);
 // Sessions drawn as a Telegram chat list (avatar, name, time, unread and @ badges) unless status rows are chosen.
 let chatList = store.get('dashboard.chatList') !== '0';
 // Tapping a session opens its Topic at the latest post, or at the first unread one.
@@ -266,6 +268,12 @@ function quotaDetail(q) {
     const note = el(q.extraReset.url ? 'button' : 'div', 'note link', `extra reset announced${q.extraReset.at ? ` · in ${countdown(q.extraReset.at)}` : ''}`);
     if (q.extraReset.url) note.addEventListener('click', (e) => { e.stopPropagation(); tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener'); });
     box.append(note);
+  }
+  const using = accountSessions(snapshot, q.key);
+  box.append(el('div', 'note', using.length ? `In use by ${using.length} session${using.length === 1 ? '' : 's'}:` : 'No session uses this account now'));
+  for (const s of using) {
+    const status = displayStatus(s);
+    box.append(el('div', 'sub', `${sessionLabel(s)}${s.branch ? ` · ${s.branch}` : ''} · ${s.host} · ${STATUS_LABELS[status] ?? status}`));
   }
   return box;
 }
@@ -555,6 +563,8 @@ const deviceToggles = () => [
     (v) => { unit = v ? 'used' : 'left'; store.set('dashboard.unit', unit); }),
   deviceToggle('Packed layout (Sessions and Quota): hosts flow down each column and fill the gaps, instead of aligned rows', () => packed,
     (v) => { packed = v; store.set('dashboard.packed', v ? '1' : '0'); document.body.classList.toggle('packed', v); }),
+  deviceToggle('Pin the tabs (Sessions, Quota, ...) to the top while scrolling', () => pinTabs,
+    (v) => { pinTabs = v; store.set('dashboard.pinTabs', v ? '1' : '0'); document.body.classList.toggle('pin-tabs', v); }),
   deviceToggle('Group sessions by project instead of by host', () => groupBy === 'project',
     (v) => { groupBy = v ? 'project' : 'host'; store.set('dashboard.groupBy', groupBy); }),
   deviceToggle('In a project, order sessions by urgency instead of by workstation', () => groupOrder === 'urgency',
