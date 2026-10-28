@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { repoRootFrom, REPO, formatPull, formatReminder, formatMergeFailure, isStartup } from './sync-hook.js';
+import { depsChanged, repoRootFrom, REPO, formatPull, formatReminder, formatMergeFailure, isStartup } from './sync-hook.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -133,14 +133,14 @@ function fixture() {
 }
 
 /** Run the hook as a separate process, as the harness would. */
-function runHook(repo, mode, payload = {}, aiLab = '') {
+function runHook(repo, mode, payload = {}, aiLab = '', extraEnv = {}) {
   // A session started by a provider launcher exports the already-synced marker;
   // inherited here it would make every --pull a no-op.
   const { CC_CONFIG_STARTUP_SYNCED: _launcherMarker, ...env } = process.env;
   const raw = execFileSync(process.execPath, [path.join(HERE, 'sync-hook.js'), mode], {
     cwd: repo, encoding: 'utf8', input: JSON.stringify(payload),
     stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-    env: { ...env, ...IDENT, CLAUDE_SYNC_REPO: repo, CLAUDE_SYNC_AI_LAB: aiLab },
+    env: { ...env, ...IDENT, CLAUDE_SYNC_REPO: repo, CLAUDE_SYNC_AI_LAB: aiLab, ...extraEnv },
   }).trim();
   return raw ? JSON.parse(raw).systemMessage : null;
 }
@@ -272,7 +272,7 @@ test('integration: ai-lab is fast-forwarded by the same pull, labelled as itself
   git(lab.a, 'commit', '--quiet', '-m', 'lab change');
   git(lab.a, 'push', '--quiet');
 
-  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, lab.b);
+  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, tempHome());
   assert.match(notice, /\[ai-lab\] fast-forwarded 1 commit/);
   assert.equal(readText(path.join(lab.b, 'lab.txt')), 'new\n');
 });
@@ -287,6 +287,34 @@ test('integration: ai-lab with local edits is reported, not touched', () => {
   git(lab.a, 'commit', '--allow-empty', '--quiet', '-m', 'more'); git(lab.a, 'push', '--quiet');
 
   const before = git(lab.b, 'rev-parse', 'HEAD');
-  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b), /\[ai-lab\] not updated: 1 local change/);
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, tempHome()), /\[ai-lab\] not updated: 1 local change/);
   assert.equal(git(lab.b, 'rev-parse', 'HEAD'), before);
+});
+
+// A home with no provider cache: the post-pull refresh must fail loudly there, never touch the real one.
+function tempHome() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-home-'));
+  return { HOME: home, USERPROFILE: home };
+}
+
+test('integration: a failed provider-cache refresh after an ai-lab pull is reported', () => {
+  const cfg = fixture();
+  const lab = fixture();
+  git(lab.a, 'commit', '--allow-empty', '--quiet', '-m', 'lab change'); git(lab.a, 'push', '--quiet');
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, tempHome()),
+    /\[ai-lab\] fast-forwarded 1 commit\(s\), but setup repair failed: provider cache refresh failed/);
+});
+
+test('integration: only a dependency change asks for a venv sync', () => {
+  const { a, b } = fixture();
+  const base = git(b, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(a, 'code.py'), 'x = 1\n');
+  git(a, 'add', '.'); git(a, 'commit', '--quiet', '-m', 'code'); git(a, 'push', '--quiet');
+  const code = git(a, 'rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(a, 'uv.lock'), 'lock\n');
+  git(a, 'add', '.'); git(a, 'commit', '--quiet', '-m', 'lock'); git(a, 'push', '--quiet');
+  const lock = git(a, 'rev-parse', 'HEAD');
+  git(b, 'fetch', '--quiet');
+  assert.equal(depsChanged(b, `${base}..${code}`), false);
+  assert.equal(depsChanged(b, `${code}..${lock}`), true);
 });

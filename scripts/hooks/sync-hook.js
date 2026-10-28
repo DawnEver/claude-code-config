@@ -32,7 +32,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
 
@@ -230,16 +230,36 @@ export const runPull = () => pullRepo(REPO, {
   afterPull: async () => { (await import('../setup/check-links.js')).checkLinks(); return null; },
 });
 
-/** Fast-forward ai-lab; a moved tree re-syncs the venv when the lock changed, then the provider cache. */
-export const runAiLabPull = (repo) => pullRepo(repo, {
+/** Regenerate the provider cache against the ai-lab now on disk: an error string, or null. */
+async function refreshCache() {
+  const cache = (await import('../setup/provider-setup.mjs')).refreshProviderCache();
+  return cache.error ? `provider cache refresh failed: ${cache.error} — run: node scripts/setup/setup.js` : null;
+}
+
+/** Whether `range` touched ai-lab's dependencies, i.e. the venv must be re-synced. */
+export const depsChanged = (repo, range) =>
+  Boolean(git(['diff', '--name-only', range, '--', 'pyproject.toml', 'uv.lock'], { cwd: repo, allowFail: true }));
+
+/**
+ * The venv sync, then the cache refresh. It can take minutes, longer than a launch waits for
+ * this hook (startup-sync.mjs kills it at 75 s, which would land mid-install), so a pull hands
+ * it to a detached run of this file. A stale cache meanwhile never blocks a launch.
+ */
+export async function syncAiLabVenv(repo) {
+  try { execFileSync('uv', ['sync', '--frozen', '--quiet'], { cwd: repo, timeout: 600000, stdio: 'ignore', windowsHide: true }); }
+  catch (err) { return `uv sync failed (${err.code || err.message}) — run: uv sync --project "${repo}"`; }
+  return refreshCache();
+}
+
+const detachedVenvSync = (repo) => spawn(process.execPath, [fileURLToPath(import.meta.url), '--ai-lab-venv', repo],
+  { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+
+/** Fast-forward ai-lab; a moved tree refreshes the provider cache, after a venv sync when the deps changed. */
+export const runAiLabPull = (repo, { background = detachedVenvSync } = {}) => pullRepo(repo, {
   afterPull: async (range) => {
-    if (git(['diff', '--name-only', range, '--', 'pyproject.toml', 'uv.lock'], { cwd: repo, allowFail: true })) {
-      try {
-        execFileSync('uv', ['sync', '--frozen', '--quiet'], { cwd: repo, timeout: 50000, stdio: 'ignore', windowsHide: true });
-      } catch (err) { return `uv sync failed (${err.code || err.message}) — run: uv sync --project "${repo}"`; }
-    }
-    const cache = (await import('../setup/provider-setup.mjs')).refreshProviderCache();
-    return cache.error ? `provider cache refresh failed: ${cache.error} — run: node scripts/setup/setup.js` : null;
+    if (!depsChanged(repo, range)) return refreshCache();
+    background(repo);
+    return null;
   },
 });
 
@@ -308,6 +328,10 @@ async function main() {
         try { await (await import('../bridge/ensure.mjs')).ensureDaemon(); } catch { /* bridge is optional */ }
       }
     }
+  } else if (mode === '--ai-lab-venv') {
+    const error = await syncAiLabVenv(process.argv[3]);
+    if (error) process.stderr.write(`[sync-hook] ${error}\n`);
+    return;
   } else if (mode === '--remind') {
     notice = runRemind();
   } else {
