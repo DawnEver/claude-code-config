@@ -50,7 +50,7 @@ test('doctor warns about unidentified or dead cache lock owners without changing
 });
 
 test('doctor detects native updates that leave a cache root but delete its protected contents', t => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-protected-'));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-protected-'))); // macOS tmpdir is a symlink; the code compares real paths
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   assert.deepEqual(checkProtectedCodexCaches({ codexHome: home }), []);
   const backup = path.join(home, '.tmp', 'cc-config-plugin-backup-fixture');

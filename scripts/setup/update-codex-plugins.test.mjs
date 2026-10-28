@@ -27,7 +27,7 @@ test('repair CLI restores protected files without a marketplace or native execut
 });
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-plugin-update-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-plugin-update-'))); // macOS tmpdir is a symlink; the code compares real paths
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const codexHome = path.join(root, 'home');
   const marketplaceRoot = path.join(root, 'local marketplace');

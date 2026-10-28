@@ -85,7 +85,7 @@ test('shutdown reminder shares one wall-clock budget and runs no network command
 });
 
 function protectedHome(t) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-hook-repair-'));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-hook-repair-'))); // macOS tmpdir is a symlink; the code compares real paths
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const backup = path.join(home, '.tmp', 'cc-config-plugin-backup-fixture');
   fs.mkdirSync(path.join(backup, 'rem', '1.0.0'), { recursive: true });
