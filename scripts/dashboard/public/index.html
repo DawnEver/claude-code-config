@@ -26,12 +26,9 @@
   #version .commit { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
   .muted { color: var(--hint); font-size: var(--t3); }
 
-  /* 1. Does anything need me? */
+  /* Loading, sign-in and access problems: the page's one message before any data. */
   .summary { border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; background: var(--card); }
-  .summary.alert { background: color-mix(in srgb, var(--warn) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
-  .summary-head { font-weight: 700; font-size: var(--t1); display: flex; align-items: center; gap: 8px; }
-  .summary-sub { color: var(--hint); font-size: var(--t2); margin-top: 2px; }
-  .summary .row { margin-top: 8px; }
+  .summary-head { font-weight: 700; font-size: var(--t1); }
 
   /* 2. Filters */
   .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; margin-bottom: 8px; scrollbar-width: none; }
@@ -56,28 +53,20 @@
   .list { background: var(--card); border-radius: 14px; overflow: hidden; }
   .empty { color: var(--hint); text-align: center; padding: 16px; font-size: var(--t2); }
 
-  .row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; width: 100%; border: 0; background: none;
-    color: inherit; font: inherit; text-align: left; }
-  .list .row + .row { border-top: 1px solid var(--sep); }
-  .row.link { cursor: pointer; }
-  .row.link:active { background: var(--sep); }
   .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--idle); }
   .main { flex: 1; }
   .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sub { color: var(--hint); font-size: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
   .agent { font-weight: 600; } .agent.claude { color: var(--claude); } .agent.codex { color: var(--codex); }
-  .pill { flex: none; font-size: var(--t3); font-weight: 600; padding: 3px 8px; border-radius: 999px; background: var(--sep); color: var(--hint); }
-  .chev { flex: none; color: var(--hint); font-size: 20px; line-height: 1; width: 10px; }
-  .dismiss { flex: none; font: inherit; font-size: var(--t3); padding: 3px 8px; border-radius: 6px; border: 1px solid var(--sep); background: transparent; color: var(--hint); cursor: pointer; }
+  .chev { flex: none; color: var(--hint); }
 
-  .s-working .dot { background: var(--run); } .s-working .pill { background: color-mix(in srgb, var(--run) 15%, transparent); color: var(--run); }
+  .s-working .dot { background: var(--run); }
   .s-needs_approval .dot, .s-needs_input .dot { background: var(--warn); }
-  .s-needs_approval .pill, .s-needs_input .pill { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
   .s-idle .dot { background: var(--idle); }
   .s-stale .dot, .s-unknown .dot, .s-ended .dot { background: transparent; border: 2px solid var(--idle); }
   .on-dot { background: var(--ok); } .off-dot { background: transparent; border: 2px solid var(--idle); }
 
-  /* Sessions as a Telegram chat list (Config: this device). */
+  /* Sessions as a Telegram chat list. */
   .chat { display: flex; align-items: center; gap: 10px; padding: 8px 12px; width: 100%; border: 0; background: none;
     color: inherit; font: inherit; text-align: left; }
   .list .chat + .chat { border-top: 1px solid var(--sep); }
@@ -101,8 +90,7 @@
   .res-t { white-space: nowrap; text-align: right; }
   .res-about { grid-column: 1 / -1; overflow-wrap: anywhere; }
 
-  /* Quota: one card per account. */
-  /* Tabs: one question per view; the needs-you card above covers both. */
+  /* Tabs: one question per view. */
   .tabs { display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content;
     max-width: 100%; box-sizing: border-box; overflow-x: auto; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
@@ -159,23 +147,29 @@
   .qbest { font-size: var(--t3); color: var(--hint); margin: 0 4px 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
   .qref { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; cursor: default; font-size: var(--t2); }
   .qref .see { color: var(--hint); font-size: var(--t3); }
-    font-weight: 700; text-align: center; line-height: 26px; margin-left: auto; }
   .qmini .used, .qmini .reset { font-size: var(--t2); font-weight: 600; }
   .reset { text-align: right; white-space: nowrap; }
   .reset:empty { display: none; }
   .qmini .k { color: var(--hint); font-weight: 600; } .qmini .used { text-align: right; font-weight: 600; }
-  /* Config: shared settings first (the editable few), then each host's facts. */
+  /* Config: Display (this device), then Shared settings (all hosts), then Developer, collapsed. */
   .cfg { background: var(--card); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
   .cfg-row { padding: 10px 12px; } .cfg-row + .cfg-row { border-top: 1px solid var(--sep); }
   .cfg-top { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  .cfg-top label { font-size: var(--t2); flex: 1 1 200px; }
+  .cfg-name { font-size: var(--t2); flex: 1 1 160px; }
+  .cfg-h { font-size: var(--t3); font-weight: 600; color: var(--hint); margin: 10px 4px 4px; }
+  .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 9px; background: var(--sep); }
+  .seg button { border: 0; border-radius: 7px; padding: 5px 10px; font: inherit; font-size: var(--t3); font-weight: 600; background: none; color: var(--hint); cursor: pointer; white-space: nowrap; }
+  .seg button[aria-checked="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px color-mix(in srgb, var(--fg) 15%, transparent); }
+  .hint { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--sep); color: var(--hint); font-size: 11px; cursor: help; }
+  .mark { font-size: var(--t3); font-weight: 600; padding: 1px 6px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); cursor: help; }
+  .change { margin-top: 4px; } .change.ok { color: var(--ok); } .change.bad { color: var(--bad); white-space: normal; } .change.pending { color: var(--warn); }
+  .dev { margin-top: 18px; } .dev summary { cursor: pointer; }
   .cfg-edit { display: flex; gap: 6px; align-items: center; }
   .cfg-edit input, .cfg-edit select { width: 96px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--sep); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--t2); }
   .cfg-edit button { border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; font-size: var(--t2); font-weight: 600; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
   .cfg-edit button:disabled { opacity: .4; cursor: default; }
-  .cfg .note { color: var(--hint); }
-  .demo-toggle { display: flex; gap: 10px; align-items: center; padding: 10px 12px; font-size: var(--t2); cursor: pointer; }
-  .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 10px 12px; font-size: var(--t2); }
+  /* A host's own facts under its quota (read-only: who may control it lives in its files). */
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 10px 12px; margin: 0 0 14px; font-size: var(--t3); background: var(--card); border-radius: 14px; }
   .facts dt { color: var(--hint); } .facts dd { margin: 0; }
   .section-h { font-size: var(--t2); text-transform: uppercase; letter-spacing: .04em; color: var(--hint); margin: 4px 4px 8px; }
   .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
@@ -206,31 +200,28 @@
   .note { display: block; margin-top: 8px; font-size: var(--t3); font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; font-family: inherit; text-align: left; }
   .note.link { cursor: pointer; }
   .foot { margin-top: 8px; }
-  .s-exhausted .dot { background: var(--bad); } .s-exhausted .pill { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
 
-  /* Responsive, continuously: columns appear as the width allows (one per ~340 px); auto-fit
-     collapses unused tracks, so the cards always share the full row. Spacing and the title
+  /* Responsive, continuously: columns appear as the width allows (one per ~340 px). Spacing and the title
      scale with the viewport. No cap. */
   body { padding: clamp(12px, 2vw, 32px) clamp(12px, 2.5vw, 40px) calc(clamp(16px, 2vw, 32px) + env(safe-area-inset-bottom)); }
   h1 { font-size: clamp(20px, 1.2vw + 14px, 28px); }
-  .quota-hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
-    #hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 0 14px; align-items: start; }
-  /* auto-fill here: a lone waiting session keeps card width instead of spanning the window. */
-  .packed #hosts, .packed #quota-view .quota-hosts { display: block; column-width: 340px; column-gap: 14px; }
-  .packed #hosts > .host, .packed #quota-view .host { break-inside: avoid; }
+  /* Packed: hosts flow down each column and fill the gaps. */
+  #hosts, .quota-hosts { column-width: 340px; column-gap: 14px; }
+  #hosts > .host, .quota-hosts > .host { break-inside: avoid; }
+  /* auto-fill here: a lone session keeps card width instead of spanning the window. */
   .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 0 14px; }
   .selects select { max-width: 320px; }
 </style>
 </head>
 <body>
-  <header class="top"><h1>Agents Dashboard <span id="version" class="muted"></span></h1><span id="updated" class="muted"></span></header>
-  <section id="summary" class="summary"><div class="summary-head">Loading…</div></section>
+  <header class="top"><h1><span id="title">Agents Dashboard</span> <span id="version" class="muted"></span></h1><span id="updated" class="muted"></span></header>
+  <section id="summary" class="summary"><div class="summary-head"></div></section>
   <nav id="tabs" class="tabs" role="tablist" hidden>
-    <button role="tab" data-tab="sessions">Sessions <b id="n-sessions"></b></button>
-    <button role="tab" data-tab="quota">Quota <b id="n-quota"></b><i class="tab-dot" id="quota-dot" hidden></i></button>
-    <button role="tab" data-tab="usage">Usage</button>
-    <button role="tab" data-tab="events">Events <b id="n-events"></b><i class="tab-badge" id="events-badge" hidden></i></button>
-    <button role="tab" data-tab="config">Config</button>
+    <button role="tab" data-tab="sessions"><span class="label"></span> <b id="n-sessions"></b></button>
+    <button role="tab" data-tab="quota"><span class="label"></span> <b id="n-quota"></b><i class="tab-dot" id="quota-dot" hidden></i></button>
+    <button role="tab" data-tab="usage"><span class="label"></span></button>
+    <button role="tab" data-tab="events"><span class="label"></span> <b id="n-events"></b><i class="tab-badge" id="events-badge" hidden></i></button>
+    <button role="tab" data-tab="config"><span class="label"></span></button>
   </nav>
   <div id="banner" class="banner"></div>
   <section id="quota-view" class="view" data-view="quota" hidden></section>

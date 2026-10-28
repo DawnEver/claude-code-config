@@ -1,5 +1,5 @@
 // scripts/dashboard/public/shared/config-keys.mjs — the config keys the dashboard may change, defined
-// once for the Worker, the host (scripts/bridge/context.mjs) and the page (labels and bounds; its example data).
+// once for the Worker, the host (scripts/bridge/context.mjs) and the page (bounds and options; its example data). Labels are words: i18n.mjs `config.<key>`.
 // Pure: no imports.
 
 // The only keys a remote request can touch: behaviour that grants nothing. Permissions
@@ -10,15 +10,15 @@ const int = (lo, hi) => Object.assign((v) => (Number.isInteger(v) && v >= lo && 
 // No dots in the name: the key is a dotted path, and a dot would address another object.
 const PROJECT = /^bridge\.projects\.([A-Za-z0-9_-]{1,100})\.projectInTitle$/;
 export const CONFIG_KEYS = {
-  'bridge.idleCloseMinutes': { label: 'Close an idle Topic after (minutes, 0 = never)', parse: int(0, 1440) },
-  'bridge.deleteClosedAfterHours': { label: 'Delete a closed Topic after (hours, 0 = never)', parse: int(0, 720) },
-  'bridge.dashboard.everySeconds': { label: 'Push to the dashboard every (seconds)', parse: int(5, 3600) },
-  'bridge.projects.*.projectInTitle': { label: 'Project name in Topic titles', options: ['always', 'main', 'never'],
+  'bridge.idleCloseMinutes': { parse: int(0, 1440) },
+  'bridge.deleteClosedAfterHours': { parse: int(0, 720) },
+  'bridge.dashboard.everySeconds': { parse: int(5, 3600) },
+  'bridge.projects.*.projectInTitle': { options: ['always', 'main', 'never'],
     parse: (v) => (['always', 'main', 'never'].includes(v) ? v : undefined) },
 };
 
-/** CONFIG_KEYS as plain data (label and bounds), as the snapshot serves it to the page. */
-export const configKeysMeta = () => Object.entries(CONFIG_KEYS).map(([key, s]) => ({ key, label: s.label,
+/** CONFIG_KEYS as plain data (bounds or options), as the snapshot serves it to the page. */
+export const configKeysMeta = () => Object.entries(CONFIG_KEYS).map(([key, s]) => ({ key,
   ...(s.options ? { options: s.options } : { min: s.parse.min, max: s.parse.max }) }));
 
 /** The table entry for a concrete key (a project key matches its `*` pattern), or null. */

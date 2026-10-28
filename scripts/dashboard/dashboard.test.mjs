@@ -178,9 +178,9 @@ test('set-menu: the local bot token must be the configured bot', () => {
 test('one status vocabulary from native state to the wire', async () => {
   const { STATUS_CODES } = await import('../bridge/daemon.mjs');
   const { STATUSES } = await import('../shared/dashboard-schema.mjs');
-  const { STATUS_LABELS } = await import('./public/view.mjs');
+  const { DISPLAY_STATUSES } = await import('./public/view.mjs');
   assert.deepEqual([...new Set(Object.values(STATUS_CODES))].sort(), [...STATUSES].sort(), 'every native state maps onto the vocabulary, and covers it');
-  assert.deepEqual(Object.keys(STATUS_LABELS).sort(), [...STATUSES, 'stale'].sort(), 'the page adds only freshness');
+  assert.deepEqual([...DISPLAY_STATUSES].sort(), [...STATUSES, 'stale'].sort(), 'the page adds only freshness');
 });
 
 test('the vocabulary is defined once: no status label, agent name or stale threshold copied elsewhere', () => {
@@ -692,4 +692,49 @@ test('accountSessions: the sessions on one account across hosts, most urgent fir
   const got = accountSessions(snap, 'k');
   assert.deepEqual(got.map((s) => [s.id, s.hostId]).sort(), [['1', 'a'], ['3', 'b']]);
   assert.equal(accountSessions(snap, 'none').length, 0);
+});
+
+test('i18n: the language defaults from Telegram language_code (zh* -> zh, else en); t() falls back to English, then the key', async () => {
+  const { t, defaultLang, LANGS, i18nKeys } = await import('./public/shared/i18n.mjs');
+  assert.deepEqual(['zh', 'zh-hans', 'zh-TW', 'ZH'].map(defaultLang), ['zh', 'zh', 'zh', 'zh']);
+  assert.deepEqual(['en', 'de', 'ja', '', undefined, null].map(defaultLang), ['en', 'en', 'en', 'en', 'en', 'en']);
+  assert.equal(t('tab.config', 'en'), 'Config');
+  assert.equal(t('tab.config', 'zh'), '设置');
+  assert.equal(t('tab.config', 'fr'), 'Config', 'an unknown language reads English');
+  assert.equal(t('no.such.key', 'zh'), 'no.such.key');
+  assert.equal(t('sessions.count', 'en', { n: 1 }), '1 session');
+  assert.equal(t('sessions.count', 'en', { n: 3 }), '3 sessions');
+  assert.equal(t('status.needs_approval', 'zh'), '待批准');
+  for (const k of i18nKeys()) for (const l of LANGS) assert.notEqual(t(k, l, {}), k, `${k} has ${l}`);
+});
+
+test('i18n: every config key and option, every status and chip has words; view text follows the language', async () => {
+  const { t } = await import('./public/shared/i18n.mjs');
+  const { CONFIG_KEYS } = await import('./public/shared/config-keys.mjs');
+  const { DISPLAY_STATUSES, GROUPS, configLabel } = await import('./public/view.mjs');
+  const keys = [...Object.keys(CONFIG_KEYS).map((k) => `config.${k}`), ...Object.values(CONFIG_KEYS).flatMap((s) => (s.options ?? []).map((o) => `config.option.${o}`)),
+    ...DISPLAY_STATUSES.map((s) => `status.${s}`), ...Object.keys(GROUPS).map((g) => `group.${g}`)];
+  for (const k of keys) assert.notEqual(t(k, 'zh'), k, k);
+  assert.equal(configLabel('bridge.projects.api.projectInTitle', 'bridge.projects.*.projectInTitle'), 'Project name in Topic titles · api');
+  assert.equal(stateAge({ status: 'idle', lastActivityAt: new Date(NOW - 125 * 60000).toISOString() }, NOW, 'zh'), '空闲 2h');
+  assert.equal(ago(new Date(NOW - 3 * 60000).toISOString(), NOW, 'zh'), '3m前');
+  assert.equal(formatTime(new Date(2026, 9, 21, 23, 36).getTime(), { lang: 'zh' }), '10月21日 23:36');
+});
+
+test('view: config rows sit in their group and read the change flow — queued, handed to a host, then the outcome', () => {
+  const m = mockDashboard(NOW);
+  const row = (snap, k) => configView(snap).rows.find((r) => r.key === k);
+  assert.deepEqual(Object.fromEntries(configView(m).rows.map((r) => [r.key, r.group])), { 'bridge.dashboard.everySeconds': 'dashboard', 'bridge.deleteClosedAfterHours': 'topics',
+    'bridge.idleCloseMinutes': 'topics', 'bridge.projects.backend-api.projectInTitle': 'projects' });
+  const events = [{ at: 3, kind: 'config', key: 'bridge.idleCloseMinutes', value: 45, outcome: 'refused', host: 'host-b', error: 'read-only' },
+    { at: 2, kind: 'config', key: 'bridge.idleCloseMinutes', value: 45, outcome: 'applied', host: 'host-a' },
+    { at: 1, kind: 'config', key: 'bridge.idleCloseMinutes', value: 45, outcome: 'requested' }];
+  assert.equal(row({ ...m, events }, 'bridge.idleCloseMinutes').last, events[0], 'the newest outcome a host reported');
+  assert.equal(row({ ...m, events: events.slice(2) }, 'bridge.idleCloseMinutes').last, null, 'a request alone is no outcome');
+  assert.equal(row(m, 'bridge.deleteClosedAfterHours').pending.host, 'host-a', 'handed to a host');
+});
+
+test('removed: one session renderer (chat list), no needs-you card, packed layout fixed', () => {
+  const app = fs.readFileSync(new URL('./public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /chatList|needsYouCard|dashboard\.packed|quotaAlertRow/);
 });

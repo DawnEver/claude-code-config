@@ -5,21 +5,23 @@
 
 import { STATUS, QUOTA_STALE_MS, agentName } from './shared/vocab.mjs';
 import { quotaView, alertKey } from './shared/quota-model.mjs';
+import { t } from './shared/i18n.mjs';
 
 export { QUOTA_STALE_MS, agentName, quotaView, alertKey };
-/** A session's status as shown: the host's status, or `stale` when its host went silent. */
-export const STATUS_LABELS = { ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [k, v.label])), stale: 'Stale' };
+/** The statuses a session shows: the host's, or `stale` when its host went silent; in words via i18n `status.<st>`. */
+export const DISPLAY_STATUSES = [...Object.keys(STATUS), 'stale'];
+export const statusLabel = (st, lang = 'en') => t(`status.${st}`, lang);
 export const ATTENTION = ['needs_approval', 'needs_input'];
 /** Most urgent first: what needs the human, then what runs, then the rest. */
 const RANK = { ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [k, v.rank])), stale: Object.keys(STATUS).length };
 
-/** The status chips: each a predicate over a session's display status. */
+/** The status chips: each a predicate over a session's display status; named by i18n `group.<key>`. */
 export const GROUPS = {
-  all: { label: 'All', has: () => true },
-  attention: { label: 'Needs you', has: (st) => ATTENTION.includes(st) },
-  working: { label: 'Working', has: (st) => st === 'working' },
-  idle: { label: 'Idle', has: (st) => st === 'idle' },
-  stale: { label: 'Offline', has: (st) => st === 'stale' },
+  all: { has: () => true },
+  attention: { has: (st) => ATTENTION.includes(st) },
+  working: { has: (st) => st === 'working' },
+  idle: { has: (st) => st === 'idle' },
+  stale: { has: (st) => st === 'stale' },
 };
 
 export const displayStatus = (s) => (s.stale ? 'stale' : s.status);
@@ -66,11 +68,11 @@ export const attention = (snapshot) => sortSessions(sessionsOf(snapshot).filter(
  * How long a session has been in its current state, from its last activity (the snapshot has no
  * per-state timestamp; status changes are activity, so it is the time since the last change).
  */
-export function stateAge(s, now = Date.now()) {
+export function stateAge(s, now = Date.now(), lang = 'en') {
   const at = Date.parse(s.lastActivityAt);
   const word = s.stale ? null : ATTENTION.includes(s.status) ? 'waiting' : s.status === 'idle' || s.status === 'working' ? s.status : null;
-  if (!word || !Number.isFinite(at)) return ago(s.lastActivityAt, now);
-  return `${word} ${span(now - at)}`;
+  if (!word || !Number.isFinite(at)) return ago(s.lastActivityAt, now, lang);
+  return t(`time.${word}`, lang, { span: span(now - at) });
 }
 
 /** A duration in its largest whole unit: <1m, 12m, 3h, 2d. */
@@ -83,12 +85,12 @@ function span(ms) {
  * When the session last posted to its Topic, or null when it never did: `style` 'ago' (reply 5m ago)
  * or 'clock', the 24h time (reply 14:05; a weekday or date before it when not today).
  */
-export function replyTime(s, now = Date.now(), style = 'ago') {
+export function replyTime(s, now = Date.now(), style = 'ago', lang = 'en') {
   const at = Date.parse(s.lastPostAt);
   if (!Number.isFinite(at)) return null;
-  if (style !== 'clock') return `reply ${span(now - at)} ago`;
-  const hm = formatTime(at, { clock: '24', date: 'off' }), day = chatTime(s.lastPostAt, now, { clock: '24' });
-  return `reply ${day === hm ? hm : `${day} ${hm}`}`;
+  if (style !== 'clock') return t('time.replyAgo', lang, { span: span(now - at) });
+  const hm = formatTime(at, { clock: '24', date: 'off', lang }), day = chatTime(s.lastPostAt, now, { clock: '24', lang });
+  return t('time.reply', lang, { when: day === hm ? hm : `${day} ${hm}` });
 }
 
 /**
@@ -125,7 +127,7 @@ export function groupSessions(hosts, by = 'host', order = 'host') {
   const arrange = (list) => (order === 'host' ? sortSessions(list).sort((a, b) => rank.get(a.hostId) - rank.get(b.hostId)) : sortSessions(list));
   const groups = new Map();
   for (const h of hosts) for (const s of h.sessions) {
-    const id = s.project ?? 'unknown project';
+    const id = s.project ?? t('session.unknownProject');
     const g = groups.get(id) ?? { id, online: false, sessions: [] };
     g.online ||= h.online;
     g.sessions.push({ ...s, hostId: s.hostId ?? h.id });
@@ -135,15 +137,15 @@ export function groupSessions(hosts, by = 'host', order = 'host') {
 }
 
 /** What a session is called: its own name (renamed or generated), else its project. */
-export const sessionLabel = (s) => s.name ?? s.project ?? 'unknown project';
+export const sessionLabel = (s, lang = 'en') => s.name ?? s.project ?? t('session.unknownProject', lang);
 
 /** A chat list's time column: the clock today, the weekday within a week, else the date. */
-export function chatTime(iso, now = Date.now(), { clock = '24' } = {}) {
+export function chatTime(iso, now = Date.now(), { clock = '24', lang = 'en' } = {}) {
   const at = Date.parse(iso);
   if (!Number.isFinite(at)) return '';
   const d = new Date(at), today = new Date(now);
-  if (d.toDateString() === today.toDateString()) return formatTime(at, { clock, date: 'off' });
-  return now - at < 6 * 86400000 ? WEEKDAYS[d.getDay()] : `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  if (d.toDateString() === today.toDateString()) return formatTime(at, { clock, date: 'off', lang });
+  return now - at < 6 * 86400000 ? CAL[lang === 'zh' ? 'zh' : 'en'].weekday(d) : CAL[lang === 'zh' ? 'zh' : 'en'].day(d);
 }
 
 /** A count badge as Telegram draws it: up to 99, then 99+. */
@@ -185,26 +187,30 @@ export function stats(snapshot) {
  * An absolute time as this device chose to read it: `clock` '24' (default) or '12'; `date` 'day'
  * (21 Oct, default), 'iso' (2026-10-21) or 'off'. Local time zone.
  */
-export function formatTime(ms, { clock = '24', date = 'day' } = {}) {
+export function formatTime(ms, { clock = '24', date = 'day', lang = 'en' } = {}) {
   const d = new Date(ms);
+  const cal = CAL[lang === 'zh' ? 'zh' : 'en'];
   const pad = (n) => String(n).padStart(2, '0');
   const h = d.getHours();
-  const time = clock === '12' ? `${h % 12 || 12}:${pad(d.getMinutes())} ${h < 12 ? 'AM' : 'PM'}` : `${pad(h)}:${pad(d.getMinutes())}`;
-  const day = date === 'iso' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-    : date === 'day' ? `${d.getDate()} ${MONTHS[d.getMonth()]}` : '';
+  const time = clock === '12' ? cal.ampm(`${h % 12 || 12}:${pad(d.getMinutes())}`, h < 12) : `${pad(h)}:${pad(d.getMinutes())}`;
+  const day = date === 'iso' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : date === 'day' ? cal.day(d) : '';
   return day ? `${day} ${time}` : time;
 }
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** How each UI language writes a weekday, a short date and a 12h time. */
+const CAL = {
+  en: { weekday: (d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()], day: (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`,
+    ampm: (hm, am) => `${hm} ${am ? 'AM' : 'PM'}` },
+  zh: { weekday: (d) => `周${'日一二三四五六'[d.getDay()]}`, day: (d) => `${d.getMonth() + 1}月${d.getDate()}日`,
+    ampm: (hm, am) => `${am ? '上午' : '下午'} ${hm}` },
+};
 
-export function ago(iso, now = Date.now()) {
+export function ago(iso, now = Date.now(), lang = 'en') {
   const at = Date.parse(iso);
-  if (!Number.isFinite(at)) return 'never';
+  if (!Number.isFinite(at)) return t('time.never', lang);
   const s = Math.max(0, Math.round((now - at) / 1000));
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+  if (s < 60) return t('time.justNow', lang);
+  return t('time.ago', lang, { span: span(s * 1000) });
 }
 
 // ── Quota (per account; computed by the host, scripts/bridge/quota.mjs accountModels) ──
@@ -220,10 +226,10 @@ export function countdown(ms, now = Date.now()) {
 export const accountName = (q) => `${agentName(q.agent)}${q.label ? ` · ${q.label}` : ''}`;
 
 /** Why an account needs the human, in one line; '' when it does not. `withReset: false` where the row already shows it. */
-export function verdictText(q, { now = Date.now(), withReset = true } = {}) {
-  const reset = withReset && q.bind?.resetsAt > now ? ` · resets in ${countdown(q.bind.resetsAt, now)}` : '';
-  if (q.verdict === 'exhausted') return `${q.bind.k} exhausted${reset}`;
-  if (q.verdict === 'short') return `${q.bind.k} runs out in ${countdown(q.bind.forecast.eta, now)}${reset}`;
+export function verdictText(q, { now = Date.now(), withReset = true, lang = 'en' } = {}) {
+  const reset = withReset && q.bind?.resetsAt > now ? t('quota.resetSuffix', lang, { in: countdown(q.bind.resetsAt, now) }) : '';
+  if (q.verdict === 'exhausted') return t('quota.exhausted', lang, { k: q.bind.k, reset });
+  if (q.verdict === 'short') return t('quota.short', lang, { k: q.bind.k, eta: countdown(q.bind.forecast.eta, now), reset });
   return '';
 }
 
@@ -231,14 +237,14 @@ export function verdictText(q, { now = Date.now(), withReset = true } = {}) {
 export const resetText = (w, now = Date.now()) => (!w.renewed && w.resetsAt > now ? `↻ ${countdown(w.resetsAt, now)}` : '');
 
 /** A window's label in the page's one unit, % left; a stale reading is a ceiling (`≤`) unless already exhausted. */
-export function windowLabel(w, stale, unit = 'left') {
+export function windowLabel(w, stale, unit = 'left', lang = 'en') {
   // A passed reset is all that is known: the last reading predates it, so the use now is unknown, not zero.
-  if (w.renewed) return { text: 'not read', title: 'the window has reset since the last reading; use unknown until the account is used on this host', stale: false };
+  if (w.renewed) return { text: t('quota.notRead', lang), title: t('quota.notReadTitle', lang), stale: false };
   const left = Math.max(0, Math.round(100 - w.used));
   const ceiling = stale && left > 0;
   const n = amount(w.used, unit);
   const bound = ceiling ? (unit === 'left' ? '≤' : '≥') : '';
-  return { text: `${bound}${n}%`, title: `${ceiling ? (unit === 'left' ? 'at most' : 'at least') : ''}${ceiling ? ' ' : ''}${n}% ${unit}${ceiling ? ' (stale reading)' : ''}`, stale: ceiling };
+  return { text: `${bound}${n}%`, title: t('quota.windowTitle', lang, { n, unit, ceiling }), stale: ceiling };
 }
 
 /** A window's use as the reader chose to see it: what is left (default) or what is used. The one place the unit is applied. */
@@ -273,7 +279,7 @@ export const quotaAlerts = (snapshot, now = Date.now(), read = [], index = accou
  * hour of the day, a long one at every local midnight labelled by weekday and date. `pos` is
  * 0..1 along the axis; `now` is where the present sits on it (null once past the reset).
  */
-export function timeTicks(w, now = Date.now()) {
+export function timeTicks(w, now = Date.now(), lang = 'en') {
   if (!w.resetsAt || !w.windowMs) return { ticks: [], now: null };
   const start = w.resetsAt - w.windowMs;
   const daily = w.windowMs > 86400000;
@@ -282,7 +288,7 @@ export function timeTicks(w, now = Date.now()) {
   const ticks = [];
   for (const t = first; t.getTime() < w.resetsAt; daily ? t.setDate(t.getDate() + 1) : t.setHours(t.getHours() + 1)) {
     ticks.push({ at: t.getTime(), pos: (t.getTime() - start) / w.windowMs,
-      label: daily ? `${WEEKDAYS[t.getDay()]} ${t.getDate()}` : String(t.getHours()).padStart(2, '0') });
+      label: daily ? `${CAL[lang === 'zh' ? 'zh' : 'en'].weekday(t)} ${t.getDate()}` : String(t.getHours()).padStart(2, '0') });
   }
   return { ticks, now: now >= start && now <= w.resetsAt ? (now - start) / w.windowMs : null };
 }
@@ -291,8 +297,20 @@ export function timeTicks(w, now = Date.now()) {
  * The config tab: one row per editable key any host reports. The shared value is the freshest
  * online host's; a host reading another value is still syncing (`differs`), or overrides it
  * locally (`overrides`: a shared edit will not reach it). `meta` is the key's CONFIG_KEYS entry
- * (label, bounds or options), matching a project key to its `*` pattern.
+ * (bounds or options), matching a project key to its `*` pattern; `group` is the section it shows
+ * in. A change reads as one flow: `pending` (queued, or handed to a host), then `last`, the newest
+ * outcome a host reported (applied or refused).
  */
+/** The Config section a shared key belongs to, in the order shown. */
+export const CONFIG_GROUPS = ['topics', 'dashboard', 'projects'];
+const configGroup = (key) => (key.startsWith('bridge.projects.') ? 'projects' : key.startsWith('bridge.dashboard.') ? 'dashboard' : 'topics');
+
+/** A shared key in words: its CONFIG_KEYS label (i18n `config.<pattern>`), a project key with its project. */
+export function configLabel(key, metaKey, lang = 'en') {
+  const label = t(`config.${metaKey}`, lang);
+  return metaKey.includes('*') ? `${label} · ${key.split('.')[2]}` : label;
+}
+
 export function configView(snapshot) {
   const metas = snapshot.configKeys ?? [];
   // A `*` segment matches any one segment of the dotted key.
@@ -306,10 +324,11 @@ export function configView(snapshot) {
     rows: keys.map((key) => {
       const reporting = hosts.filter((h) => key in h.config.editable);
       const value = reporting[0].config.editable[key];
-      return { key, meta: metaOf(key), value,
+      return { key, meta: metaOf(key), value, group: configGroup(key),
         differs: reporting.filter((h) => h.config.editable[key] !== value && !h.config.localOverrides.includes(key)).map((h) => ({ host: h.id, value: h.config.editable[key] })),
         overrides: reporting.filter((h) => h.config.localOverrides.includes(key)).map((h) => h.id),
-        pending: (snapshot.configPending ?? []).find((c) => c.key === key) ?? null };
+        pending: (snapshot.configPending ?? []).find((c) => c.key === key) ?? null,
+        last: (snapshot.events ?? []).find((e) => e.kind === 'config' && e.key === key && e.outcome !== 'requested') ?? null };
     }).filter((r) => r.meta),
     hosts: sortHosts(hosts),
   };
@@ -338,7 +357,7 @@ export function hostsView(snapshot, now = Date.now(), index = accountIndex(snaps
 }
 
 /**
- * The tabs below the needs-you card, each answering one question: what runs (sessions), will
+ * The tabs, each answering one question: what runs (sessions), will
  * the quota last (quota), what happened (events: the alerts, as history). `alert` marks the
  * quota tab while an unread quota alert stands; `unseen` counts events newer than `seenAt`;
  * `events` counts what the Events tab lists (unread when it was opened, `shownFrom`).
@@ -354,15 +373,14 @@ export function tabs(snapshot, now = Date.now(), seenAt = null, read = [], shown
  * An event (registry.mjs: an alert or a config change, stored as data) in words, on the reader's
  * clock: a countdown is to now, not to when the event happened.
  */
-export function eventText(e, now = Date.now()) {
+export function eventText(e, now = Date.now(), lang = 'en') {
   const who = e.account ? `${accountName(e.account)}${e.account.email ? ` (${e.account.email})` : ''}: ` : '';
   const until = (at) => (at > now ? countdown(at, now) : null);
   switch (e.kind) {
-    case 'exhausted': return `${who}${e.window} exhausted${until(e.resetsAt) ? ` · resets in ${until(e.resetsAt)}` : ''}`;
+    case 'exhausted': return `${who}${t('quota.exhausted', lang, { k: e.window, reset: until(e.resetsAt) ? t('quota.resetSuffix', lang, { in: until(e.resetsAt) }) : '' })}`;
     case 'seat-problem': return `${who}${e.problem}`;
-    case 'extra-reset': return `${who}extra reset announced${until(e.at) ? ` · in ${until(e.at)}` : ''}${e.url ? ` · ${e.url}` : ''}`;
-    case 'config': return `config ${e.key} = ${JSON.stringify(e.value)} ${e.outcome === 'requested' ? 'requested'
-      : e.outcome === 'applied' ? `applied by ${e.host}` : `refused by ${e.host}: ${e.error}`}`;
+    case 'extra-reset': return t('event.extraReset', lang, { who, in: until(e.at), url: e.url });
+    case 'config': return t(`event.config.${e.outcome}`, lang, { key: e.key, value: JSON.stringify(e.value), host: e.host, error: e.error });
     default: return e.kind;
   }
 }

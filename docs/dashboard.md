@@ -85,15 +85,14 @@ no API, no authentication.
   name may echo its topic), and two counts per Topic: `unread`, the messages
   posted since the human last wrote there (a prompt typed at the machine counts as writing; reading
   without replying cannot be seen), and `mention`, while a `waiting for you` mention stands.
-  Also `posted` (a running count of posts), `lastPostAt` (shown as `reply 5m ago`, or as `reply 14:05` in 24h time — Config → This device), and two message
+  Also `posted` (a running count of posts), `lastPostAt` (shown as `reply 5m ago`, or as `reply 14:05` in 24h time — Config → Display → Time), and two message
   ids that become links opening the Topic at its first unread post (`firstUnreadUrl`) or its latest
   (`latestUrl`).
 - **Unread on this device**: Telegram's own unread count is not visible to a bot. Opening a Topic from
   the dashboard stores that session's `posted` in localStorage; the badge is `unread` less what was
-  already there then, so a Topic read without replying clears here. The badge and `@` show in both
-  views. Tapping opens the latest post; Config → This device can switch to the first unread one (the
+  already there then, so a Topic read without replying clears here. Tapping opens the latest post; Config → Display → Sessions can switch to the first unread one (the
   latest stands in once this device has opened the Topic, since the first post still unread is then unknown).
-- **Chat list** (default; Config → This device turns it off): sessions drawn as Telegram lists chats: agent avatar with
+- **Chat list** (the one session renderer, also under an account's "In use by"): sessions drawn as Telegram lists chats: agent avatar with
   the status dot, name and time, status and where it runs, then the unread count and `@`. No message
   preview: it would put conversation content on Cloudflare. `lastActivityAt` is the bridge's last
   mirrored activity (a session with no group configured stays at its `up` time).
@@ -121,8 +120,7 @@ app-server); the Worker never recomputes it.
   (`quotaView` in `public/view.mjs`). A reading older than 15 min is a floor (`≥` used,
   `≤` left) and forecasts nothing; a passed reset is a new window not yet started.
 - **Verdict**: the binding window is the one that runs out soonest, else the fullest. Only an
-  exhausted window joins the needs-you card (tap it to mark it read on this device; it returns
-  with the next window period). A projected run-out is shown on the account row, never alerted.
+  exhausted window flags the Quota tab and becomes an event. A projected run-out is shown on the account row, never alerted.
 - **Events**: the Worker turns a window hitting its limit, a seat problem, or an announced extra
   reset into events (`quotaAlertsFor` in `public/shared/quota-model.mjs`), stored as data
   (`{at, kind, ...}`; last 50, in Durable Object storage) and worded by the page on its own clock
@@ -141,16 +139,18 @@ app-server); the Worker never recomputes it.
   a tap opens it in place to the detail: org and plan, each window's trend on a local-time axis
   (hours for 5h, weekday and date for 7d, a line at the present), reset and forecast. A shared
   account appears under every host that runs it, marked as one budget.
-- **Machine load** (Config → This device: Detailed (default) / Compact / Off): under the host
+- **Machine load** (Config → Display → Layout: Detailed (default) / Compact / Off): under the host
   header of both tabs, each host's CPU % (all cores since the previous push), memory and, where
   `nvidia-smi` exists, each GPU's use and memory, as short values beside each bar. Detailed adds
   the hardware on a line of its own: CPU model, cores, memory size and type (DDR4, DDR5, LPDDR5…),
   GPU models. Load is sampled by `scripts/bridge/resources.mjs` on every push; the memory type is
   read once per daemon (Windows `Win32_PhysicalMemory`, macOS `system_profiler`, Linux `dmidecode`,
   which needs root — unknown otherwise). Numbers and model names only.
-- **Needs-you card** (Config → This device, off by default): the card above the tabs listing
-  sessions and quota that need you. Off, the Events tab is the only notification and the Sessions
-  tab's "Needs you" chip lists those sessions; sign-in and access errors still show there.
+- **Notification**: the Events tab is the one notification; the Sessions tab's "Needs you" chip
+  lists the sessions waiting. The card above the tabs only shows loading, sign-in and access errors.
+- **Packed**: hosts flow down columns (CSS columns, ~340 px each) in Sessions and Quota; not a setting.
+- **Host facts**: each host's read-only facts (Telegram bridge, allowed users, approvals, Codex
+  sources, a dashboard error) sit under its accounts on the Quota tab.
 - **Shown**: account email, org and plan; per window a bar (fill = use, line = even pace),
   the trend (spend per slice against an even spend; hatched = never observed), reset time and
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most
@@ -178,6 +178,15 @@ sessions go.
   when either changed, so an edit applied here or synced in from another host takes effect
   within a minute on every host. A key set in a host's local
   layer overrides the shared value there; the Config tab says so.
+- **Config tab, by layer**: *Display* (this device, localStorage, applies at once: language, time,
+  quota unit, session grouping and order, where a Topic opens, tab bar, machine load — each a
+  segmented choice with its explanation behind `?`); *Shared settings* (all hosts: `CONFIG_KEYS`
+  grouped as Topic lifecycle, Dashboard, Projects; a row is marked when a host is still syncing or
+  overrides it locally, and reads the change as queued → handed to a host → applied/refused, from
+  `configPending` and the config events); *Developer* (collapsed: demo mode).
+- **Language**: every word is in `public/shared/i18n.mjs` (`{key: {en, zh}}`, `t(key, lang)`;
+  `CONFIG_KEYS` labels are `config.<key>` there). The default follows the Telegram user's
+  `language_code` (`zh*` -> Chinese, else English); Config → Display → Language overrides it on this device.
 
 ## Setup
 
@@ -248,7 +257,7 @@ is whitelisted field by field; at most 200 per host.
   `TELEGRAM_PUBLIC_KEY=<hex>`. A host daemon may push to it over `http://127.0.0.1`.
 - UI without Telegram: open `/?mock` — built-in example data, no API call. Mock rendering is
   not dashboard acceptance.
-- Demo mode, for showing the dashboard to others: Config tab -> "This device" -> Demo mode
+- Demo mode, for showing the dashboard to others: Config tab -> Developer -> Demo mode
   (or open with `?demo`, which turns it on). Pure front end: a per-device setting in
   localStorage; the live data is masked in the browser by `demoMasker()` (`public/demo.mjs`),
   nothing is sent or changed on the gateway or any host. Rules, numbered by first appearance:
