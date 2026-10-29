@@ -115,6 +115,12 @@ export async function runCodexHook(input, deps = {}) {
     }));
   } else if (event === 'PreToolUse') {
     await repair(true);
+    // A daemon that died mid-session would otherwise stay down until some session starts:
+    // a Codex-only host would drop off the dashboard and Telegram while its sessions run on.
+    await attempt(deps.revive ?? (deps.guard ? async () => {} : async () => {
+      const { daemonRunning, ensureDaemon } = await import('../bridge/ensure.mjs');
+      if (!daemonRunning()) await ensureDaemon();
+    }));
     const result = await attempt(deps.guard ?? (async () => (await import('./loop-guard-hook.js')).guardCall(input, { env, host: 'codex' })));
     if (result?.verdict === 'deny') return { hookSpecificOutput: { hookEventName: event, permissionDecision: 'deny', permissionDecisionReason: result.reason } };
     if (result?.verdict === 'warn') return { hookSpecificOutput: { hookEventName: event, additionalContext: result.reason } };

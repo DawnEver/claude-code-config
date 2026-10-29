@@ -47,6 +47,8 @@ let raw = null;      // the last snapshot as fetched; `snapshot` is what is show
 const shown = () => (raw && demoOn ? (masker ??= demoMasker())(raw) : raw);
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
+// Quota hosts opened from their header: every account row open, plus the host's facts.
+const openHosts = new Set();
 let accounts = new Map();
 let hostList = [];   // hostsView(snapshot): the one host model the Sessions and Quota tabs render
 // The display settings of this device, each one choice of a few values; the first is the default.
@@ -279,19 +281,42 @@ function hostFacts(h) {
   return [dl];
 }
 
-/** Quota by host: what each machine has left on each account, then its facts. A shared account is one budget. */
+/**
+ * Quota by host: what each machine has left on each account. A shared account is one budget.
+ * Tapping a host's header opens all its accounts and its facts; tapping again folds them.
+ */
 function renderQuota() {
   const box = $('quota-view');
   box.replaceChildren();
   const grid = el('div', 'quota-hosts');
   for (const h of hostList) {
-    if (!h.accounts.length) { grid.append(hostSection(h, [el('div', 'qrows empty', tr('quota.noAccounts')), ...hostFacts(h)])); continue; }
-    const best = bestAccounts(h.accounts);
-    const bestLine = el('div', 'qbest', best.length ? tr('quota.bestNow') : tr('quota.bestNone'));
-    best.forEach(({ q }, i) => bestLine.append(i ? ' · ' : '', acctTag(q, true)));
-    const rows = el('div', 'qrows');
-    for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q) : quotaRow(q, h.id));
-    grid.append(hostSection(h, [bestLine, rows, ...hostFacts(h)]));
+    const expanded = openHosts.has(h.id);
+    const facts = expanded ? hostFacts(h) : [];
+    let section;
+    if (!h.accounts.length) section = hostSection(h, [el('div', 'qrows empty', tr('quota.noAccounts')), ...facts]);
+    else {
+      const best = bestAccounts(h.accounts);
+      const bestLine = el('div', 'qbest', best.length ? tr('quota.bestNow') : tr('quota.bestNone'));
+      best.forEach(({ q }, i) => bestLine.append(i ? ' · ' : '', acctTag(q, true)));
+      const rows = el('div', 'qrows');
+      for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q) : quotaRow(q, h.id));
+      section = hostSection(h, [bestLine, rows, ...facts]);
+    }
+    const head = section.querySelector('.host-head');
+    head.classList.add('toggle');
+    head.setAttribute('role', 'button');
+    head.setAttribute('aria-expanded', String(expanded));
+    head.tabIndex = 0;
+    const toggle = () => {
+      const ids = h.accounts.filter((q) => !q.refTo).map((q) => `${h.id}|${q.key}`);
+      if (expanded) { openHosts.delete(h.id); ids.forEach((id) => openRows.delete(id)); }
+      else { openHosts.add(h.id); ids.forEach((id) => openRows.add(id)); }
+      tg?.HapticFeedback?.selectionChanged?.();
+      render();
+    };
+    head.addEventListener('click', toggle);
+    head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    grid.append(section);
   }
   box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
 }

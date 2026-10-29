@@ -140,3 +140,13 @@ test('real native entry restores a protected runtime file without vendor calls',
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.readFileSync(f.entry, 'utf8'), 'protected runtime');
 });
+
+test('PreToolUse revives a dead bridge daemon before the guard, failing open', async () => {
+  const calls = [];
+  const out = await runCodexHook({ hook_event_name: 'PreToolUse' }, {
+    receipt: () => {}, repair: () => null,
+    revive: () => { calls.push('revive'); throw new Error('spawn failed'); }, guard: () => { calls.push('guard'); },
+  });
+  assert.deepEqual(calls, ['revive', 'guard']);
+  assert.match(out.systemMessage, /spawn failed/);
+});

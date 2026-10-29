@@ -56,6 +56,17 @@ function spawnDaemon() {
   spawn(process.execPath, [DAEMON, '--log', log], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 }
 
+/**
+ * Cheap liveness check for hot paths (a Codex tool call): the runtime file's pid is alive.
+ * No source hashing — a stale-but-alive daemon hands itself over within a minute anyway.
+ */
+export function daemonRunning({ runtimeFile = RUNTIME_FILE, alive = isAlive, stale = predatesBoot } = {}) {
+  try {
+    const { pid } = JSON.parse(fs.readFileSync(runtimeFile, 'utf8'));
+    return !!pid && alive(pid) && !stale(runtimeFile);
+  } catch { return false; }
+}
+
 /** @returns {'unconfigured'|'running'|'started'|'restarted'|'different-home'} */
 export async function ensureDaemon({ runtimeFile = RUNTIME_FILE, configured = () => { const c = readBridgeConfig(); return !!(c.botToken || c.dashboard); }, codexHome = resolveCodexHome(),
   revision = bridgeSourceRevision, configRevision = bridgeConfigRevision, alive = isAlive, stale = predatesBoot, kill = (pid) => process.kill(pid), start = spawnDaemon,

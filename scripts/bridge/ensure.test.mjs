@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { acquireDaemonLock, ensureDaemon } from './ensure.mjs';
+import { acquireDaemonLock, daemonRunning, ensureDaemon } from './ensure.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-ensure-'));
 
@@ -65,4 +65,13 @@ test('a live collector for another Codex home is not silently replaced or attrib
       alive: () => true, stale: () => false, kill: () => assert.fail('replaced another home'), start: () => assert.fail('started duplicate collector') });
     assert.equal(result, 'different-home');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('daemonRunning reads only the runtime pid: missing, dead, stale and live', () => {
+  const file = path.join(tmp(), 'runtime.json');
+  assert.equal(daemonRunning({ runtimeFile: file }), false);
+  fs.writeFileSync(file, JSON.stringify({ pid: 42 }));
+  assert.equal(daemonRunning({ runtimeFile: file, alive: () => false, stale: () => false }), false);
+  assert.equal(daemonRunning({ runtimeFile: file, alive: () => true, stale: () => true }), false);
+  assert.equal(daemonRunning({ runtimeFile: file, alive: () => true, stale: () => false }), true);
 });
