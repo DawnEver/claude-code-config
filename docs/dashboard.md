@@ -213,7 +213,7 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 4. **Code deploys are automatic**: a push to `main` touching `scripts/dashboard/**` runs
    `.github/workflows/dashboard-deploy.yml` (dashboard tests, then `wrangler deploy`). It needs
    the repo secret `CLOUDFLARE_API_TOKEN` (Workers edit, scoped to the account and the zone) and
-   the variables `CLOUDFLARE_ACCOUNT_ID` and `DASHBOARD_DOMAIN` (the url's host). It never
+   the variable `DASHBOARD_DOMAIN` (the url's host). It never
    touches `DASHBOARD_CONFIG`, which persists across deploys.
    **Membership deploy**: `host-token` runs it; by hand (`npm run dashboard -- deploy`) only
    after changing `botId` or `allowedUserIds`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`,
