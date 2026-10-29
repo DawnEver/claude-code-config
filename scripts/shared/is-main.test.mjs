@@ -82,18 +82,28 @@ test('sync-hook still runs when reached through a linked path', () => {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     }).trim();
     const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: REPO, encoding: 'utf8' }).trim();
+    const hasRemote = execFileSync('git', ['remote'], { cwd: REPO, encoding: 'utf8' }).trim().length > 0;
+    const hasUpstream = (() => {
+      try {
+        execFileSync('git', ['rev-parse', '--verify', '--quiet', '@{u}'], { cwd: REPO, windowsHide: true });
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    const noUpstream = hasRemote && !hasUpstream;
     let ahead;
-    try {
+    if (hasUpstream) {
       ahead = Number(execFileSync('git', ['rev-list', '--count', '@{u}..HEAD'], {
         cwd: REPO, encoding: 'utf8', windowsHide: true,
       }).trim());
-    } catch {
+    } else {
       // Detached HEAD / no upstream (e.g. CI checkout): match sync-hook's fallback.
       ahead = Number(execFileSync('git', ['rev-list', '--count', 'HEAD', '--not', '--remotes'], {
         cwd: REPO, encoding: 'utf8', windowsHide: true,
       }).trim());
-    }
-    if (dirty || ahead > 0) assert.match(raw, /\[cc-config\]/, 'hook body must execute via a linked path');
+    } 
+    if (dirty || ahead > 0 || noUpstream) assert.match(raw, /\[cc-config\]/, 'hook body must execute via a linked path');
     else assert.equal(raw, '');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
