@@ -82,9 +82,17 @@ test('sync-hook still runs when reached through a linked path', () => {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     }).trim();
     const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: REPO, encoding: 'utf8' }).trim();
-    const ahead = Number(execFileSync('git', ['rev-list', '--count', '@{u}..HEAD'], {
-      cwd: REPO, encoding: 'utf8', windowsHide: true,
-    }).trim());
+    let ahead;
+    try {
+      ahead = Number(execFileSync('git', ['rev-list', '--count', '@{u}..HEAD'], {
+        cwd: REPO, encoding: 'utf8', windowsHide: true,
+      }).trim());
+    } catch {
+      // Detached HEAD / no upstream (e.g. CI checkout): match sync-hook's fallback.
+      ahead = Number(execFileSync('git', ['rev-list', '--count', 'HEAD', '--not', '--remotes'], {
+        cwd: REPO, encoding: 'utf8', windowsHide: true,
+      }).trim());
+    }
     if (dirty || ahead > 0) assert.match(raw, /\[cc-config\]/, 'hook body must execute via a linked path');
     else assert.equal(raw, '');
   } finally {
