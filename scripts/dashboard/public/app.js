@@ -3,11 +3,12 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, billingView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
+import { GROUPS, accountSessions, billingSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, billingView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
+import { LOGOS } from './logos.mjs';
 
 const POLL_MS = 8000;
 const REPO = 'https://github.com/DawnEver/claude-code-config';
@@ -119,7 +120,10 @@ function badges(s) {
 function sessionRow(s, { withHost = false, inProject = false } = {}) {
   const status = displayStatus(s);
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
-  const avatar = el('span', `avatar ${s.agent}`, s.agent === 'claude' ? 'C' : 'X');
+  // The platform the session spends: a provider's own mark (ccds, cods), else the agent's maker.
+  const brand = LOGOS[s.provider] ? s.provider : s.agent === 'claude' ? 'anthropic' : 'openai';
+  const avatar = el('span', `avatar ${s.agent} ${brand}`);
+  avatar.append(logo(brand));
   avatar.append(el('span', 'dot'));
   const body = el('div', 'main');
   const top = el('div', 'chat-top');
@@ -224,6 +228,17 @@ function quotaDetail(q) {
   return box;
 }
 
+const SVG = 'http://www.w3.org/2000/svg';
+function logo(brand) {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-label', brand);
+  const path = document.createElementNS(SVG, 'path');
+  path.setAttribute('d', LOGOS[brand]);
+  svg.append(path);
+  return svg;
+}
+
 /** An account as a compact tag: who and how much is left, coloured by its verdict. */
 function acctTag(q, withAgent = false) {
   const left = q.left === null ? '' : ` ${windowLabel(q.bind, q.stale, pref.unit, lang).text}`;
@@ -296,7 +311,7 @@ function renderQuota() {
   const grid = el('div', 'quota-hosts');
   // An API balance sits under each machine whose sessions spend it (ccds, cods), like an account; one no machine uses, at the bottom.
   const billing = billingView(snapshot.billing, Date.now(), lang);
-  const spentOn = (b, hostId) => accountSessions(snapshot, b.key).filter((u) => u.hostId === hostId);
+  const spentOn = (b, hostId) => billingSessions(snapshot, b).filter((u) => u.hostId === hostId);
   for (const h of hostList) {
     const expanded = openHosts.has(h.id);
     const facts = expanded ? hostFacts(h) : [];
@@ -329,7 +344,7 @@ function renderQuota() {
     grid.append(section);
   }
   box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
-  const idle = billing.filter((b) => !accountSessions(snapshot, b.key).length);
+  const idle = billing.filter((b) => !billingSessions(snapshot, b).length);
   if (idle.length) box.append(el('div', 'section-h', tr('billing.heading')), billingRows(idle));
   box.append(el('div', 'section-h', tr('billing.heading')), rows);
 }
@@ -342,7 +357,7 @@ function billingRows(bills, hostId = null) {
     row.title = b.hosts.join(', ');
     row.append(el('span', 'k', b.name), el('span', b.error ? 'muted' : 'left', b.error ?? b.amounts), el('span', 'muted', b.age));
     rows.append(row);
-    const using = hostId === null ? [] : accountSessions(snapshot, b.key).filter((u) => u.hostId === hostId);
+    const using = hostId === null ? [] : billingSessions(snapshot, b).filter((u) => u.hostId === hostId);
     if (using.length) {
       const list = el('div', 'waiting');
       for (const u of using) list.append(sessionRow(u));

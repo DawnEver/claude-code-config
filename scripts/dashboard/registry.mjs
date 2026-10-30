@@ -122,7 +122,16 @@ export class Registry {
         byKey.set(b.key, !held || b.at > held.at ? { ...b, hosts } : { ...held, hosts });
       }
     }
-    return [...byKey.values()].sort((a, b) => a.provider.localeCompare(b.provider) || String(a.label).localeCompare(String(b.label)));
+    // Two keys of one platform account (each host its own key) read the same balances: one row,
+    // the platforms report no account id to tell them apart otherwise.
+    const byAccount = new Map();
+    for (const b of byKey.values()) {
+      const id = b.error ? b.key : JSON.stringify([b.provider, b.label, [...b.balances].sort((x, y) => x.currency.localeCompare(y.currency))]);
+      const held = byAccount.get(id);
+      byAccount.set(id, held ? { ...(b.at > held.at ? b : held), keys: [...held.keys, b.key].sort(), hosts: [...new Set([...held.hosts, ...b.hosts])].sort() }
+        : { ...b, keys: [b.key] });
+    }
+    return [...byAccount.values()].sort((a, b) => a.provider.localeCompare(b.provider) || String(a.label).localeCompare(String(b.label)));
   }
 
   snapshot() {

@@ -34,6 +34,14 @@ export function sessionsOf(snapshot) {
 export const accountSessions = (snapshot, key) =>
   sortSessions(snapshot.hosts.flatMap((h) => h.sessions.filter((s) => s.account === key).map((s) => ({ ...s, hostId: s.hostId ?? h.id }))));
 
+/**
+ * The sessions spending one API balance: by any key it merged (registry billing) or, for a host
+ * that holds no key to read it (so no account), by naming its provider.
+ */
+export const billingSessions = (snapshot, b) =>
+  sortSessions(snapshot.hosts.flatMap((h) => h.sessions.filter((s) => (b.keys ?? [b.key]).includes(s.account) || (!s.account && s.provider === b.provider))
+    .map((s) => ({ ...s, hostId: s.hostId ?? h.id }))));
+
 export const sortSessions = (sessions) => [...sessions].sort((a, b) =>
   (RANK[displayStatus(a)] ?? 9) - (RANK[displayStatus(b)] ?? 9) || String(a.project).localeCompare(String(b.project)));
 
@@ -257,7 +265,7 @@ const CURRENCY = { USD: '$', CNY: '¥', EUR: '€', GBP: '£' };
 
 /** The API platform balances (snapshot.billing) as rows: a name, the amounts, and the reading's age or its error. */
 export function billingView(billing, now = Date.now(), lang = 'en') {
-  return (billing ?? []).map((b) => ({ key: b.key, name: [providerName(b.provider), b.label].filter(Boolean).join(' · '),
+  return (billing ?? []).map((b) => ({ key: b.key, keys: b.keys ?? [b.key], provider: b.provider, name: [providerName(b.provider), b.label].filter(Boolean).join(' · '),
     amounts: b.balances.map((x) => `${CURRENCY[x.currency] ?? `${x.currency} `}${x.amount.toFixed(2)}`).join(' · '),
     error: b.error, age: ago(new Date(b.at).toISOString(), now, lang), hosts: b.hosts ?? [] }));
 }

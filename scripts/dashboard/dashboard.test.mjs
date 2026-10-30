@@ -9,7 +9,7 @@ import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
-import { accountSessions, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, eventText, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
+import { accountSessions, billingSessions, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, eventText, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -763,4 +763,17 @@ test('registry: an API balance two hosts read is one entry, the freshest, with b
   const [one, ...rest] = r.snapshot().billing;
   assert.equal(rest.length, 0);
   assert.deepEqual([one.balances[0].amount, one.hosts], [10, ['host-a', 'host-b']]);
+});
+
+test('billing: two keys reading the same balance are one account; its sessions match by any key or by provider', () => {
+  const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => 5000 });
+  const bal = [{ currency: 'USD', amount: 2 }, { currency: 'CNY', amount: 457.22 }];
+  r.accept('host-a', parseHostPush(push({ billing: [{ key: 'deepseek:aaaaaaaaaaaa', at: 1.7e12, balances: bal }] })));
+  r.accept('host-b', parseHostPush(push({ billing: [{ key: 'deepseek:bbbbbbbbbbbb', at: 1.7e12, balances: [...bal].reverse() }] })));
+  const billing = r.snapshot().billing;
+  assert.equal(billing.length, 1);
+  assert.deepEqual([billing[0].keys, billing[0].hosts], [['deepseek:aaaaaaaaaaaa', 'deepseek:bbbbbbbbbbbb'], ['host-a', 'host-b']]);
+  const snap = { hosts: [{ id: 'host-a', sessions: [{ id: 's1', account: 'deepseek:bbbbbbbbbbbb' }] },
+    { id: 'host-b', sessions: [{ id: 's2', account: null, provider: 'deepseek' }, { id: 's3', account: 'claude:x' }] }] };
+  assert.deepEqual(billingSessions(snap, billing[0]).map((s) => s.id).sort(), ['s1', 's2']);
 });
