@@ -76,7 +76,7 @@ test('one reading per source: repos, the forge refusing, or this host unable to 
   const { repos: [r] } = await readSource(src, { token: 't', fetch: async () => ({ ok: false, status: 401 }), now: () => NOW });
   assert.deepEqual([r.key, r.pinned], ['git.example.org/team/a', false], 'a repo the forge refused is still that repo, with its error');
   assert.match(r.error, /^HTTP 401: the token is refused/);
-  assert.equal(sourceId(src), 'gitea:git.example.org::team/a', 'what is read, not how it is shown or keyed');
+  assert.equal(sourceId(src), 'gitea|git.example.org||team/a', 'what is read, not how it is shown or keyed');
 });
 
 test('the reader reads only what the gateway assigns, once at a time, and keeps each reading until delivered', async () => {
@@ -84,12 +84,12 @@ test('the reader reads only what the gateway assigns, once at a time, and keeps 
   let reads = 0, release;
   const r = new ForgeReader({ sources: [src], now: () => NOW, token: () => 't',
     readOne: () => { reads++; return new Promise((ok) => { release = () => ok({ repos: [{ key: 'github.com/o/r' }] }); }); } });
-  assert.deepEqual(r.ids(), ['github:github.com:o:']);
-  r.assign(['github:github.com:o:', 'unknown']); r.assign(['github:github.com:o:']);
+  assert.deepEqual(r.ids(), ['github|github.com|o|']);
+  r.assign(['github|github.com|o|', 'unknown']); r.assign(['github|github.com|o|']);
   assert.equal(reads, 1, 'a source being read is not read again');
   release(); await new Promise((ok) => setTimeout(ok, 0));
   const out = r.outbox();
-  assert.deepEqual(out, [{ source: 'github:github.com:o:', at: NOW, repos: [{ key: 'github.com/o/r' }] }]);
+  assert.deepEqual(out, [{ source: 'github|github.com|o|', at: NOW, repos: [{ key: 'github.com/o/r' }] }]);
   r.delivered(out);
   assert.deepEqual(r.outbox(), []);
 });

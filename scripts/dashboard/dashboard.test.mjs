@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
 import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schema.mjs';
-import { Registry, FORGE_EVERY_MS, FORGE_LEASE_MS } from './registry.mjs';
+import { Registry, FORGE_EVERY_MS, FORGE_FORGET_MS, FORGE_LEASE_MS } from './registry.mjs';
 import { createApi, parseDashboardConfig, REPORT_TTL_MS } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
@@ -774,7 +774,7 @@ test('accounts: a balance two hosts read is one account, the freshest, with both
 test('forge leases: one host reads a source per interval; a dead host lease lapses; a host that cannot read is skipped', () => {
   let t = 1.7e12;
   const r = new Registry({ hosts: ['a', 'b'], ttlMs: 600000, now: () => t });
-  const SRC = 'gitea:git.example.org::team/x';
+  const SRC = 'gitea|git.example.org||team/x';
   let seq = 0;
   const send = (host, readings = []) => r.accept(host, parseHostPush({ ...push(), seq: ++seq, forges: { sources: [SRC], readings } })).forgeRead;
   const reading = (extra) => ({ source: SRC, at: t, ...extra });
@@ -821,4 +821,22 @@ test('code view: the range picks active repos and branches; attention first; ses
   assert.equal(live.branches[1].pull.number, 7);
   assert.deepEqual(day.attention.map((a) => a.kind), ['main-failing', 'pr-failing', 'pr-conflict', 'session-failing']);
   assert.deepEqual(codeView(snap, 30, NOW).repos.map((r) => r.key), ['github.com/o/live', 'github.com/o/quiet']);
+});
+
+test('forge sources: a port is a valid host; the newer good reading of a repo wins; no host able to read shows why; a source left every config is forgotten', () => {
+  let t = 1.7e12;
+  const r = new Registry({ hosts: ['a'], ttlMs: 600000, now: () => t });
+  const PORT = 'gitea|git.example.org:8443||team/x', OWNER = 'github|github.com|o|', ONE = 'github|github.com||o/r';
+  let seq = 0;
+  const send = (sources, readings = []) => r.accept('a', parseHostPush({ ...push(), seq: ++seq, forges: { sources, readings } })).forgeRead;
+  assert.deepEqual(send([PORT]), [PORT], 'a forge host with a port is a source like any other');
+  send([PORT], [{ source: PORT, at: t, unavailable: 'no token for git.example.org:8443' }]);
+  assert.deepEqual(r.snapshot().repos.map((x) => x.error), ['no host can read it: a: no token for git.example.org:8443']);
+  const repo = (at, ci) => ({ key: 'github.com/o/r', forge: 'github', name: 'o/r', at, pushedAt: '2026-10-30T10:00:00Z', branches: [{ name: 'main', ci }], pulls: [] });
+  send([PORT, OWNER, ONE], [{ source: OWNER, at: t, repos: [repo(t, 'failure')] }, { source: ONE, at: t + 1, repos: [repo(t + 1, 'success')] }]);
+  send([PORT, OWNER, ONE], [{ source: OWNER, at: t + 2, repos: [repo(t + 2, 'pending')] }]);
+  assert.equal(r.snapshot().repos.find((x) => x.key === 'github.com/o/r').branches[0].ci, 'pending', 'the newest reading of a repo two sources cover');
+  t += FORGE_FORGET_MS + 1;
+  send([OWNER]);
+  assert.deepEqual(r.snapshot().repos.map((x) => x.key), ['github.com/o/r'], 'sources no config names any more are gone');
 });

@@ -119,15 +119,15 @@ test('push: config changes from the reply are applied and reported on the next p
 
 test('push: declares its forge sources, carries owed readings until accepted, reads what the reply assigns', async () => {
   const bodies = [], assigned = [], delivered = [];
-  let fail = false, outbox = [{ source: 'github:github.com:o:', at: 1.7e12, repos: [] }];
-  const forges = { ids: () => ['github:github.com:o:'], outbox: () => outbox, delivered: (x) => { delivered.push(x); outbox = []; }, assign: (ids) => assigned.push(ids) };
+  let fail = false, outbox = [{ source: 'github|github.com|o|', at: 1.7e12, repos: [] }];
+  const forges = { ids: () => ['github|github.com|o|'], outbox: () => outbox, delivered: (x) => { delivered.push(x); outbox = []; }, assign: (ids) => assigned.push(ids) };
   const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', sessions: () => [], forges,
     fetch: async (url, init) => { bodies.push(JSON.parse(init.body)); return fail ? { ok: false, status: 500 }
-      : { ok: true, json: async () => ({ accepted: true, forgeRead: ['github:github.com:o:'] }) }; } });
+      : { ok: true, json: async () => ({ accepted: true, forgeRead: ['github|github.com|o|'] }) }; } });
   fail = true; await push.tick();
   assert.deepEqual([delivered.length, assigned.length], [0, 0], 'a failed push delivers nothing and assigns nothing');
   fail = false; await push.tick(); await push.tick();
   assert.deepEqual(bodies.map((b) => [b.forges.sources, b.forges.readings.length]),
-    [[['github:github.com:o:'], 1], [['github:github.com:o:'], 1], [['github:github.com:o:'], 0]]);
-  assert.deepEqual(assigned, [['github:github.com:o:'], ['github:github.com:o:']]);
+    [[['github|github.com|o|'], 1], [['github|github.com|o|'], 1], [['github|github.com|o|'], 0]]);
+  assert.deepEqual(assigned, [['github|github.com|o|'], ['github|github.com|o|']]);
 });

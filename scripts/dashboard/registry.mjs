@@ -20,6 +20,8 @@ export const FORGE_EVERY_MS = 5 * 60000;
 export const FORGE_LEASE_MS = 2 * 60000;
 /** A host that could not read a source (no token, no route) is not asked for it again within this. */
 export const FORGE_SKIP_MS = 30 * 60000;
+/** A source no host has declared for this long left every config: it is forgotten. */
+export const FORGE_FORGET_MS = 24 * 3600000;
 
 export class Registry {
   constructor({ hosts = [], ttlMs = 60000, now = Date.now, store = null } = {}) {
@@ -33,7 +35,7 @@ export class Registry {
     // Forge sources (bridge.forges), the one record of each: its last reading ({at, repos} or
     // {at, error}), the host holding its lease, and hosts that cannot read it until a time. Kept
     // in storage, so a restart neither empties the Code tab nor makes every host read at once.
-    this.forges = new Map(Object.entries(store?.get('forges') ?? {}));
+    this.forges = new Map(Object.entries(store?.get('forges') ?? {}).filter(([id]) => id.includes('|')));   // `|` ids only (sourceId)
   }
 
   /**
@@ -73,20 +75,25 @@ export class Registry {
     for (const x of readings) {
       const f = this.forges.get(x.source) ?? { skip: {} };
       if (f.lease?.host === hostId) delete f.lease;
-      if (x.repos) Object.assign(f, { at: x.at, repos: x.repos, by: hostId, error: null });
+      // Why it is not read, kept per host while there is no good reading: no token anywhere must show.
+      if (x.repos) Object.assign(f, { at: x.at, repos: x.repos, by: hostId, error: null, unavailable: {} });
       else if (x.error) { if (!f.repos) Object.assign(f, { errorAt: x.at, error: x.error }); f.skip[hostId] = now + FORGE_SKIP_MS; }
-      else f.skip[hostId] = now + FORGE_SKIP_MS;
+      else { (f.unavailable ??= {})[hostId] = x.unavailable; f.errorAt = x.at; f.skip[hostId] = now + FORGE_SKIP_MS; }
       this.forges.set(x.source, f);
     }
     const read = [];
     for (const id of sources) {
       const f = this.forges.get(id) ?? { skip: {} };
+      f.declared = now;   // some host's config still names it
+      this.forges.set(id, f);
       const due = !f.repos || now - f.at >= FORGE_EVERY_MS;
       if (!due || (f.lease && f.lease.until > now) || (f.skip[hostId] ?? 0) > now) continue;
       f.lease = { host: hostId, until: now + FORGE_LEASE_MS };
       this.forges.set(id, f);
       read.push(id);
     }
+    // A source no host has named for FORGE_FORGET_MS was removed from every config: forgotten.
+    for (const [id, f] of this.forges) if (now - (f.declared ?? 0) > FORGE_FORGET_MS) this.forges.delete(id);
     if (readings.length || read.length) this.store?.put('forges', Object.fromEntries(this.forges));
     return read;
   }
@@ -164,13 +171,21 @@ export class Registry {
   repos() {
     const byKey = new Map();
     for (const [id, f] of this.forges) {
-      if (f.repos) { for (const r of f.repos) if (!byKey.has(r.key) || (byKey.get(r.key).error && !r.error)) byKey.set(r.key, { ...r, hosts: [f.by] }); }
-      else if (f.error) {
-        const [kind, host, owner, list] = id.split(':');
-        for (const name of list ? list.split(',') : [owner]) {
-          const key = `${host}/${name}`.toLowerCase();
-          if (!byKey.has(key)) byKey.set(key, { key, forge: kind, name, url: `https://${host}/${name}`, at: f.errorAt, error: f.error, pinned: true, hosts: [], branches: [], pulls: [] });
+      if (f.repos) {
+        // Two sources covering one repo: a good reading beats an error, then the newer reading wins.
+        for (const r of f.repos) {
+          const held = byKey.get(r.key);
+          if (!held || (held.error && !r.error) || (!held.error === !r.error && r.at > held.at)) byKey.set(r.key, { ...r, hosts: [f.by] });
         }
+        continue;
+      }
+      const why = f.error ?? (Object.keys(f.unavailable ?? {}).length
+        ? `no host can read it: ${Object.entries(f.unavailable).map(([h, w]) => `${h}: ${w}`).join('; ')}` : null);
+      if (!why) continue;
+      const [kind, host, owner, list] = id.split('|');
+      for (const name of list ? list.split(',') : [owner]) {
+        const key = `${host}/${name}`.toLowerCase();
+        if (!byKey.has(key)) byKey.set(key, { key, forge: kind, name, url: `https://${host}/${name}`, at: f.errorAt, error: why, pinned: true, hosts: [], branches: [], pulls: [] });
       }
     }
     return [...byKey.values()].sort((a, b) => String(b.pushedAt).localeCompare(String(a.pushedAt)));

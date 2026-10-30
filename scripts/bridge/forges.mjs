@@ -145,7 +145,8 @@ function githubRepo(r, at) {
  * A source's identity, the same on every host that reads the same shared settings: what is read
  * (kind, forge host, owner, repos), not how it is shown or which credential reads it.
  */
-export const sourceId = (src) => `${src.kind}:${new URL(src.base).host}:${src.owner ?? ''}:${[...src.repos].sort().join(',')}`;
+// `|`-separated: a forge host may carry a port (`git.example.org:8443`).
+export const sourceId = (src) => `${src.kind}|${new URL(src.base).host}|${src.owner ?? ''}|${[...src.repos].sort().join(',')}`;
 
 /**
  * One source as this host sees it, as one reading: `{repos}`, or `{error}` when the forge refused

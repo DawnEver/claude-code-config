@@ -124,7 +124,7 @@ function parseRepo(r) {
       conflict: p.conflict === true, ci: ci(p.ci), updatedAt: iso(p.updatedAt) })) };
 }
 
-const SOURCE_ID = /^(github|gitea):[a-z0-9.-]{1,100}:[\w.-]{0,100}:[\w.,/-]{0,2000}$/;
+const SOURCE_ID = /^(github|gitea)\|[a-z0-9.-]{1,100}(:\d{1,5})?\|[\w.-]{0,100}\|[\w.,/-]{0,2000}$/;
 
 /**
  * A host's forge part (scripts/bridge/forges.mjs): the sources it is configured for, and the
