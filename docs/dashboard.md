@@ -109,7 +109,16 @@ no API, no authentication.
 ## Usage
 
 The Usage tab reads the usage store (D1 behind this Worker): tokens, agent time and turns by day,
-project, model and machine over 7 d to 1 y. Host side, schema, SQL access and setup: `docs/usage.md`.
+project, model and machine over 24 h (by hour) to 1 y. Host side, schema, SQL access and setup: `docs/usage.md`.
+
+Tapping a project, model or machine row selects it; the chart, totals and API value then cover
+only the selection, at any range. Several values of one list combine as any-of, values of
+different lists as all-of (e.g. one model on one machine in two projects). Each list is
+computed under the other lists' selections only, so it keeps offering what could be added, and
+a selected value always stays listed (at zero if nothing matches). `GET /api/usage?days=7&project=a&model=m`
+(repeat a key for several values, at most 20 each; `project=` is the no-project bucket); each
+filter is held `REPORT_TTL_MS` like a range. The selection is kept per device. Demo mode shows
+masked names, so its rows do not filter.
 
 ## Quota
 

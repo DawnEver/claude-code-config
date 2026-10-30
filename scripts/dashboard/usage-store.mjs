@@ -67,27 +67,51 @@ const tokens = (r) => r.input + r.cache_read + r.cache_write + r.output;
  * `active_ms` sums turn durations: agent time, so parallel sessions add up.
  * Reads usage_hours (UTC hours), never turns: a viewer off a whole-hour offset sees each hour
  * under the local bucket its start falls in.
+ *
+ * `filter` narrows it to some projects, models and machines ({project, model, machine}: lists of
+ * values, '' the no-project bucket): any value within a dimension, every dimension at once. The
+ * daily series, the totals and the cost follow the whole filter; each ranked list follows the
+ * other dimensions' filters only, so it still offers the values its own dimension could add,
+ * and always lists its selected values.
  */
-export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now() } = {}) {
+export const FILTER_DIMS = ['project', 'model', 'machine'];
+
+export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now(), filter = {} } = {}) {
   const off = tzOffsetMin * 60000;
   const unit = days === 1 ? 'hour' : 'day';
   const ms = unit === 'hour' ? 3600000 : 86400000;
   const buckets = unit === 'hour' ? 24 : days;
   const since = Math.floor((now + off) / ms - buckets + 1) * ms - off;
+  const sel = Object.fromEntries(FILTER_DIMS.map((d) => [d, filter[d]?.length ? new Set(filter[d]) : null]));
   const all = (sql, ...args) => db.prepare(sql).bind(...args).all().then((r) => r.results);
+  // A session's price falls in the range its last turn ended in. Not updated_at: that is when
+  // the price arrived, so a backfill would put every past session into the current week.
+  // A price is per session, model and machine; its project is its turns'.
+  const ins = (list) => list.map(() => '?').join(', ');
+  const costWhere = [
+    ...(sel.model ? [`c.model IN (${ins(filter.model)})`] : []),
+    ...(sel.machine ? [`c.machine IN (${ins(filter.machine)})`] : []),
+    ...(sel.project ? [`EXISTS (SELECT 1 FROM turns p WHERE p.agent = c.agent AND p.session = c.session AND COALESCE(p.project, '') IN (${ins(filter.project)}))`] : []),
+  ];
   const [hours, cost] = await Promise.all([
     all('SELECT * FROM usage_hours WHERE hour > ?', since - 3600000),
-    // A session's price falls in the range its last turn ended in. Not updated_at: that is when
-    // the price arrived, so a backfill would put every past session into the current week.
     all(`SELECT SUM(cost_usd) AS usd FROM session_costs c
-      WHERE (SELECT MAX(ended_at) FROM turns t WHERE t.agent = c.agent AND t.session = c.session) >= ?`, since),
+      WHERE (SELECT MAX(ended_at) FROM turns t WHERE t.agent = c.agent AND t.session = c.session) >= ?${costWhere.map((w) => ` AND ${w}`).join('')}`,
+    since, ...(sel.model ? filter.model : []), ...(sel.machine ? filter.machine : []), ...(sel.project ? filter.project : [])),
   ]);
+  const keeps = (r, except) => FILTER_DIMS.every((d) => d === except || !sel[d] || sel[d].has(r[d]));
   const label = (hour) => new Date(Math.max(hour, since) + off).toISOString().slice(0, unit === 'hour' ? 13 : 10);
-  const daily = rollup(hours, (r) => `${label(r.hour)}|${r.agent}`, (r) => ({ day: label(r.hour), agent: r.agent }))
+  const daily = rollup(hours.filter((r) => keeps(r)), (r) => `${label(r.hour)}|${r.agent}`, (r) => ({ day: label(r.hour), agent: r.agent }))
     .map(({ k, ...r }) => r).sort((a, b) => a.day.localeCompare(b.day) || a.agent.localeCompare(b.agent));
-  const by = (col) => rollup(hours, (r) => r[col]).map((r) => ({ ...r, k: r.k === '' ? null : r.k }))
-    .sort((a, b) => tokens(b) - tokens(a)).slice(0, 12);
-  return { days, unit, since, daily, projects: by('project'), models: by('model'), machines: by('machine'), costUsd: cost[0]?.usd ?? null };
+  const by = (col) => {
+    const rows = rollup(hours.filter((r) => keeps(r, col)), (r) => r[col]).sort((a, b) => tokens(b) - tokens(a));
+    const shown = rows.filter((r, i) => i < 12 || sel[col]?.has(r.k));
+    // A selected value with no use under the other filters still lists, at zero, to be unselected.
+    for (const v of sel[col] ?? []) if (!shown.some((r) => r.k === v)) shown.push({ k: v, ...Object.fromEntries(SUMS.map((c) => [c, 0])) });
+    return shown.map((r) => ({ ...r, k: r.k === '' ? null : r.k, ...(sel[col]?.has(r.k) ? { selected: true } : {}) }));
+  };
+  return { days, unit, since, daily, projects: by('project'), models: by('model'), machines: by('machine'), costUsd: cost[0]?.usd ?? null,
+    filter: Object.fromEntries(FILTER_DIMS.map((d) => [d, filter[d] ?? []])) };
 }
 
 export const MAX_QUERY_ROWS = 5000;

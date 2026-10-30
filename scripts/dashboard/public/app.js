@@ -66,7 +66,11 @@ const topicSeen = (() => { try { return JSON.parse(store.get('dashboard.topicSee
 const USAGE_RANGES = [1, 7, 30, 90, 365];   // 1: the last 24 h, by hour
 const USAGE_EVERY_MS = 5 * 60000;
 let usageDays = USAGE_RANGES.includes(Number(store.get('dashboard.usageDays'))) ? Number(store.get('dashboard.usageDays')) : 30;
-let usage = null;        // {days, report, at} | {days, error, at}
+let usage = null;        // {key, report, at} | {key, error, at}
+// The Usage filter: selected values per dimension ('' = no project); kept per device.
+const USAGE_DIMS = { project: 'projects', model: 'models', machine: 'machines' };
+let usageFilter = (() => { try { const f = JSON.parse(store.get('dashboard.usageFilter') ?? '{}'); return Object.fromEntries(Object.keys(USAGE_DIMS).map((d) => [d, Array.isArray(f[d]) ? f[d].map(String) : []])); } catch { return { project: [], model: [], machine: [] }; } })();
+const usageKey = () => JSON.stringify([usageDays, usageFilter]);
 let usageLoading = false;
 let configShown = null;   // the config view last rendered (JSON)
 let configDirty = false;  // a shared edit typed but not saved
@@ -640,21 +644,38 @@ const tzOffsetMin = () => -new Date().getTimezoneOffset();
 
 async function fetchUsage(force = false) {
   if (mock || usageLoading || !tg?.initData) return;
-  if (!force && usage?.days === usageDays && Date.now() - usage.at < USAGE_EVERY_MS) return;
+  const key = usageKey();
+  if (!force && usage?.key === key && Date.now() - usage.at < USAGE_EVERY_MS) return;
   usageLoading = true;
+  const q = new URLSearchParams({ days: String(usageDays), tz: String(tzOffsetMin()) });
+  for (const [d, vs] of Object.entries(usageFilter)) for (const v of vs) q.append(d, v);
   try {
-    const res = await fetch(`api/usage?days=${usageDays}&tz=${tzOffsetMin()}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
-    usage = res.ok ? { days: usageDays, report: await res.json(), at: Date.now() }
-      : { days: usageDays, error: res.status === 503 ? ['usage.notSetUp'] : ['usage.unavailable', { status: res.status }], at: Date.now() };
-  } catch { usage = { days: usageDays, error: ['usage.unreachable'], at: Date.now() }; } finally { usageLoading = false; }
+    const res = await fetch(`api/usage?${q}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
+    usage = res.ok ? { key, report: await res.json(), at: Date.now() }
+      : { key, error: res.status === 503 ? ['usage.notSetUp'] : ['usage.unavailable', { status: res.status }], at: Date.now() };
+  } catch { usage = { key, error: ['usage.unreachable'], at: Date.now() }; } finally { usageLoading = false; }
+  // A selection made while this request was in flight asks again.
+  if (usageKey() !== key) return fetchUsage(true);
   renderUsage();
 }
 
+/** Select or unselect one value of a dimension, then refetch. */
+function toggleUsage(dim, value) {
+  const vs = usageFilter[dim];
+  usageFilter = { ...usageFilter, [dim]: vs.includes(value) ? vs.filter((v) => v !== value) : [...vs, value] };
+  store.set('dashboard.usageFilter', JSON.stringify(usageFilter));
+  tg?.HapticFeedback?.selectionChanged?.();
+  renderUsage();
+  fetchUsage(true);
+}
+
 /** One ranked list: name, agent time and turns, tokens, and a hairline for its share. */
-function usageList(titleKey, rows) {
+function usageList(titleKey, rows, dim) {
   const box = el('div', 'usage-list');
   for (const r of rows) {
-    const row = el('div', 'u');
+    // Demo mode shows masked names: a row there names no real value to filter by.
+    const row = el(demoOn ? 'div' : 'button', `u${r.selected ? ' on' : ''}`);
+    if (!demoOn) { row.setAttribute('aria-pressed', String(r.selected)); row.addEventListener('click', () => toggleUsage(dim, r.value)); }
     const share = el('i', 'share');
     share.style.width = `${Math.round(r.share * 100)}%`;
     row.append(el('span', 'n', r.name), el('span', 'm', `${hoursText(r.active)} · ${tr('usage.turns', { n: r.turns })}`), el('b', null, tokenText(r.tokens)), share);
@@ -676,7 +697,20 @@ function renderUsage() {
   }
   box.append(range);
   if (mock) return box.append(el('div', 'qrows empty', tr('usage.mock')));
-  if (!usage || usage.days !== usageDays) return box.append(el('div', 'qrows empty', tr('app.loading')));
+  const picked = Object.entries(usageFilter).flatMap(([d, vs]) => vs.map((v) => [d, v]));
+  if (picked.length) {
+    const bar = el('div', 'usage-filter');
+    for (const [d, v] of picked) {
+      const chip = el('button', 'chip on', `${demoOn ? '•••' : v || tr('session.unknownProject')} ×`);
+      chip.addEventListener('click', () => toggleUsage(d, v));
+      bar.append(chip);
+    }
+    const clear = el('button', 'chip', tr('usage.clearFilter'));
+    clear.addEventListener('click', () => { usageFilter = { project: [], model: [], machine: [] }; store.set('dashboard.usageFilter', JSON.stringify(usageFilter)); renderUsage(); fetchUsage(true); });
+    bar.append(clear);
+    box.append(bar);
+  }
+  if (!usage || usage.key !== usageKey()) return box.append(el('div', 'qrows empty', tr('app.loading')));
   if (usage.error) return box.append(el('div', 'qrows empty', tr(...usage.error)));
   const v = usageView(demoOn ? (masker ??= demoMasker()).usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
   const totals = el('div', 'usage-totals');
@@ -696,7 +730,7 @@ function renderUsage() {
   const axis = el('div', 'usage-axis');
   const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
   axis.append(el('span', null, tick(v.days[0])), el('span', null, tr('usage.axis', { unit: v.unit })), el('span', null, tick(v.days.at(-1))));
-  box.append(totals, chart, axis, ...usageList('usage.projects', v.projects), ...usageList('usage.models', v.models), ...usageList('usage.machines', v.machines));
+  box.append(totals, chart, axis, ...usageList('usage.projects', v.projects, 'project'), ...usageList('usage.models', v.models, 'model'), ...usageList('usage.machines', v.machines, 'machine'));
 }
 
 function renderTabs() {

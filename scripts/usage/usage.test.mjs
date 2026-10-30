@@ -302,6 +302,35 @@ test('store: a session\'s cost falls in the range of its last turn, not of when 
   assert.equal((await report(db, { days: 30, now })).costUsd, 12);
 });
 
+test('store: a filter narrows series, totals and cost; each list is a facet of the other dimensions and keeps its picks', async () => {
+  const db = fakeD1();
+  const now = Date.parse('2026-10-30T12:00:00Z');
+  const at = { started_at: Date.parse('2026-10-30T10:00:00Z'), ended_at: Date.parse('2026-10-30T10:01:00Z') };
+  const t = (session, project, model, machine, output) => ({ machine, row: turnRow({ session, turn: session, project, model, output, input: 0, cache_read: 0, cache_write: 0, ...at }) });
+  const rows = [t('a', 'p1', 'm1', 'host-a', 10), t('b', 'p2', 'm1', 'host-a', 20), t('c', 'p1', 'm2', 'host-b', 40), t('d', null, 'm2', 'host-a', 80)];
+  for (const { machine, row } of rows) {
+    await ingest(db, machine, { turns: [row], quota: [], resources: [], costs: [{ agent: 'claude', session: row.session, model: row.model, cost_usd: row.output }] });
+  }
+  const host = (r) => Object.fromEntries(r.map((x) => [x.k, x.output]));
+  const out = (r) => r.daily.reduce((n, d) => n + d.output, 0);
+
+  const p1 = await report(db, { days: 7, now, filter: { project: ['p1'] } });
+  assert.equal(out(p1), 50, 'p1 only');
+  assert.equal(p1.costUsd, 50);
+  assert.deepEqual(host(p1.projects), { p1: 50, p2: 20, null: 80 }, 'its own list still offers every project');
+  assert.equal(p1.projects.find((x) => x.k === 'p1').selected, true);
+  assert.deepEqual(host(p1.models), { m1: 10, m2: 40 }, 'other lists follow the project filter');
+
+  const both = await report(db, { days: 7, now, filter: { project: ['p1', 'p2'], machine: ['host-a'] } });
+  assert.equal(out(both), 30, 'OR within a dimension, AND across');
+  assert.equal(both.costUsd, 30);
+  const none = await report(db, { days: 7, now, filter: { project: [''], model: ['m1'] } });
+  assert.equal(out(none), 0);
+  assert.deepEqual(none.projects.find((x) => x.k === null), { ...none.projects.find((x) => x.k === null), selected: true }, 'the no-project bucket is selectable');
+  const gone = await report(db, { days: 7, now, filter: { model: ['m1'], machine: ['host-b'] } });
+  assert.deepEqual(gone.models.find((x) => x.k === 'm1').output, 0, 'a pick with no use under the other filters lists at zero');
+});
+
 test('store: usage_hours always equals turns grouped by hour, through grow, move, re-send and delete', async () => {
   const db = fakeD1();
   const empty = { turns: [], costs: [], quota: [], resources: [] };
@@ -384,6 +413,9 @@ test('usage view: every day of the range, split by agent; ranked lists with shar
   assert.equal(v.days[2].claudePct, 50);
   assert.deepEqual(v.totals, { tokens: 200, active: 3600000, turns: 3, costUsd: 4.2, cacheHit: 80 / 150 });
   assert.equal(v.projects[0].share, 1);
+  assert.deepEqual([v.projects[0].value, v.projects[0].selected], ['secret-proj', false]);
+  const picked = usageView({ ...report, projects: [{ k: null, input: 10, selected: true }, { k: 'p', input: 30 }] }, Date.parse('2026-10-21T12:00:00Z'));
+  assert.deepEqual(picked.projects.map((p) => [p.value, p.selected, p.share]), [['', true, 0.25], ['p', false, 0.75]], 'shares of its own list; no project is the value ""');
   assert.deepEqual([tokenText(950), tokenText(12345), tokenText(3.45e6), tokenText(0)], ['950', '12k', '3.5M', '0']);
   assert.deepEqual([hoursText(45 * 60000), hoursText(3.5 * 3600000), hoursText(0)], ['45m', '3.5h', '0']);
   const hv = usageView({ days: 1, unit: 'hour', daily: [{ day: '2026-10-21T11', agent: 'claude', input: 5, cache_read: 0, cache_write: 0, output: 0, turns: 1 }] },

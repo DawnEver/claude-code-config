@@ -685,6 +685,22 @@ test('usage report: for an allowlisted viewer, held REPORT_TTL_MS per range so a
   assert.ok(reads > again, 'expired: read again');
 });
 
+test('usage report: the filter is part of the held key, in any order; values are bounded', async () => {
+  let reads = 0, last = null;
+  const db = { prepare: (sql) => ({ bind: (...args) => ({ all: async () => { reads++; last = { sql, args }; return { results: [] }; } }) }) };
+  const g = await gateway({}, { db });
+  const r = await (await g.req('/api/usage?days=7&model=m2&model=m1&project=', await asViewer(ALICE))).json();
+  assert.deepEqual(r.filter, { project: [''], model: ['m1', 'm2'], machine: [] });
+  const once = reads;
+  await g.req('/api/usage?days=7&model=m1&project=&model=m2', await asViewer(ALICE));
+  assert.equal(reads, once, 'the same filter in another order is held');
+  await g.req('/api/usage?days=7&model=m1', await asViewer(ALICE));
+  assert.ok(reads > once, 'another filter reads');
+  const many = Array.from({ length: 30 }, (_, i) => `machine=h${i}`).join('&');
+  assert.equal((await (await g.req(`/api/usage?days=7&${many}`, await asViewer(ALICE))).json()).filter.machine.length, 20);
+  assert.ok(last.sql.includes('?'), 'values are bound, never spliced into SQL');
+});
+
 test('accountSessions: the sessions on one account across hosts, most urgent first', () => {
   const snap = { hosts: [
     { id: 'a', sessions: [{ id: '1', account: 'k', status: 'running', project: 'p' }, { id: '2', account: 'x', status: 'running' }] },

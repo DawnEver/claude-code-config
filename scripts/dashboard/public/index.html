@@ -117,6 +117,9 @@
   .usage-axis { display: flex; justify-content: space-between; font-size: var(--t3); color: var(--hint); margin-bottom: 12px; }
   .usage-list { background: var(--card); border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
   .usage-list .u { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; padding: 8px 12px; font-size: var(--t2); position: relative; }
+  .usage-list .u { width: 100%; border: 0; background: none; color: inherit; font-family: inherit; text-align: left; cursor: pointer; }
+  .usage-list .u.on { background: color-mix(in srgb, var(--accent) 14%, transparent); } .usage-list .u.on .n { font-weight: 600; }
+  .usage-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
   .usage-list .u + .u { border-top: 1px solid var(--sep); }
   .usage-list .u .share { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--link, #2481cc); }
   .usage-list .u .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

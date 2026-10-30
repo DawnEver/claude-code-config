@@ -135,6 +135,7 @@ const TABLE = {
   'usage.apiValueTitle': { en: 'what Claude Code priced its sessions at: list price, not a subscription bill', zh: 'Claude Code 按标价估算的会话价值，并非订阅账单' },
   'usage.day': { en: (v) => `${v.day}: Claude ${v.claude}, Codex ${v.codex}, ${v.active} agent time`, zh: (v) => `${v.day}：Claude ${v.claude}，Codex ${v.codex}，智能体时长 ${v.active}` },
   'usage.axis': { en: (v) => `tokens per ${v.unit} · Claude / Codex`, zh: (v) => `每${v.unit === 'hour' ? '小时' : '天'} token · Claude / Codex` },
+  'usage.clearFilter': { en: 'Clear', zh: '清除' },
   'usage.projects': { en: 'Projects', zh: '项目' },
   'usage.models': { en: 'Models', zh: '模型' },
   'usage.machines': { en: 'Machines', zh: '机器' },

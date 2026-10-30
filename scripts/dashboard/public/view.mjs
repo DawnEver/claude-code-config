@@ -437,8 +437,13 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
     days.push(byDay.get(day) ?? { day, claude: 0, codex: 0, active: 0 });
   }
   const max = Math.max(1, ...days.map((d) => d.claude + d.codex));
-  const list = (rows) => rows.map((r) => ({ name: r.k ?? 'unknown', tokens: tokensOf(r), share: tokens ? tokensOf(r) / tokens : 0,
-    active: r.active_ms ?? 0, turns: r.turns ?? 0 }));
+  // `value` is what a filter sends back: '' for the no-project bucket.
+  // A share is of its own list: under a filter, a list spans more than the filtered totals.
+  const list = (rows) => {
+    const sum = rows.reduce((n, r) => n + tokensOf(r), 0);
+    return rows.map((r) => ({ name: r.k ?? 'unknown', value: r.k ?? '', selected: r.selected === true, tokens: tokensOf(r),
+      share: sum ? tokensOf(r) / sum : 0, active: r.active_ms ?? 0, turns: r.turns ?? 0 }));
+  };
   return {
     unit: hourly ? 'hour' : 'day',
     totals: { tokens, active, turns, costUsd: report.costUsd ?? null, cacheHit: input + cacheRead + cacheWrite ? cacheRead / (input + cacheRead + cacheWrite) : null },
