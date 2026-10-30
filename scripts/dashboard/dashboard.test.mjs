@@ -9,7 +9,7 @@ import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
-import { accountSessions, billingSessions, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, eventText, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
+import { accountSessions, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, eventText, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -311,7 +311,7 @@ test('view: sessions group by host as filtered, or by project across hosts', () 
 
 test('view: tabs count each view and flag quota that needs the human; no accounts, no tabs', () => {
   const m = mockDashboard(NOW);
-  assert.deepEqual(tabs(m, NOW), { sessions: 5, quota: 2, alert: true, events: 2, unseen: 2 });
+  assert.deepEqual(tabs(m, NOW), { sessions: 5, quota: 3, alert: true, events: 2, unseen: 2 });
   assert.equal(tabs(m, NOW, m.events[1].at).unseen, 1, 'only events newer than the last look');
   assert.equal(tabs(m, NOW, m.events[0].at).unseen, 0);
   assert.equal(tabs(m, NOW, null, quotaAlerts(m, NOW).map(alertKey)).alert, false, 'read alerts do not flag the quota tab');
@@ -393,7 +393,7 @@ test('events: every alert is kept as history for the dashboard, newest first, bo
 test('view: quota by host — each host with the accounts it runs; a shared account says where else it runs', () => {
   const by = hostsView(mockDashboard(NOW), NOW);
   assert.deepEqual(by.map((h) => [h.id, h.accounts.map((q) => `${q.key}+${q.sharedWith.join(',')}`)]),
-    [['host-a', ['claude:a+host-c', 'codex:b+host-b']], ['host-b', ['codex:b+host-a']], ['host-c', ['claude:a+host-a']]],
+    [['host-a', ['claude:a+host-c', 'codex:b+host-b']], ['host-b', ['codex:b+host-a', 'api:deepseek:default+']], ['host-c', ['claude:a+host-a']]],
     'online hosts first; one budget, never a second card without saying so');
   assert.deepEqual(by[0].accounts.map(accountTag), ['team-a', 'bob'], 'seat alias, else the email name');
 });
@@ -599,7 +599,7 @@ test('view: best account now — per agent the most left on its binding window, 
 test('view: a shared account renders fully once — on its first online host — and as a reference elsewhere', () => {
   const by = hostsView(mockDashboard(NOW), NOW);
   assert.deepEqual(by.map((h) => [h.id, h.accounts.map((q) => `${q.key}${q.refTo ? `>${q.refTo}` : ''}`)]),
-    [['host-a', ['claude:a', 'codex:b']], ['host-b', ['codex:b>host-a']], ['host-c', ['claude:a>host-a']]]);
+    [['host-a', ['claude:a', 'codex:b']], ['host-b', ['codex:b>host-a', 'api:deepseek:default']], ['host-c', ['claude:a>host-a']]]);
   const off = mockDashboard(NOW);
   off.hosts[0].online = false;
   const by2 = hostsView(off, NOW);
@@ -754,25 +754,19 @@ test('removed: one session renderer (chat list), no needs-you card, packed layou
   assert.doesNotMatch(app, /chatList|needsYouCard|dashboard\.packed|quotaAlertRow/);
 });
 
-test('registry: an API balance two hosts read is one entry, the freshest, with both hosts', () => {
+test('accounts: a balance two hosts read is one account, the freshest, with both hosts; it sits in a host card like a subscription', () => {
   const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => 5000 });
-  const b = (at, amount) => [{ key: 'deepseek:0123456789ab', at, balances: [{ currency: 'CNY', amount }] }];
-  r.accept('host-a', parseHostPush(push({ billing: b(1.7e12 + 1000, 10) })));
-  r.accept('host-b', parseHostPush(push({ billing: b(1.7e12, 12) })));
-  const [one, ...rest] = r.snapshot().billing;
+  const b = (at, amount) => [{ key: 'api:deepseek:default', kind: 'balance', provider: 'deepseek', at, balances: [{ currency: 'CNY', amount }] }];
+  r.accept('host-a', parseHostPush(push({ accounts: b(1.7e12 + 1000, 10) })));
+  r.accept('host-b', parseHostPush(push({ accounts: b(1.7e12, 12), sessions: [session({ id: 's1', account: 'api:deepseek:default' })] })));
+  const snap = r.snapshot();
+  assert.equal(snap.billing, undefined, 'no second list: a balance is an account');
+  const [one, ...rest] = snap.accounts;
   assert.equal(rest.length, 0);
   assert.deepEqual([one.balances[0].amount, one.hosts], [10, ['host-a', 'host-b']]);
-});
-
-test('billing: two keys reading the same balance are one account; its sessions match by any key or by provider', () => {
-  const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => 5000 });
-  const bal = [{ currency: 'USD', amount: 2 }, { currency: 'CNY', amount: 457.22 }];
-  r.accept('host-a', parseHostPush(push({ billing: [{ key: 'deepseek:aaaaaaaaaaaa', at: 1.7e12, balances: bal }] })));
-  r.accept('host-b', parseHostPush(push({ billing: [{ key: 'deepseek:bbbbbbbbbbbb', at: 1.7e12, balances: [...bal].reverse() }] })));
-  const billing = r.snapshot().billing;
-  assert.equal(billing.length, 1);
-  assert.deepEqual([billing[0].keys, billing[0].hosts], [['deepseek:aaaaaaaaaaaa', 'deepseek:bbbbbbbbbbbb'], ['host-a', 'host-b']]);
-  const snap = { hosts: [{ id: 'host-a', sessions: [{ id: 's1', account: 'deepseek:bbbbbbbbbbbb' }] },
-    { id: 'host-b', sessions: [{ id: 's2', account: null, provider: 'deepseek' }, { id: 's3', account: 'claude:x' }] }] };
-  assert.deepEqual(billingSessions(snap, billing[0]).map((s) => s.id).sort(), ['s1', 's2']);
+  const hosts = hostsView(snap, 1.7e12 + 2000);
+  assert.deepEqual(hosts.map((h) => [h.id, h.accounts.map((q) => [q.key, q.refTo])]),
+    [['host-a', [['api:deepseek:default', null]]], ['host-b', [['api:deepseek:default', 'host-a']]]]);
+  assert.deepEqual(accountSessions(snap, 'api:deepseek:default').map((s) => [s.id, s.hostId]), [['s1', 'host-b']]);
+  assert.deepEqual(r.events, [], 'a balance never raises a quota alert');
 });

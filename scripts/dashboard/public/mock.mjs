@@ -17,21 +17,23 @@ export function mockDashboard(now = Date.now()) {
       resources: { cpu: 42, cores: 16, cpuModel: 'AMD Ryzen 9 7950X', mem: { used: 21e9, total: 34e9, type: 'DDR5' }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
     { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
       s('host-b', false, '7d1e9b3c-3333', 'claude', 'refactor', 'refactor/core', 'idle', 900, { url: 'https://t.me/c/1000000002/7', closed: true }, null, 'Split the parser module', 1),
-      { ...s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null), provider: 'deepseek', account: 'deepseek:0123456789ab' }],
+      { ...s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null), provider: 'deepseek', account: 'api:deepseek:default' }],
       resources: { cpu: 7, cores: 10, cpuModel: 'Apple M2 Pro', mem: { used: 9e9, total: 17e9, type: 'LPDDR5' }, gpus: [] } },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
-  ], billing: [{ key: 'deepseek:0123456789ab', provider: 'deepseek', label: null, at: now - 300000, error: null, hosts: ['host-a'], balances: [{ currency: 'CNY', amount: 457.22 }, { currency: 'USD', amount: 2 }] }], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }], events: [
+  ], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }], events: [
     { at: t(40), kind: 'exhausted', account: { agent: 'codex', label: null, email: 'bob@example.com' }, window: '5h', resetsAt: now + 3 * H },
     { at: t(7200), kind: 'config', key: 'bridge.idleCloseMinutes', value: 30, outcome: 'applied', host: 'host-b' },
   ], accounts: [
-    { key: 'claude:a', agent: 'claude', label: 'team-a', email: 'alice@example.com', detail: 'Team A · Team Premium', problems: [],
+    { key: 'claude:a', kind: 'quota', agent: 'claude', label: 'team-a', email: 'alice@example.com', detail: 'Team A · Team Premium', problems: [],
       at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null, windows: [
         { k: '5h', used: 26, resetsAt: now + 24 * 60000, windowMs: 5 * H, cells: [0.4, 0.8, 1.2, 0.9, 1.6, 2, 1.1, 0.7, 0.9, null], forecast: { atReset: 31, eta: null, short: false } },
         { k: '7d', used: 45, resetsAt: now + 129 * H, windowMs: 168 * H, cells: [0.6, 1.4, 1.8, 0.9, 1.1, 2.2, 2.6, 2.4, 2.5, null, null, null, null, null], forecast: { atReset: 118, eta: now + 47 * H, short: true } }] },
-    { key: 'codex:b', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-a', 'host-b'],
+    { key: 'codex:b', kind: 'quota', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-a', 'host-b'],
       resetCredits: { count: 1, expiries: [now + 3 * 24 * H] }, extraReset: null, windows: [
         { k: '5h', used: 100, resetsAt: now + 3 * H, windowMs: 5 * H, cells: [-1, -1, 30, 40, null, null, null, null, null, null], forecast: null },
         { k: '7d', used: 12, resetsAt: now + 100 * H, windowMs: 168 * H, cells: [0.4, 0.7, 0.6, 0.9, 0.5, null, null, null, null, null, null, null, null, null], forecast: { atReset: 30, eta: null, short: false } }] },
+    { key: 'api:deepseek:default', kind: 'balance', provider: 'deepseek', label: null, at: now - 300000, error: null, hosts: ['host-b'],
+      balances: [{ currency: 'CNY', amount: 457.22 }, { currency: 'USD', amount: 2 }] },
   ] };
 }

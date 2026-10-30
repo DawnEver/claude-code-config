@@ -906,8 +906,6 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
   r.hosts.codex.statusSnapshot = () => null;
   assert.equal(r.bridge.dashboardSessions().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
-  r.hosts.codex.statusSnapshot = () => ({ state: 'unknown' });
-  assert.ok(!r.bridge.dashboardSessions().some((s) => s.id === 'quiet'), 'a host reporting its state unknown is hidden');
   r.bridge.sessionDown('codex:quiet');
   assert.deepEqual(r.bridge.dashboardSessions().map((s) => s.id), ['busy']);
 });
@@ -1017,6 +1015,7 @@ test('cardDetail: the pinned card names the account and its use, and the machine
     ['Account: a@example.com · used 5h 40% · 7d 12%', 'Machine: CPU 30% · RAM 8.0/32 GB · GPU 5% 1.0/24 GB']);
   assert.deepEqual(cardDetail({ agent: 'codex', seat: null }, { accounts }), []);
   // ccds spends the DeepSeek balance, not the Claude seat of its config dir.
-  const billing = [{ key: 'deepseek:0123456789ab', provider: 'deepseek', label: null, balances: [{ currency: 'CNY', amount: 457.2 }] }];
-  assert.deepEqual(cardDetail({ agent: 'claude', seat: 'w', provider: 'deepseek' }, { accounts, billing }), ['Account: deepseek · 457.20 CNY']);
+  const balance = { key: 'api:deepseek:default', kind: 'balance', provider: 'deepseek', label: null, error: null, balances: [{ currency: 'CNY', amount: 457.2 }] };
+  assert.deepEqual(cardDetail({ agent: 'claude', seat: 'w', provider: 'deepseek' }, { accounts: [...accounts, balance], balanceEntries: [{ provider: 'deepseek', label: null }] }),
+    ['Account: deepseek · 457.20 CNY']);
 });

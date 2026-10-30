@@ -34,14 +34,6 @@ export function sessionsOf(snapshot) {
 export const accountSessions = (snapshot, key) =>
   sortSessions(snapshot.hosts.flatMap((h) => h.sessions.filter((s) => s.account === key).map((s) => ({ ...s, hostId: s.hostId ?? h.id }))));
 
-/**
- * The sessions spending one API balance: by any key it merged (registry billing) or, for a host
- * that holds no key to read it (so no account), by naming its provider.
- */
-export const billingSessions = (snapshot, b) =>
-  sortSessions(snapshot.hosts.flatMap((h) => h.sessions.filter((s) => (b.keys ?? [b.key]).includes(s.account) || (!s.account && s.provider === b.provider))
-    .map((s) => ({ ...s, hostId: s.hostId ?? h.id }))));
-
 export const sortSessions = (sessions) => [...sessions].sort((a, b) =>
   (RANK[displayStatus(a)] ?? 9) - (RANK[displayStatus(b)] ?? 9) || String(a.project).localeCompare(String(b.project)));
 
@@ -231,7 +223,8 @@ export function countdown(ms, now = Date.now()) {
   return d ? `${d}d ${h}h` : h ? `${h}h ${min}m` : `${min}m`;
 }
 
-export const accountName = (q) => `${agentName(q.agent)}${q.label ? ` · ${q.label}` : ''}`;
+/** An account's name: the agent (a subscription) or the platform (a balance), then its label. */
+export const accountName = (q) => `${q.kind === 'balance' ? providerName(q.provider) : agentName(q.agent)}${q.label ? ` · ${q.label}` : ''}`;
 
 /** Why an account needs the human, in one line; '' when it does not. `withReset: false` where the row already shows it. */
 export function verdictText(q, { now = Date.now(), withReset = true, lang = 'en' } = {}) {
@@ -263,12 +256,13 @@ const PROVIDER_NAMES = { deepseek: 'DeepSeek', anthropic: 'Anthropic', openai: '
 export const providerName = (p) => PROVIDER_NAMES[p] ?? p;
 const CURRENCY = { USD: '$', CNY: '¥', EUR: '€', GBP: '£' };
 
-/** The API platform balances (snapshot.billing) as rows: a name, the amounts, and the reading's age or its error. */
-export function billingView(billing, now = Date.now(), lang = 'en') {
-  return (billing ?? []).map((b) => ({ key: b.key, keys: b.keys ?? [b.key], provider: b.provider, name: [providerName(b.provider), b.label].filter(Boolean).join(' · '),
-    amounts: b.balances.map((x) => `${CURRENCY[x.currency] ?? `${x.currency} `}${x.amount.toFixed(2)}`).join(' · '),
-    error: b.error, age: ago(new Date(b.at).toISOString(), now, lang), hosts: b.hosts ?? [] }));
-}
+/**
+ * A balance account as read: its amounts in one line (`$2.00 · ¥457.22`) or its error. It has no
+ * windows, so nothing binds, nothing is left in %, and it never alerts: the shape quotaView
+ * gives a subscription, so every account renders and sorts through the same code.
+ */
+export const balanceView = (a) => ({ ...a, stale: false, windows: [], bind: null, left: null, problems: [], verdict: a.error ? 'none' : 'ok',
+  amounts: a.balances.map((x) => `${CURRENCY[x.currency] ?? `${x.currency} `}${x.amount.toFixed(2)}`).join(' · ') });
 
 /** An email's local part, for a meta line with the full address in its title. */
 export const emailName = (email) => email?.split('@')[0] ?? null;
@@ -355,10 +349,11 @@ export function configView(snapshot) {
 }
 
 /** Every account as the reader sees it, by key: what a session (its `account`) or a host refers to. */
-export const accountIndex = (snapshot, now = Date.now()) => new Map((snapshot.accounts ?? []).map((a) => [a.key, quotaView(a, now)]));
+export const accountIndex = (snapshot, now = Date.now()) => new Map((snapshot.accounts ?? [])
+  .map((a) => [a.key, a.kind === 'balance' ? balanceView(a) : quotaView(a, now)]));
 
-/** An account in a few characters: the seat alias, else the email's name, else the agent. */
-export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? agentName(q.agent);
+/** An account in a few characters: the seat alias, else the email's name, else the agent or platform. */
+export const accountTag = (q) => q.label ?? q.email?.split('@')[0] ?? (q.kind === 'balance' ? providerName(q.provider) : agentName(q.agent));
 
 /**
  * The one host model every tab renders from: each host as the gateway reported it (online,

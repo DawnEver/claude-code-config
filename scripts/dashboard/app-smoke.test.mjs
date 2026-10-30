@@ -93,6 +93,10 @@ test('the page renders every tab from the example data, and no view throws', asy
     assert.deepEqual(errors, [], 'a view threw while rendering');
     assert.ok(doc.getElementById('hosts').querySelectorAll('.chat').length > 0, 'the Sessions tab lists sessions');
     assert.ok(doc.getElementById('quota-view').querySelectorAll('.qrow').length > 0, 'the Quota tab lists accounts');
+    // An API balance is an account like any other: a row in the card of the host that reads it.
+    const balance = doc.getElementById('quota-view').querySelectorAll('.deepseek');
+    assert.equal(balance.length, 1);
+    assert.equal(balance[0].textContent, 'DeepSeek');
   } finally {
     console.error = consoleError;
   }

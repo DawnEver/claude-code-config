@@ -39,7 +39,8 @@ export class Registry {
     this.hosts.set(hostId, { ...push, receivedAt: this.now() });
     const configChanges = this.#settle(hostId, push.configResults);
     const merged = new Map(this.accounts().map((a) => [a.key, a]));
-    for (const key of new Set(push.accounts.map((a) => a.key))) {
+    // Alerts are about quota windows: a balance has none.
+    for (const key of new Set(push.accounts.filter((a) => a.kind === 'quota').map((a) => a.key))) {
       const { events, state } = quotaAlertsFor(this.alerted.get(key), quotaView(merged.get(key), this.now()));
       this.alerted.set(key, state);
       for (const e of events) this.#event(e);
@@ -95,7 +96,7 @@ export class Registry {
   }
 
   /**
-   * Quota is per account, not per host: an account reported by several hosts appears once,
+   * An account (a subscription or an API balance) is one, not one per host: reported by several hosts it appears once,
    * as its freshest observation (`at`, the host's sample time), with every host that runs it.
    * An offline host's last report still counts: use only grows until a reset, so an old
    * reading stays a true floor, and the reader marks it by its age.
@@ -109,35 +110,14 @@ export class Registry {
         byKey.set(a.key, !held || (a.at ?? 0) > (held.at ?? 0) ? { ...a, hosts } : { ...held, hosts });
       }
     }
-    return [...byKey.values()].sort((a, b) => a.agent.localeCompare(b.agent) || String(a.label ?? a.email).localeCompare(String(b.label ?? b.email)));
-  }
-
-  /** API platform balances, merged like quota: one entry per account, its freshest reading, with every host that reads it. */
-  billing() {
-    const byKey = new Map();
-    for (const [id, p] of this.hosts) {
-      for (const b of p?.billing ?? []) {
-        const held = byKey.get(b.key);
-        const hosts = [...(held?.hosts ?? []), id].sort();
-        byKey.set(b.key, !held || b.at > held.at ? { ...b, hosts } : { ...held, hosts });
-      }
-    }
-    // Two keys of one platform account (each host its own key) read the same balances: one row,
-    // the platforms report no account id to tell them apart otherwise.
-    const byAccount = new Map();
-    for (const b of byKey.values()) {
-      // An empty or zero balance identifies nothing: two such accounts stay apart.
-      const id = b.error || !b.balances.some((x) => x.amount) ? b.key : JSON.stringify([b.provider, b.label, [...b.balances].sort((x, y) => x.currency.localeCompare(y.currency))]);
-      const held = byAccount.get(id);
-      byAccount.set(id, held ? { ...(b.at > held.at ? b : held), keys: [...held.keys, b.key].sort(), hosts: [...new Set([...held.hosts, ...b.hosts])].sort() }
-        : { ...b, keys: [b.key] });
-    }
-    return [...byAccount.values()].sort((a, b) => a.provider.localeCompare(b.provider) || String(a.label).localeCompare(String(b.label)));
+    // Subscriptions first, by agent; then API balances, by provider.
+    const order = (a) => [a.kind === 'balance' ? 1 : 0, a.agent ?? a.provider, String(a.label ?? a.email)];
+    return [...byKey.values()].sort((a, b) => { const x = order(a), y = order(b); return x[0] - y[0] || x[1].localeCompare(y[1]) || x[2].localeCompare(y[2]); });
   }
 
   snapshot() {
     return { schemaVersion: SCHEMA_VERSION, generatedAt: new Date(this.now()).toISOString(),
-      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), billing: this.billing(), events: this.events,
+      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), events: this.events,
       configKeys: configKeysMeta(),
       configPending: [...this.changes.values()].map(({ id, key, value, at, host }) => ({ id, key, value, at: new Date(at).toISOString(), host: host ?? null })) };
   }

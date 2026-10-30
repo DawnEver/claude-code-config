@@ -170,28 +170,40 @@ app-server); the Worker never recomputes it.
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most
   every 30 min).
 
-## Billing
+## Accounts: subscriptions and API balances
 
-API platform balances. A balance sits under each machine whose sessions spend it, with
-those sessions, like a quota account; one no machine uses is listed below the hosts. A session
-spends a balance when it runs on that provider: `ccds` sets `HARNESS_PROVIDER` (cc-launcher.mjs),
-which the session-bridge channel reports; a `cods` thread carries Codex's own `modelProvider`
-(`openai` = the subscription). Such a session is never attributed to the Claude seat or Codex
-login beside it (`quota.mjs accountFor`); its pinned card shows the balance. A billing account is a provider plus the
-credential it is read with, declared once in the shared settings — never a key:
+A session spends exactly one account, and there is one account model with two kinds
+(`accounts[]` in the push, `kind`):
+
+- `quota` — a subscription (a Claude seat, the Codex login): windows, resets, forecast, alerts.
+- `balance` — an API platform's balance: amounts per currency, or its read error. No windows,
+  so it never binds, never alerts.
+
+Every account is merged by key across hosts in the registry, placed under each host that reads
+it by `hostsView` (full row on the first host, a `refTo` row elsewhere), and rendered by one
+row component (`accountRow`): folded by default, opening to its detail and that host's own
+sessions on it.
+
+**Which account a session spends** is decided once, on its host (`quota.mjs accountFor`); the
+page only looks `session.account` up. A Claude session spends its seat's subscription, a Codex
+session the app-server's login, and an API-key session its platform's balance — never the
+subscription beside it. A session is an API-key session when it runs on a provider: `ccds` sets
+`HARNESS_PROVIDER` (cc-launcher.mjs), which the session-bridge channel reports; a `cods` thread
+carries Codex's own `modelProvider` (`openai` = the subscription). Its pinned card shows the balance.
+
+**A balance account is its configured entry**, declared once in the shared settings — never a key:
 
 ```json
 "bridge": { "billing": [{ "provider": "deepseek" }, { "provider": "deepseek", "label": "lab", "keyUsername": "api-key-lab" }] }
 ```
 
-Each host that holds the key (the git credential store; `keyUsername` defaults to the
-provider's session username in the provider cache) reads it every 15 min in the background
-(`scripts/bridge/billing.mjs`) and pushes `billing` entries keyed by provider + a sha256 key
-fingerprint, so hosts holding the same key merge into one row. A host without the key
-reports nothing. A provider is one reader in `READERS`: DeepSeek has one
-(`/user/balance`, per currency). Anthropic and OpenAI expose no balance to an API key —
-only spend, through an Admin key — so they are listed as `no balance API` until a reader
-derives a balance from spend since a recorded top-up.
+Its key is `api:<provider>:<label|default>` (`billing.mjs balanceKey`), so every host reading it,
+whatever key it holds, reports the same account, and a host without the key still attributes
+its sessions to it. An API-key session spends its provider's unlabelled entry. Each host holding
+the key (the git credential store; `keyUsername` defaults to the provider's session username in
+the provider cache) reads it every 15 min in the background (`BalanceReader`). A provider is one
+reader in `READERS`: DeepSeek has one (`/user/balance`, per currency). Anthropic and OpenAI expose
+no balance to an API key — only spend, through an Admin key — so they read as `no balance API`.
 
 ## Config
 

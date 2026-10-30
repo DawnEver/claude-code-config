@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, billingSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, billingView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
+import { GROUPS, accountSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -136,7 +136,8 @@ function sessionRow(s, { withHost = false, inProject = false } = {}) {
   // The account the session spends, as on the Quota tab (observation-only sessions have none).
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
-  else if (s.seat || s.provider) sub.append(document.createTextNode(` · ${s.seat ?? providerName(s.provider)}`));
+  // No reading of it anywhere: name what it spends — the platform for an API-key session, else the seat.
+  else if (s.provider || s.seat) sub.append(document.createTextNode(` · ${s.provider ? providerName(s.provider) : s.seat}`));
   bottom.append(sub, ...badges(s));
   body.append(top, bottom);
   row.append(avatar, body);
@@ -194,8 +195,11 @@ const resetCell = (w) => { const s = el('span', 'reset', resetText(w)); if (s.te
 /** A window's name; the binding one (what the account's % left is read from) is marked. */
 const kCell = (w, q) => { const k = el('span', `k${q.bind?.k === w.k ? ' bind' : ''}`, w.k); if (q.bind?.k === w.k) k.title = tr('quota.binding', { unit: tr(`quota.${pref.unit}`) }); return k; };
 
-/** The expanded part of a quota row: each window with its trend on a time axis, then resets to act on. */
-function quotaDetail(q, hostId) {
+/**
+ * The expanded part of an account row: for a subscription each window with its trend on a time
+ * axis and the resets to act on; then, for any account, this host's sessions spending it.
+ */
+function accountDetail(q, hostId) {
   const box = el('div', 'qdetail');
   if (q.detail) box.append(el('div', 'sub', q.detail));
   for (const w of q.windows) {
@@ -216,22 +220,26 @@ function quotaDetail(q, hostId) {
     if (q.extraReset.url) note.addEventListener('click', (e) => { e.stopPropagation(); tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener'); });
     box.append(note);
   }
-  // This host's sessions on the account: a shared account is one budget, but each session sits
-  // under the machine it runs on (the other host lists its own under its reference row).
-  const using = hostSessions(q.key, hostId);
-  box.append(el('div', 'note', using.length ? tr('quota.inUse', { n: using.length }) : tr('quota.notInUse')));
-  if (using.length) box.append(sessionList(using));
+  box.append(sessionsPart(hostSessions(q.key, hostId)));
   return box;
 }
 
+/**
+ * A host's sessions on an account: a shared account is one budget, but each session sits under
+ * the machine it runs on (the other host lists its own under its reference row).
+ */
 const hostSessions = (key, hostId) => accountSessions(snapshot, key).filter((u) => u.hostId === hostId);
 
-/** Session rows as on the Sessions tab (status, branch; a tap opens the Topic). */
-function sessionList(sessions) {
+/** "In use by N" and the session rows as on the Sessions tab (status, branch; a tap opens the Topic). */
+function sessionsPart(sessions) {
+  const box = el('div');
+  box.append(el('div', 'note', sessions.length ? tr('quota.inUse', { n: sessions.length }) : tr('quota.notInUse')));
+  if (!sessions.length) return box;
   const list = el('div', 'waiting');
   for (const u of sessions) list.append(sessionRow(u));
   list.addEventListener('click', (e) => e.stopPropagation());
-  return list;
+  box.append(list);
+  return box;
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -248,30 +256,42 @@ function logo(brand) {
 /** An account as a compact tag: who and how much is left, coloured by its verdict. */
 function acctTag(q, withAgent = false) {
   const left = q.left === null ? '' : ` ${windowLabel(q.bind, q.stale, pref.unit, lang).text}`;
-  const tag = el('span', `acct v-${q.verdict}`, `${withAgent ? `${agentName(q.agent)} ` : ''}${accountTag(q)}${left}`);
-  tag.title = `${accountName(q)}${q.email ? ` · ${q.email}` : ''}${q.left === null ? '' : ` · ${q.left}% ${tr('quota.left')}`}`;
+  const tag = el('span', `acct v-${q.verdict}`, `${withAgent && q.agent ? `${agentName(q.agent)} ` : ''}${accountTag(q)}${left}`);
+  tag.title = `${accountName(q)}${q.email ? ` · ${q.email}` : ''}${q.amounts ? ` · ${q.amounts}` : ''}${q.left === null ? '' : ` · ${q.left}% ${tr('quota.left')}`}`;
   return tag;
 }
 
+/** An account's headline: a subscription's binding window, a balance's amounts (or its error). */
+function headline(q) {
+  if (q.kind === 'balance') return el('span', q.error ? 'left muted' : 'left', q.error ?? q.amounts);
+  if (!q.bind) return noReading(q);
+  const left = leftCell(q.bind, q.stale, 'left');
+  left.textContent += ` ${tr(`quota.${pref.unit}`)}`;
+  return left;
+}
+
 /**
- * One account on one host: at a glance who, each window's use against even pace and what is
- * left; tapped, it opens in place to the detail (trend with time ticks, reset, forecast).
+ * One account on one host, whatever its kind: at a glance who and what is left (a subscription's
+ * windows against even pace, a balance's amounts); tapped, it opens in place to its detail and
+ * this host's sessions on it. A shared account is one budget: its full row sits on one host, and
+ * elsewhere a reference row (`refTo`) that opens to that host's own sessions the same way.
  */
-function quotaRow(q, hostId) {
+function accountRow(q, hostId) {
   const id = `${hostId}|${q.key}`;
   const open = openRows.has(id);
-  const row = el('div', `qrow v-${q.verdict}${q.stale ? ' stale' : ''}${open ? ' open' : ''}`);
+  const ref = Boolean(q.refTo);
+  const using = hostSessions(q.key, hostId);
+  const row = el('div', `qrow${ref ? ' qref' : ''} v-${q.verdict}${q.stale ? ' stale' : ''}${open ? ' open' : ''}`);
   row.setAttribute('role', 'button');
   row.setAttribute('aria-expanded', String(open));
   row.tabIndex = 0;
   const top = el('div', 'qrow-top');
-  let left;
-  if (q.bind) { left = leftCell(q.bind, q.stale, 'left'); left.textContent += ` ${tr(`quota.${pref.unit}`)}`; }
-  else left = noReading(q);
-  top.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'chev', open ? '⌄' : '›'));
+  top.append(el('span', `agent ${q.agent ?? q.provider}`, accountName(q)), headline(q),
+    ref ? el('span', 'see', tr('quota.see', { host: q.refTo })) : el('span', 'chev', open ? '⌄' : '›'));
   row.append(top);
-  if (open) row.append(quotaDetail(q, hostId));
-  else {
+  if (ref) row.title = tr('quota.oneBudget', { host: q.refTo });
+  if (open) row.append(ref ? sessionsPart(using) : accountDetail(q, hostId));
+  else if (!ref && q.windows.length) {
     const mini = el('div', 'qmini');
     for (const w of q.windows) {
       const cell = el('div');
@@ -281,12 +301,15 @@ function quotaRow(q, hostId) {
     row.append(mini);
   }
   const meta = el('div', 'sub');
-  if (q.email) { const e = el('span', null, emailName(q.email)); e.title = q.email; meta.append(e); }
-  if (q.sharedWith.length) meta.append(`${meta.childNodes.length ? ' · ' : ''}${tr('quota.sharedAlso', { hosts: q.sharedWith.join(', ') })}`);
+  const add = (part) => { if (meta.childNodes.length) meta.append(' · '); meta.append(part); };
+  if (q.email && !ref) { const e = el('span', null, emailName(q.email)); e.title = q.email; add(e); }
+  if (!open && using.length) add(tr('quota.inUse', { n: using.length }));
+  if (q.sharedWith.length && !ref) add(tr('quota.sharedAlso', { hosts: q.sharedWith.join(', ') }));
+  if (q.kind === 'balance' && q.at && !ref) add(agoText(q.at));
   if (q.stale && q.at) { const c = el('span', 'clock', ' ◷'); c.title = tr('quota.reading', { ago: agoText(q.at) }); meta.append(c); }
   if (meta.childNodes.length) row.append(meta);
-  if (q.verdict === 'short' || q.verdict === 'exhausted') row.append(el('div', 'warn', verdictText(q, { withReset: false, lang })));
-  for (const p of q.problems) row.append(el('div', 'warn', p));
+  if (!ref && (q.verdict === 'short' || q.verdict === 'exhausted')) row.append(el('div', 'warn', verdictText(q, { withReset: false, lang })));
+  if (!ref) for (const p of q.problems) row.append(el('div', 'warn', p));
   const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
   row.addEventListener('click', toggle);
   row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
@@ -315,22 +338,17 @@ function renderQuota() {
   const box = $('quota-view');
   box.replaceChildren();
   const grid = el('div', 'quota-hosts');
-  // An API balance sits under each machine whose sessions spend it (ccds, cods), like an account; one no machine uses, at the bottom.
-  const billing = billingView(snapshot.billing, Date.now(), lang);
-  const spentOn = (b, hostId) => billingSessions(snapshot, b).filter((u) => u.hostId === hostId);
   for (const h of hostList) {
     const expanded = openHosts.has(h.id);
     const facts = expanded ? hostFacts(h) : [];
-    const bills = billing.filter((b) => spentOn(b, h.id).length);
-    if (bills.length) facts.unshift(billingRows(bills, h.id));
     let section;
-    if (!h.accounts.length) section = hostSection(h, [...(bills.length ? [] : [el('div', 'qrows empty', tr('quota.noAccounts'))]), ...facts]);
+    if (!h.accounts.length) section = hostSection(h, [el('div', 'qrows empty', tr('quota.noAccounts')), ...facts]);
     else {
       const best = bestAccounts(h.accounts);
       const bestLine = el('div', 'qbest', best.length ? tr('quota.bestNow') : tr('quota.bestNone'));
       best.forEach(({ q }, i) => bestLine.append(i ? ' · ' : '', acctTag(q, true)));
       const rows = el('div', 'qrows');
-      for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q, h.id) : quotaRow(q, h.id));
+      for (const q of h.accounts) rows.append(accountRow(q, h.id));
       section = hostSection(h, [bestLine, rows, ...facts]);
     }
     const head = section.querySelector('.host-head');
@@ -339,7 +357,7 @@ function renderQuota() {
     head.setAttribute('aria-expanded', String(expanded));
     head.tabIndex = 0;
     const toggle = () => {
-      const ids = [...h.accounts, ...bills].map((x) => `${h.id}|${x.key}`);
+      const ids = h.accounts.map((q) => `${h.id}|${q.key}`);
       if (expanded) { openHosts.delete(h.id); ids.forEach((id) => openRows.delete(id)); }
       else { openHosts.add(h.id); ids.forEach((id) => openRows.add(id)); }
       tg?.HapticFeedback?.selectionChanged?.();
@@ -350,20 +368,6 @@ function renderQuota() {
     grid.append(section);
   }
   box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
-  const idle = billing.filter((b) => !billingSessions(snapshot, b).length);
-  if (idle.length) box.append(el('div', 'section-h', tr('billing.heading')), billingRows(idle));
-}
-
-/** API balances as rows; under a host (`hostId`), each followed by that host's sessions spending it. */
-function billingRows(bills, hostId = null) {
-  const rows = el('div', 'qrows');
-  for (const b of bills) {
-    const row = el('div', 'qrow brow');
-    row.title = b.hosts.join(', ');
-    row.append(el('span', 'k', b.name), el('span', b.error ? 'muted' : 'left', b.error ?? b.amounts), el('span', 'muted', b.age));
-    rows.append(hostId === null ? row : withSessions(row, `${hostId}|${b.key}`, billingSessions(snapshot, b).filter((u) => u.hostId === hostId)));
-  }
-  return rows;
 }
 
 /** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */
@@ -390,35 +394,6 @@ function noReading(q) {
   const span = el('span', 'left', tr(reset ? 'quota.notReadSinceReset' : 'quota.noReading'));
   span.title = tr(reset ? 'quota.notReadSinceResetTitle' : 'quota.noReadingTitle');
   return span;
-}
-
-function quotaRef(q, hostId) {
-  const row = el('div', `qrow qref v-${q.verdict}${q.stale ? ' stale' : ''}`);
-  const left = q.bind ? leftCell(q.bind, q.stale, 'left') : noReading(q);
-  if (q.bind) left.textContent += ` ${tr(`quota.${pref.unit}`)}`;
-  row.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'see', tr('quota.see', { host: q.refTo })));
-  row.title = tr('quota.oneBudget', { host: q.refTo });
-  return withSessions(row, `${hostId}|${q.key}`, hostSessions(q.key, hostId));
-}
-
-/**
- * A row followed by this host's sessions on it, folded like an account row: the count shows,
- * the list opens on a tap (or with the host header). Nothing in use, the bare row.
- */
-function withSessions(row, id, using) {
-  if (!using.length) return row;
-  const open = openRows.has(id);
-  const box = el('div', 'folded');
-  const note = el('div', 'note toggle', `${tr('quota.inUse', { n: using.length })} ${open ? '⌄' : '›'}`);
-  note.setAttribute('role', 'button');
-  note.setAttribute('aria-expanded', String(open));
-  note.tabIndex = 0;
-  const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
-  note.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-  note.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
-  box.append(row, note);
-  if (open) box.append(sessionList(using));
-  return box;
 }
 
 function renderChips() {

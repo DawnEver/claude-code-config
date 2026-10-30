@@ -77,3 +77,16 @@ Local `npm run dashboard -- deploy` needs `wrangler login`. Check what is live w
 - Shared account (seat on two hosts): each host's quota row/ref lists only its own sessions.
 - Gateway (parseHostPush) drops status 'unknown' sessions: hosts on old bridge code still push them.
 - Avatars: Claude starburst / OpenAI knot / DeepSeek whale in brand colour on white (`b-<brand>`).
+
+## Architecture pass: one account model (supersedes the billing notes above)
+- Root cause of the day's churn: subscriptions and balances were two parallel models (two
+  lists, two merges, two "in use" lookups, three row renderers), attribution ran on host AND
+  page, the unknown filter ran in daemon AND gateway, and nothing rendered the page in tests.
+- Now: `accounts[]` with `kind: 'quota' | 'balance'`. Balance key = configured entry
+  `api:<provider>:<label|default>` (billing.mjs balanceKey); no key fingerprint, no
+  equal-balance merge. `accountFor(s, accounts, config.billing)` on the host is the only
+  attribution; the page only looks `session.account` up. Registry merges all kinds once;
+  `hostsView` places all kinds (full row on first host, `refTo` elsewhere); `accountRow` renders
+  all kinds, folded by default. Unknown sessions: gateway only.
+- `app-smoke.test.mjs`: fake DOM, renders every tab of the mock; catches ReferenceErrors.
+- Brand colours once in CSS vars: --claude #d97757, --codex #10a37f, --deepseek #4d6bfe.

@@ -38,7 +38,7 @@ import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
-import { BillingReader } from './billing.mjs';
+import { BalanceReader } from './billing.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
 import { ResourceReader } from './resources.mjs';
@@ -66,21 +66,20 @@ export const sessionName = (v) => { const t = typeof v === 'string' ? v.replace(
 const clock = t => new Date(t).toTimeString().slice(0, 5);
 const GB = 1024 ** 3;
 
-/**
- * The pinned card's facts beyond the state: the account the session spends (who, each window's
- * use) and this machine's load. Either is left out when unknown; observation-only sessions have
- * no account (quota.mjs accountFor).
- */
 /** The card's identity: agent, its Claude seat when not the default, or the API platform it spends, the machine. */
 export const cardWho = ({ agent, seat, provider }, machine) => `${agent}${seat ? ` ${seat}` : provider ? ` via ${provider}` : ''} on ${machine}`;
 
-export function cardDetail(s, { accounts = [], billing = [], resources = null } = {}) {
+/**
+ * The pinned card's facts beyond the state: the account the session spends (a subscription's
+ * window use, a balance's amounts) and this machine's load. Either is left out when unknown;
+ * observation-only sessions have no account (quota.mjs accountFor).
+ */
+export function cardDetail(s, { accounts = [], balanceEntries = [], resources = null } = {}) {
   const lines = [];
-  const key = accountFor(s, accounts, billing);
-  const b = billing.find(x => x.key === key);
-  if (b) lines.push(`Account: ${b.label ?? b.provider} · ${b.error ?? b.balances.map(x => `${x.amount.toFixed(2)} ${x.currency}`).join(' · ')}`);
-  const a = accounts.find(x => x.key === key);
-  if (a) {
+  const a = accounts.find(x => x.key === accountFor(s, accounts, balanceEntries));
+  if (a?.kind === 'balance') {
+    lines.push(`Account: ${[a.provider, a.label].filter(Boolean).join(' ')} · ${a.error ?? a.balances.map(x => `${x.amount.toFixed(2)} ${x.currency}`).join(' · ')}`);
+  } else if (a) {
     const used = a.windows.map(w => `${w.k} ${Math.round(w.used)}%`).join(' · ');
     lines.push(`Account: ${a.email ?? a.label ?? a.agent}${used ? ` · used ${used}` : ''}`);
   }
@@ -246,12 +245,12 @@ export class Bridge {
    * This machine's sessions for the dashboard: read-only, from the same registry and
    * adapter snapshots the status cards use. No cwd, no title: the project name stands in.
    * A Topic is listed only once Telegram confirmed it (lazy creation: many sessions have none).
-   * A session whose state is unknown is left out: nothing about it can be acted on.
+   * A session whose state is unknown is reported as such; the gateway hides it
+   * (dashboard-schema.mjs parseHostPush), the one place that covers every bridge version.
    */
   dashboardSessions() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended')
-      .map((s) => ({ s, snap: this.hosts.get(s.agent)?.statusSnapshot?.(s.id) }))
-      .filter(({ snap }) => snap?.state !== 'unknown').map(({ s, snap }) => ({
+      .map((s) => ({ s, snap: this.hosts.get(s.agent)?.statusSnapshot?.(s.id) })).map(({ s, snap }) => ({
       id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null, provider: s.provider ?? null,
       unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
       lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
@@ -953,8 +952,8 @@ export async function main() {
   const codex = new CodexAdapter({ sources: config.codexSources, localObserver: new CodexLocalObserver({ sources: config.codexSources }) });
   // The pinned card's account and load: the dashboard push's last reading, else a sample of its own.
   const resources = new ResourceReader();
-  let lastAccounts = [], lastBilling = [], lastResources = null;
-  const cardFacts = () => ({ accounts: lastAccounts, billing: lastBilling, resources: config.dashboard ? lastResources : resources.read() });
+  let lastAccounts = [], lastResources = null;
+  const cardFacts = () => ({ accounts: lastAccounts, balanceEntries: config.billing, resources: config.dashboard ? lastResources : resources.read() });
   const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, telegramEnabled: !!telegram, cardFacts,
     topicCacheFile: telegram ? path.join(BRIDGE_RUNTIME_DIR, 'topics.json') : null });
 
@@ -991,7 +990,7 @@ export async function main() {
     const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
       codexFallback: `${machine}/home-${homeKey}`,
       codexSeriesFile: account => path.join(BRIDGE_RUNTIME_DIR, `codex-usage-${homeKey}-${createHash('sha256').update(account?.email ?? 'unknown').digest('hex').slice(0, 16)}.jsonl`) });
-    const billing = new BillingReader({ entries: config.billing, log });
+    const balances = new BalanceReader({ entries: config.billing, log });
     // A dashboard edit is written to the settings file; the change check above then hands over.
     const onConfigChanges = (changes) => {
       const results = changes.map((c) => ({ id: c.id, ...applyConfigChange(c) }));
@@ -1003,8 +1002,9 @@ export async function main() {
       scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
         sources: () => usageSources(os.homedir(), { machine, codexHome }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
-      sessions: (list, bills) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, bills) })),
-      accounts: () => (lastAccounts = accounts.read()), billing: () => (lastBilling = billing.read()),
+      sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, config.billing) })),
+      // Subscriptions and API balances alike: one list of the accounts this host can read.
+      accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]),
       resources: () => { const r = (lastResources = resources.read()); usage.sample(r); return r; }, onConfigChanges });
     push.start();
     usage.start();

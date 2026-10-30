@@ -13,7 +13,7 @@ export { AGENTS, STATUSES };
 export const MAX_SESSIONS = 200;
 /** A host id is its machine name (scripts/shared/machine.mjs), bounded for the gateway. */
 export const isHostId = (id) => isValidMachineName(id) && id.length <= 64;
-/** An API platform's name as the provider catalogue spells it ('deepseek'): a billing key's prefix, a session's provider. */
+/** An API platform's name as the provider catalogue spells it ('deepseek'): a balance account's provider, a session's provider. */
 export const isProvider = (v) => typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v);
 
 const text = (v, max = 128) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
@@ -41,7 +41,7 @@ function parseSession(s) {
   const url = t && topicUrl(t.chatId, t.topicId);
   return {
     id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
-    // The API platform the session spends (billing); null = a subscription.
+    // The API platform the session spends instead of a subscription; null = a subscription.
     provider: isProvider(s.provider) ? s.provider : null,
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
     // Background tasks (shells, agents) an idle session left running.
@@ -55,7 +55,7 @@ function parseSession(s) {
   };
 }
 
-export const MAX_ACCOUNTS = 20;
+export const MAX_ACCOUNTS = 40;
 const num = (v, lo = -Infinity, hi = Infinity) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null);
 const epoch = (v) => num(v, 1e12, 1e14);   // ms, 2001..5138
 
@@ -70,27 +70,32 @@ function parseWindow(w) {
     forecast: f && typeof f === 'object' ? { atReset: num(f.atReset, 0, 100000), eta: epoch(f.eta), short: f.short === true } : null };
 }
 
-/** One account's quota: identity, seat checks, windows, resets to act on. */
+/**
+ * One account a session can spend: a subscription (`kind: 'quota'`: identity, seat checks,
+ * windows, resets to act on) or an API platform balance (`kind: 'balance'`).
+ */
 function parseAccount(a) {
+  return a?.kind === 'balance' ? parseBalance(a) : parseQuota(a);
+}
+
+function parseQuota(a) {
   const key = text(a?.key, 200);
   if (!key || !AGENTS.includes(a.agent)) return null;
   const rc = a.resetCredits;
   const ex = a.extraReset;
   const url = typeof ex?.url === 'string' && /^https:\/\/[^\s"<>]{1,300}$/.test(ex.url) ? ex.url : null;
-  return { key, agent: a.agent, label: text(a.label, 64), email: text(a.email, 200), detail: text(a.detail, 200),
+  return { key, kind: 'quota', agent: a.agent, label: text(a.label, 64), email: text(a.email, 200), detail: text(a.detail, 200),
     problems: (Array.isArray(a.problems) ? a.problems : []).map((p) => text(p, 200)).filter(Boolean).slice(0, 5),
     at: epoch(a.at), windows: (Array.isArray(a.windows) ? a.windows : []).slice(0, 4).map(parseWindow).filter(Boolean),
     resetCredits: num(rc?.count, 1, 1000) ? { count: rc.count, expiries: (Array.isArray(rc.expiries) ? rc.expiries : []).slice(0, 10).map((x) => (x === null ? null : epoch(x))) } : null,
     extraReset: ex && typeof ex === 'object' ? { at: epoch(ex.at), url } : null };
 }
 
-export const MAX_BILLING = 20;
-
-/** One API platform account's balance (scripts/bridge/billing.mjs): identity, amounts per currency, or its error. */
-function parseBilling(b) {
-  const key = typeof b?.key === 'string' && /^[a-z0-9-]{1,32}:[a-f0-9]{12}$/.test(b.key) ? b.key : null;
-  if (!key || !epoch(b.at)) return null;
-  return { key, provider: key.split(':')[0], label: text(b.label, 64), at: b.at, error: text(b.error, 200),
+/** An API platform balance (scripts/bridge/billing.mjs): its configured entry, amounts per currency, or its error. */
+function parseBalance(b) {
+  const m = typeof b.key === 'string' ? /^api:([a-z0-9-]{1,32}):([^\s:]{1,64})$/.exec(b.key) : null;
+  if (!m || m[1] !== b.provider || !epoch(b.at)) return null;
+  return { key: b.key, kind: 'balance', provider: b.provider, label: text(b.label, 64), at: b.at, error: text(b.error, 200),
     balances: (Array.isArray(b.balances) ? b.balances : []).slice(0, 4)
       .filter((x) => /^[A-Z]{3}$/.test(x?.currency) && num(x.amount, -1e9, 1e9) !== null).map((x) => ({ currency: x.currency, amount: x.amount })) };
 }
@@ -121,7 +126,7 @@ function parseConfigSummary(c) {
 const CHANGE_ID = /^[a-f0-9]{16,32}$/;
 const parseResult = (r) => (r && CHANGE_ID.test(r.id) ? { id: r.id, ok: r.ok === true, error: r.ok === true ? null : text(r.error, 200) ?? 'failed' } : null);
 
-/** A host's POST body -> {bootAt, seq, sessions, accounts, billing, resources, config, configResults} or null. Unknown session entries are dropped, not fatal. */
+/** A host's POST body -> {bootAt, seq, sessions, accounts, resources, config, configResults} or null. Unknown session entries are dropped, not fatal. */
 export function parseHostPush(body) {
   if (!body || body.schemaVersion !== SCHEMA_VERSION || !Array.isArray(body.sessions)) return null;
   if (!Number.isSafeInteger(body.bootAt) || body.bootAt < 1 || !Number.isSafeInteger(body.seq) || body.seq < 1) return null;
@@ -134,8 +139,7 @@ export function parseHostPush(body) {
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
-  const billing = (Array.isArray(body.billing) ? body.billing : []).slice(0, MAX_BILLING).map(parseBilling).filter(Boolean);
-  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, billing, resources: parseResources(body.resources), config: parseConfigSummary(body.config),
+  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, resources: parseResources(body.resources), config: parseConfigSummary(body.config),
     configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean) };
 }
 
