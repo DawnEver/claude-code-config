@@ -91,7 +91,9 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now(),
   const costWhere = [
     ...(sel.model ? [`c.model IN (${ins(filter.model)})`] : []),
     ...(sel.machine ? [`c.machine IN (${ins(filter.machine)})`] : []),
-    ...(sel.project ? [`EXISTS (SELECT 1 FROM turns p WHERE p.agent = c.agent AND p.session = c.session AND COALESCE(p.project, '') IN (${ins(filter.project)}))`] : []),
+    // The price's own model and machine in that project, not any turn of its session.
+    ...(sel.project ? [`EXISTS (SELECT 1 FROM turns p WHERE p.agent = c.agent AND p.session = c.session AND p.model = c.model
+      AND p.machine = c.machine AND COALESCE(p.project, '') IN (${ins(filter.project)}))`] : []),
   ];
   const [hours, cost] = await Promise.all([
     all('SELECT * FROM usage_hours WHERE hour > ?', since - 3600000),

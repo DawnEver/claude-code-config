@@ -329,6 +329,13 @@ test('store: a filter narrows series, totals and cost; each list is a facet of t
   assert.deepEqual(none.projects.find((x) => x.k === null), { ...none.projects.find((x) => x.k === null), selected: true }, 'the no-project bucket is selectable');
   const gone = await report(db, { days: 7, now, filter: { model: ['m1'], machine: ['host-b'] } });
   assert.deepEqual(gone.models.find((x) => x.k === 'm1').output, 0, 'a pick with no use under the other filters lists at zero');
+
+  // One session, two models in two projects: a project filter prices only its own model's share.
+  const mixed = [turnRow({ session: 'X', turn: 'x1', project: 'p1', model: 'm1', ...at }), turnRow({ session: 'X', turn: 'x2', project: 'p2', model: 'm2', ...at })];
+  await ingest(db, 'host-a', { turns: mixed, quota: [], resources: [], costs: [
+    { agent: 'claude', session: 'X', model: 'm1', cost_usd: 1 }, { agent: 'claude', session: 'X', model: 'm2', cost_usd: 9 }] });
+  assert.equal((await report(db, { days: 7, now, filter: { project: ['p1'], model: ['m2'] } })).costUsd, 40, 'session c only: X ran m2 in p2, not p1');
+  assert.equal((await report(db, { days: 7, now, filter: { project: ['p2'] } })).costUsd, 9 + 20);
 });
 
 test('store: usage_hours always equals turns grouped by hour, through grow, move, re-send and delete', async () => {

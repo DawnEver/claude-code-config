@@ -25,3 +25,6 @@ export const STATUSES = Object.keys(STATUS);
 
 /** A quota reading older than this is a floor on use and is never projected from. */
 export const QUOTA_STALE_MS = 15 * 60000;
+
+/** The Usage tab's filter: at most this many selected values per dimension (the page stops there, the API refuses more). */
+export const USAGE_FILTER_MAX = 20;

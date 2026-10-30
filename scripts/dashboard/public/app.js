@@ -5,6 +5,7 @@
 
 import { GROUPS, accountSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, billingView, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
+import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 
@@ -69,7 +70,7 @@ let usageDays = USAGE_RANGES.includes(Number(store.get('dashboard.usageDays'))) 
 let usage = null;        // {key, report, at} | {key, error, at}
 // The Usage filter: selected values per dimension ('' = no project); kept per device.
 const USAGE_DIMS = { project: 'projects', model: 'models', machine: 'machines' };
-let usageFilter = (() => { try { const f = JSON.parse(store.get('dashboard.usageFilter') ?? '{}'); return Object.fromEntries(Object.keys(USAGE_DIMS).map((d) => [d, Array.isArray(f[d]) ? f[d].map(String) : []])); } catch { return { project: [], model: [], machine: [] }; } })();
+let usageFilter = (() => { try { const f = JSON.parse(store.get('dashboard.usageFilter') ?? '{}'); return Object.fromEntries(Object.keys(USAGE_DIMS).map((d) => [d, Array.isArray(f[d]) ? f[d].map(String).slice(0, USAGE_FILTER_MAX) : []])); } catch { return { project: [], model: [], machine: [] }; } })();
 const usageKey = () => JSON.stringify([usageDays, usageFilter]);
 let usageLoading = false;
 let configShown = null;   // the config view last rendered (JSON)
@@ -662,6 +663,8 @@ async function fetchUsage(force = false) {
 /** Select or unselect one value of a dimension, then refetch. */
 function toggleUsage(dim, value) {
   const vs = usageFilter[dim];
+  // The API refuses more than USAGE_FILTER_MAX values in a dimension: a further pick is not taken.
+  if (!vs.includes(value) && vs.length >= USAGE_FILTER_MAX) { tg?.HapticFeedback?.notificationOccurred?.('error'); return; }
   usageFilter = { ...usageFilter, [dim]: vs.includes(value) ? vs.filter((v) => v !== value) : [...vs, value] };
   store.set('dashboard.usageFilter', JSON.stringify(usageFilter));
   tg?.HapticFeedback?.selectionChanged?.();

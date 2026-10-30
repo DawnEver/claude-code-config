@@ -697,7 +697,7 @@ test('usage report: the filter is part of the held key, in any order; values are
   await g.req('/api/usage?days=7&model=m1', await asViewer(ALICE));
   assert.ok(reads > once, 'another filter reads');
   const many = Array.from({ length: 30 }, (_, i) => `machine=h${i}`).join('&');
-  assert.equal((await (await g.req(`/api/usage?days=7&${many}`, await asViewer(ALICE))).json()).filter.machine.length, 20);
+  assert.equal((await g.req(`/api/usage?days=7&${many}`, await asViewer(ALICE))).status, 400, 'an oversized filter is refused, not cut');
   assert.ok(last.sql.includes('?'), 'values are bound, never spliced into SQL');
 });
 

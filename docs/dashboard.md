@@ -116,7 +116,7 @@ only the selection, at any range. Several values of one list combine as any-of, 
 different lists as all-of (e.g. one model on one machine in two projects). Each list is
 computed under the other lists' selections only, so it keeps offering what could be added, and
 a selected value always stays listed (at zero if nothing matches). `GET /api/usage?days=7&project=a&model=m`
-(repeat a key for several values, at most 20 each; `project=` is the no-project bucket); each
+(repeat a key for several values, at most `USAGE_FILTER_MAX` (20) each, more is a 400; `project=` is the no-project bucket); each
 filter is held `REPORT_TTL_MS` like a range. The selection is kept per device. Demo mode shows
 masked names, so its rows do not filter.
 

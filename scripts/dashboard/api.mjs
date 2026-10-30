@@ -5,6 +5,7 @@ import { SCHEMA_VERSION, isHostId, parseConfigChange, parseHostPush } from '../s
 import { Registry } from './registry.mjs';
 import { TELEGRAM_PUBLIC_KEY, verifyHostToken, verifyInitData } from './auth.mjs';
 import { parseUsageBatch } from '../shared/usage-schema.mjs';
+import { USAGE_FILTER_MAX } from './public/shared/vocab.mjs';
 import { FILTER_DIMS, ingest, query, report } from './usage-store.mjs';
 
 const MAX_BODY = 256 * 1024;
@@ -120,8 +121,10 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       if (!db) return error(503, 'no_usage_store');
       const days = Math.min(366, Math.max(1, Number(url.searchParams.get('days')) || 30));
       const tz = Math.min(840, Math.max(-720, Number(url.searchParams.get('tz')) || 0));
-      // ?project=a&project=b&model=…: up to 20 values per dimension; '' is the no-project bucket.
-      const filter = Object.fromEntries(FILTER_DIMS.map((d) => [d, [...new Set(url.searchParams.getAll(d).map((v) => v.slice(0, 200)))].slice(0, 20).sort()]));
+      // ?project=a&project=b&model=…: '' is the no-project bucket. More than USAGE_FILTER_MAX values
+      // in a dimension is refused, not cut: a cut filter would report less than was asked for.
+      const filter = Object.fromEntries(FILTER_DIMS.map((d) => [d, [...new Set(url.searchParams.getAll(d).map((v) => v.slice(0, 200)))].sort()]));
+      if (FILTER_DIMS.some((d) => filter[d].length > USAGE_FILTER_MAX)) return error(400, 'filter_too_large');
       const key = JSON.stringify([days, tz, filter]);
       const held = reports.get(key);
       if (held && now() - held.at < REPORT_TTL_MS) return json(200, held.value);
