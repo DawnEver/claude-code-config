@@ -479,10 +479,14 @@ export function codeView(snapshot, days, now = Date.now()) {
     });
   const attention = [];
   for (const r of repos) {
-    if (r.mainCi === 'failure') attention.push({ kind: 'main-failing', repo: r, branch: r.defaultBranch });
+    // A failing default branch is one item, with the sessions on it: not a second "session" item.
+    if (r.mainCi === 'failure') attention.push({ kind: 'main-failing', repo: r, branch: r.defaultBranch,
+      sessions: r.branches.find((x) => x.name === r.defaultBranch)?.sessions ?? [] });
     for (const p of r.pulls) if (p.ci === 'failure') attention.push({ kind: 'pr-failing', repo: r, pull: p });
     for (const p of r.pulls) if (p.conflict) attention.push({ kind: 'pr-conflict', repo: r, pull: p });
-    for (const b of r.branches) if (b.ci === 'failure' && b.sessions.length) attention.push({ kind: 'session-failing', repo: r, branch: b.name, sessions: b.sessions });
+    for (const b of r.branches) {
+      if (b.ci === 'failure' && b.sessions.length && b.name !== r.defaultBranch) attention.push({ kind: 'session-failing', repo: r, branch: b.name, sessions: b.sessions });
+    }
   }
   const ORDER = ['main-failing', 'pr-failing', 'pr-conflict', 'session-failing'];
   attention.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));

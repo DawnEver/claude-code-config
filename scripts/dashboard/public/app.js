@@ -841,7 +841,7 @@ function repoRow(r) {
     name: el('span', 'agent', r.name), headline: head,
     open: () => [repoDetail(r)],
     meta: [r.forge === 'github' ? 'GitHub' : 'Gitea', tr('code.pulls', { n: r.pulls.length }), tr('code.branches', { n: r.branches.length }),
-      working && tr('quota.inUse', { n: working }), timeAgo(r.pushedAt) && tr('code.pushed', { ago: timeAgo(r.pushedAt) })],
+      working && tr('code.working', { n: working }), timeAgo(r.pushedAt) && tr('code.pushed', { ago: timeAgo(r.pushedAt) })],
     warns: r.error ? [r.error] : [],
   });
 }

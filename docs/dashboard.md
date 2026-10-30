@@ -194,10 +194,10 @@ carries Codex's own `modelProvider` (`openai` = the subscription). Its pinned ca
 **A balance account is its configured entry**, declared once in the shared settings — never a key:
 
 ```json
-"bridge": { "billing": [{ "provider": "deepseek" }, { "provider": "deepseek", "label": "lab", "keyUsername": "api-key-lab" }] }
+"bridge": { "balances": [{ "provider": "deepseek" }, { "provider": "deepseek", "label": "lab", "keyUsername": "api-key-lab" }] }
 ```
 
-Its key is `api:<provider>:<label|default>` (`billing.mjs balanceKey`), so every host reading it,
+Its key is `api:<provider>:<label|default>` (`balances.mjs balanceKey`), so every host reading it,
 whatever key it holds, reports the same account, and a host without the key still attributes
 its sessions to it. An API-key session spends its provider's unlabelled entry. Each host holding
 the key (the git credential store; `keyUsername` defaults to the provider's session username in

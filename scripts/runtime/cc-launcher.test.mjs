@@ -156,8 +156,8 @@ function bridgeFixture(botToken) {
 
 test('bridge: a configured bot token loads the session-bridge channel on official Claude', () => {
   const { shared, local } = bridgeFixture('123:abc');
-  const { args } = buildClaudeInvocation({ provider: null, extraArgs: ['-c'], envSettingsPath: shared, localPath: local });
-  assert.deepEqual(args, [...CHANNEL_ARGS, '-c']);
+  const { args } = buildClaudeInvocation({ provider: null, extraArgs: ['--verbose'], envSettingsPath: shared, localPath: local });
+  assert.deepEqual(args, [...CHANNEL_ARGS, '--verbose']);
 });
 
 test('bridge: no bot token -> no channel flag', () => {

@@ -38,7 +38,7 @@ import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
-import { BalanceReader } from './billing.mjs';
+import { BalanceReader } from './balances.mjs';
 import { ForgeReader } from './forges.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
@@ -954,7 +954,7 @@ export async function main() {
   // The pinned card's account and load: the dashboard push's last reading, else a sample of its own.
   const resources = new ResourceReader();
   let lastAccounts = [], lastResources = null;
-  const cardFacts = () => ({ accounts: lastAccounts, balanceEntries: config.billing, resources: config.dashboard ? lastResources : resources.read() });
+  const cardFacts = () => ({ accounts: lastAccounts, balanceEntries: config.balances, resources: config.dashboard ? lastResources : resources.read() });
   const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, telegramEnabled: !!telegram, cardFacts,
     topicCacheFile: telegram ? path.join(BRIDGE_RUNTIME_DIR, 'topics.json') : null });
 
@@ -991,7 +991,7 @@ export async function main() {
     const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
       codexFallback: `${machine}/home-${homeKey}`,
       codexSeriesFile: account => path.join(BRIDGE_RUNTIME_DIR, `codex-usage-${homeKey}-${createHash('sha256').update(account?.email ?? 'unknown').digest('hex').slice(0, 16)}.jsonl`) });
-    const balances = new BalanceReader({ entries: config.billing, log });
+    const balances = new BalanceReader({ entries: config.balances, log });
     // The code forges this host can reach (Code tab): its own tokens, read every few minutes.
     const forges = new ForgeReader({ sources: config.forges, log });
     // A dashboard edit is written to the settings file; the change check above then hands over.
@@ -1005,7 +1005,7 @@ export async function main() {
       scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
         sources: () => usageSources(os.homedir(), { machine, codexHome }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
-      sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, config.billing) })),
+      sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, config.balances) })),
       // Subscriptions and API balances alike: one list of the accounts this host can read.
       accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]), repos: () => forges.reading(),
       resources: () => { const r = (lastResources = resources.read()); usage.sample(r); return r; }, onConfigChanges });

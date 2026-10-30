@@ -71,7 +71,8 @@ test('gitea: REST per repo — branches newest first, open PRs, each head\'s com
 test('a forge this host cannot reach or has no token for reports nothing; a failing repo reports its error', async () => {
   const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'] };
   assert.deepEqual(await readSource(src, { token: null, fetch: async () => { throw new Error('unreachable'); }, now: () => NOW }), []);
-  assert.deepEqual(await readSource(src, { token: 't', fetch: async () => { throw new Error('ENOTFOUND'); }, now: () => NOW }), [], 'unreachable: not this host\'s to report');
+  assert.deepEqual(await readSource(src, { token: 't', fetch: async () => { throw new TypeError('fetch failed'); }, now: () => NOW }), [], 'unreachable: not this host\'s to report');
+  await assert.rejects(readSource(src, { token: 't', fetch: async () => { throw new RangeError('a bug'); }, now: () => NOW }), /a bug/, 'a fault is said, not hidden');
   const [r] = await readSource(src, { token: 't', fetch: async () => ({ ok: false, status: 500 }), now: () => NOW });
   assert.deepEqual([r.key, r.error], ['git.example.org/team/a', 'HTTP 500']);
 });

@@ -37,7 +37,7 @@ const TABLE = {
 
   // Tabs
   'tab.sessions': { en: 'Sessions', zh: '会话' },
-  'tab.quota': { en: 'Quota', zh: '额度' },
+  'tab.quota': { en: 'Accounts', zh: '账户' },
   'tab.usage': { en: 'Usage', zh: '用量' },
   'tab.code': { en: 'Code', zh: '代码' },
   'tab.events': { en: 'Events', zh: '事件' },
@@ -85,7 +85,7 @@ const TABLE = {
   'fact.off': { en: 'off', zh: '关' },
 
   // Quota
-  'quota.heading': { en: (v) => `Quota ${v.unit === 'left' ? 'left' : 'used'}`, zh: (v) => `额度（${v.unit === 'left' ? '剩余' : '已用'}）` },
+  'quota.heading': { en: (v) => `Accounts · quota ${v.unit === 'left' ? 'left' : 'used'} · balances`, zh: (v) => `账户 · 额度${v.unit === 'left' ? '剩余' : '已用'} · 余额` },
   'quota.left': { en: 'left', zh: '剩余' },
   'quota.used': { en: 'used', zh: '已用' },
   'quota.noAccounts': { en: 'No accounts', zh: '没有账号' },
@@ -126,6 +126,7 @@ const TABLE = {
   'code.pushed': { en: (v) => `pushed ${v.ago}`, zh: (v) => `推送于 ${v.ago}` },
   'code.pulls': { en: (v) => plural(v.n, 'PR'), zh: (v) => `${v.n} 个 PR` },
   'code.branches': { en: (v) => plural(v.n, 'branch', 'branches'), zh: (v) => `${v.n} 个分支` },
+  'code.working': { en: (v) => `${plural(v.n, 'session')} working`, zh: (v) => `${v.n} 个会话在工作` },
   'code.openPulls': { en: 'Open pull requests', zh: '打开的 PR' },
   'code.activeBranches': { en: 'Branches', zh: '分支' },
   'code.draft': { en: 'draft', zh: '草稿' },

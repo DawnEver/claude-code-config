@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BalanceReader, balanceKeyFor, billingEntries, readAccount } from './billing.mjs';
+import { BalanceReader, balanceKeyFor, balanceEntries, readAccount } from './balances.mjs';
 import { parseHostPush, SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 import { balanceView } from '../dashboard/public/view.mjs';
 
@@ -8,7 +8,7 @@ const cache = { providers: { deepseek: { host: 'api.deepseek.com', key_usernames
 const getKey = ({ host }) => (host === 'api.deepseek.com' ? { key: 'sk-test' } : { error: 'none' });
 const deepseekBody = { is_available: true, balance_infos: [{ currency: 'CNY', total_balance: '457.22' }, { currency: 'USD', total_balance: '2.00' }] };
 
-test('billing: a DeepSeek balance per currency is a balance account keyed by its configured entry; the key never leaves', async () => {
+test('balances: a DeepSeek balance per currency is a balance account keyed by its configured entry; the key never leaves', async () => {
   const calls = [];
   const fetch = async (url, opts) => { calls.push([url, opts.headers.Authorization]); return { ok: true, json: async () => deepseekBody }; };
   const a = await readAccount({ provider: 'deepseek', label: null, keyUsername: null }, { cache, getKey, fetch, now: () => 1.7e12 });
@@ -21,7 +21,7 @@ test('billing: a DeepSeek balance per currency is a balance account keyed by its
   assert.ok(!JSON.stringify(a).includes('sk-test'));
 });
 
-test('billing: no key on this host is no entry; an HTTP failure or a provider without a reader is an error', async () => {
+test('balances: no key on this host is no entry; an HTTP failure or a provider without a reader is an error', async () => {
   assert.equal(await readAccount({ provider: 'openai' }, { cache, getKey }), null);
   assert.equal(await readAccount({ provider: 'nope' }, { cache, getKey }), null);
   const failed = await readAccount({ provider: 'deepseek' }, { cache, getKey, fetch: async () => ({ ok: false, status: 401 }) });
@@ -30,8 +30,8 @@ test('billing: no key on this host is no entry; an HTTP failure or a provider wi
   assert.equal(unsupported.error, 'no balance API');
 });
 
-test('billing: entries validated; the reader refreshes in the background at most every interval', async () => {
-  assert.deepEqual(billingEntries([{ provider: 'deepseek', label: 'main' }, { label: 'x' }, null]), [{ provider: 'deepseek', label: 'main', keyUsername: null }]);
+test('balances: entries validated; the reader refreshes in the background at most every interval', async () => {
+  assert.deepEqual(balanceEntries([{ provider: 'deepseek', label: 'main' }, { label: 'x' }, null]), [{ provider: 'deepseek', label: 'main', keyUsername: null }]);
   let t = 0, reads = 0;
   const r = new BalanceReader({ entries: [{ provider: 'deepseek' }], everyMs: 1000, now: () => t, readCache: () => cache,
     readOne: async () => { reads++; return { key: 'api:deepseek:default', kind: 'balance', provider: 'deepseek', label: null, at: 1.7e12, balances: [] }; } });
@@ -44,7 +44,7 @@ test('billing: entries validated; the reader refreshes in the background at most
   assert.deepEqual(new BalanceReader({}).read(), [], 'nothing configured: nothing read');
 });
 
-test('billing: a balance rides the push as an account; the schema bounds it and the view formats amounts', () => {
+test('balances: a balance rides the push as an account; the schema bounds it and the view formats amounts', () => {
   const base = { schemaVersion: SCHEMA_VERSION, bootAt: 1, seq: 1, sessions: [] };
   const balance = (key, extra = {}) => ({ key, kind: 'balance', provider: 'deepseek', at: 1.7e12, ...extra });
   const p = parseHostPush({ ...base, accounts: [balance('api:deepseek:default', { balances: [{ currency: 'CNY', amount: 457.22 }, { currency: 'bad', amount: 1 }] }),

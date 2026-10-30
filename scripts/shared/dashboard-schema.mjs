@@ -95,7 +95,7 @@ function parseQuota(a) {
     extraReset: ex && typeof ex === 'object' ? { at: epoch(ex.at), url } : null };
 }
 
-/** An API platform balance (scripts/bridge/billing.mjs): its configured entry, amounts per currency, or its error. */
+/** An API platform balance (scripts/bridge/balances.mjs): its configured entry, amounts per currency, or its error. */
 function parseBalance(b) {
   const m = typeof b.key === 'string' ? /^api:([a-z0-9-]{1,32}):([^\s:]{1,64})$/.exec(b.key) : null;
   if (!m || m[1] !== b.provider || !epoch(b.at)) return null;

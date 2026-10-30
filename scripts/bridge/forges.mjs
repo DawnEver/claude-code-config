@@ -37,6 +37,9 @@ const CI = { SUCCESS: 'success', success: 'success', FAILURE: 'failure', ERROR: 
 const ciState = (s) => CI[s] ?? null;
 const REVIEW = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQUIRED: 'required' };
 
+/** A network failure or timeout (Node's fetch: TypeError 'fetch failed'; AbortSignal.timeout: TimeoutError). */
+const unreachable = (e) => e?.name === 'TimeoutError' || e?.name === 'AbortError' || (e instanceof TypeError && e.message === 'fetch failed');
+
 /** A request that throws on a network failure (this host cannot reach the forge) and on an HTTP error. */
 async function getJson(fetch, url, token, init = {}) {
   const res = await fetch(url, { ...init, headers: { Accept: 'application/json', Authorization: `${init.scheme ?? 'Bearer'} ${token}`, ...init.headers },
@@ -47,7 +50,8 @@ async function getJson(fetch, url, token, init = {}) {
 
 const GITHUB_QUERY = `query($login: String!, $after: String) { repositoryOwner(login: $login) { repositories(first: 50, after: $after, orderBy: {field: PUSHED_AT, direction: DESC}) {
   pageInfo { hasNextPage endCursor }
-  nodes { name url isPrivate isArchived pushedAt defaultBranchRef { name }
+  nodes { name url isPrivate isArchived pushedAt
+    defaultBranchRef { name target { ... on Commit { oid committedDate author { name user { login } } statusCheckRollup { state } } } }
     refs(refPrefix: "refs/heads/", first: ${MAX_BRANCHES}, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) { nodes { name
       target { ... on Commit { oid committedDate author { name user { login } } statusCheckRollup { state } } } } }
     pullRequests(states: OPEN, first: ${MAX_PULLS}, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title url isDraft author { login }
@@ -90,8 +94,10 @@ const ADAPTERS = {
     for (const full of names) {
       try {
         const r = await get(`/repos/${full}`);
+        // The newest branches, and the default branch however old: its CI is the repo's headline.
         const branches = (await get(`/repos/${full}/branches?limit=50`))
-          .sort((a, b) => Date.parse(b.commit?.timestamp) - Date.parse(a.commit?.timestamp)).slice(0, MAX_BRANCHES);
+          .sort((a, b) => Date.parse(b.commit?.timestamp) - Date.parse(a.commit?.timestamp))
+          .filter((b, i) => i < MAX_BRANCHES || b.name === r.default_branch);
         const pulls = (await get(`/repos/${full}/pulls?state=open&limit=${MAX_PULLS}`)).slice(0, MAX_PULLS);
         const status = new Map();
         for (const sha of new Set([...branches.map((b) => b.commit?.id), ...pulls.map((p) => p.head?.sha)].filter(Boolean))) {
@@ -105,7 +111,7 @@ const ADAPTERS = {
             author: p.user?.login ?? null, head: p.head?.ref ?? null, base: p.base?.ref ?? null, review: null,
             conflict: p.mergeable === false, ci: status.get(p.head?.sha) ?? null, updatedAt: p.updated_at })) });
       } catch (e) {
-        if (!e.http) throw e;
+        if (!e.http) throw e;   // unreachable or a fault: the source decides
         out.push({ key: repoKey(`${src.base}/${full}`), forge: 'gitea', name: full, url: `${src.base}/${full}`, private: null,
           defaultBranch: null, pushedAt: null, at: now(), error: e.message, branches: [], pulls: [] });
       }
@@ -118,8 +124,9 @@ function githubRepo(r, at) {
   const ci = (c) => ciState(c?.statusCheckRollup?.state);
   return { key: repoKey(r.url), forge: 'github', name: new URL(r.url).pathname.slice(1), url: r.url, private: r.isPrivate,
     defaultBranch: r.defaultBranchRef?.name ?? null, pushedAt: r.pushedAt, at, error: null,
-    branches: r.refs.nodes.map((b) => ({ name: b.name, sha: b.target?.oid ?? null, at: b.target?.committedDate ?? null,
-      author: b.target?.author?.user?.login ?? b.target?.author?.name ?? null, ci: ci(b.target) })),
+    // The newest branches, and the default branch however old: its CI is the repo's headline.
+    branches: [...r.refs.nodes, ...(r.defaultBranchRef && !r.refs.nodes.some((b) => b.name === r.defaultBranchRef.name) ? [r.defaultBranchRef] : [])].map((b) => ({ name: b.name, sha: b.target?.oid ?? null, at: b.target?.committedDate ?? null,
+      author: b.target?.author?.user?.login ?? b.target?.author?.name ?? null, ci: ci(b.target) })).sort((x, y) => String(y.at).localeCompare(String(x.at))),
     pulls: r.pullRequests.nodes.map((p) => ({ number: p.number, title: p.title, url: p.url, draft: p.isDraft, author: p.author?.login ?? null,
       head: p.headRefName, base: p.baseRefName, review: REVIEW[p.reviewDecision] ?? null, conflict: p.mergeable === 'CONFLICTING',
       ci: ci(p.commits?.nodes?.[0]?.commit), updatedAt: p.updatedAt })) };
@@ -133,7 +140,9 @@ export async function readSource(src, { token, fetch = globalThis.fetch, now = D
   if (!token) return [];
   try { return await ADAPTERS[src.kind](src, { token, fetch, now }); }
   catch (e) {
-    if (!e.http) return [];
+    // A forge this host cannot reach is not its to report; any other fault is a bug, and is said.
+    if (unreachable(e)) return [];
+    if (!e.http) throw e;
     return src.repos.map((full) => ({ key: repoKey(`${src.base}/${full}`), forge: src.kind, name: full, url: `${src.base}/${full}`, private: null,
       defaultBranch: null, pushedAt: null, at: now(), error: e.message, branches: [], pulls: [] }));
   }

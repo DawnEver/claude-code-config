@@ -1,7 +1,7 @@
-// scripts/bridge/billing.mjs — API platform balances as dashboard accounts (docs/dashboard.md "Accounts").
+// scripts/bridge/balances.mjs — API platform balances as dashboard accounts (docs/dashboard.md "Accounts").
 //
-// A billing account is a provider plus the credential it is read with: declared in the shared
-// settings as `bridge.billing: [{provider, label?, keyUsername?}]`, never with a key. The key is
+// A balance account is a provider plus the credential it is read with: declared in the shared
+// settings as `bridge.balances: [{provider, label?, keyUsername?}]`, never with a key. The key is
 // the provider's session key from the git credential store (scripts/shared/credential-key.mjs),
 // its host from ai-lab's provider cache; a host without the key reports nothing for it.
 // Each provider is one reader below: (key) -> {balances: [{currency, amount}]}. A provider with
@@ -41,7 +41,7 @@ export function balanceKeyFor(provider, entries) {
 }
 
 /** The configured entries, valid ones only. */
-export function billingEntries(raw) {
+export function balanceEntries(raw) {
   return (Array.isArray(raw) ? raw : []).filter((e) => typeof e?.provider === 'string')
     .map((e) => ({ provider: e.provider, label: typeof e.label === 'string' ? e.label : null,
       keyUsername: typeof e.keyUsername === 'string' ? e.keyUsername : null }));

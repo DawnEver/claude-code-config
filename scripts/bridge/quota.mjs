@@ -16,7 +16,7 @@
 import fs from 'fs';
 import os from 'os';
 import { readBridgeConfig } from './context.mjs';
-import { balanceKeyFor } from './billing.mjs';
+import { balanceKeyFor } from './balances.mjs';
 import { fetchExtraResets } from './extra-resets.mjs';
 import { burn, readSeries, recordSample } from './quota-series.mjs';
 import { QUOTA_STALE_MS } from '../dashboard/public/shared/vocab.mjs';
@@ -220,7 +220,7 @@ export function accountModels({ machine, seats, codexAccount, claude = [], codex
  * The account a session of this machine spends: a Claude session by the config dir it runs in
  * (`seat`: its alias, null for the base dir), a Codex session by the shared app-server's one
  * account, an API-key session (ccds, cods: `provider`) by its platform's configured balance
- * entry (`bridge.billing`) — never the subscription beside it, and whether or not this host can
+ * entry (`bridge.balances`) — never the subscription beside it, and whether or not this host can
  * read that balance. `aliases` is local knowledge only: the dashboard schema never forwards it.
  */
 export function accountFor(session, accounts, balanceEntries = []) {

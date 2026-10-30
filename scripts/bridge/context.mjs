@@ -10,7 +10,7 @@ import path from 'path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'child_process';
-import { billingEntries } from './billing.mjs';
+import { balanceEntries } from './balances.mjs';
 import { forgeSources } from './forges.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
 import { readMergedEnvSettings, ENV_SETTINGS_PATH, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
@@ -73,7 +73,7 @@ export function readBridgeConfig({ sharedPath = ENV_SETTINGS_PATH, localPath = L
     deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
     codexSources: Array.isArray(b.codexSources) ? b.codexSources.filter((s) => typeof s === 'string') : BRIDGE_DEFAULTS.codexSources,
     ...dashboardConfig(b.dashboard, localBridge(localPath).dashboard?.hostToken),
-    billing: billingEntries(b.billing),
+    balances: balanceEntries(b.balances),
     forges: forgeSources(b.forges),
     projects,
   };
