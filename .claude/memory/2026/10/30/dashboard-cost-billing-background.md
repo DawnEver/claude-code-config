@@ -69,3 +69,11 @@ Local `npm run dashboard -- deploy` needs `wrangler login`. Check what is live w
 - Quota tab: a balance sits under each host whose sessions spend it; unused ones at the bottom.
 - Avatars: platform marks from Simple Icons in `public/logos.mjs` (path data only, built via DOM).
 - Deploy: CF token "Edit Cloudflare Workers" got Account → D1 → Edit on 10-30; CI deploys again.
+
+## Later fixes (same day)
+- A stray `box.append(..., rows)` in renderQuota threw after Quota drew, so Sessions stayed blank.
+  render() now isolates each view (`isolated(fn)`); a one-tab fault cannot blank the others.
+  The static "every script parses" test cannot catch a ReferenceError: no DOM test exists.
+- Shared account (seat on two hosts): each host's quota row/ref lists only its own sessions.
+- Gateway (parseHostPush) drops status 'unknown' sessions: hosts on old bridge code still push them.
+- Avatars: Claude starburst / OpenAI knot / DeepSeek whale in brand colour on white (`b-<brand>`).
