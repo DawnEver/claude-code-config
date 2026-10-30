@@ -78,6 +78,17 @@ function parseAccount(a) {
     extraReset: ex && typeof ex === 'object' ? { at: epoch(ex.at), url } : null };
 }
 
+export const MAX_BILLING = 20;
+
+/** One API platform account's balance (scripts/bridge/billing.mjs): identity, amounts per currency, or its error. */
+function parseBilling(b) {
+  const key = typeof b?.key === 'string' && /^[a-z0-9-]{1,32}:[a-f0-9]{12}$/.test(b.key) ? b.key : null;
+  if (!key || !epoch(b.at)) return null;
+  return { key, provider: key.split(':')[0], label: text(b.label, 64), at: b.at, error: text(b.error, 200),
+    balances: (Array.isArray(b.balances) ? b.balances : []).slice(0, 4)
+      .filter((x) => /^[A-Z]{3}$/.test(x?.currency) && num(x.amount, -1e9, 1e9) !== null).map((x) => ({ currency: x.currency, amount: x.amount })) };
+}
+
 /** A host's load (scripts/bridge/resources.mjs): CPU %, memory and each GPU, numbers and a GPU model name only. */
 function parseResources(r) {
   if (!r || typeof r !== 'object') return null;
@@ -104,7 +115,7 @@ function parseConfigSummary(c) {
 const CHANGE_ID = /^[a-f0-9]{16,32}$/;
 const parseResult = (r) => (r && CHANGE_ID.test(r.id) ? { id: r.id, ok: r.ok === true, error: r.ok === true ? null : text(r.error, 200) ?? 'failed' } : null);
 
-/** A host's POST body -> {bootAt, seq, sessions, accounts, resources, config, configResults} or null. Unknown session entries are dropped, not fatal. */
+/** A host's POST body -> {bootAt, seq, sessions, accounts, billing, resources, config, configResults} or null. Unknown session entries are dropped, not fatal. */
 export function parseHostPush(body) {
   if (!body || body.schemaVersion !== SCHEMA_VERSION || !Array.isArray(body.sessions)) return null;
   if (!Number.isSafeInteger(body.bootAt) || body.bootAt < 1 || !Number.isSafeInteger(body.seq) || body.seq < 1) return null;
@@ -115,7 +126,8 @@ export function parseHostPush(body) {
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
-  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, resources: parseResources(body.resources), config: parseConfigSummary(body.config),
+  const billing = (Array.isArray(body.billing) ? body.billing : []).slice(0, MAX_BILLING).map(parseBilling).filter(Boolean);
+  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, billing, resources: parseResources(body.resources), config: parseConfigSummary(body.config),
     configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean) };
 }
 

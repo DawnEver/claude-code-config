@@ -85,6 +85,7 @@ const TABLE = {
   'quota.heading': { en: (v) => `Quota ${v.unit === 'left' ? 'left' : 'used'}`, zh: (v) => `额度（${v.unit === 'left' ? '剩余' : '已用'}）` },
   'quota.left': { en: 'left', zh: '剩余' },
   'quota.used': { en: 'used', zh: '已用' },
+  'billing.heading': { en: 'API balance', zh: 'API 余额' },
   'quota.noAccounts': { en: 'No accounts', zh: '没有账号' },
   'quota.bestNow': { en: 'Best now: ', zh: '当前最佳：' },
   'quota.bestNone': { en: 'Best now: none with quota left', zh: '当前最佳：没有剩余额度的账号' },

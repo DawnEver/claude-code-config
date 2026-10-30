@@ -21,7 +21,7 @@ export function mockDashboard(now = Date.now()) {
       resources: { cpu: 7, cores: 10, cpuModel: 'Apple M2 Pro', mem: { used: 9e9, total: 17e9, type: 'LPDDR5' }, gpus: [] } },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
-  ], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }], events: [
+  ], billing: [{ key: 'deepseek:0123456789ab', provider: 'deepseek', label: null, at: now - 300000, error: null, hosts: ['host-a'], balances: [{ currency: 'CNY', amount: 457.22 }, { currency: 'USD', amount: 2 }] }], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }], events: [
     { at: t(40), kind: 'exhausted', account: { agent: 'codex', label: null, email: 'bob@example.com' }, window: '5h', resetsAt: now + 3 * H },
     { at: t(7200), kind: 'config', key: 'bridge.idleCloseMinutes', value: 30, outcome: 'applied', host: 'host-b' },
   ], accounts: [

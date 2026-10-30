@@ -112,9 +112,22 @@ export class Registry {
     return [...byKey.values()].sort((a, b) => a.agent.localeCompare(b.agent) || String(a.label ?? a.email).localeCompare(String(b.label ?? b.email)));
   }
 
+  /** API platform balances, merged like quota: one entry per account, its freshest reading, with every host that reads it. */
+  billing() {
+    const byKey = new Map();
+    for (const [id, p] of this.hosts) {
+      for (const b of p?.billing ?? []) {
+        const held = byKey.get(b.key);
+        const hosts = [...(held?.hosts ?? []), id].sort();
+        byKey.set(b.key, !held || b.at > held.at ? { ...b, hosts } : { ...held, hosts });
+      }
+    }
+    return [...byKey.values()].sort((a, b) => a.provider.localeCompare(b.provider) || String(a.label).localeCompare(String(b.label)));
+  }
+
   snapshot() {
     return { schemaVersion: SCHEMA_VERSION, generatedAt: new Date(this.now()).toISOString(),
-      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), events: this.events,
+      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), billing: this.billing(), events: this.events,
       configKeys: configKeysMeta(),
       configPending: [...this.changes.values()].map(({ id, key, value, at, host }) => ({ id, key, value, at: new Date(at).toISOString(), host: host ?? null })) };
   }

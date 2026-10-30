@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
+import { GROUPS, accountSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, billingView, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
@@ -319,6 +319,16 @@ function renderQuota() {
     grid.append(section);
   }
   box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
+  const billing = billingView(snapshot.billing, Date.now(), lang);
+  if (!billing.length) return;
+  const rows = el('div', 'qrows');
+  for (const b of billing) {
+    const row = el('div', 'qrow brow');
+    row.title = b.hosts.join(', ');
+    row.append(el('span', 'k', b.name), el('span', b.error ? 'muted' : 'left', b.error ?? b.amounts), el('span', 'muted', b.age));
+    rows.append(row);
+  }
+  box.append(el('div', 'section-h', tr('billing.heading')), rows);
 }
 
 /** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */

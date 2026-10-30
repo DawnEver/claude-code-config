@@ -156,6 +156,24 @@ app-server); the Worker never recomputes it.
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most
   every 30 min).
 
+## Billing
+
+API platform balances, below the quota hosts. A billing account is a provider plus the
+credential it is read with, declared once in the shared settings — never a key:
+
+```json
+"bridge": { "billing": [{ "provider": "deepseek" }, { "provider": "deepseek", "label": "lab", "keyUsername": "api-key-lab" }] }
+```
+
+Each host that holds the key (the git credential store; `keyUsername` defaults to the
+provider's session username in the provider cache) reads it every 15 min in the background
+(`scripts/bridge/billing.mjs`) and pushes `billing` entries keyed by provider + a sha256 key
+fingerprint, so hosts holding the same key merge into one row. A host without the key
+reports nothing. A provider is one reader in `READERS`: DeepSeek has one
+(`/user/balance`, per currency). Anthropic and OpenAI expose no balance to an API key —
+only spend, through an Admin key — so they are listed as `no balance API` until a reader
+derives a balance from spend since a recorded top-up.
+
 ## Config
 
 The dashboard shows each host's config and may change a fixed few keys — behaviour that grants

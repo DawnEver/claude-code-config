@@ -738,3 +738,13 @@ test('removed: one session renderer (chat list), no needs-you card, packed layou
   const app = fs.readFileSync(new URL('./public/app.js', import.meta.url), 'utf8');
   assert.doesNotMatch(app, /chatList|needsYouCard|dashboard\.packed|quotaAlertRow/);
 });
+
+test('registry: an API balance two hosts read is one entry, the freshest, with both hosts', () => {
+  const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => 5000 });
+  const b = (at, amount) => [{ key: 'deepseek:0123456789ab', at, balances: [{ currency: 'CNY', amount }] }];
+  r.accept('host-a', parseHostPush(push({ billing: b(1.7e12 + 1000, 10) })));
+  r.accept('host-b', parseHostPush(push({ billing: b(1.7e12, 12) })));
+  const [one, ...rest] = r.snapshot().billing;
+  assert.equal(rest.length, 0);
+  assert.deepEqual([one.balances[0].amount, one.hosts], [10, ['host-a', 'host-b']]);
+});

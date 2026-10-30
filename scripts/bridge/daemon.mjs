@@ -38,6 +38,7 @@ import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
+import { BillingReader } from './billing.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
 import { ResourceReader } from './resources.mjs';
@@ -987,6 +988,7 @@ export async function main() {
     const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
       codexFallback: `${machine}/home-${homeKey}`,
       codexSeriesFile: account => path.join(BRIDGE_RUNTIME_DIR, `codex-usage-${homeKey}-${createHash('sha256').update(account?.email ?? 'unknown').digest('hex').slice(0, 16)}.jsonl`) });
+    const billing = new BillingReader({ entries: config.billing, log });
     // A dashboard edit is written to the settings file; the change check above then hands over.
     const onConfigChanges = (changes) => {
       const results = changes.map((c) => ({ id: c.id, ...applyConfigChange(c) }));
@@ -999,7 +1001,7 @@ export async function main() {
         sources: () => usageSources(os.homedir(), { machine, codexHome }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list) })),
-      accounts: () => (lastAccounts = accounts.read()),
+      accounts: () => (lastAccounts = accounts.read()), billing: () => billing.read(),
       resources: () => { const r = (lastResources = resources.read()); usage.sample(r); return r; }, onConfigChanges });
     push.start();
     usage.start();
