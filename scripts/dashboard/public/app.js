@@ -922,7 +922,9 @@ async function showVersion() {
 function renderVersion() {
   const box = $('version');
   box.replaceChildren();
-  if (!deployed) return;
+  const refresh = el('button', 'commit', tr('app.forceUpdate'));
+  refresh.addEventListener('click', () => hardReload());
+  if (!deployed) { box.append(refresh); return; }
   box.append(document.createTextNode(tr('app.build', { at: deployed.at ? formatTime(Date.parse(deployed.at), timeFormat()) : deployed.id.slice(0, 8) })));
   if (deployed.commit) {
     const sha = deployed.commit.replace(/\+$/, '');
@@ -931,9 +933,35 @@ function renderVersion() {
     link.addEventListener('click', () => { const url = `${REPO}/commit/${sha}`; tg?.openLink ? tg.openLink(url) : window.open(url, '_blank', 'noopener'); });
     box.append(document.createTextNode(' · '), link);
   }
+  box.append(document.createTextNode(' · '), refresh);
 }
+
+// Telegram keeps a closed Mini App alive and its webview may serve cached files despite
+// no-cache: the page compares what it runs (the cached app.js) with the server's, and on a
+// difference refetches every file it loaded, then reloads. The footer button does the same.
+const OWN_FILES = () => [location.pathname, ...performance.getEntriesByType('resource').map((e) => new URL(e.name))
+  .filter((u) => u.origin === location.origin && !u.pathname.includes('/api/')).map((u) => u.pathname)];
+async function hardReload() {
+  await Promise.allSettled([...new Set(OWN_FILES())].map((u) => fetch(u, { cache: 'reload' })));
+  location.reload();
+}
+async function stale() {
+  try {
+    const tag = async (cache) => (await fetch('app.js', { method: 'HEAD', cache })).headers.get('etag');
+    const [mine, live] = await Promise.all([tag('force-cache'), tag('no-store')]);
+    return Boolean(mine && live && mine !== live);
+  } catch { return false; }
+}
+async function updateIfStale() {
+  // At most once a minute: a webview that will not refresh its cache must not reload forever.
+  const last = Number(store.get('dashboard.autoReloadAt')) || 0;
+  if (Date.now() - last < 60000 || !(await stale())) return;
+  store.set('dashboard.autoReloadAt', String(Date.now()));
+  await hardReload();
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) updateIfStale(); });
 
 applyLang();
 $('summary').replaceChildren(el('div', 'summary-head', tr('app.loading')));
 load();
-if (!mock) { setInterval(load, POLL_MS); showVersion(); }
+if (!mock) { setInterval(load, POLL_MS); showVersion(); updateIfStale(); }

@@ -21,6 +21,7 @@ const TABLE = {
   // Chrome
   'app.title': { en: 'Agents Dashboard', zh: '智能体面板' },
   'app.loading': { en: 'Loading…', zh: '加载中…' },
+  'app.forceUpdate': { en: 'Force update', zh: '强制更新' },
   'app.build': { en: (v) => `build ${v.at}`, zh: (v) => `构建 ${v.at}` },
   'app.commitDirty': { en: 'deployed from this commit plus uncommitted changes', zh: '基于此提交及未提交的改动部署' },
   'app.commitOpen': { en: 'open this commit on GitHub', zh: '在 GitHub 上打开此提交' },
