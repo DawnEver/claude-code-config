@@ -224,6 +224,16 @@ this host's to report. Sources are configuration, in the shared settings:
 ```
 
 `owner` reads all of an owner's repos, `repos` the listed ones (both narrow together on GitHub).
+`show` lists the repos the tab shows by default (absent: all); each device may choose others in
+Config › Code, and *Back to the defaults* returns to `show`. `keyUsername` names which credential
+of the forge host is the token: store a forge API token (read-only scope) under it with
+`git credential approve`. Do not rely on the credential a git client stored for pushing — a Git
+Credential Manager OAuth token expires within hours and then reads as HTTP 401.
+
+**Nothing fails silently.** A host without the token, or whose token is refused, reports the
+listed repos with that error; the registry prefers any host's successful reading over an error,
+and the tab lists a repo no host could read first under *Needs attention*. The daemon logs one
+`forges:` line whenever what it reads changes (repos per forge, each error).
 A kind is one adapter onto one model — `Repo {key, branches, pulls}`, `Branch {name, sha, at,
 author, ci}`, `Pull {number, head, base, review, conflict, ci}` — so adding GitLab is adding an
 adapter. GitHub is one GraphQL query per 50 repos, newest push first, stopping at a year of

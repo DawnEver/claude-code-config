@@ -27,8 +27,13 @@ export function forgeSources(raw) {
     const base = String(s.base ?? KINDS[s.kind] ?? '').replace(/\/+$/, '');
     if (!/^https:\/\/[^\s/]+$/.test(base)) return [];
     const owner = typeof s.owner === 'string' && /^[\w.-]+$/.test(s.owner) ? s.owner : null;
-    const repos = (Array.isArray(s.repos) ? s.repos : []).filter((r) => typeof r === 'string' && /^[\w.-]+\/[\w.-]+$/.test(r));
-    return owner || repos.length ? [{ kind: s.kind, base, owner, repos }] : [];
+    const names = (v) => (Array.isArray(v) ? v : []).filter((r) => typeof r === 'string' && /^[\w.-]+\/[\w.-]+$/.test(r));
+    const repos = names(s.repos);
+    // `show`: the repos the Code tab shows by default (a device may choose others); absent = all.
+    const show = Array.isArray(s.show) ? names(s.show) : null;
+    // `keyUsername`: which credential of the forge host is the token (a stored API token), else the host's only one.
+    const keyUsername = typeof s.keyUsername === 'string' && /^[\w.@-]{1,64}$/.test(s.keyUsername) ? s.keyUsername : null;
+    return owner || repos.length ? [{ kind: s.kind, base, owner, repos, show, keyUsername }] : [];
   });
 }
 
@@ -44,7 +49,11 @@ const unreachable = (e) => e?.name === 'TimeoutError' || e?.name === 'AbortError
 async function getJson(fetch, url, token, init = {}) {
   const res = await fetch(url, { ...init, headers: { Accept: 'application/json', Authorization: `${init.scheme ?? 'Bearer'} ${token}`, ...init.headers },
     signal: AbortSignal.timeout(TIMEOUT_MS) });
-  if (!res.ok) { const e = new Error(`HTTP ${res.status}`); e.http = true; throw e; }
+  if (!res.ok) {
+    const e = new Error(res.status === 401 ? 'HTTP 401: the token is refused (expired or revoked)' : `HTTP ${res.status}`);
+    e.http = true;
+    throw e;
+  }
   return res.json();
 }
 
@@ -137,14 +146,18 @@ function githubRepo(r, at) {
  * repos are not this host's to report); a repo whose request fails says so in its `error`.
  */
 export async function readSource(src, { token, fetch = globalThis.fetch, now = Date.now }) {
-  if (!token) return [];
-  try { return await ADAPTERS[src.kind](src, { token, fetch, now }); }
+  const failed = (error) => src.repos.map((full) => ({ key: repoKey(`${src.base}/${full}`), forge: src.kind, name: full, url: `${src.base}/${full}`, private: null,
+    defaultBranch: null, pushedAt: null, at: now(), error, branches: [], pulls: [] }));
+  const pinned = (repos) => repos.map((r) => ({ ...r, pinned: !src.show || src.show.some((n) => n.toLowerCase() === r.name.toLowerCase()) }));
+  // No token: said for the listed repos, so a missing credential shows instead of an empty tab
+  // (a host that can read them wins the merge over this one).
+  if (!token) return pinned(failed(`no token for ${new URL(src.base).host}${src.keyUsername ? ` (${src.keyUsername})` : ''} on this host`));
+  try { return pinned(await ADAPTERS[src.kind](src, { token, fetch, now })); }
   catch (e) {
     // A forge this host cannot reach is not its to report; any other fault is a bug, and is said.
     if (unreachable(e)) return [];
     if (!e.http) throw e;
-    return src.repos.map((full) => ({ key: repoKey(`${src.base}/${full}`), forge: src.kind, name: full, url: `${src.base}/${full}`, private: null,
-      defaultBranch: null, pushedAt: null, at: now(), error: e.message, branches: [], pulls: [] }));
+    return pinned(failed(e.message));
   }
 }
 
@@ -154,7 +167,7 @@ export function forgeToken(src, { run = spawnSync } = {}) {
     const gh = run('gh', ['auth', 'token'], { encoding: 'utf8', windowsHide: true });
     if (gh.status === 0 && gh.stdout?.trim()) return gh.stdout.trim();
   }
-  const got = fetchKey({ host: new URL(src.base).host, run });
+  const got = fetchKey({ host: new URL(src.base).host, username: src.keyUsername, run });
   return got.key ?? null;
 }
 
@@ -186,5 +199,10 @@ export class ForgeReader {
     const got = await Promise.all(this.sources.map((s) => this.readOne(s, { token: this.token(s), now: this.now })));
     this.last = got.flat();
     this.version++;
+    // One line whenever what this host reads changes: how many repos per forge, and each error.
+    const summary = this.sources.map((s, i) => `${s.kind} ${new URL(s.base).host}: ${got[i].filter((r) => !r.error).length} repos`
+      + [...new Set(got[i].filter((r) => r.error).map((r) => r.error))].map((e) => `, error: ${e}`).join('')).join('; ');
+    if (summary !== this.summary) this.log(`forges: ${summary}`);
+    this.summary = summary;
   }
 }

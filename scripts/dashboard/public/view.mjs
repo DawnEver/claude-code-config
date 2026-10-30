@@ -463,14 +463,17 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
  * The Code tab for the last `days` (1 = 24 h): the repos with activity in range, newest push
  * first, each with its default branch's CI, its branches active in range — each with its open PR
  * and the sessions working on it (by repo key and branch: an exact link) — and its open PRs.
- * `attention` lists what needs the human, most urgent kind first; `inactive` counts repos left out.
+ * `attention` lists what needs the human, most urgent kind first (a repo no host could read, first);
+ * `inactive` counts shown repos idle in range, `hidden` those not chosen for this device.
  */
-export function codeView(snapshot, days, now = Date.now()) {
+export function codeView(snapshot, days, now = Date.now(), chosen = null) {
   const since = now - days * 86400000;
   const recent = (t) => t != null && Date.parse(t) >= since;
   const sessions = sessionsOf(snapshot).filter((s) => s.repo);
-  const all = snapshot.repos ?? [];
-  const repos = all.filter((r) => recent(r.pushedAt) || r.branches.some((b) => recent(b.at)) || r.pulls.some((p) => recent(p.updatedAt)))
+  // Shown: the device's choice (`chosen`: repo keys) if it made one, else each repo's default (its source's `show`).
+  const all = (snapshot.repos ?? []).filter((r) => (chosen ? chosen.includes(r.key) : r.pinned !== false));
+  // A repo that could not be read is always listed: its error is the news.
+  const repos = all.filter((r) => r.error || recent(r.pushedAt) || r.branches.some((b) => recent(b.at)) || r.pulls.some((p) => recent(p.updatedAt)))
     .map((r) => {
       const branches = r.branches.filter((b) => recent(b.at) || b.name === r.defaultBranch)
         .map((b) => ({ ...b, pull: r.pulls.find((p) => p.head === b.name) ?? null,
@@ -479,6 +482,7 @@ export function codeView(snapshot, days, now = Date.now()) {
     });
   const attention = [];
   for (const r of repos) {
+    if (r.error) attention.push({ kind: 'unreadable', repo: r });
     // A failing default branch is one item, with the sessions on it: not a second "session" item.
     if (r.mainCi === 'failure') attention.push({ kind: 'main-failing', repo: r, branch: r.defaultBranch,
       sessions: r.branches.find((x) => x.name === r.defaultBranch)?.sessions ?? [] });
@@ -488,7 +492,7 @@ export function codeView(snapshot, days, now = Date.now()) {
       if (b.ci === 'failure' && b.sessions.length && b.name !== r.defaultBranch) attention.push({ kind: 'session-failing', repo: r, branch: b.name, sessions: b.sessions });
     }
   }
-  const ORDER = ['main-failing', 'pr-failing', 'pr-conflict', 'session-failing'];
+  const ORDER = ['unreadable', 'main-failing', 'pr-failing', 'pr-conflict', 'session-failing'];
   attention.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
-  return { repos, attention, inactive: all.length - repos.length };
+  return { repos, attention, inactive: all.length - repos.length, hidden: (snapshot.repos ?? []).length - all.length };
 }

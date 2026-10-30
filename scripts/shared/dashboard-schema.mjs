@@ -114,6 +114,8 @@ function parseRepo(r) {
   if (!isRepoKey(r?.key) || !['github', 'gitea'].includes(r.forge) || !epoch(r.at)) return null;
   return { key: r.key, forge: r.forge, name: text(r.name, 200), url: https(r.url), private: typeof r.private === 'boolean' ? r.private : null,
     defaultBranch: text(r.defaultBranch, 200), pushedAt: iso(r.pushedAt), at: r.at, error: text(r.error, 200),
+    // Shown on the Code tab by default (the source's `show`); a device may choose others.
+    pinned: r.pinned !== false,
     branches: (Array.isArray(r.branches) ? r.branches : []).slice(0, 30).filter((b) => text(b?.name, 200)).map((b) => ({
       name: text(b.name, 200), sha: text(b.sha, 64), at: iso(b.at), author: text(b.author, 100), ci: ci(b.ci) })),
     pulls: (Array.isArray(r.pulls) ? r.pulls : []).slice(0, 30).filter((p) => num(p?.number, 1, 1e9)).map((p) => ({

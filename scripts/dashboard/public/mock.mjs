@@ -46,5 +46,10 @@ export function mockDashboard(now = Date.now()) {
     { key: 'git.example.org/team/frontend', forge: 'gitea', name: 'team/frontend', url: 'https://git.example.org/team/frontend', private: true,
       defaultBranch: 'main', pushedAt: new Date(now - 26 * H).toISOString(), at: now - 120000, error: null, hosts: ['host-a'],
       branches: [{ name: 'main', sha: 'c3', at: new Date(now - 26 * H).toISOString(), author: 'bob', ci: 'pending' }], pulls: [] },
+    { key: 'git.example.org/team/docs', forge: 'gitea', name: 'team/docs', url: 'https://git.example.org/team/docs', private: null,
+      defaultBranch: null, pushedAt: null, at: now - 120000, error: 'HTTP 401: the token is refused (expired or revoked)', hosts: [], branches: [], pulls: [] },
+    { key: 'github.com/example/old-notes', forge: 'github', name: 'example/old-notes', url: 'https://github.com/example/old-notes', private: false, pinned: false,
+      defaultBranch: 'main', pushedAt: new Date(now - 5 * H).toISOString(), at: now - 120000, error: null, hosts: ['host-a'],
+      branches: [{ name: 'main', sha: 'd4', at: new Date(now - 5 * H).toISOString(), author: 'alice', ci: 'success' }], pulls: [] },
   ] };
 }

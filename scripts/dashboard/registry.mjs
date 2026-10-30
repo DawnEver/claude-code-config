@@ -122,8 +122,10 @@ export class Registry {
     for (const [id, p] of this.hosts) {
       for (const r of p?.repos ?? []) {
         const held = byKey.get(r.key);
-        const hosts = [...(held?.hosts ?? []), id].sort();
-        byKey.set(r.key, !held || r.at > held.at ? { ...r, hosts } : { ...held, hosts });
+        // `hosts`: those that read it; a host that failed to (no token, refused) never outranks one that did.
+        const hosts = r.error ? held?.hosts ?? [] : [...(held?.hosts ?? []), id].sort();
+        const better = !held || (held.error && !r.error) || (!held.error === !r.error && r.at > held.at);
+        byKey.set(r.key, better ? { ...r, hosts } : { ...held, hosts });
       }
     }
     return [...byKey.values()].sort((a, b) => String(b.pushedAt).localeCompare(String(a.pushedAt)));

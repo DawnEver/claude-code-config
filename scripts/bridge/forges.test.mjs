@@ -15,11 +15,11 @@ test('repo key: one identity for every URL form of a repository', () => {
 test('forge sources: kind, base and owner or repos; anything else is dropped', () => {
   assert.deepEqual(forgeSources([
     { kind: 'github', owner: 'someone' },
-    { kind: 'gitea', base: 'https://git.example.org/', repos: ['team/a', 'bad'] },
+    { kind: 'gitea', base: 'https://git.example.org/', repos: ['team/a', 'bad'], show: ['team/a'], keyUsername: 'dashboard' },
     { kind: 'gitlab', owner: 'x' }, { kind: 'gitea', base: 'http://insecure', owner: 'x' }, null,
   ]), [
-    { kind: 'github', base: 'https://github.com', owner: 'someone', repos: [] },
-    { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'] },
+    { kind: 'github', base: 'https://github.com', owner: 'someone', repos: [], show: null, keyUsername: null },
+    { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: ['team/a'], keyUsername: 'dashboard' },
   ]);
 });
 
@@ -42,7 +42,7 @@ test('github: one GraphQL query per page maps repos, branches and open PRs; repo
   assert.deepEqual(calls[0], ['https://api.github.com/graphql', 'Bearer t']);
   assert.deepEqual(repos, [{
     key: 'github.com/someone/live', forge: 'github', name: 'someone/live', url: 'https://github.com/someone/live', private: false,
-    defaultBranch: 'main', pushedAt: day(1), at: NOW, error: null,
+    defaultBranch: 'main', pushedAt: day(1), at: NOW, error: null, pinned: true,
     branches: [{ name: 'main', sha: 'a1', at: day(1), author: 'a', ci: 'success' }, { name: 'feat', sha: 'b2', at: day(2), author: 'a', ci: 'failure' }],
     pulls: [{ number: 7, title: 'Feat', url: 'https://github.com/someone/live/pull/7', draft: false, author: 'a', head: 'feat', base: 'main',
       review: 'required', conflict: true, ci: 'pending', updatedAt: day(2) }],
@@ -68,9 +68,12 @@ test('gitea: REST per repo — branches newest first, open PRs, each head\'s com
     review: null, conflict: false, ci: null, updatedAt: day(2) }]);
 });
 
-test('a forge this host cannot reach or has no token for reports nothing; a failing repo reports its error', async () => {
-  const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'] };
-  assert.deepEqual(await readSource(src, { token: null, fetch: async () => { throw new Error('unreachable'); }, now: () => NOW }), []);
+test('an unreachable forge reports nothing; a missing or refused token and a failing repo say so; `show` marks the defaults', async () => {
+  const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: ['team/b'], keyUsername: 'dashboard' };
+  const [none] = await readSource(src, { token: null, now: () => NOW });
+  assert.deepEqual([none.key, none.error, none.pinned], ['git.example.org/team/a', 'no token for git.example.org (dashboard) on this host', false]);
+  const [refused] = await readSource(src, { token: 't', fetch: async () => ({ ok: false, status: 401 }), now: () => NOW });
+  assert.match(refused.error, /^HTTP 401: the token is refused/);
   assert.deepEqual(await readSource(src, { token: 't', fetch: async () => { throw new TypeError('fetch failed'); }, now: () => NOW }), [], 'unreachable: not this host\'s to report');
   await assert.rejects(readSource(src, { token: 't', fetch: async () => { throw new RangeError('a bug'); }, now: () => NOW }), /a bug/, 'a fault is said, not hidden');
   const [r] = await readSource(src, { token: 't', fetch: async () => ({ ok: false, status: 500 }), now: () => NOW });

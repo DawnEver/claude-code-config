@@ -70,6 +70,9 @@ const USAGE_EVERY_MS = 5 * 60000;
 // The Code tab's activity range, kept on this device: 30 days the first time.
 const CODE_RANGES = [1, 7, 30, 365];
 let codeDays = CODE_RANGES.includes(Number(store.get('dashboard.codeDays'))) ? Number(store.get('dashboard.codeDays')) : 30;
+// The repos this device shows (Config › Code), or null: each repo's default (bridge.forges `show`).
+let codeRepos = (() => { try { const v = JSON.parse(store.get('dashboard.codeRepos')); return Array.isArray(v) ? v.map(String) : null; } catch { return null; } })();
+const saveCodeRepos = (v) => { codeRepos = v; store.set('dashboard.codeRepos', v ? JSON.stringify(v) : ''); };
 let usageDays = USAGE_RANGES.includes(Number(store.get('dashboard.usageDays'))) ? Number(store.get('dashboard.usageDays')) : 30;
 let usage = null;        // {key, report, at} | {key, error, at}
 // The Usage filter: selected values per dimension ('' = no project); kept per device.
@@ -577,15 +580,42 @@ function displaySection() {
       prefRow('clock', 'cfg.clock', null, [tr('cfg.clock.24'), tr('cfg.clock.12')]),
       prefRow('date', 'cfg.date', 'cfg.date.hint', [formatTime(sample, { date: 'day', lang }).split(' ').slice(0, -1).join(' '), '2026-10-21', tr('cfg.date.off')]),
       prefRow('replyStyle', 'cfg.reply', 'cfg.reply.hint', [tr('cfg.reply.ago'), tr('cfg.reply.clock')])]),
-    ...cfgGroup('cfg.quota', [prefRow('unit', 'cfg.unit', 'cfg.unit.hint', [tr('cfg.unit.used'), tr('cfg.unit.left')])]),
+    ...cfgGroup('cfg.accounts', [prefRow('unit', 'cfg.unit', 'cfg.unit.hint', [tr('cfg.unit.used'), tr('cfg.unit.left')])]),
     ...cfgGroup('cfg.sessions', [
       prefRow('groupBy', 'cfg.groupBy', null, [tr('cfg.groupBy.project'), tr('cfg.groupBy.host')]),
       prefRow('groupOrder', 'cfg.order', 'cfg.order.hint', [tr('cfg.order.host'), tr('cfg.order.urgency')]),
       prefRow('openAt', 'cfg.openAt', 'cfg.openAt.hint', [tr('cfg.openAt.latest'), tr('cfg.openAt.first')])]),
+    ...codeReposGroup(),
     ...cfgGroup('cfg.layout', [
       prefRow('pinTabs', 'cfg.pinTabs', 'cfg.pinTabs.hint', [tr('cfg.pinTabs.on'), tr('cfg.pinTabs.off')]),
       prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.detailed'), tr('cfg.load.compact'), tr('cfg.load.off')])]),
   ];
+}
+
+/**
+ * Config › Code: which repositories this device shows, one switch each; until one is changed
+ * the defaults stand (each forge source's `show`), and Default goes back to them.
+ */
+function codeReposGroup() {
+  const all = snapshot?.repos ?? [];
+  if (!all.length) return [];
+  const shown = new Set(codeRepos ?? all.filter((r) => r.pinned !== false).map((r) => r.key));
+  const rows = all.map((r) => {
+    const row = el('div', 'cfg-row cfg-top');
+    row.append(el('span', 'cfg-name', r.name), segmented([['on', tr('cfg.code.on')], ['off', tr('cfg.code.off')]], shown.has(r.key) ? 'on' : 'off', r.name, (v) => {
+      const next = new Set(shown);
+      v === 'on' ? next.add(r.key) : next.delete(r.key);
+      saveCodeRepos([...next]);
+      redrawConfig();
+    }));
+    return row;
+  });
+  if (codeRepos) {
+    const reset = el('button', 'chip', tr('cfg.code.default'));
+    reset.addEventListener('click', () => { saveCodeRepos(null); redrawConfig(); });
+    rows.push(reset);
+  }
+  return cfgGroup('cfg.code', rows);
 }
 
 // Edits are a request to the gateway, applied by a host: the row shows it queued, handed over, then the outcome.
@@ -836,12 +866,13 @@ function repoDetail(r) {
 function repoRow(r) {
   const working = r.branches.reduce((n, b) => n + b.sessions.length, 0);
   const head = el('span', 'left');
-  head.append(ciBadge(r.mainCi), ` ${r.defaultBranch ?? ''}`);
+  if (!r.error) head.append(ciBadge(r.mainCi), ` ${r.defaultBranch ?? ''}`);
   return foldRow(`code|${r.key}`, {
     name: el('span', 'agent', r.name), headline: head,
     open: () => [repoDetail(r)],
-    meta: [r.forge === 'github' ? 'GitHub' : 'Gitea', tr('code.pulls', { n: r.pulls.length }), tr('code.branches', { n: r.branches.length }),
-      working && tr('code.working', { n: working }), timeAgo(r.pushedAt) && tr('code.pushed', { ago: timeAgo(r.pushedAt) })],
+    // A repo not read has no counts to give: its forge and the error say all there is.
+    meta: [r.forge === 'github' ? 'GitHub' : 'Gitea', ...(r.error ? [] : [tr('code.pulls', { n: r.pulls.length }), tr('code.branches', { n: r.branches.length }),
+      working && tr('code.working', { n: working }), timeAgo(r.pushedAt) && tr('code.pushed', { ago: timeAgo(r.pushedAt) })])],
     warns: r.error ? [r.error] : [],
   });
 }
@@ -851,12 +882,12 @@ function renderCode() {
   box.replaceChildren();
   box.append(rangePicker(CODE_RANGES, codeDays, (d) => { codeDays = d; store.set('dashboard.codeDays', String(d)); render(); }));
   if (!(snapshot.repos ?? []).length) { box.append(el('div', 'qrows empty', tr('code.none'))); return; }
-  const v = codeView(snapshot, codeDays);
+  const v = codeView(snapshot, codeDays, Date.now(), codeRepos);
   if (v.attention.length) {
     const list = el('div', 'qrows');
     for (const a of v.attention) {
       const url = a.pull?.url ?? (a.repo.url && a.branch ? `${a.repo.url}/${a.repo.forge === 'github' ? 'tree' : 'src/branch'}/${encodeURIComponent(a.branch)}` : a.repo.url);
-      list.append(codeItem('failure', tr(`code.att.${a.kind}`, { repo: a.repo.name, branch: a.branch, n: a.pull?.number }), [], url, a.sessions ?? []));
+      list.append(codeItem('failure', tr(`code.att.${a.kind}`, { repo: a.repo.name, branch: a.branch, n: a.pull?.number, error: a.repo.error }), [], url, a.sessions ?? []));
     }
     box.append(el('div', 'section-h', tr('code.attention')), list);
   }
@@ -864,6 +895,11 @@ function renderCode() {
   for (const r of v.repos) rows.append(repoRow(r));
   box.append(el('div', 'section-h', tr('code.repos', { n: v.repos.length })), rows);
   if (v.inactive) box.append(el('div', 'note', tr('code.inactive', { n: v.inactive })));
+  if (v.hidden) {
+    const note = el('button', 'note link', tr('code.hidden', { n: v.hidden }));
+    note.addEventListener('click', () => showTab('config'));
+    box.append(note);
+  }
 }
 
 function renderTabs() {
@@ -873,7 +909,7 @@ function renderTabs() {
   $('n-sessions').textContent = String(n.sessions);
   $('n-quota').textContent = String(n.quota);
   $('quota-dot').hidden = !n.alert;
-  const code = codeView(snapshot, codeDays);
+  const code = codeView(snapshot, codeDays, Date.now(), codeRepos);
   $('n-code').textContent = (snapshot.repos ?? []).length ? String(code.repos.length) : '';
   $('code-dot').hidden = !code.attention.length;
   $('n-events').textContent = String(n.events);
@@ -901,6 +937,9 @@ window.addEventListener('scroll', () => {
   scrollSave = setTimeout(() => { scrollAt[tab] = Math.round(window.scrollY); store.set('dashboard.scroll', JSON.stringify(scrollAt)); }, 200);
 }, { passive: true });
 for (const ev of ['wheel', 'touchstart', 'keydown']) window.addEventListener(ev, () => { restoring = null; }, { passive: true });
+
+/** Switch to a tab as its button does (a link inside a view, e.g. Code › Config). */
+const showTab = (name) => document.querySelector(`#tabs [data-tab="${name}"]`)?.click();
 
 for (const b of document.querySelectorAll('#tabs [data-tab]')) {
   b.addEventListener('click', () => {
