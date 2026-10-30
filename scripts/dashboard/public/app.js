@@ -195,7 +195,7 @@ const resetCell = (w) => { const s = el('span', 'reset', resetText(w)); if (s.te
 const kCell = (w, q) => { const k = el('span', `k${q.bind?.k === w.k ? ' bind' : ''}`, w.k); if (q.bind?.k === w.k) k.title = tr('quota.binding', { unit: tr(`quota.${pref.unit}`) }); return k; };
 
 /** The expanded part of a quota row: each window with its trend on a time axis, then resets to act on. */
-function quotaDetail(q) {
+function quotaDetail(q, hostId) {
   const box = el('div', 'qdetail');
   if (q.detail) box.append(el('div', 'sub', q.detail));
   for (const w of q.windows) {
@@ -216,16 +216,22 @@ function quotaDetail(q) {
     if (q.extraReset.url) note.addEventListener('click', (e) => { e.stopPropagation(); tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener'); });
     box.append(note);
   }
-  const using = accountSessions(snapshot, q.key);
-  // The same rows as the Sessions tab (status, host, branch; a tap opens the Topic), not a text list.
+  // This host's sessions on the account: a shared account is one budget, but each session sits
+  // under the machine it runs on (the other host lists its own under its reference row).
+  const using = hostSessions(q.key, hostId);
   box.append(el('div', 'note', using.length ? tr('quota.inUse', { n: using.length }) : tr('quota.notInUse')));
-  if (using.length) {
-    const list = el('div', 'waiting');
-    for (const s of using) list.append(sessionRow(s, { withHost: true }));
-    list.addEventListener('click', (e) => e.stopPropagation());
-    box.append(list);
-  }
+  if (using.length) box.append(sessionList(using));
   return box;
+}
+
+const hostSessions = (key, hostId) => accountSessions(snapshot, key).filter((u) => u.hostId === hostId);
+
+/** Session rows as on the Sessions tab (status, branch; a tap opens the Topic). */
+function sessionList(sessions) {
+  const list = el('div', 'waiting');
+  for (const u of sessions) list.append(sessionRow(u));
+  list.addEventListener('click', (e) => e.stopPropagation());
+  return list;
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -264,7 +270,7 @@ function quotaRow(q, hostId) {
   else left = noReading(q);
   top.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'chev', open ? '⌄' : '›'));
   row.append(top);
-  if (open) row.append(quotaDetail(q));
+  if (open) row.append(quotaDetail(q, hostId));
   else {
     const mini = el('div', 'qmini');
     for (const w of q.windows) {
@@ -324,7 +330,7 @@ function renderQuota() {
       const bestLine = el('div', 'qbest', best.length ? tr('quota.bestNow') : tr('quota.bestNone'));
       best.forEach(({ q }, i) => bestLine.append(i ? ' · ' : '', acctTag(q, true)));
       const rows = el('div', 'qrows');
-      for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q) : quotaRow(q, h.id));
+      for (const q of h.accounts) rows.append(q.refTo ? quotaRef(q, h.id) : quotaRow(q, h.id));
       section = hostSection(h, [bestLine, rows, ...facts]);
     }
     const head = section.querySelector('.host-head');
@@ -393,13 +399,17 @@ function noReading(q) {
   return span;
 }
 
-function quotaRef(q) {
+function quotaRef(q, hostId) {
   const row = el('div', `qrow qref v-${q.verdict}${q.stale ? ' stale' : ''}`);
   const left = q.bind ? leftCell(q.bind, q.stale, 'left') : noReading(q);
   if (q.bind) left.textContent += ` ${tr(`quota.${pref.unit}`)}`;
   row.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'see', tr('quota.see', { host: q.refTo })));
   row.title = tr('quota.oneBudget', { host: q.refTo });
-  return row;
+  const using = hostSessions(q.key, hostId);
+  if (!using.length) return row;
+  const box = el('div');
+  box.append(row, el('div', 'note', tr('quota.inUse', { n: using.length })), sessionList(using));
+  return box;
 }
 
 function renderChips() {

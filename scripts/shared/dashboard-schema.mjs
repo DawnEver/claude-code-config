@@ -129,6 +129,8 @@ export function parseHostPush(body) {
   const sessions = [];
   for (const raw of body.sessions.slice(0, MAX_SESSIONS)) {
     const s = parseSession(raw);
+    // A session in an unknown state can be neither read nor acted on: hidden here, whatever bridge version pushed it.
+    if (s?.status === 'unknown') continue;
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
