@@ -208,7 +208,8 @@ function accountDetail(q, hostId) {
     const sub = el('div', 'win-sub');
     const forecast = w.forecast && (w.forecast.short ? tr('quota.runsOutIn', { eta: countdown(w.forecast.eta) })
       : tr('quota.atReset', { n: amount(w.forecast.atReset, pref.unit), unit: tr(`quota.${pref.unit}`) }));
-    sub.append(trend(w), el('span', null, w.renewed ? tr('quota.resetUnknown') : forecast || ''));
+    // The forecast is read alongside the window's use and reset: the same weight, coloured when it runs out.
+    sub.append(trend(w), el('span', `forecast${w.forecast?.short ? ' hot' : ''}`, w.renewed ? tr('quota.resetUnknown') : forecast || ''));
     box.append(row, sub);
   }
   if (q.resetCredits) {
