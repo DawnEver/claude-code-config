@@ -24,7 +24,9 @@
   .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
   h1 { font-size: 20px; margin: 0; }
   /* Force update: an icon beside the data's age (its hint names it). */
-  .icon-btn { font: inherit; font-size: var(--t2); line-height: 1; color: var(--accent); background: none; border: 0; padding: 0 2px; cursor: pointer; }
+  .icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; margin-left: 4px; vertical-align: middle; border: 0; border-radius: 50%;
+    font: inherit; font-size: 16px; font-weight: 700; line-height: 1; color: var(--accent-fg); background: var(--accent); cursor: pointer; }
+  .icon-btn:active { opacity: .7; }
   /* The build, at the foot of every tab: what is deployed, and a button to load it fresh. */
   #version { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px; margin: 28px 0 12px;
     color: var(--hint); font-size: var(--t3); }
