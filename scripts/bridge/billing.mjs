@@ -3,13 +3,15 @@
 // A billing account is a provider plus the credential it is read with: declared in the shared
 // settings as `bridge.billing: [{provider, label?, keyUsername?}]`, never with a key. The key is
 // the provider's session key from the git credential store (scripts/shared/credential-key.mjs),
-// its host from ai-lab's provider cache; a host without the key reports the account's error.
+// its host from ai-lab's provider cache; a host without the key reports nothing for it.
 // Each provider is one reader below: (key) -> {balances: [{currency, amount}]}. A provider with
 // no balance endpoint has no reader yet and is reported as unsupported.
 
 import { createHash } from 'crypto';
 import { fetchKey, sessionUsername } from '../shared/credential-key.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
+
+const TIMEOUT_MS = 15000;   // a hung request must not stall every later refresh
 
 const json = async (res) => {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -20,7 +22,7 @@ const json = async (res) => {
 export const READERS = {
   // https://api-docs.deepseek.com/api/get-user-balance
   async deepseek({ key, host, fetch }) {
-    const body = await json(await fetch(`https://${host}/user/balance`, { headers: { Authorization: `Bearer ${key}` } }));
+    const body = await json(await fetch(`https://${host}/user/balance`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(TIMEOUT_MS) }));
     return { balances: (body.balance_infos ?? []).map((b) => ({ currency: String(b.currency), amount: Number(b.total_balance) }))
       .filter((b) => Number.isFinite(b.amount)) };
   },

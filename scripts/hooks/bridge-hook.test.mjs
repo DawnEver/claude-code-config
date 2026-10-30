@@ -67,7 +67,8 @@ test('mirrorFor: prompt from payload, channel injections skipped, final prefers 
     assert.deepEqual(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: tp, last_assistant_message: 'not flushed yet' }, env).texts,
       ['checking', 'from transcript', 'not flushed yet'], 'a transcript lagging the last message');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  assert.equal(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: '/nope' }, env), null);
+  assert.deepEqual(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: '/nope' }, env), { sessionId: 's', kind: 'final', texts: [] },
+    'a textless turn end still ends the turn');
 });
 
 test('mirrorFor: StopFailure (a turn ended by an API error) is a failed final', () => {

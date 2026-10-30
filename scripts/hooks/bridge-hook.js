@@ -140,8 +140,7 @@ export function mirrorFor(payload) {
     if (last && texts.at(-1) !== last) texts.push(last);
     let background = 0;
     if (payload.transcript_path) try { background = backgroundTasks(fs.readFileSync(payload.transcript_path, 'utf8')); } catch { /* none */ }
-    // A turn with no text still ends: its background count is the state worth sending.
-    if (!texts.length) return background ? { ...base, kind: 'final', texts: [], background } : null;
+    // A turn with no text still ends: idle, and its background count (0 clears a stale one).
     return { ...base, kind: 'final', texts, ...(background ? { background } : {}) };
   }
   // A turn ended by an API error fires StopFailure instead of Stop; it waits for the human.
