@@ -126,7 +126,8 @@ export class Registry {
     // the platforms report no account id to tell them apart otherwise.
     const byAccount = new Map();
     for (const b of byKey.values()) {
-      const id = b.error ? b.key : JSON.stringify([b.provider, b.label, [...b.balances].sort((x, y) => x.currency.localeCompare(y.currency))]);
+      // An empty or zero balance identifies nothing: two such accounts stay apart.
+      const id = b.error || !b.balances.some((x) => x.amount) ? b.key : JSON.stringify([b.provider, b.label, [...b.balances].sort((x, y) => x.currency.localeCompare(y.currency))]);
       const held = byAccount.get(id);
       byAccount.set(id, held ? { ...(b.at > held.at ? b : held), keys: [...held.keys, b.key].sort(), hosts: [...new Set([...held.hosts, ...b.hosts])].sort() }
         : { ...b, keys: [b.key] });

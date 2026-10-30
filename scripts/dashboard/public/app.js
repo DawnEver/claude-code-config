@@ -346,7 +346,6 @@ function renderQuota() {
   box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
   const idle = billing.filter((b) => !billingSessions(snapshot, b).length);
   if (idle.length) box.append(el('div', 'section-h', tr('billing.heading')), billingRows(idle));
-  box.append(el('div', 'section-h', tr('billing.heading')), rows);
 }
 
 /** API balances as rows; under a host (`hostId`), each followed by that host's sessions spending it. */
@@ -827,9 +826,10 @@ function render() {
   $('updated').textContent = snapshot.mock ? tr('app.exampleData') : lastOk && snapshot.demo ? tr('app.demoData', { ago: agoText(lastOk) })
     : lastOk ? tr('app.data', { ago: agoText(lastOk) }) : '';
   renderTabs();
-  renderQuota();
-  renderEvents();
-  if (tab === 'usage') renderUsage();
+  // Each view on its own: a fault in one tab must not leave the others blank.
+  isolated(renderQuota);
+  isolated(renderEvents);
+  if (tab === 'usage') isolated(renderUsage);
   // The config form is rebuilt only when its data changed and nobody is editing a shared value:
   // a poll must not wipe a value being typed.
   if (tab === 'config') {
@@ -838,10 +838,12 @@ function render() {
     if (key !== configShown && !editing) { configShown = key; renderConfig(); }
   }
   if (tab === 'events' && snapshot.events?.length) { seenAt = snapshot.events[0].at; store.set('dashboard.eventsSeenAt', seenAt); }
-  renderChips();
-  renderSelects();
-  renderHosts();
+  isolated(() => { renderChips(); renderSelects(); renderHosts(); });
   restoreScroll();
+}
+
+function isolated(fn) {
+  try { fn(); } catch (e) { console.error(e); }
 }
 
 function stop(messageKey) {
