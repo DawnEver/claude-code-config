@@ -124,6 +124,25 @@ function parseRepo(r) {
       conflict: p.conflict === true, ci: ci(p.ci), updatedAt: iso(p.updatedAt) })) };
 }
 
+const SOURCE_ID = /^(github|gitea):[a-z0-9.-]{1,100}:[\w.-]{0,100}:[\w.,/-]{0,2000}$/;
+
+/**
+ * A host's forge part (scripts/bridge/forges.mjs): the sources it is configured for, and the
+ * readings it owes — each `{source, at}` with `repos`, an `error` (the forge refused) or
+ * `unavailable` (this host cannot read it). Readings are sent only when the gateway asked.
+ */
+function parseForges(f) {
+  const sources = (Array.isArray(f?.sources) ? f.sources : []).filter((id) => typeof id === 'string' && SOURCE_ID.test(id)).slice(0, 20);
+  const readings = (Array.isArray(f?.readings) ? f.readings : []).slice(0, 20).flatMap((x) => {
+    if (!sources.includes(x?.source) || !epoch(x.at)) return [];
+    if (Array.isArray(x.repos)) return [{ source: x.source, at: x.at, repos: x.repos.slice(0, MAX_REPOS).map(parseRepo).filter(Boolean) }];
+    if (text(x.error, 200)) return [{ source: x.source, at: x.at, error: text(x.error, 200) }];
+    if (text(x.unavailable, 200)) return [{ source: x.source, at: x.at, unavailable: text(x.unavailable, 200) }];
+    return [];
+  });
+  return { sources, readings };
+}
+
 /** A host's load (scripts/bridge/resources.mjs): CPU %, memory and each GPU, numbers and a GPU model name only. */
 function parseResources(r) {
   if (!r || typeof r !== 'object') return null;
@@ -163,9 +182,7 @@ export function parseHostPush(body) {
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
-  // Repos ride a push only when the host has a new reading: absent means "unchanged", not "none".
-  const repos = Array.isArray(body.repos) ? body.repos.slice(0, MAX_REPOS).map(parseRepo).filter(Boolean) : undefined;
-  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, ...(repos ? { repos } : {}), resources: parseResources(body.resources), config: parseConfigSummary(body.config),
+  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, forges: parseForges(body.forges), resources: parseResources(body.resources), config: parseConfigSummary(body.config),
     configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean) };
 }
 

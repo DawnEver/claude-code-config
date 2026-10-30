@@ -884,14 +884,14 @@ function renderCode() {
   if (!(snapshot.repos ?? []).length) { box.append(el('div', 'qrows empty', tr('code.none'))); return; }
   const v = codeView(snapshot, codeDays, Date.now(), codeRepos);
   if (v.attention.length) {
-    const list = el('div', 'qrows');
+    const list = el('div', 'cards');
     for (const a of v.attention) {
       const url = a.pull?.url ?? (a.repo.url && a.branch ? `${a.repo.url}/${a.repo.forge === 'github' ? 'tree' : 'src/branch'}/${encodeURIComponent(a.branch)}` : a.repo.url);
       list.append(codeItem('failure', tr(`code.att.${a.kind}`, { repo: a.repo.name, branch: a.branch, n: a.pull?.number, error: a.repo.error }), [], url, a.sessions ?? []));
     }
     box.append(el('div', 'section-h', tr('code.attention')), list);
   }
-  const rows = el('div', 'qrows');
+  const rows = el('div', 'cards');
   for (const r of v.repos) rows.append(repoRow(r));
   box.append(el('div', 'section-h', tr('code.repos', { n: v.repos.length })), rows);
   if (v.inactive) box.append(el('div', 'note', tr('code.inactive', { n: v.inactive })));

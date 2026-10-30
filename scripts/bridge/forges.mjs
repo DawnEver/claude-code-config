@@ -142,22 +142,25 @@ function githubRepo(r, at) {
 }
 
 /**
- * One source as this host sees it: [] when it holds no token or cannot reach the forge (the
- * repos are not this host's to report); a repo whose request fails says so in its `error`.
+ * A source's identity, the same on every host that reads the same shared settings: what is read
+ * (kind, forge host, owner, repos), not how it is shown or which credential reads it.
+ */
+export const sourceId = (src) => `${src.kind}:${new URL(src.base).host}:${src.owner ?? ''}:${[...src.repos].sort().join(',')}`;
+
+/**
+ * One source as this host sees it, as one reading: `{repos}`, or `{error}` when the forge refused
+ * (a refused token, an HTTP error), or `{unavailable}` when this host cannot read it at all (no
+ * token, the forge unreachable) — then the gateway asks another host. A fault in this code throws.
  */
 export async function readSource(src, { token, fetch = globalThis.fetch, now = Date.now }) {
-  const failed = (error) => src.repos.map((full) => ({ key: repoKey(`${src.base}/${full}`), forge: src.kind, name: full, url: `${src.base}/${full}`, private: null,
-    defaultBranch: null, pushedAt: null, at: now(), error, branches: [], pulls: [] }));
-  const pinned = (repos) => repos.map((r) => ({ ...r, pinned: !src.show || src.show.some((n) => n.toLowerCase() === r.name.toLowerCase()) }));
-  // No token: said for the listed repos, so a missing credential shows instead of an empty tab
-  // (a host that can read them wins the merge over this one).
-  if (!token) return pinned(failed(`no token for ${new URL(src.base).host}${src.keyUsername ? ` (${src.keyUsername})` : ''} on this host`));
-  try { return pinned(await ADAPTERS[src.kind](src, { token, fetch, now })); }
-  catch (e) {
-    // A forge this host cannot reach is not its to report; any other fault is a bug, and is said.
-    if (unreachable(e)) return [];
+  if (!token) return { unavailable: `no token for ${new URL(src.base).host}${src.keyUsername ? ` (${src.keyUsername})` : ''}` };
+  try {
+    const repos = await ADAPTERS[src.kind](src, { token, fetch, now });
+    return { repos: repos.map((r) => ({ ...r, pinned: !src.show || src.show.some((n) => n.toLowerCase() === r.name.toLowerCase()) })) };
+  } catch (e) {
+    if (unreachable(e)) return { unavailable: `${new URL(src.base).host} unreachable` };
     if (!e.http) throw e;
-    return pinned(failed(e.message));
+    return { error: e.message };
   }
 }
 
@@ -171,38 +174,41 @@ export function forgeToken(src, { run = spawnSync } = {}) {
   return got.key ?? null;
 }
 
-/** Reads every source at most every `everyMs`, in the background: `read()` is synchronous and returns the last reading. */
+/**
+ * The host's side of the gateway's lease (registry.mjs forge leases): the push declares which
+ * sources this host is configured for (`ids`); the gateway answers which to read now, at most one
+ * host per source per interval; `assign` reads those in the background and keeps each reading in
+ * an outbox until a push carrying it is accepted (`delivered`). Reading the same source twice is
+ * harmless: the gateway keeps one reading per source, replaced whole.
+ */
 export class ForgeReader {
-  constructor({ sources = [], everyMs = 5 * 60000, log = () => {}, now = Date.now, token = forgeToken, readOne = readSource }) {
-    Object.assign(this, { sources, everyMs, log, now, token, readOne });
-    this.last = [];
-    this.version = 0;   // one per completed reading: the push sends a reading once
-    this.at = -Infinity;
-    this.pending = null;
+  constructor({ sources = [], log = () => {}, now = Date.now, token = forgeToken, readOne = readSource }) {
+    Object.assign(this, { sources, log, now, token, readOne });
+    this.byId = new Map(sources.map((s) => [sourceId(s), s]));
+    this.running = new Set();
+    this.out = new Map();   // source id -> reading not yet delivered
   }
 
-  read() {
-    if (this.sources.length && !this.pending && this.now() - this.at >= this.everyMs) {
-      this.pending = this.refresh().catch((e) => this.log(`forges: ${e.message}`))
-        .finally(() => { this.at = this.now(); this.pending = null; });
+  ids() { return [...this.byId.keys()]; }
+
+  assign(ids) {
+    for (const id of ids) {
+      const src = this.byId.get(id);
+      if (!src || this.running.has(id)) continue;
+      this.running.add(id);
+      this.readOne(src, { token: this.token(src), now: this.now })
+        .catch((e) => ({ error: `fault: ${String(e.message ?? e).slice(0, 160)}` }))
+        .then((r) => {
+          this.out.set(id, { source: id, at: this.now(), ...r });
+          this.log(`forges: ${id} -> ${r.repos ? `${r.repos.length} repos` : r.error ? `error: ${r.error}` : `unavailable: ${r.unavailable}`}`);
+        })
+        .finally(() => this.running.delete(id));
     }
-    return this.last;
   }
 
-  /** For the dashboard push: the last reading and its version, or null before the first. */
-  reading() {
-    this.read();
-    return this.version ? { version: this.version, list: this.last } : null;
-  }
+  /** The readings to send with the next push. */
+  outbox() { return [...this.out.values()]; }
 
-  async refresh() {
-    const got = await Promise.all(this.sources.map((s) => this.readOne(s, { token: this.token(s), now: this.now })));
-    this.last = got.flat();
-    this.version++;
-    // One line whenever what this host reads changes: how many repos per forge, and each error.
-    const summary = this.sources.map((s, i) => `${s.kind} ${new URL(s.base).host}: ${got[i].filter((r) => !r.error).length} repos`
-      + [...new Set(got[i].filter((r) => r.error).map((r) => r.error))].map((e) => `, error: ${e}`).join('')).join('; ');
-    if (summary !== this.summary) this.log(`forges: ${summary}`);
-    this.summary = summary;
-  }
+  /** A push carrying these was accepted: they need not be sent again (a newer reading of the same source stays). */
+  delivered(readings) { for (const r of readings) if (this.out.get(r.source) === r) this.out.delete(r.source); }
 }

@@ -8,8 +8,8 @@
 import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 
 export class DashboardPush {
-  constructor({ url, hostToken, machine, sessions, accounts = () => [], repos = () => null, resources = () => null, config = () => null, onConfigChanges = () => [], everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
-    Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, sessions, accounts, repos, resources, config, onConfigChanges, everySeconds, log, fetch, timeoutMs });
+  constructor({ url, hostToken, machine, sessions, accounts = () => [], forges = null, resources = () => null, config = () => null, onConfigChanges = () => [], everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
+    Object.assign(this, { url: `${url}/api/hosts/${machine}/snapshot`, hostToken, sessions, accounts, forges, resources, config, onConfigChanges, everySeconds, log, fetch, timeoutMs });
     this.bootAt = now();
     this.seq = 0;
     this.inFlight = false;
@@ -20,11 +20,11 @@ export class DashboardPush {
   body() {
     // Accounts first: a session is labelled with the account it spends (sessions(accounts)).
     const accounts = this.accounts();
-    // The forges' reading rides along only when it is new (every few minutes), not every push.
-    const repos = this.repos();
-    this.sending = repos && repos.version !== this.reposSent ? repos : null;
+    // The forge sources this host could read and the readings it owes (forges.mjs ForgeReader):
+    // the gateway answers which to read next, so a source is read by one host per interval.
+    this.sending = this.forges ? this.forges.outbox() : [];
     return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(accounts), accounts,
-      ...(this.sending ? { repos: this.sending.list } : {}), resources: this.resources(), config: this.config(), configResults: this.results };
+      ...(this.forges ? { forges: { sources: this.forges.ids(), readings: this.sending } } : {}), resources: this.resources(), config: this.config(), configResults: this.results };
   }
 
   /** Off the message path: an unref'd timer, never awaited by Telegram routing. */
@@ -45,7 +45,10 @@ export class DashboardPush {
       const reply = await res.json().catch(() => ({}));
       if (reply.accepted !== true) throw new Error('refused as not newer than the one held');
       this.results = [];   // delivered with this push
-      if (this.sending) this.reposSent = this.sending.version;
+      if (this.forges) {
+        this.forges.delivered(this.sending);
+        this.forges.assign((Array.isArray(reply.forgeRead) ? reply.forgeRead : []).filter((id) => typeof id === 'string'));
+      }
       // Changes the gateway hands this host: applied (and validated again) by the daemon.
       const changes = (Array.isArray(reply.configChanges) ? reply.configChanges : []).filter((c) => typeof c?.id === 'string');
       if (changes.length) this.results = await Promise.resolve(this.onConfigChanges(changes)).catch(() => changes.map((c) => ({ id: c.id, ok: false, error: 'not applied' })));

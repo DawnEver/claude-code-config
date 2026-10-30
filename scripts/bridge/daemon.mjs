@@ -1007,7 +1007,7 @@ export async function main() {
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, config.balances) })),
       // Subscriptions and API balances alike: one list of the accounts this host can read.
-      accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]), repos: () => forges.reading(),
+      accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]), forges,
       resources: () => { const r = (lastResources = resources.read()); usage.sample(r); return r; }, onConfigChanges });
     push.start();
     usage.start();

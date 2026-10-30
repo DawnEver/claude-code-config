@@ -14,6 +14,13 @@ export const MAX_EVENTS = 50;
 /** A change handed to a host that does not report it within this goes to the next host. */
 export const CHANGE_RETRY_MS = 120000;
 
+/** A forge source is read again once its last good reading is this old. */
+export const FORGE_EVERY_MS = 5 * 60000;
+/** A host given a source to read holds it this long; past it, another host may take it (a host that died). */
+export const FORGE_LEASE_MS = 2 * 60000;
+/** A host that could not read a source (no token, no route) is not asked for it again within this. */
+export const FORGE_SKIP_MS = 30 * 60000;
+
 export class Registry {
   constructor({ hosts = [], ttlMs = 60000, now = Date.now, store = null } = {}) {
     Object.assign(this, { ttlMs, now, store });
@@ -23,6 +30,10 @@ export class Registry {
     // entry with no kind is from before events were data: dropped.
     this.events = (store?.get('events') ?? []).filter((e) => e?.kind);
     this.changes = new Map();   // pending config change id -> {id, key, value, by, at, host?, sentAt?}
+    // Forge sources (bridge.forges), the one record of each: its last reading ({at, repos} or
+    // {at, error}), the host holding its lease, and hosts that cannot read it until a time. Kept
+    // in storage, so a restart neither empties the Code tab nor makes every host read at once.
+    this.forges = new Map(Object.entries(store?.get('forges') ?? {}));
   }
 
   /**
@@ -36,8 +47,8 @@ export class Registry {
     // A boot dated ahead of this clock would outrank every later boot: refused (5 min skew).
     if (push.bootAt > this.now() + 300000) return { accepted: false };
     if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false };
-    // A push without repos means the host's forge reading is unchanged: its last one stands.
-    this.hosts.set(hostId, { ...push, repos: push.repos ?? prev?.repos ?? [], receivedAt: this.now() });
+    this.hosts.set(hostId, { ...push, receivedAt: this.now() });
+    const forgeRead = this.#forges(hostId, push.forges ?? { sources: [], readings: [] });
     const configChanges = this.#settle(hostId, push.configResults);
     const merged = new Map(this.accounts().map((a) => [a.key, a]));
     // Alerts are about quota windows: a balance has none.
@@ -47,7 +58,37 @@ export class Registry {
       for (const e of events) this.#event(e);
     }
     this.store?.put('alerted', Object.fromEntries(this.alerted));
-    return { accepted: true, configChanges };
+    return { accepted: true, configChanges, forgeRead };
+  }
+
+  /**
+   * Take this host's forge readings, then lease it the sources it is configured for that are due:
+   * no good reading within FORGE_EVERY_MS, no live lease, and this host not skipped. One host per
+   * source per interval however many are configured for it; a lease a dead host held lapses after
+   * FORGE_LEASE_MS. A reading replaces the source's last one whole (idempotent); an error is kept
+   * only while there is no good reading, and a host that cannot read is skipped for FORGE_SKIP_MS.
+   */
+  #forges(hostId, { sources, readings }) {
+    const now = this.now();
+    for (const x of readings) {
+      const f = this.forges.get(x.source) ?? { skip: {} };
+      if (f.lease?.host === hostId) delete f.lease;
+      if (x.repos) Object.assign(f, { at: x.at, repos: x.repos, by: hostId, error: null });
+      else if (x.error) { if (!f.repos) Object.assign(f, { errorAt: x.at, error: x.error }); f.skip[hostId] = now + FORGE_SKIP_MS; }
+      else f.skip[hostId] = now + FORGE_SKIP_MS;
+      this.forges.set(x.source, f);
+    }
+    const read = [];
+    for (const id of sources) {
+      const f = this.forges.get(id) ?? { skip: {} };
+      const due = !f.repos || now - f.at >= FORGE_EVERY_MS;
+      if (!due || (f.lease && f.lease.until > now) || (f.skip[hostId] ?? 0) > now) continue;
+      f.lease = { host: hostId, until: now + FORGE_LEASE_MS };
+      this.forges.set(id, f);
+      read.push(id);
+    }
+    if (readings.length || read.length) this.store?.put('forges', Object.fromEntries(this.forges));
+    return read;
   }
 
   #event(e) {
@@ -116,16 +157,20 @@ export class Registry {
     return [...byKey.values()].sort((a, b) => { const x = order(a), y = order(b); return x[0] - y[0] || x[1].localeCompare(y[1]) || x[2].localeCompare(y[2]); });
   }
 
-  /** Repositories as the hosts that can reach their forge saw them: one per repo, the freshest reading, with every host that sees it. */
+  /**
+   * Every repository of every source's last good reading, newest push first (a repo two sources
+   * list appears once). A source never read well shows as its error, so a missing token is seen.
+   */
   repos() {
     const byKey = new Map();
-    for (const [id, p] of this.hosts) {
-      for (const r of p?.repos ?? []) {
-        const held = byKey.get(r.key);
-        // `hosts`: those that read it; a host that failed to (no token, refused) never outranks one that did.
-        const hosts = r.error ? held?.hosts ?? [] : [...(held?.hosts ?? []), id].sort();
-        const better = !held || (held.error && !r.error) || (!held.error === !r.error && r.at > held.at);
-        byKey.set(r.key, better ? { ...r, hosts } : { ...held, hosts });
+    for (const [id, f] of this.forges) {
+      if (f.repos) { for (const r of f.repos) if (!byKey.has(r.key) || (byKey.get(r.key).error && !r.error)) byKey.set(r.key, { ...r, hosts: [f.by] }); }
+      else if (f.error) {
+        const [kind, host, owner, list] = id.split(':');
+        for (const name of list ? list.split(',') : [owner]) {
+          const key = `${host}/${name}`.toLowerCase();
+          if (!byKey.has(key)) byKey.set(key, { key, forge: kind, name, url: `https://${host}/${name}`, at: f.errorAt, error: f.error, pinned: true, hosts: [], branches: [], pulls: [] });
+        }
       }
     }
     return [...byKey.values()].sort((a, b) => String(b.pushedAt).localeCompare(String(a.pushedAt)));

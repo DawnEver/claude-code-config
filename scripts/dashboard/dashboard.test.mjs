@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
 import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schema.mjs';
-import { Registry } from './registry.mjs';
+import { Registry, FORGE_EVERY_MS, FORGE_LEASE_MS } from './registry.mjs';
 import { createApi, parseDashboardConfig, REPORT_TTL_MS } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
@@ -114,7 +114,7 @@ test('api: host push and viewer read, each authenticated', async () => {
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, '{nope'))).status, 400);
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, { schemaVersion: 1 }))).status, 400);
   assert.equal((await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, 'x'.repeat(300 * 1024)))).status, 413);
-  assert.deepEqual(await (await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()))).json(), { accepted: true, configChanges: [] });
+  assert.deepEqual(await (await g.req('/api/hosts/host-a/snapshot', hostPost(g.token, push()))).json(), { accepted: true, configChanges: [], forgeRead: [] });
 
   assert.equal((await g.req('/api/dashboard')).status, 401);
   assert.equal((await g.req('/api/dashboard', { headers: { authorization: 'tma user=%7B%22id%22%3A42%7D' } })).status, 401, 'unsigned client claim');
@@ -771,15 +771,31 @@ test('accounts: a balance two hosts read is one account, the freshest, with both
   assert.deepEqual(r.events, [], 'a balance never raises a quota alert');
 });
 
-test('code: repos merge across hosts; a push without repos keeps the last reading', () => {
-  const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => 5000 });
-  const repo = (at, branches = []) => ({ key: 'git.example.org/team/a', forge: 'gitea', name: 'team/a', url: 'https://git.example.org/team/a', at, pushedAt: '2026-10-30T10:00:00Z', branches, pulls: [] });
-  r.accept('host-a', parseHostPush({ ...push(), repos: [repo(1.7e12 + 1000, [{ name: 'main', ci: 'success' }])] }));
-  r.accept('host-b', parseHostPush({ ...push(), repos: [repo(1.7e12)] }));
-  r.accept('host-a', parseHostPush({ ...push(), seq: 2 }));
-  const [one, ...rest] = r.snapshot().repos;
-  assert.equal(rest.length, 0);
-  assert.deepEqual([one.at, one.hosts, one.branches[0].ci], [1.7e12 + 1000, ['host-a', 'host-b'], 'success']);
+test('forge leases: one host reads a source per interval; a dead host lease lapses; a host that cannot read is skipped', () => {
+  let t = 1.7e12;
+  const r = new Registry({ hosts: ['a', 'b'], ttlMs: 600000, now: () => t });
+  const SRC = 'gitea:git.example.org::team/x';
+  let seq = 0;
+  const send = (host, readings = []) => r.accept(host, parseHostPush({ ...push(), seq: ++seq, forges: { sources: [SRC], readings } })).forgeRead;
+  const reading = (extra) => ({ source: SRC, at: t, ...extra });
+  const repo = { key: 'git.example.org/team/x', forge: 'gitea', name: 'team/x', at: t, pushedAt: '2026-10-30T10:00:00Z', branches: [], pulls: [] };
+  assert.deepEqual([send('a'), send('b')], [[SRC], []], 'two hosts configured: only one is asked');
+  t += FORGE_LEASE_MS + 1;
+  assert.deepEqual(send('b'), [SRC], 'a never answered (died): its lease lapsed, b takes over');
+  assert.deepEqual(send('b', [reading({ repos: [repo] })]), [], 'fresh: nobody reads again');
+  assert.deepEqual(send('a'), []);
+  assert.deepEqual(send('b', [reading({ repos: [repo] })]), [], 'the same reading again changes nothing (idempotent)');
+  assert.deepEqual(r.snapshot().repos.map((x) => [x.key, x.hosts]), [['git.example.org/team/x', ['b']]]);
+  t += FORGE_EVERY_MS;
+  assert.deepEqual(send('a'), [SRC], 'due again: one host');
+  assert.deepEqual(send('a', [reading({ unavailable: 'no token for git.example.org' })]), [], 'a cannot read it: released and skipped');
+  assert.deepEqual(send('b'), [SRC], 'b is asked instead');
+  assert.deepEqual(send('b', [reading({ error: 'HTTP 401: the token is refused (expired or revoked)' })]), []);
+  assert.equal(r.snapshot().repos[0].error, null, 'an error never replaces a good reading');
+  const fresh = new Registry({ hosts: ['a'], ttlMs: 600000, now: () => t });
+  assert.deepEqual(fresh.accept('a', parseHostPush({ ...push(), forges: { sources: [SRC], readings: [] } })).forgeRead, [SRC]);
+  fresh.accept('a', parseHostPush({ ...push(), seq: 2, forges: { sources: [SRC], readings: [reading({ error: 'HTTP 401: refused' })] } }));
+  assert.deepEqual(fresh.snapshot().repos.map((x) => [x.key, x.error]), [['git.example.org/team/x', 'HTTP 401: refused']], 'never read well: the error shows');
 });
 
 test('code view: the range picks active repos and branches; attention first; sessions meet their branch by repo key', () => {

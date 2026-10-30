@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { forgeSources, readSource, ForgeReader } from './forges.mjs';
+import { forgeSources, readSource, sourceId, ForgeReader } from './forges.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
 
 const NOW = Date.parse('2026-10-30T12:00:00Z');
@@ -37,7 +37,7 @@ test('github: one GraphQL query per page maps repos, branches and open PRs; repo
     { name: 'old', isArchived: false, pushedAt: day(400), refs: { nodes: [] }, pullRequests: { nodes: [] } },
   ] } } };
   const fetch = async (url, opts) => { calls.push([url, opts.headers.Authorization]); return { ok: true, json: async () => ({ data: page }) }; };
-  const repos = await readSource({ kind: 'github', base: 'https://github.com', owner: 'someone', repos: [] }, { token: 't', fetch, now: () => NOW });
+  const { repos } = await readSource({ kind: 'github', base: 'https://github.com', owner: 'someone', repos: [] }, { token: 't', fetch, now: () => NOW });
   assert.equal(calls.length, 1, 'a repo idle over a year ends paging: the list is ordered by last push');
   assert.deepEqual(calls[0], ['https://api.github.com/graphql', 'Bearer t']);
   assert.deepEqual(repos, [{
@@ -61,33 +61,35 @@ test('gitea: REST per repo — branches newest first, open PRs, each head\'s com
     '/api/v1/repos/team/a/commits/o1/status': { state: '' },
   };
   const fetch = async (url) => { const p = url.replace('https://git.example.org', ''); return p in api ? { ok: true, json: async () => api[p] } : { ok: false, status: 404 }; };
-  const [r] = await readSource({ kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'] }, { token: 't', fetch, now: () => NOW });
+  const { repos: [r] } = await readSource({ kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'] }, { token: 't', fetch, now: () => NOW });
   assert.equal(r.key, 'git.example.org/team/a');
   assert.deepEqual(r.branches.map((b) => [b.name, b.author, b.ci]), [['main', 'A', 'success'], ['old', 'b', null]]);
   assert.deepEqual(r.pulls, [{ number: 3, title: 'WIP: thing', url: 'https://git.example.org/team/a/pulls/3', draft: true, author: 'b', head: 'old', base: 'main',
     review: null, conflict: false, ci: null, updatedAt: day(2) }]);
 });
 
-test('an unreachable forge reports nothing; a missing or refused token and a failing repo say so; `show` marks the defaults', async () => {
+test('one reading per source: repos, the forge refusing, or this host unable to read; a fault throws', async () => {
   const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: ['team/b'], keyUsername: 'dashboard' };
-  const [none] = await readSource(src, { token: null, now: () => NOW });
-  assert.deepEqual([none.key, none.error, none.pinned], ['git.example.org/team/a', 'no token for git.example.org (dashboard) on this host', false]);
-  const [refused] = await readSource(src, { token: 't', fetch: async () => ({ ok: false, status: 401 }), now: () => NOW });
-  assert.match(refused.error, /^HTTP 401: the token is refused/);
-  assert.deepEqual(await readSource(src, { token: 't', fetch: async () => { throw new TypeError('fetch failed'); }, now: () => NOW }), [], 'unreachable: not this host\'s to report');
+  assert.deepEqual(await readSource(src, { token: null, now: () => NOW }), { unavailable: 'no token for git.example.org (dashboard)' });
+  assert.deepEqual(await readSource(src, { token: 't', fetch: async () => { throw new TypeError('fetch failed'); }, now: () => NOW }), { unavailable: 'git.example.org unreachable' });
   await assert.rejects(readSource(src, { token: 't', fetch: async () => { throw new RangeError('a bug'); }, now: () => NOW }), /a bug/, 'a fault is said, not hidden');
-  const [r] = await readSource(src, { token: 't', fetch: async () => ({ ok: false, status: 500 }), now: () => NOW });
-  assert.deepEqual([r.key, r.error], ['git.example.org/team/a', 'HTTP 500']);
+  const { repos: [r] } = await readSource(src, { token: 't', fetch: async () => ({ ok: false, status: 401 }), now: () => NOW });
+  assert.deepEqual([r.key, r.pinned], ['git.example.org/team/a', false], 'a repo the forge refused is still that repo, with its error');
+  assert.match(r.error, /^HTTP 401: the token is refused/);
+  assert.equal(sourceId(src), 'gitea:git.example.org::team/a', 'what is read, not how it is shown or keyed');
 });
 
-test('the reader refreshes in the background at most every interval and keeps the last reading', async () => {
-  let t = 0, reads = 0;
-  const r = new ForgeReader({ sources: [{ kind: 'github', base: 'https://github.com', owner: 'o', repos: [] }], everyMs: 1000, now: () => t,
-    token: () => 't', readOne: async () => { reads++; return [{ key: 'github.com/o/r' }]; } });
-  assert.deepEqual(r.read(), []);
-  await r.pending;
-  assert.deepEqual(r.read(), [{ key: 'github.com/o/r' }]);
-  t = 500; r.read(); assert.equal(reads, 1);
-  t = 1000; r.read(); await r.pending; assert.equal(reads, 2);
-  assert.deepEqual(new ForgeReader({}).read(), [], 'nothing configured: nothing read');
+test('the reader reads only what the gateway assigns, once at a time, and keeps each reading until delivered', async () => {
+  const src = { kind: 'github', base: 'https://github.com', owner: 'o', repos: [] };
+  let reads = 0, release;
+  const r = new ForgeReader({ sources: [src], now: () => NOW, token: () => 't',
+    readOne: () => { reads++; return new Promise((ok) => { release = () => ok({ repos: [{ key: 'github.com/o/r' }] }); }); } });
+  assert.deepEqual(r.ids(), ['github:github.com:o:']);
+  r.assign(['github:github.com:o:', 'unknown']); r.assign(['github:github.com:o:']);
+  assert.equal(reads, 1, 'a source being read is not read again');
+  release(); await new Promise((ok) => setTimeout(ok, 0));
+  const out = r.outbox();
+  assert.deepEqual(out, [{ source: 'github:github.com:o:', at: NOW, repos: [{ key: 'github.com/o/r' }] }]);
+  r.delivered(out);
+  assert.deepEqual(r.outbox(), []);
 });

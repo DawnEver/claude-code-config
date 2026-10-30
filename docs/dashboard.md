@@ -210,6 +210,16 @@ no balance to an API key — only spend, through an Admin key — so they read a
 What each code forge's repositories are doing: branches, open PRs and each head's CI, linked
 to the sessions working on them.
 
+**Read once per interval, by one host that can, coordinated by the gateway.** Every host
+configured for a source declares it in its push (`forges.sources`, a source id = what is read:
+kind, forge host, owner, repos). The gateway (registry.mjs, the one record per source, kept in
+Durable Object storage) leases a source to the pushing host only when it is due — no good reading
+within `FORGE_EVERY_MS` (5 min) and no live lease — and says so in the reply (`forgeRead`). So
+however many hosts are configured, one reads; a lease lapses after `FORGE_LEASE_MS` (2 min), so a
+host that dies mid-read is replaced by the next one to push; a host that reports it cannot read
+(no token, forge unreachable) or whose token is refused is not asked again for `FORGE_SKIP_MS`
+(30 min) and another is. A reading replaces the source's record whole, so a repeat is harmless.
+
 **Read by the hosts that can reach each forge** (`scripts/bridge/forges.mjs`). A forge inside a
 private network is read by the hosts on that network, a public one by any; the gateway never
 reaches a forge and never holds a token. Each host uses its own token: `gh auth token` for
@@ -230,19 +240,17 @@ of the forge host is the token: store a forge API token (read-only scope) under 
 `git credential approve`. Do not rely on the credential a git client stored for pushing — a Git
 Credential Manager OAuth token expires within hours and then reads as HTTP 401.
 
-**Nothing fails silently.** A host without the token, or whose token is refused, reports the
-listed repos with that error; the registry prefers any host's successful reading over an error,
-and the tab lists a repo no host could read first under *Needs attention*. The daemon logs one
-`forges:` line whenever what it reads changes (repos per forge, each error).
+**Nothing fails silently.** An error never replaces a good reading; a source never read well
+shows its error on its repos, listed first under *Needs attention*. The daemon logs one
+`forges:` line per reading it makes (repos, the forge's error, or why it cannot read).
 A kind is one adapter onto one model — `Repo {key, branches, pulls}`, `Branch {name, sha, at,
 author, ci}`, `Pull {number, head, base, review, conflict, ci}` — so adding GitLab is adding an
 adapter. GitHub is one GraphQL query per 50 repos, newest push first, stopping at a year of
 inactivity; Gitea (and Forgejo) is REST per repo, CI from each head's combined commit status,
 which Gitea Actions reports. `ci` is `success | failure | pending | null`.
 
-**One repo, one record.** Its key is `<forge host>/<owner>/<name>` (`scripts/shared/repo-key.mjs`).
-Hosts read every 5 min; a reading rides the dashboard push only when new, and the registry keeps
-each host's last one, merging by key (freshest, with every host that sees it). A session carries
+**One repo, one record.** Its key is `<forge host>/<owner>/<name>` (`scripts/shared/repo-key.mjs`);
+a reading rides the next dashboard push and stays in the host's outbox until a push is accepted. A session carries
 the key of its working tree's origin, so the tab links a session to its branch, PR and CI exactly.
 
 **The tab** (`view.mjs codeView`): a range (24h / 7d / 30d / 1y, 30d by default, kept per device)

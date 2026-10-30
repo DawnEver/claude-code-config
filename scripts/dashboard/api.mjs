@@ -86,8 +86,8 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       if (what === 'snapshot') {
         const parsed = parseHostPush(raw);
         if (!parsed) return error(400, 'invalid_snapshot');
-        const { accepted, configChanges = [] } = registry.accept(hostId, parsed);
-        return json(200, { accepted, configChanges });
+        const { accepted, configChanges = [], forgeRead = [] } = registry.accept(hostId, parsed);
+        return json(200, { accepted, configChanges, forgeRead });
       }
       if (!db) return error(503, 'no_usage_store');
       if (what === 'usage') {
