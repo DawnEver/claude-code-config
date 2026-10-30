@@ -220,7 +220,9 @@ export function accountModels({ machine, seats, codexAccount, claude = [], codex
  * (`seat`: its alias, null for the base dir), a Codex session by the shared app-server's one
  * account. `aliases` is local knowledge only: the dashboard schema never forwards it.
  */
-export function accountFor(session, accounts) {
+export function accountFor(session, accounts, billing = []) {
+  // An API-key session (ccds, cods) spends its platform's balance, never a subscription.
+  if (session.provider) return billing.find((b) => b.provider === session.provider)?.key ?? null;
   const a = session.agent === 'claude' ? accounts.find((x) => x.agent === 'claude' && x.aliases?.includes(session.seat ?? null))
     : accounts.find((x) => x.agent === session.agent);
   return a?.key ?? null;

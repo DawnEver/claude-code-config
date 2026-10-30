@@ -31,6 +31,7 @@ import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 import { isValidAlias } from '../shared/seats.mjs';
+import { isProvider } from '../shared/dashboard-schema.mjs';
 import { AGENTS } from '../dashboard/public/shared/vocab.mjs';
 
 const AUTH_TIMEOUT_MS = 5000;
@@ -180,7 +181,7 @@ export class ClaudeAdapter extends EventEmitter {
             named: previous?.named ?? NO_NAME });
           const s = this.sessions.get(sessionId);
           if (s.transcript) s.named = transcriptName(s.transcript, s.named);
-          this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, name: s.named.name, backlog: [] });
+          this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, provider: isProvider(p.provider) ? p.provider : null, name: s.named.name, backlog: [] });
           this.#emitStatus(sessionId);
           this.#takeOver(sessionId);
           this.#release();

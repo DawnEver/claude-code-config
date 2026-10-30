@@ -17,6 +17,7 @@ import { spawn, execFile } from 'child_process';
 import { WsStreamClient } from './ws-stream.mjs';
 import { JsonRpcPeer } from './jsonrpc.mjs';
 import { BRIDGE_DEFAULTS } from './context.mjs';
+import { isProvider } from '../shared/dashboard-schema.mjs';
 
 const QUOTA_REFRESH_MS = 5 * 60000;
 // Codex keeps a thread in memory ("loaded") long after its last client left (an idle one is
@@ -308,7 +309,9 @@ export class CodexAdapter extends EventEmitter {
     this.threads.set(threadId, info);
     // Back from release: what ran since it went quiet replays (updatedAt is seconds).
     const since = released === undefined ? this.connectedAt : released * 1000;
-    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, name: th.name ?? null, backlog: backlogSince(th.turns, since) });
+    // modelProvider: the [model_providers.<name>] the thread runs on; 'openai' is the subscription.
+    const provider = isProvider(th.modelProvider) && th.modelProvider !== 'openai' ? th.modelProvider : null;
+    this.emit('up', { id: threadId, cwd: info.cwd, branch: info.branch, provider, name: th.name ?? null, backlog: backlogSince(th.turns, since) });
     this.emit('status', { id: threadId }); // Refresh an existing observation-only card on RPC takeover.
   }
 

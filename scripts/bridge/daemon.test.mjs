@@ -1007,6 +1007,7 @@ for (const [how, act] of [
 test('cardWho: agent, seat when set, machine — the part the pin bar shows', () => {
   assert.equal(cardWho({ agent: 'claude', seat: 'w' }, 'm'), 'claude w on m');
   assert.equal(cardWho({ agent: 'codex', seat: null }, 'm'), 'codex on m');
+  assert.equal(cardWho({ agent: 'claude', seat: null, provider: 'deepseek' }, 'm'), 'claude via deepseek on m');
 });
 
 test('cardDetail: the pinned card names the account and its use, and the machine load', () => {
@@ -1015,4 +1016,7 @@ test('cardDetail: the pinned card names the account and its use, and the machine
   assert.deepEqual(cardDetail({ agent: 'claude', seat: 'w' }, { accounts, resources }),
     ['Account: a@example.com · used 5h 40% · 7d 12%', 'Machine: CPU 30% · RAM 8.0/32 GB · GPU 5% 1.0/24 GB']);
   assert.deepEqual(cardDetail({ agent: 'codex', seat: null }, { accounts }), []);
+  // ccds spends the DeepSeek balance, not the Claude seat of its config dir.
+  const billing = [{ key: 'deepseek:0123456789ab', provider: 'deepseek', label: null, balances: [{ currency: 'CNY', amount: 457.2 }] }];
+  assert.deepEqual(cardDetail({ agent: 'claude', seat: 'w', provider: 'deepseek' }, { accounts, billing }), ['Account: deepseek · 457.20 CNY']);
 });

@@ -59,7 +59,7 @@ test('schema: whitelists fields, derives a Topic link, never forwards the chat i
   const p = parseHostPush(push({ sessions: [session({ cwd: '/home/u/x', token: 'secret' }), session({ id: 's2', topic: null, status: 'bogus' }),
     session({ agent: 'gpt' }), session()] }));
   assert.equal(p.sessions.length, 2, 'unknown agent and duplicate dropped');
-  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'lastPostAt', 'mention', 'name', 'posted', 'project', 'seat', 'status', 'topic', 'unread']);
+  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'lastPostAt', 'mention', 'name', 'posted', 'project', 'provider', 'seat', 'status', 'topic', 'unread']);
   assert.deepEqual(p.sessions[0].topic, { url: 'https://t.me/c/1234567890/77', closed: false });
   assert.equal(p.sessions[1].status, 'unknown');
   assert.equal(p.sessions[1].topic, null);

@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, billingView, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
+import { GROUPS, accountSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, billingView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -132,7 +132,7 @@ function sessionRow(s, { withHost = false, inProject = false } = {}) {
   // The account the session spends, as on the Quota tab (observation-only sessions have none).
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
-  else if (s.seat) sub.append(document.createTextNode(` · ${s.seat}`));
+  else if (s.seat || s.provider) sub.append(document.createTextNode(` · ${s.seat ?? providerName(s.provider)}`));
   bottom.append(sub, ...badges(s));
   body.append(top, bottom);
   row.append(avatar, body);
@@ -294,11 +294,16 @@ function renderQuota() {
   const box = $('quota-view');
   box.replaceChildren();
   const grid = el('div', 'quota-hosts');
+  // An API balance sits under each machine whose sessions spend it (ccds, cods), like an account; one no machine uses, at the bottom.
+  const billing = billingView(snapshot.billing, Date.now(), lang);
+  const spentOn = (b, hostId) => accountSessions(snapshot, b.key).filter((u) => u.hostId === hostId);
   for (const h of hostList) {
     const expanded = openHosts.has(h.id);
     const facts = expanded ? hostFacts(h) : [];
+    const bills = billing.filter((b) => spentOn(b, h.id).length);
+    if (bills.length) facts.unshift(billingRows(bills, h.id));
     let section;
-    if (!h.accounts.length) section = hostSection(h, [el('div', 'qrows empty', tr('quota.noAccounts')), ...facts]);
+    if (!h.accounts.length) section = hostSection(h, [...(bills.length ? [] : [el('div', 'qrows empty', tr('quota.noAccounts'))]), ...facts]);
     else {
       const best = bestAccounts(h.accounts);
       const bestLine = el('div', 'qbest', best.length ? tr('quota.bestNow') : tr('quota.bestNone'));
@@ -324,16 +329,28 @@ function renderQuota() {
     grid.append(section);
   }
   box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
-  const billing = billingView(snapshot.billing, Date.now(), lang);
-  if (!billing.length) return;
+  const idle = billing.filter((b) => !accountSessions(snapshot, b.key).length);
+  if (idle.length) box.append(el('div', 'section-h', tr('billing.heading')), billingRows(idle));
+  box.append(el('div', 'section-h', tr('billing.heading')), rows);
+}
+
+/** API balances as rows; under a host (`hostId`), each followed by that host's sessions spending it. */
+function billingRows(bills, hostId = null) {
   const rows = el('div', 'qrows');
-  for (const b of billing) {
+  for (const b of bills) {
     const row = el('div', 'qrow brow');
     row.title = b.hosts.join(', ');
     row.append(el('span', 'k', b.name), el('span', b.error ? 'muted' : 'left', b.error ?? b.amounts), el('span', 'muted', b.age));
     rows.append(row);
+    const using = hostId === null ? [] : accountSessions(snapshot, b.key).filter((u) => u.hostId === hostId);
+    if (using.length) {
+      const list = el('div', 'waiting');
+      for (const u of using) list.append(sessionRow(u));
+      list.addEventListener('click', (e) => e.stopPropagation());
+      rows.append(el('div', 'note', tr('quota.inUse', { n: using.length })), list);
+    }
   }
-  box.append(el('div', 'section-h', tr('billing.heading')), rows);
+  return rows;
 }
 
 /** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */

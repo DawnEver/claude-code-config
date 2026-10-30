@@ -242,6 +242,8 @@ function main() {
     cwd,
     // The seat this session runs as (scripts/shared/seats.mjs); null = an unassigned base dir.
     seat: seatOf(configDir(), readSeats(), readMachineName()),
+    // The API platform it spends, set by the launcher (cc-launcher.mjs); null = the subscription.
+    provider: process.env.HARNESS_PROVIDER || null,
     transcriptPath: transcriptPathOf(configDir(), cwd, identity.sessionId),
   };
   // Claude Code swallows an MCP server's stderr, so the reason this process ends goes to a

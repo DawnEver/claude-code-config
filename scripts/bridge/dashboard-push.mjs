@@ -18,9 +18,9 @@ export class DashboardPush {
   }
 
   body() {
-    // Accounts first: a session is labelled with the account it spends (sessions(accounts)).
-    const accounts = this.accounts();
-    return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(accounts), accounts, billing: this.billing(),
+    // Accounts and balances first: a session is labelled with the account it spends (sessions(accounts, billing)).
+    const accounts = this.accounts(), billing = this.billing();
+    return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(accounts, billing), accounts, billing,
       resources: this.resources(), config: this.config(), configResults: this.results };
   }
 

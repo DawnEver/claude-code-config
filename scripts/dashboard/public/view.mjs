@@ -251,11 +251,13 @@ export function windowLabel(w, stale, unit = 'left', lang = 'en') {
 export const amount = (used, unit = 'left') => Math.round(unit === 'left' ? Math.max(0, 100 - used) : Math.min(100, used));
 
 const PROVIDER_NAMES = { deepseek: 'DeepSeek', anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter' };
+/** An API platform's display name ('deepseek' -> 'DeepSeek'). */
+export const providerName = (p) => PROVIDER_NAMES[p] ?? p;
 const CURRENCY = { USD: '$', CNY: '¥', EUR: '€', GBP: '£' };
 
 /** The API platform balances (snapshot.billing) as rows: a name, the amounts, and the reading's age or its error. */
 export function billingView(billing, now = Date.now(), lang = 'en') {
-  return (billing ?? []).map((b) => ({ key: b.key, name: [PROVIDER_NAMES[b.provider] ?? b.provider, b.label].filter(Boolean).join(' · '),
+  return (billing ?? []).map((b) => ({ key: b.key, name: [providerName(b.provider), b.label].filter(Boolean).join(' · '),
     amounts: b.balances.map((x) => `${CURRENCY[x.currency] ?? `${x.currency} `}${x.amount.toFixed(2)}`).join(' · '),
     error: b.error, age: ago(new Date(b.at).toISOString(), now, lang), hosts: b.hosts ?? [] }));
 }

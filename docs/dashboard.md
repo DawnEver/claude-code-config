@@ -172,7 +172,12 @@ app-server); the Worker never recomputes it.
 
 ## Billing
 
-API platform balances, below the quota hosts. A billing account is a provider plus the
+API platform balances. A balance sits under each machine whose sessions spend it, with
+those sessions, like a quota account; one no machine uses is listed below the hosts. A session
+spends a balance when it runs on that provider: `ccds` sets `HARNESS_PROVIDER` (cc-launcher.mjs),
+which the session-bridge channel reports; a `cods` thread carries Codex's own `modelProvider`
+(`openai` = the subscription). Such a session is never attributed to the Claude seat or Codex
+login beside it (`quota.mjs accountFor`); its pinned card shows the balance. A billing account is a provider plus the
 credential it is read with, declared once in the shared settings — never a key:
 
 ```json

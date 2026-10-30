@@ -133,7 +133,7 @@ test('start() returns false when the daemon probe fails, without connecting', as
 test('handshake then subscribe every loaded thread via thread/resume', async () => {
   const { srv, ups } = await started();
   assert.deepEqual(srv.calls.map((c) => c.method), ['initialize', 'initialized', 'account/read', 'account/rateLimits/read', 'thread/loaded/list', 'thread/resume']);
-  assert.deepEqual(ups, [{ id: 't1', cwd: '/w', branch: 'feat/x', name: null, backlog: [] }]);
+  assert.deepEqual(ups, [{ id: 't1', cwd: '/w', branch: 'feat/x', provider: null, name: null, backlog: [] }]);
 });
 
 test('account quota: read on refresh, replaced by pushes for the codex bucket only', async () => {
@@ -149,6 +149,12 @@ test('account quota: read on refresh, replaced by pushes for the codex bucket on
   assert.deepEqual([a.quota.limits.primary.usedPercent, a.quota.limits.secondary.usedPercent], [30, 7], 'a partial push keeps the other window');
   await a.refresh();
   assert.equal(srv.calls.filter((c) => c.method === 'account/rateLimits/read').length, 1, 'not re-read within 5 minutes');
+});
+
+test('a thread on a non-OpenAI model provider (cods) carries it; OpenAI is the subscription', async () => {
+  const th = (id, modelProvider) => ({ id, cwd: '/w', ephemeral: false, modelProvider, turns: [], status: { type: 'idle' }, updatedAt: Date.now() / 1000 });
+  const { ups } = await started({ loaded: ['t1', 't2'], threads: { t1: th('t1', 'deepseek'), t2: th('t2', 'openai') } });
+  assert.deepEqual(ups.map((u) => [u.id, u.provider]).sort(), [['t1', 'deepseek'], ['t2', null]]);
 });
 
 test('status follows Codex\'s own thread status, not the adapter\'s turn bookkeeping', async () => {

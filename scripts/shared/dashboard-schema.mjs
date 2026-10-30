@@ -13,6 +13,8 @@ export { AGENTS, STATUSES };
 export const MAX_SESSIONS = 200;
 /** A host id is its machine name (scripts/shared/machine.mjs), bounded for the gateway. */
 export const isHostId = (id) => isValidMachineName(id) && id.length <= 64;
+/** An API platform's name as the provider catalogue spells it ('deepseek'): a billing key's prefix, a session's provider. */
+export const isProvider = (v) => typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v);
 
 const text = (v, max = 128) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 
@@ -39,6 +41,8 @@ function parseSession(s) {
   const url = t && topicUrl(t.chatId, t.topicId);
   return {
     id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
+    // The API platform the session spends (billing); null = a subscription.
+    provider: isProvider(s.provider) ? s.provider : null,
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
     // Background tasks (shells, agents) an idle session left running.
     ...(num(s.background, 1, 999) ? { background: s.background } : {}),

@@ -17,7 +17,7 @@ export function mockDashboard(now = Date.now()) {
       resources: { cpu: 42, cores: 16, cpuModel: 'AMD Ryzen 9 7950X', mem: { used: 21e9, total: 34e9, type: 'DDR5' }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
     { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
       s('host-b', false, '7d1e9b3c-3333', 'claude', 'refactor', 'refactor/core', 'idle', 900, { url: 'https://t.me/c/1000000002/7', closed: true }, null, 'Split the parser module', 1),
-      s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null)],
+      { ...s('host-b', false, '019a8c41-4444', 'codex', 'tests', 'main', 'working', 3, null), provider: 'deepseek', account: 'deepseek:0123456789ab' }],
       resources: { cpu: 7, cores: 10, cpuModel: 'Apple M2 Pro', mem: { used: 9e9, total: 17e9, type: 'LPDDR5' }, gpus: [] } },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },

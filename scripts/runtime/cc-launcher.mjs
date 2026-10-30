@@ -90,6 +90,8 @@ export function buildClaudeInvocation({
   const notice = repo.notice;
   extraArgs = [...repo.args, ...extraArgs];
 
+  // The provider a session spends (the bridge attributes it to that platform's account); absent = the subscription.
+  delete env.HARNESS_PROVIDER;
   if (!provider || provider === 'claude') {
     // A machine with its own bot token runs the session bridge (docs/bridge.md), so every
     // official session loads its channel. Third-party providers lack channels entirely.
@@ -114,6 +116,7 @@ export function buildClaudeInvocation({
   const baseUrl = row.endpoints?.anthropic;
   if (!baseUrl) return fail(`provider ${provider} declares no anthropic protocol in the ai-lab catalogue; Claude Code cannot use it`);
   env.ANTHROPIC_BASE_URL = baseUrl;
+  env.HARNESS_PROVIDER = provider;
 
   if (rules.claudeApiKeyEnv && withKey) {
     const user = sessionUsername(provider, row);

@@ -71,12 +71,15 @@ const GB = 1024 ** 3;
  * use) and this machine's load. Either is left out when unknown; observation-only sessions have
  * no account (quota.mjs accountFor).
  */
-/** The card's identity: agent, its Claude seat when not the default, the machine. */
-export const cardWho = ({ agent, seat }, machine) => `${agent}${seat ? ` ${seat}` : ''} on ${machine}`;
+/** The card's identity: agent, its Claude seat when not the default, or the API platform it spends, the machine. */
+export const cardWho = ({ agent, seat, provider }, machine) => `${agent}${seat ? ` ${seat}` : provider ? ` via ${provider}` : ''} on ${machine}`;
 
-export function cardDetail(s, { accounts = [], resources = null } = {}) {
+export function cardDetail(s, { accounts = [], billing = [], resources = null } = {}) {
   const lines = [];
-  const a = accounts.find(x => x.key === accountFor(s, accounts));
+  const key = accountFor(s, accounts, billing);
+  const b = billing.find(x => x.key === key);
+  if (b) lines.push(`Account: ${b.label ?? b.provider} · ${b.error ?? b.balances.map(x => `${x.amount.toFixed(2)} ${x.currency}`).join(' · ')}`);
+  const a = accounts.find(x => x.key === key);
   if (a) {
     const used = a.windows.map(w => `${w.k} ${Math.round(w.used)}%`).join(' · ');
     lines.push(`Account: ${a.email ?? a.label ?? a.agent}${used ? ` · used ${used}` : ''}`);
@@ -194,7 +197,7 @@ export class Bridge {
    * minus the turns the backlog already carried (a turn that completes during bring-up is
    * reported both ways).
    */
-  async sessionUp(agent, { id, cwd, branch, seat = null, name = null, backlog = [] }) {
+  async sessionUp(agent, { id, cwd, branch, seat = null, provider = null, name = null, backlog = [] }) {
     const key = sessionKey(agent, id);
     if (this.sessions.has(key) || this.held.has(key)) return this.sessions.get(key);
     this.held.set(key, []);
@@ -204,11 +207,11 @@ export class Bridge {
       const chatId = this.chatFor(ctx.project);
       const cacheKey = chatId === null ? null : TopicCache.key(chatId, key);
       const cached = cacheKey === null || this.deletingTopics.has(cacheKey) ? null : this.topics.get(cacheKey);
-      // A Claude seat (scripts/shared/seats.mjs) names the login the session runs as.
+      // A Claude seat (scripts/shared/seats.mjs) names the login the session runs as; a provider, the API platform it spends instead.
       const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, name: sessionName(name),
-        project: ctx.project, branch: ctx.branch, cwd, seat, chain: Promise.resolve(), progress: null, injected: [] };
+        project: ctx.project, branch: ctx.branch, cwd, seat, provider, chain: Promise.resolve(), progress: null, injected: [] };
       s.titleOf = (suffix = '') => topicTitle({ name: s.name, machine: this.machine, project: ctx.project, branch: ctx.branch,
-        agent: seat ? `${agent}:${seat}` : agent, suffix, projectInTitle: this.config.projects[ctx.project]?.projectInTitle });
+        agent: seat || provider ? `${agent}:${seat ?? provider}` : agent, suffix, projectInTitle: this.config.projects[ctx.project]?.projectInTitle });
       const base = s.base = s.title = s.titleOf();
       this.sessions.set(key, s);
       s.title = this.#selectTitle(s, cached?.title);
@@ -249,7 +252,7 @@ export class Bridge {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended')
       .map((s) => ({ s, snap: this.hosts.get(s.agent)?.statusSnapshot?.(s.id) }))
       .filter(({ snap }) => snap?.state !== 'unknown').map(({ s, snap }) => ({
-      id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null,
+      id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null, provider: s.provider ?? null,
       unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
       lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
       ...(snap?.observationOnly ? { observationOnly: true } : {}),
@@ -438,7 +441,7 @@ export class Bridge {
     // machine) or is gone, it is not, even before anything new is posted.
     if (s.mention && (state === 'running' || state === 'disconnected')) { this.#clearMention(s); this.#save(s); }
     // Telegram's pin bar shows only the start of the first line: state, then who runs it where.
-    const who = { agent: s.agent.split(':')[0], seat: s.seat ?? null };
+    const who = { agent: s.agent.split(':')[0], seat: s.seat ?? null, provider: s.provider ?? null };
     const content = `${observationOnly ? 'Observation only (local TUI controls)' : STATUS[statusCode(state)].label} · since ${clock(s.statusSince)} · ${cardWho(who, this.machine)}`;
     if (!force && s.statusText === content) return;
     // Account and load ride along whenever the card is redrawn (a state change or Refresh), never on their own.
@@ -950,8 +953,8 @@ export async function main() {
   const codex = new CodexAdapter({ sources: config.codexSources, localObserver: new CodexLocalObserver({ sources: config.codexSources }) });
   // The pinned card's account and load: the dashboard push's last reading, else a sample of its own.
   const resources = new ResourceReader();
-  let lastAccounts = [], lastResources = null;
-  const cardFacts = () => ({ accounts: lastAccounts, resources: config.dashboard ? lastResources : resources.read() });
+  let lastAccounts = [], lastBilling = [], lastResources = null;
+  const cardFacts = () => ({ accounts: lastAccounts, billing: lastBilling, resources: config.dashboard ? lastResources : resources.read() });
   const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, telegramEnabled: !!telegram, cardFacts,
     topicCacheFile: telegram ? path.join(BRIDGE_RUNTIME_DIR, 'topics.json') : null });
 
@@ -1000,8 +1003,8 @@ export async function main() {
       scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
         sources: () => usageSources(os.homedir(), { machine, codexHome }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
-      sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list) })),
-      accounts: () => (lastAccounts = accounts.read()), billing: () => billing.read(),
+      sessions: (list, bills) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, bills) })),
+      accounts: () => (lastAccounts = accounts.read()), billing: () => (lastBilling = billing.read()),
       resources: () => { const r = (lastResources = resources.read()); usage.sample(r); return r; }, onConfigChanges });
     push.start();
     usage.start();

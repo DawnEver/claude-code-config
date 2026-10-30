@@ -180,4 +180,9 @@ test('accountFor: a Claude session by its config dir, a Codex session by the Cod
   assert.equal(accountFor({ agent: 'claude', seat: 'team-b' }, accounts), 'claude:b@example.com|');
   assert.equal(accountFor({ agent: 'claude', seat: 'gone' }, accounts), null);
   assert.equal(accountFor({ agent: 'codex' }, accounts), 'codex:c@example.com');
+  // An API-key session (ccds, cods) spends its platform's balance, never the subscription beside it.
+  const billing = [{ key: 'deepseek:0123456789ab', provider: 'deepseek' }];
+  assert.equal(accountFor({ agent: 'claude', seat: null, provider: 'deepseek' }, accounts, billing), 'deepseek:0123456789ab');
+  assert.equal(accountFor({ agent: 'codex', provider: 'deepseek' }, accounts, billing), 'deepseek:0123456789ab');
+  assert.equal(accountFor({ agent: 'codex', provider: 'kimi' }, accounts, billing), null, 'no balance read: no account, not the subscription');
 });

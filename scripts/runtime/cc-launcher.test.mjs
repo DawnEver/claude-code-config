@@ -59,6 +59,7 @@ test('deepseek: base URL and role models from the catalogue, key from the store 
   const { env, error } = invoke(RULES);
   assert.equal(error, null);
   assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+  assert.equal(env.HARNESS_PROVIDER, 'deepseek', 'the bridge attributes the session to this platform');
   assert.equal(env.ANTHROPIC_API_KEY, 'sk-secret');
   assert.equal(env.ANTHROPIC_MODEL, 'deepseek-v4-flash[1m]');
   assert.equal(env.ANTHROPIC_DEFAULT_FABLE_MODEL, 'deepseek-v4-pro[1m]');
