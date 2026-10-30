@@ -289,6 +289,19 @@ test('store: report by the viewer\'s day; query is read-only and capped', async 
   assert.match(schema.rows[0][0], /uncached input tokens/, 'the schema explains itself');
 });
 
+test('store: a session\'s cost falls in the range of its last turn, not of when the price arrived', async () => {
+  const db = fakeD1();
+  const now = Date.parse('2026-10-30T12:00:00Z');
+  const at = (iso) => ({ started_at: Date.parse(iso), ended_at: Date.parse(iso) + 60000 });
+  await ingest(db, 'host-a', { costs: [], quota: [], resources: [], turns: [
+    turnRow({ session: 'OLD', ...at('2026-10-10T10:00:00Z') }), turnRow({ session: 'NEW', ...at('2026-10-29T10:00:00Z') })] });
+  // A backfill: both prices arrive now.
+  await ingest(db, 'host-a', { turns: [], quota: [], resources: [], costs: [
+    { agent: 'claude', session: 'OLD', model: 'claude-opus-5-5', cost_usd: 10 }, { agent: 'claude', session: 'NEW', model: 'claude-opus-5-5', cost_usd: 2 }] }, now);
+  assert.equal((await report(db, { days: 7, now })).costUsd, 2);
+  assert.equal((await report(db, { days: 30, now })).costUsd, 12);
+});
+
 test('store: usage_hours always equals turns grouped by hour, through grow, move, re-send and delete', async () => {
   const db = fakeD1();
   const empty = { turns: [], costs: [], quota: [], resources: [] };

@@ -906,6 +906,8 @@ test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended se
   assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
   r.hosts.codex.statusSnapshot = () => null;
   assert.equal(r.bridge.dashboardSessions().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
+  r.hosts.codex.statusSnapshot = () => ({ state: 'unknown' });
+  assert.ok(!r.bridge.dashboardSessions().some((s) => s.id === 'quiet'), 'a host reporting its state unknown is hidden');
   r.bridge.sessionDown('codex:quiet');
   assert.deepEqual(r.bridge.dashboardSessions().map((s) => s.id), ['busy']);
 });

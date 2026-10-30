@@ -242,14 +242,17 @@ export class Bridge {
    * This machine's sessions for the dashboard: read-only, from the same registry and
    * adapter snapshots the status cards use. No cwd, no title: the project name stands in.
    * A Topic is listed only once Telegram confirmed it (lazy creation: many sessions have none).
+   * A session whose state is unknown is left out: nothing about it can be acted on.
    */
   dashboardSessions() {
-    return [...this.sessions.values()].filter((s) => s.state !== 'ended').map((s) => ({
+    return [...this.sessions.values()].filter((s) => s.state !== 'ended')
+      .map((s) => ({ s, snap: this.hosts.get(s.agent)?.statusSnapshot?.(s.id) }))
+      .filter(({ snap }) => snap?.state !== 'unknown').map(({ s, snap }) => ({
       id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null,
       unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
       lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
-      ...(this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.observationOnly ? { observationOnly: true } : {}),
-      status: statusCode(this.hosts.get(s.agent)?.statusSnapshot?.(s.id)?.state),
+      ...(snap?.observationOnly ? { observationOnly: true } : {}),
+      status: statusCode(snap?.state),
       lastActivityAt: new Date(s.lastActivity).toISOString(),
       topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed',
         ...(s.unread && s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}) } : null,

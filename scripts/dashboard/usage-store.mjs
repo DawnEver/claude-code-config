@@ -18,7 +18,7 @@ const SQL = {
   // A re-sent turn that did not change is no write (nor a usage_hours trigger).
   turn: insert('turns', TURN_COLS, 'agent, session, turn, model', `${TURN_VALUES.map((c) => `${c} = excluded.${c}`).join(', ')}
   WHERE (${TURN_VALUES.map((c) => `turns.${c}`).join(', ')}) IS NOT (${TURN_VALUES.map((c) => `excluded.${c}`).join(', ')})`),
-  // updated_at is when the price last changed: the report's range test for a session.
+  // updated_at is when the price last changed (not the report's range test: see report).
   cost: insert('session_costs', ['agent', 'session', 'model', 'machine', 'cost_usd', 'updated_at'], 'agent, session, model',
     'cost_usd = excluded.cost_usd, machine = excluded.machine, updated_at = excluded.updated_at WHERE session_costs.cost_usd IS NOT excluded.cost_usd'),
   // Use only grows within a window: keep the highest reading.
@@ -77,7 +77,10 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now() 
   const all = (sql, ...args) => db.prepare(sql).bind(...args).all().then((r) => r.results);
   const [hours, cost] = await Promise.all([
     all('SELECT * FROM usage_hours WHERE hour > ?', since - 3600000),
-    all('SELECT SUM(cost_usd) AS usd FROM session_costs WHERE updated_at >= ?', since),
+    // A session's price falls in the range its last turn ended in. Not updated_at: that is when
+    // the price arrived, so a backfill would put every past session into the current week.
+    all(`SELECT SUM(cost_usd) AS usd FROM session_costs c
+      WHERE (SELECT MAX(ended_at) FROM turns t WHERE t.agent = c.agent AND t.session = c.session) >= ?`, since),
   ]);
   const label = (hour) => new Date(Math.max(hour, since) + off).toISOString().slice(0, unit === 'hour' ? 13 : 10);
   const daily = rollup(hours, (r) => `${label(r.hour)}|${r.agent}`, (r) => ({ day: label(r.hour), agent: r.agent }))
