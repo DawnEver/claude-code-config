@@ -43,8 +43,13 @@ test('claude status follows the turn edges the hooks report', async () => {
     assert.equal(r.a.statusSnapshot('s').state, 'idle');
     assert.equal(r.a.answerApproval('p', true, 's'), true);
     assert.equal(r.a.statusSnapshot('s').state, 'idle');
+    await r.hook({ sessionId: 's', kind: 'final', texts: [], background: 2 });
+    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'idle', background: 2 }, 'idle with tasks still running');
     await r.a.inject('s', 'new task', 'user');
-    assert.equal(r.a.statusSnapshot('s').state, 'running');
+    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'running' }, 'a running turn shows no background count');
+    await r.hook({ sessionId: 's', kind: 'final', text: 'all done' });
+    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'idle' }, 'a turn end recounts');
+    await r.a.inject('s', 'new task', 'user');
     ch.destroy();
     await new Promise((resolve) => setTimeout(resolve, 30));
     assert.equal(r.a.statusSnapshot('s').state, 'disconnected');

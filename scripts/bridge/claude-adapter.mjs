@@ -193,7 +193,8 @@ export class ClaudeAdapter extends EventEmitter {
           if (p.kind === 'activity' && !STATES.has(p.state)) throw bad();
           const r = this.#mirror({ ...ids(p), retry: p.retry === true, ...(Number.isFinite(p.at) ? { at: p.at } : {}), ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
             ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? ''),
-            ...(Array.isArray(p.texts) ? { texts: p.texts.map(String) } : {}) });
+            ...(Array.isArray(p.texts) ? { texts: p.texts.map(String) } : {}),
+            ...(Number.isSafeInteger(p.background) && p.background > 0 ? { background: Math.min(p.background, 999) } : {}) });
           return { ok: true, routed: r !== false, ...(Array.isArray(r) ? { deliver: r } : {}) };
         }
         if (method === 'question') {
@@ -390,6 +391,8 @@ export class ClaudeAdapter extends EventEmitter {
     // Async hooks may land out of order: a state stamped earlier never overwrites a later one.
     if (!(m.at < s.stateAt)) {
       s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
+      // Background tasks still running when the turn ended: counted again at every turn end.
+      if (m.kind === 'final') s.background = m.background ?? 0;
       if (Number.isFinite(m.at)) s.stateAt = m.at;
       this.#emitStatus(id);
     }
@@ -474,7 +477,8 @@ export class ClaudeAdapter extends EventEmitter {
   /** The state the hooks last reported; a channel approval cannot prove how it was resolved locally. */
   statusSnapshot(id) {
     const s = this.sessions.get(id);
-    return s ? { state: s.activity ?? 'unknown' } : { state: 'disconnected' };
+    if (!s) return { state: 'disconnected' };
+    return { state: s.activity ?? 'unknown', ...(s.activity === 'idle' && s.background ? { background: s.background } : {}) };
   }
 
   #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }

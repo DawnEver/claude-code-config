@@ -67,6 +67,11 @@ no API, no authentication.
   same codes label the status card): `working`, `idle`, `needs_approval`, `needs_input`,
   `unknown`, and `ended` for the instant a session is going down — an ended session is
   dropped from the next push rather than listed. The UI never infers a status.
+  A session whose host reports `unknown` is not listed at all. An `idle` Claude session
+  may carry `background`: the shells and agents its turn left running, counted from the
+  transcript at every turn end (`backgroundTasks` in `scripts/hooks/bridge-hook.js`: started
+  minus notified or stopped; Monitors are not counted). Claude wakes when one ends, so the
+  next turn end corrects it. Codex reports no such count.
 - **Freshness is separate.** `lastSeen` is the gateway's own clock at the last accepted push
   (host clocks are not trusted). A host silent for `ttlSeconds` (60) is Offline and every
   session it last reported carries `stale: true`, shown as `Stale`, not as its last state.

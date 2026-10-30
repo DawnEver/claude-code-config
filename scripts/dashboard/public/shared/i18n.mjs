@@ -59,6 +59,7 @@ const TABLE = {
   'session.topicClosed': { en: 'Topic closed', zh: '话题已关闭' },
   'session.mention': { en: 'a mention waits for you', zh: '有人提到了你' },
   'session.unread': { en: 'messages since you last wrote in or opened this Topic', zh: '自你上次发言或打开此话题以来的消息' },
+  'session.background': { en: (v) => `${v.n} running in background`, zh: (v) => `后台 ${v.n} 个任务运行中` },
   'session.unknownProject': { en: 'unknown project', zh: '未知项目' },
   'time.waiting': { en: (v) => `waiting ${v.span}`, zh: (v) => `等待 ${v.span}` },
   'time.idle': { en: (v) => `idle ${v.span}`, zh: (v) => `空闲 ${v.span}` },

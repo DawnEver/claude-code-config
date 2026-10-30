@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { turnTexts, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
+import { turnTexts, backgroundTasks, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 
 const j = (o) => JSON.stringify(o);
@@ -23,6 +23,30 @@ test('turnTexts: text blocks after the last real user message only', () => {
   assert.deepEqual(turnTexts(lines), ['Let me look.', 'Done.']);
   assert.deepEqual(turnTexts(user('q')), []);
   assert.deepEqual(turnTexts('garbage\n' + user([{ type: 'text', text: 'q' }]) + '\n' + asst([{ type: 'text', text: 'a' }])), ['a']);
+});
+
+test('backgroundTasks: shells and agents started minus those notified or stopped; quoted text and old starts do not count', () => {
+  const now = Date.parse('2026-10-30T12:00:00Z');
+  const at = (iso, o) => j({ ...JSON.parse(o), timestamp: iso });
+  const result = (text) => user([{ type: 'tool_result', tool_use_id: 't', content: text }]);
+  const T = '2026-10-30T11:00:00Z';
+  const lines = [
+    at(T, result('Command running in background with ID: sh1. Output is being written to: x')),
+    at(T, result('Command running in background with ID: sh2. Output is being written to: x')),
+    at(T, result('Async agent launched successfully.\nagentId: ag1 (internal ID)')),
+    at(T, result('Command running in background with ID: sh3.')),
+    at('2026-10-28T00:00:00Z', result('Command running in background with ID: old1.')),
+    at(T, result('grep says: Command running in background with ID: quoted')),
+    at(T, asst([{ type: 'text', text: 'Command running in background with ID: said' }])),
+    at(T, user('<task-notification>\n<task-id>sh1</task-id>\n<status>completed</status>\n</task-notification>')),
+    at(T, j({ type: 'attachment', attachment: { type: 'queued_command', prompt: '<task-notification>\n<task-id>ag1</task-id>\n<status>failed</status>' } })),
+    at(T, result('{"message":"Successfully stopped task: sh3 (sleep 9)"}')),
+  ];
+  assert.equal(backgroundTasks(lines.join('\n'), { now }), 1, 'sh2 still runs');
+  const payload = { hook_event_name: 'Stop', session_id: 's', transcript_path: path.join(os.tmpdir(), `bg-${process.pid}.jsonl`) };
+  fs.writeFileSync(payload.transcript_path, lines[1].replace(T, new Date().toISOString()));
+  try { assert.deepEqual(mirrorFor(payload), { sessionId: 's', kind: 'final', texts: [], background: 1 }, 'a textless turn end still reports its tasks'); }
+  finally { fs.rmSync(payload.transcript_path, { force: true }); }
 });
 
 test('mirrorFor: prompt from payload, channel injections skipped, final prefers last_assistant_message', () => {

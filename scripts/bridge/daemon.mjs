@@ -253,7 +253,7 @@ export class Bridge {
       unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
       lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
       ...(snap?.observationOnly ? { observationOnly: true } : {}),
-      status: statusCode(snap?.state),
+      status: statusCode(snap?.state), ...(snap?.background ? { background: snap.background } : {}),
       lastActivityAt: new Date(s.lastActivity).toISOString(),
       topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed',
         ...(s.unread && s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}) } : null,

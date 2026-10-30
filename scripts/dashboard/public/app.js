@@ -122,7 +122,7 @@ function sessionRow(s, { withHost = false, inProject = false } = {}) {
   top.append(el('span', 'title', sessionLabel(s, lang)), time);
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
-  const sub = el('span', 'sub', [statusLabel(status, lang), replyTime(s, Date.now(), pref.replyStyle, lang), ...where,
+  const sub = el('span', 'sub', [statusLabel(status, lang), status === 'idle' && s.background && tr('session.background', { n: s.background }), replyTime(s, Date.now(), pref.replyStyle, lang), ...where,
     s.topic?.closed && tr('session.topicClosed')].filter(Boolean).join(' · '));
   // The account the session spends, as on the Quota tab (observation-only sessions have none).
   const q = s.account && accounts.get(s.account);

@@ -40,6 +40,8 @@ function parseSession(s) {
   return {
     id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
+    // Background tasks (shells, agents) an idle session left running.
+    ...(num(s.background, 1, 999) ? { background: s.background } : {}),
     unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,
     // Posts to the Topic ever (a running count: a page keeps what it has seen) and when the last one came.
     posted: num(s.posted, 0, Number.MAX_SAFE_INTEGER) ?? 0, lastPostAt: iso(s.lastPostAt),
