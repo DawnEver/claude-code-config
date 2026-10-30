@@ -840,3 +840,16 @@ test('forge sources: a port is a valid host; the newer good reading of a repo wi
   send([OWNER]);
   assert.deepEqual(r.snapshot().repos.map((x) => x.key), ['github.com/o/r'], 'sources no config names any more are gone');
 });
+
+test('a forgotten source stays forgotten across a restart', () => {
+  let t = 1.7e12;
+  const kv = new Map();
+  const store = { get: (k) => kv.get(k), put: (k, v) => kv.set(k, structuredClone(v)) };
+  const SRC = 'github|github.com||o/r';
+  const repo = { key: 'github.com/o/r', forge: 'github', name: 'o/r', at: t, pushedAt: '2026-10-30T10:00:00Z', branches: [], pulls: [] };
+  const r = new Registry({ hosts: ['a'], ttlMs: 600000, now: () => t, store });
+  r.accept('a', parseHostPush({ ...push(), seq: 1, forges: { sources: [SRC], readings: [{ source: SRC, at: t, repos: [repo] }] } }));
+  t += FORGE_FORGET_MS + 1;
+  r.accept('a', parseHostPush({ ...push(), seq: 2, forges: { sources: [], readings: [] } }));
+  assert.deepEqual(new Registry({ hosts: ['a'], ttlMs: 600000, now: () => t, store }).snapshot().repos, []);
+});

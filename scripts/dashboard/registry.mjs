@@ -93,8 +93,10 @@ export class Registry {
       read.push(id);
     }
     // A source no host has named for FORGE_FORGET_MS was removed from every config: forgotten.
-    for (const [id, f] of this.forges) if (now - (f.declared ?? 0) > FORGE_FORGET_MS) this.forges.delete(id);
-    if (readings.length || read.length) this.store?.put('forges', Object.fromEntries(this.forges));
+    let forgot = 0;
+    for (const [id, f] of this.forges) if (now - (f.declared ?? 0) > FORGE_FORGET_MS) { this.forges.delete(id); forgot++; }
+    // Stored whenever the record changed in substance — a reading, a lease, a forgotten source — so a restart sees it.
+    if (readings.length || read.length || forgot) this.store?.put('forges', Object.fromEntries(this.forges));
     return read;
   }
 
