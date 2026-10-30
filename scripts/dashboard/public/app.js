@@ -322,15 +322,17 @@ function quotaMini(q) {
  * then a meta line (a part `{folded}` shows only while folded) and warnings. Its open state is
  * kept by `id` across polls, and a host header can open every row of the host at once.
  */
-function foldRow(id, { cls = '', name, headline: head, right = null, title = null, folded = () => [], open: detail = () => [], meta = [], warns = [] }) {
+function foldRow(id, { cls = '', name, headline: head, right = null, title = null, folded = () => [], open: detail = () => [], meta = [], warns = [], go = null }) {
   const open = openRows.has(id);
   const row = el('div', `qrow ${cls}${open ? ' open' : ''}`);
-  row.setAttribute('role', 'button');
-  row.setAttribute('aria-expanded', String(open));
+  row.setAttribute('role', go ? 'link' : 'button');
+  if (!go) row.setAttribute('aria-expanded', String(open));
   row.tabIndex = 0;
   if (title) row.title = title;
   const top = el('div', 'qrow-top');
-  top.append(name, head, right ?? el('span', 'chev', open ? '⌄' : '›'));
+  // `go`: the row's own tap goes there (e.g. a repo to its sessions); its detail opens from the chevron alone.
+  const chev = right ?? el(go ? 'button' : 'span', 'chev', open ? '⌄' : '›');
+  top.append(name, head, chev);
   row.append(top, ...(open ? detail() : folded()));
   // A part is a node or text; a falsy one (a `cond && text` that did not hold) is left out.
   const parts = meta.map((m) => (m?.folded !== undefined ? (open ? null : m.folded) : m)).filter(Boolean);
@@ -341,9 +343,22 @@ function foldRow(id, { cls = '', name, headline: head, right = null, title = nul
   }
   for (const w of warns) row.append(el('div', 'warn', w));
   const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
-  row.addEventListener('click', toggle);
-  row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  const tap = go ?? toggle;
+  if (go) {
+    chev.setAttribute('aria-label', tr(open ? 'row.fold' : 'row.open'));
+    chev.setAttribute('aria-expanded', String(open));
+    chev.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  }
+  row.addEventListener('click', tap);
+  row.addEventListener('keydown', (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); tap(); } });
   return row;
+}
+
+/** Show the Sessions tab narrowed to one project (a repo's sessions), every other filter cleared. */
+function showProject(project) {
+  Object.assign(filters, { group: 'all', host: '', agent: '', project });
+  selectsKey = null;
+  showTab('sessions');
 }
 
 /** What a host reports about itself and nobody may change here: bridge, who may control it, approvals, sources. */
@@ -452,8 +467,10 @@ function renderSelects() {
     const select = el('select');
     select.setAttribute('aria-label', name);
     select.append(Object.assign(el('option', null, tr(`filter.${name}`)), { value: '' }));
-    for (const v of opts[name]) select.append(Object.assign(el('option', null, name === 'agent' ? agentName(v) : v), { value: v }));
-    select.value = opts[name].includes(filters[name]) ? filters[name] : '';
+    // A project chosen from elsewhere (a repo on the Code tab) stays chosen even with no session: an empty list says so.
+    const values = name === 'project' && filters.project && !opts.project.includes(filters.project) ? [...opts.project, filters.project] : opts[name];
+    for (const v of values) select.append(Object.assign(el('option', null, name === 'agent' ? agentName(v) : v), { value: v }));
+    select.value = values.includes(filters[name]) ? filters[name] : '';
     filters[name] = select.value;
     select.addEventListener('change', () => { filters[name] = select.value; render(); });
     box.append(select);
@@ -841,7 +858,13 @@ function codeItem(ci, title, meta, url, sessions = []) {
   const item = el('div', `code-item${url ? ' link' : ''}`);
   if (url) { item.setAttribute('role', 'link'); item.tabIndex = 0; }
   item.append(ciBadge(ci), el('span', 'title', title), el('span', 'sub', meta.filter(Boolean).join(' · ')));
-  if (sessions.length) { const list = el('div', 'waiting'); for (const s of sessions) list.append(sessionRow(s, { withHost: true })); item.append(list); }
+  if (sessions.length) {
+    // A session opens its own Topic: the tap stops there, never also opening the item's forge page.
+    const list = el('div', 'waiting');
+    for (const s of sessions) list.append(sessionRow(s, { withHost: true }));
+    list.addEventListener('click', (e) => e.stopPropagation());
+    item.append(list);
+  }
   if (url) item.addEventListener('click', (e) => { e.stopPropagation(); openUrl(url); });
   return item;
 }
@@ -867,8 +890,11 @@ function repoRow(r) {
   const working = r.branches.reduce((n, b) => n + b.sessions.length, 0);
   const head = el('span', 'left');
   if (!r.error) head.append(ciBadge(r.mainCi), ` ${r.defaultBranch ?? ''}`);
+  // The repo's project as its sessions name it (their origin's repo name), else the repo's own name.
+  const project = sessionsOf(snapshot).find((s) => s.repo === r.key)?.project ?? r.name.split('/').pop();
   return foldRow(`code|${r.key}`, {
-    name: el('span', 'agent', r.name), headline: head,
+    name: el('span', 'agent', r.name), headline: head, go: () => showProject(project),
+    title: tr('code.toSessions', { project }),
     open: () => [repoDetail(r)],
     // A repo not read has no counts to give: its forge and the error say all there is.
     meta: [r.forge === 'github' ? 'GitHub' : 'Gitea', ...(r.error ? [] : [tr('code.pulls', { n: r.pulls.length }), tr('code.branches', { n: r.branches.length }),

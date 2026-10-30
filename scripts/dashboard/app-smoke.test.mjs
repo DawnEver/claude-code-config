@@ -31,8 +31,8 @@ class Node {
   matches(sel) {
     if (sel.startsWith('.')) return this.classList.contains(sel.slice(1));
     if (sel.startsWith('#')) return this.id === sel.slice(1);
-    const data = /^\[data-([a-z-]+)\]$/.exec(sel);
-    if (data) return data[1] in this.dataset;
+    const data = /^\[data-([a-z-]+)(?:="([^"]*)")?\]$/.exec(sel);
+    if (data) return data[2] === undefined ? data[1] in this.dataset : this.dataset[data[1]] === data[2];
     return this.tag === sel;
   }
   *all() { for (const c of this.children) { yield c; yield* c.all(); } }
@@ -43,6 +43,7 @@ class Node {
   }
   querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
   closest() { return null; }
+  click() { this.dispatch('click'); }
   focus() {}
 }
 const text = (s) => Object.assign(new Node('#text'), { ownText: String(s) });
@@ -90,15 +91,29 @@ test('the page renders every tab from the example data, and no view throws', asy
     assert.deepEqual(tabs.map((b) => b.dataset.tab), ['sessions', 'quota', 'usage', 'code', 'events', 'config']);
     for (const b of tabs) {
       b.dispatch('click');
-      // Open every foldable row of the tab once, so detail views render too.
-      for (const row of doc.querySelectorAll('.qrow')) row.dispatch('click');
+      // Open every foldable row of the tab once, so detail views render too: a row whose tap goes
+      // elsewhere (a repo, to its sessions) opens from its chevron button.
+      for (const row of doc.querySelectorAll('.qrow')) {
+        const chev = row.querySelectorAll('button').find((x) => x.classList.contains('chev'));
+        (chev ?? row).dispatch('click');
+      }
     }
     tabs.find((b) => b.dataset.tab === 'code').dispatch('click');
+    assert.deepEqual(errors, [], 'a view threw while rendering');
     assert.ok(doc.getElementById('code-view').querySelectorAll('.qrow').length > 0, 'the Code tab lists repositories');
     assert.ok(doc.getElementById('code-view').querySelectorAll('.code-item').length > 0, 'an open repo lists its PRs and branches');
     tabs[0].dispatch('click');
     assert.deepEqual(errors, [], 'a view threw while rendering');
     assert.ok(doc.getElementById('hosts').querySelectorAll('.chat').length > 0, 'the Sessions tab lists sessions');
+    // A repo's own tap goes to the Sessions tab, narrowed to its project.
+    tabs.find((b) => b.dataset.tab === 'code').dispatch('click');
+    const repo = doc.getElementById('code-view').querySelectorAll('.qrow').find((r) => r.textContent.includes('example/backend-api'));
+    repo.dispatch('click');
+    assert.equal(tabs[0].getAttribute('aria-selected'), 'true', 'the repo went to Sessions');
+    const shown = doc.getElementById('hosts').querySelectorAll('.chat');
+    const text = doc.getElementById('hosts').textContent;
+    assert.ok(shown.length > 0 && text.includes('OAuth token refresh') && !text.includes('Landing page redesign'), 'only that project\'s sessions');
+    tabs[0].dispatch('click');
     assert.ok(doc.getElementById('quota-view').querySelectorAll('.qrow').length > 0, 'the Quota tab lists accounts');
     // An API balance is an account like any other: a row in the card of the host that reads it.
     const balance = doc.getElementById('quota-view').querySelectorAll('.deepseek');

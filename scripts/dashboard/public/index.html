@@ -115,8 +115,9 @@
   .res-about { grid-column: 1 / -1; overflow-wrap: anywhere; }
 
   /* Tabs: one question per view. */
-  .tabs { display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content;
-    max-width: 100%; box-sizing: border-box; overflow-x: auto; scrollbar-width: none; }
+  /* Too narrow for one row, the tabs wrap onto more rows: every tab stays in sight, none scrolls away. */
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content;
+    max-width: 100%; box-sizing: border-box; }
   .tabs::-webkit-scrollbar { display: none; }
   /* Pinned (this device, default): the tab bar stays at the top while the page scrolls. */
   .pin-tabs .tabs { position: sticky; top: 0; z-index: 5; box-shadow: 0 2px 6px color-mix(in srgb, var(--fg) 12%, transparent); }
@@ -161,6 +162,8 @@
   .qrow { padding: 10px 12px; cursor: pointer; }
   .qrow.stale { opacity: .75; }
   .qrow-top .chev { color: var(--hint); width: 12px; text-align: center; }
+  /* A row whose tap goes elsewhere opens its detail from the chevron: a button of its own, a larger target. */
+  .qrow-top button.chev { width: 28px; margin: -6px -8px -6px 0; padding: 6px 0; border: 0; border-radius: 8px; background: none; font: inherit; font-size: var(--t2); cursor: pointer; }
   .qdetail { margin-top: 2px; } .qrow + .qrow { border-top: 1px solid var(--sep); }
   .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; }
   .qrow-top { font-size: var(--t1); } .qrow-top .left { font-weight: 700; }
