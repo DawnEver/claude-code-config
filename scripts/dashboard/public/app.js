@@ -751,6 +751,7 @@ function renderUsage() {
   const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
   axis.append(el('span', null, tick(v.days[0])), el('span', null, tr('usage.axis', { unit: v.unit })), el('span', null, tick(v.days.at(-1))));
   box.append(totals, chart, axis, ...usageList('usage.projects', v.projects, 'project'), ...usageList('usage.models', v.models, 'model'), ...usageList('usage.machines', v.machines, 'machine'));
+  restoreScroll();
 }
 
 function renderTabs() {
@@ -767,9 +768,32 @@ function renderTabs() {
   for (const v of document.querySelectorAll('.view')) v.hidden = v.dataset.view !== tab;
 }
 
+// Each tab's scroll position, kept across tab switches and reopening the app. Content arrives
+// after load (the snapshot, the usage report), so a restore is retried on each render until it
+// lands or the reader scrolls by hand.
+const scrollAt = (() => { try { return JSON.parse(store.get('dashboard.scroll')) ?? {}; } catch { return {}; } })();
+let restoring = tab;
+function restoreScroll() {
+  if (restoring !== tab) return;
+  const y = scrollAt[tab] ?? 0;
+  window.scrollTo(0, y);
+  if (Math.abs(window.scrollY - y) < 2) restoring = null;
+}
+let scrollSave = null;
+window.addEventListener('scroll', () => {
+  if (restoring) return;
+  clearTimeout(scrollSave);
+  scrollSave = setTimeout(() => { scrollAt[tab] = Math.round(window.scrollY); store.set('dashboard.scroll', JSON.stringify(scrollAt)); }, 200);
+}, { passive: true });
+for (const ev of ['wheel', 'touchstart', 'keydown']) window.addEventListener(ev, () => { restoring = null; }, { passive: true });
+
 for (const b of document.querySelectorAll('#tabs [data-tab]')) {
   b.addEventListener('click', () => {
+    clearTimeout(scrollSave);
+    scrollAt[tab] = Math.round(window.scrollY);
+    store.set('dashboard.scroll', JSON.stringify(scrollAt));
     tab = b.dataset.tab;
+    restoring = tab;
     if (tab === 'events') shownFrom = seenAt;
     if (tab === 'usage') { renderUsage(); fetchUsage(); }
     configShown = null;
@@ -802,6 +826,7 @@ function render() {
   renderChips();
   renderSelects();
   renderHosts();
+  restoreScroll();
 }
 
 function stop(messageKey) {
