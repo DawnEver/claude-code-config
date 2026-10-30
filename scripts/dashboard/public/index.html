@@ -23,7 +23,9 @@
     background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
   h1 { font-size: 20px; margin: 0; }
-  #version { font-weight: 400; margin-left: 6px; }
+  /* The build, at the foot of every tab: what is deployed, and a button to load it fresh. */
+  #version { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px; margin: 28px 0 12px;
+    color: var(--hint); font-size: var(--t3); }
   #version .commit { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
   .muted { color: var(--hint); font-size: var(--t3); }
 
@@ -224,7 +226,7 @@
 </style>
 </head>
 <body>
-  <header class="top"><h1><span id="title">Agents Dashboard</span> <span id="version" class="muted"></span></h1><span id="updated" class="muted"></span></header>
+  <header class="top"><h1><span id="title">Agents Dashboard</span></h1><span id="updated" class="muted"></span></header>
   <section id="summary" class="summary"><div class="summary-head"></div></section>
   <nav id="tabs" class="tabs" role="tablist" hidden>
     <button role="tab" data-tab="sessions"><span class="label"></span> <b id="n-sessions"></b></button>
@@ -243,6 +245,7 @@
   <div id="selects" class="selects"></div>
   <main id="hosts"></main>
   </div>
+  <footer id="version"></footer>
   <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -898,18 +898,20 @@ async function showVersion() {
 function renderVersion() {
   const box = $('version');
   box.replaceChildren();
-  const refresh = el('button', 'commit', tr('app.forceUpdate'));
+  const refresh = el('button', 'chip', tr('app.forceUpdate'));
   refresh.addEventListener('click', () => hardReload());
-  if (!deployed) { box.append(refresh); return; }
-  box.append(document.createTextNode(tr('app.build', { at: deployed.at ? formatTime(Date.parse(deployed.at), timeFormat()) : deployed.id.slice(0, 8) })));
-  if (deployed.commit) {
-    const sha = deployed.commit.replace(/\+$/, '');
-    const link = el('button', 'commit', deployed.commit);
-    link.title = tr(deployed.commit.endsWith('+') ? 'app.commitDirty' : 'app.commitOpen');
-    link.addEventListener('click', () => { const url = `${REPO}/commit/${sha}`; tg?.openLink ? tg.openLink(url) : window.open(url, '_blank', 'noopener'); });
-    box.append(document.createTextNode(' · '), link);
+  if (deployed) {
+    const build = el('span', null, tr('app.build', { at: deployed.at ? formatTime(Date.parse(deployed.at), timeFormat()) : deployed.id.slice(0, 8) }));
+    if (deployed.commit) {
+      const sha = deployed.commit.replace(/\+$/, '');
+      const link = el('button', 'commit', deployed.commit);
+      link.title = tr(deployed.commit.endsWith('+') ? 'app.commitDirty' : 'app.commitOpen');
+      link.addEventListener('click', () => { const url = `${REPO}/commit/${sha}`; tg?.openLink ? tg.openLink(url) : window.open(url, '_blank', 'noopener'); });
+      build.append(' · ', link);
+    }
+    box.append(build);
   }
-  box.append(document.createTextNode(' · '), refresh);
+  box.append(refresh);
 }
 
 // Telegram keeps a closed Mini App alive and its webview may serve cached files despite
@@ -940,4 +942,5 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) upda
 applyLang();
 $('summary').replaceChildren(el('div', 'summary-head', tr('app.loading')));
 load();
+renderVersion();   // the Force update button stands even before the build is known
 if (!mock) { setInterval(load, POLL_MS); showVersion(); updateIfStale(); }
