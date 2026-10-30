@@ -86,6 +86,8 @@ function applyLang() {
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   document.title = tr('app.title');
   $('title').textContent = tr('app.title');
+  $('force-update').title = tr('app.forceUpdate');
+  $('force-update').setAttribute('aria-label', tr('app.forceUpdate'));
   for (const b of document.querySelectorAll('#tabs [data-tab]')) b.querySelector('.label').textContent = tr(`tab.${b.dataset.tab}`);
   document.body.classList.toggle('pin-tabs', pref.pinTabs === 'on');
 }
@@ -898,8 +900,6 @@ async function showVersion() {
 function renderVersion() {
   const box = $('version');
   box.replaceChildren();
-  const refresh = el('button', 'chip', tr('app.forceUpdate'));
-  refresh.addEventListener('click', () => hardReload());
   if (deployed) {
     const build = el('span', null, tr('app.build', { at: deployed.at ? formatTime(Date.parse(deployed.at), timeFormat()) : deployed.id.slice(0, 8) }));
     if (deployed.commit) {
@@ -911,7 +911,6 @@ function renderVersion() {
     }
     box.append(build);
   }
-  box.append(refresh);
 }
 
 // Telegram keeps a closed Mini App alive and its webview may serve cached files despite
@@ -942,5 +941,5 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) upda
 applyLang();
 $('summary').replaceChildren(el('div', 'summary-head', tr('app.loading')));
 load();
-renderVersion();   // the Force update button stands even before the build is known
+$('force-update').addEventListener('click', () => hardReload());
 if (!mock) { setInterval(load, POLL_MS); showVersion(); updateIfStale(); }

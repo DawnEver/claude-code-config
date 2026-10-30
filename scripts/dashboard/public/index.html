@@ -23,6 +23,8 @@
     background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
   h1 { font-size: 20px; margin: 0; }
+  /* Force update: an icon beside the data's age (its hint names it). */
+  .icon-btn { font: inherit; font-size: var(--t2); line-height: 1; color: var(--accent); background: none; border: 0; padding: 0 2px; cursor: pointer; }
   /* The build, at the foot of every tab: what is deployed, and a button to load it fresh. */
   #version { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px; margin: 28px 0 12px;
     color: var(--hint); font-size: var(--t3); }
@@ -226,7 +228,7 @@
 </style>
 </head>
 <body>
-  <header class="top"><h1><span id="title">Agents Dashboard</span></h1><span id="updated" class="muted"></span></header>
+  <header class="top"><h1><span id="title">Agents Dashboard</span></h1><span class="muted"><span id="updated"></span> <button id="force-update" class="icon-btn" type="button">↻</button></span></header>
   <section id="summary" class="summary"><div class="summary-head"></div></section>
   <nav id="tabs" class="tabs" role="tablist" hidden>
     <button role="tab" data-tab="sessions"><span class="label"></span> <b id="n-sessions"></b></button>
