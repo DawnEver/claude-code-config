@@ -87,8 +87,15 @@ test('the page renders every tab from the example data, and no view throws', asy
   try {
     await import('./public/app.js');
     const tabs = doc.querySelectorAll('#tabs [data-tab]');
-    assert.deepEqual(tabs.map((b) => b.dataset.tab), ['sessions', 'quota', 'usage', 'events', 'config']);
-    for (const b of tabs) b.dispatch('click');
+    assert.deepEqual(tabs.map((b) => b.dataset.tab), ['sessions', 'quota', 'usage', 'code', 'events', 'config']);
+    for (const b of tabs) {
+      b.dispatch('click');
+      // Open every foldable row of the tab once, so detail views render too.
+      for (const row of doc.querySelectorAll('.qrow')) row.dispatch('click');
+    }
+    tabs.find((b) => b.dataset.tab === 'code').dispatch('click');
+    assert.ok(doc.getElementById('code-view').querySelectorAll('.qrow').length > 0, 'the Code tab lists repositories');
+    assert.ok(doc.getElementById('code-view').querySelectorAll('.code-item').length > 0, 'an open repo lists its PRs and branches');
     tabs[0].dispatch('click');
     assert.deepEqual(errors, [], 'a view threw while rendering');
     assert.ok(doc.getElementById('hosts').querySelectorAll('.chat').length > 0, 'the Sessions tab lists sessions');

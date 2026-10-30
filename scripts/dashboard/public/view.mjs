@@ -456,3 +456,35 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
     projects: list(report.projects ?? []), models: list(report.models ?? []), machines: list(report.machines ?? []),
   };
 }
+
+// ── Code (per repository; read by the hosts that reach each forge, scripts/bridge/forges.mjs) ──
+
+/**
+ * The Code tab for the last `days` (1 = 24 h): the repos with activity in range, newest push
+ * first, each with its default branch's CI, its branches active in range — each with its open PR
+ * and the sessions working on it (by repo key and branch: an exact link) — and its open PRs.
+ * `attention` lists what needs the human, most urgent kind first; `inactive` counts repos left out.
+ */
+export function codeView(snapshot, days, now = Date.now()) {
+  const since = now - days * 86400000;
+  const recent = (t) => t != null && Date.parse(t) >= since;
+  const sessions = sessionsOf(snapshot).filter((s) => s.repo);
+  const all = snapshot.repos ?? [];
+  const repos = all.filter((r) => recent(r.pushedAt) || r.branches.some((b) => recent(b.at)) || r.pulls.some((p) => recent(p.updatedAt)))
+    .map((r) => {
+      const branches = r.branches.filter((b) => recent(b.at) || b.name === r.defaultBranch)
+        .map((b) => ({ ...b, pull: r.pulls.find((p) => p.head === b.name) ?? null,
+          sessions: sessions.filter((s) => s.repo === r.key && s.branch === b.name) }));
+      return { ...r, branches, mainCi: r.branches.find((b) => b.name === r.defaultBranch)?.ci ?? null };
+    });
+  const attention = [];
+  for (const r of repos) {
+    if (r.mainCi === 'failure') attention.push({ kind: 'main-failing', repo: r, branch: r.defaultBranch });
+    for (const p of r.pulls) if (p.ci === 'failure') attention.push({ kind: 'pr-failing', repo: r, pull: p });
+    for (const p of r.pulls) if (p.conflict) attention.push({ kind: 'pr-conflict', repo: r, pull: p });
+    for (const b of r.branches) if (b.ci === 'failure' && b.sessions.length) attention.push({ kind: 'session-failing', repo: r, branch: b.name, sessions: b.sessions });
+  }
+  const ORDER = ['main-failing', 'pr-failing', 'pr-conflict', 'session-failing'];
+  attention.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
+  return { repos, attention, inactive: all.length - repos.length };
+}

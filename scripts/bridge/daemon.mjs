@@ -39,6 +39,7 @@ import { ClaudeAdapter } from './claude-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
 import { BalanceReader } from './billing.mjs';
+import { ForgeReader } from './forges.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
 import { ResourceReader } from './resources.mjs';
@@ -208,7 +209,7 @@ export class Bridge {
       const cached = cacheKey === null || this.deletingTopics.has(cacheKey) ? null : this.topics.get(cacheKey);
       // A Claude seat (scripts/shared/seats.mjs) names the login the session runs as; a provider, the API platform it spends instead.
       const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, name: sessionName(name),
-        project: ctx.project, branch: ctx.branch, cwd, seat, provider, chain: Promise.resolve(), progress: null, injected: [] };
+        project: ctx.project, branch: ctx.branch, repo: ctx.repo ?? null, cwd, seat, provider, chain: Promise.resolve(), progress: null, injected: [] };
       s.titleOf = (suffix = '') => topicTitle({ name: s.name, machine: this.machine, project: ctx.project, branch: ctx.branch,
         agent: seat || provider ? `${agent}:${seat ?? provider}` : agent, suffix, projectInTitle: this.config.projects[ctx.project]?.projectInTitle });
       const base = s.base = s.title = s.titleOf();
@@ -251,7 +252,7 @@ export class Bridge {
   dashboardSessions() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended')
       .map((s) => ({ s, snap: this.hosts.get(s.agent)?.statusSnapshot?.(s.id) })).map(({ s, snap }) => ({
-      id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null, provider: s.provider ?? null,
+      id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null, provider: s.provider ?? null, repo: s.repo ?? null,
       unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
       lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
       ...(snap?.observationOnly ? { observationOnly: true } : {}),
@@ -991,6 +992,8 @@ export async function main() {
       codexFallback: `${machine}/home-${homeKey}`,
       codexSeriesFile: account => path.join(BRIDGE_RUNTIME_DIR, `codex-usage-${homeKey}-${createHash('sha256').update(account?.email ?? 'unknown').digest('hex').slice(0, 16)}.jsonl`) });
     const balances = new BalanceReader({ entries: config.billing, log });
+    // The code forges this host can reach (Code tab): its own tokens, read every few minutes.
+    const forges = new ForgeReader({ sources: config.forges, log });
     // A dashboard edit is written to the settings file; the change check above then hands over.
     const onConfigChanges = (changes) => {
       const results = changes.map((c) => ({ id: c.id, ...applyConfigChange(c) }));
@@ -1004,7 +1007,7 @@ export async function main() {
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, config.billing) })),
       // Subscriptions and API balances alike: one list of the accounts this host can read.
-      accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]),
+      accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]), repos: () => forges.reading(),
       resources: () => { const r = (lastResources = resources.read()); usage.sample(r); return r; }, onConfigChanges });
     push.start();
     usage.start();

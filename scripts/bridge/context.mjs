@@ -11,6 +11,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'child_process';
 import { billingEntries } from './billing.mjs';
+import { forgeSources } from './forges.mjs';
+import { repoKey } from '../shared/repo-key.mjs';
 import { readMergedEnvSettings, ENV_SETTINGS_PATH, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { CONFIG_KEYS, parseConfigChange } from '../shared/dashboard-schema.mjs';
 import { resolveSyncDir } from '../shared/sync-dir.mjs';
@@ -72,6 +74,7 @@ export function readBridgeConfig({ sharedPath = ENV_SETTINGS_PATH, localPath = L
     codexSources: Array.isArray(b.codexSources) ? b.codexSources.filter((s) => typeof s === 'string') : BRIDGE_DEFAULTS.codexSources,
     ...dashboardConfig(b.dashboard, localBridge(localPath).dashboard?.hostToken),
     billing: billingEntries(b.billing),
+    forges: forgeSources(b.forges),
     projects,
   };
 }
@@ -113,14 +116,16 @@ export function repoNameFromUrl(url) {
 }
 
 /**
- * Project and branch for a working tree. The project is the origin repo name (so every
+ * Project, branch and forge repo for a working tree. The project is the origin repo name (so every
  * worktree of one repo lands in one group), falling back to the top-level dir name.
  */
 export function gitContext(cwd, { originUrl, branch } = {}) {
-  if (!cwd) return { project: null, branch: branch ?? null };
+  if (!cwd) return { project: null, branch: branch ?? null, repo: null };
   const origin = originUrl ?? git(cwd, ['remote', 'get-url', 'origin']);
   const top = git(cwd, ['rev-parse', '--show-toplevel']);
   return {
+    // The forge repository it belongs to (shared/repo-key.mjs): how the Code tab finds the session.
+    repo: repoKey(origin),
     project: repoNameFromUrl(origin) ?? (top ? path.basename(top) : path.basename(cwd)),
     branch: branch ?? git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']),
   };

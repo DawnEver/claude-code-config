@@ -12,7 +12,7 @@ export function mockDashboard(now = Date.now()) {
     ({ id, hostId, agent, name, project, branch, seat, status, unread, mention, lastActivityAt: t(sec), stale, topic, account: acct[agent] });
   return { schemaVersion: 1, generatedAt: t(0), mock: true, hosts: [
     { id: 'host-a', online: true, lastSeen: t(4), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: [], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
-      s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a', 'OAuth token refresh', 3),
+      { ...s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a', 'OAuth token refresh', 3), repo: 'github.com/example/backend-api' },
       s('host-a', false, '019a7f20-2222', 'codex', 'frontend', 'main', 'needs_approval', 40, { url: 'https://t.me/c/1000000001/13', closed: false }, null, 'Landing page redesign', 5, true)],
       resources: { cpu: 42, cores: 16, cpuModel: 'AMD Ryzen 9 7950X', mem: { used: 21e9, total: 34e9, type: 'DDR5' }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
     { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
@@ -35,5 +35,16 @@ export function mockDashboard(now = Date.now()) {
         { k: '7d', used: 12, resetsAt: now + 100 * H, windowMs: 168 * H, cells: [0.4, 0.7, 0.6, 0.9, 0.5, null, null, null, null, null, null, null, null, null], forecast: { atReset: 30, eta: null, short: false } }] },
     { key: 'api:deepseek:default', kind: 'balance', provider: 'deepseek', label: null, at: now - 300000, error: null, hosts: ['host-b'],
       balances: [{ currency: 'CNY', amount: 457.22 }, { currency: 'USD', amount: 2 }] },
+  ], repos: [
+    { key: 'github.com/example/backend-api', forge: 'github', name: 'example/backend-api', url: 'https://github.com/example/backend-api', private: false,
+      defaultBranch: 'main', pushedAt: new Date(now - 2 * H).toISOString(), at: now - 120000, error: null, hosts: ['host-a', 'host-b'],
+      branches: [
+        { name: 'main', sha: 'a1', at: new Date(now - 2 * H).toISOString(), author: 'alice', ci: 'success' },
+        { name: 'feature/auth', sha: 'b2', at: new Date(now - 3 * H).toISOString(), author: 'alice', ci: 'failure' }],
+      pulls: [{ number: 42, title: 'OAuth token refresh', url: 'https://github.com/example/backend-api/pull/42', draft: false, author: 'alice',
+        head: 'feature/auth', base: 'main', review: 'required', conflict: false, ci: 'failure', updatedAt: new Date(now - 3 * H).toISOString() }] },
+    { key: 'git.example.org/team/frontend', forge: 'gitea', name: 'team/frontend', url: 'https://git.example.org/team/frontend', private: true,
+      defaultBranch: 'main', pushedAt: new Date(now - 26 * H).toISOString(), at: now - 120000, error: null, hosts: ['host-a'],
+      branches: [{ name: 'main', sha: 'c3', at: new Date(now - 26 * H).toISOString(), author: 'bob', ci: 'pending' }], pulls: [] },
   ] };
 }

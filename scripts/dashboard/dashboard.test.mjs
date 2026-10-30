@@ -9,7 +9,7 @@ import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
-import { accountSessions, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, eventText, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
+import { accountSessions, codeView, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, eventText, unreadEvents, quotaView, stats, tabs, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -59,7 +59,7 @@ test('schema: whitelists fields, derives a Topic link, never forwards the chat i
   const p = parseHostPush(push({ sessions: [session({ cwd: '/home/u/x', token: 'secret' }), session({ id: 's2', topic: null }),
     session({ id: 's3', status: 'bogus' }), session({ id: 's4', status: 'unknown' }), session({ agent: 'gpt' }), session()] }));
   assert.equal(p.sessions.length, 2, 'unknown agent, unknown state and duplicate dropped');
-  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'lastPostAt', 'mention', 'name', 'posted', 'project', 'provider', 'seat', 'status', 'topic', 'unread']);
+  assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'lastPostAt', 'mention', 'name', 'posted', 'project', 'provider', 'repo', 'seat', 'status', 'topic', 'unread']);
   assert.deepEqual(p.sessions[0].topic, { url: 'https://t.me/c/1234567890/77', closed: false });
   assert.equal(p.sessions[1].topic, null);
   assert.equal(topicUrl(-999, 5), null, 'not a supergroup');
@@ -769,4 +769,40 @@ test('accounts: a balance two hosts read is one account, the freshest, with both
     [['host-a', [['api:deepseek:default', null]]], ['host-b', [['api:deepseek:default', 'host-a']]]]);
   assert.deepEqual(accountSessions(snap, 'api:deepseek:default').map((s) => [s.id, s.hostId]), [['s1', 'host-b']]);
   assert.deepEqual(r.events, [], 'a balance never raises a quota alert');
+});
+
+test('code: repos merge across hosts; a push without repos keeps the last reading', () => {
+  const r = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, now: () => 5000 });
+  const repo = (at, branches = []) => ({ key: 'git.example.org/team/a', forge: 'gitea', name: 'team/a', url: 'https://git.example.org/team/a', at, pushedAt: '2026-10-30T10:00:00Z', branches, pulls: [] });
+  r.accept('host-a', parseHostPush({ ...push(), repos: [repo(1.7e12 + 1000, [{ name: 'main', ci: 'success' }])] }));
+  r.accept('host-b', parseHostPush({ ...push(), repos: [repo(1.7e12)] }));
+  r.accept('host-a', parseHostPush({ ...push(), seq: 2 }));
+  const [one, ...rest] = r.snapshot().repos;
+  assert.equal(rest.length, 0);
+  assert.deepEqual([one.at, one.hosts, one.branches[0].ci], [1.7e12 + 1000, ['host-a', 'host-b'], 'success']);
+});
+
+test('code view: the range picks active repos and branches; attention first; sessions meet their branch by repo key', () => {
+  const NOW = Date.parse('2026-10-30T12:00:00Z');
+  const ago = (h) => new Date(NOW - h * 3600000).toISOString();
+  const snap = {
+    hosts: [{ id: 'h1', sessions: [{ id: 's1', agent: 'claude', repo: 'github.com/o/live', branch: 'feat', status: 'idle' }] }],
+    repos: [
+      { key: 'github.com/o/live', name: 'o/live', forge: 'github', defaultBranch: 'main', pushedAt: ago(2), hosts: ['h1'],
+        branches: [{ name: 'main', at: ago(2), ci: 'failure' }, { name: 'feat', at: ago(5), ci: 'failure' }, { name: 'stale', at: ago(24 * 40), ci: null }],
+        pulls: [{ number: 7, head: 'feat', base: 'main', ci: 'failure', conflict: true, updatedAt: ago(5) }] },
+      { key: 'github.com/o/quiet', name: 'o/quiet', forge: 'github', defaultBranch: 'main', pushedAt: ago(24 * 10), hosts: ['h1'],
+        branches: [{ name: 'main', at: ago(24 * 10), ci: 'success' }], pulls: [] },
+    ],
+  };
+  const day = codeView(snap, 1, NOW);
+  assert.deepEqual(day.repos.map((r) => r.key), ['github.com/o/live']);
+  assert.equal(day.inactive, 1);
+  const [live] = day.repos;
+  assert.deepEqual(live.branches.map((b) => b.name), ['main', 'feat'], 'a branch idle past the range is left out');
+  assert.equal(live.mainCi, 'failure');
+  assert.deepEqual(live.branches[1].sessions.map((s) => s.id), ['s1']);
+  assert.equal(live.branches[1].pull.number, 7);
+  assert.deepEqual(day.attention.map((a) => a.kind), ['main-failing', 'pr-failing', 'pr-conflict', 'session-failing']);
+  assert.deepEqual(codeView(snap, 30, NOW).repos.map((r) => r.key), ['github.com/o/live', 'github.com/o/quiet']);
 });

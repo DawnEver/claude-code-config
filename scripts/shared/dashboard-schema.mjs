@@ -14,6 +14,8 @@ export const MAX_SESSIONS = 200;
 /** A host id is its machine name (scripts/shared/machine.mjs), bounded for the gateway. */
 export const isHostId = (id) => isValidMachineName(id) && id.length <= 64;
 /** An API platform's name as the provider catalogue spells it ('deepseek'): a balance account's provider, a session's provider. */
+/** A repository key: `<forge host>/<owner>/<name>`, lower-cased (scripts/shared/repo-key.mjs). */
+export const isRepoKey = (v) => typeof v === 'string' && v.length <= 200 && /^[a-z0-9.-]+\/[\w.-]+\/[\w.-]+$/.test(v);
 export const isProvider = (v) => typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v);
 
 const text = (v, max = 128) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
@@ -43,6 +45,8 @@ function parseSession(s) {
     id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
     // The API platform the session spends instead of a subscription; null = a subscription.
     provider: isProvider(s.provider) ? s.provider : null,
+    // The forge repository of its working tree (shared/repo-key.mjs): the Code tab's link to it.
+    repo: isRepoKey(s.repo) ? s.repo : null,
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
     // Background tasks (shells, agents) an idle session left running.
     ...(num(s.background, 1, 999) ? { background: s.background } : {}),
@@ -100,6 +104,24 @@ function parseBalance(b) {
       .filter((x) => /^[A-Z]{3}$/.test(x?.currency) && num(x.amount, -1e9, 1e9) !== null).map((x) => ({ currency: x.currency, amount: x.amount })) };
 }
 
+export const MAX_REPOS = 200;
+const CI_STATES = ['success', 'failure', 'pending'];
+const ci = (v) => (CI_STATES.includes(v) ? v : null);
+const https = (v) => (typeof v === 'string' && /^https:\/\/[^\s"<>]{1,300}$/.test(v) ? v : null);
+
+/** One repository as a host's forge reader saw it (scripts/bridge/forges.mjs): branches, open PRs, each head's CI. */
+function parseRepo(r) {
+  if (!isRepoKey(r?.key) || !['github', 'gitea'].includes(r.forge) || !epoch(r.at)) return null;
+  return { key: r.key, forge: r.forge, name: text(r.name, 200), url: https(r.url), private: typeof r.private === 'boolean' ? r.private : null,
+    defaultBranch: text(r.defaultBranch, 200), pushedAt: iso(r.pushedAt), at: r.at, error: text(r.error, 200),
+    branches: (Array.isArray(r.branches) ? r.branches : []).slice(0, 30).filter((b) => text(b?.name, 200)).map((b) => ({
+      name: text(b.name, 200), sha: text(b.sha, 64), at: iso(b.at), author: text(b.author, 100), ci: ci(b.ci) })),
+    pulls: (Array.isArray(r.pulls) ? r.pulls : []).slice(0, 30).filter((p) => num(p?.number, 1, 1e9)).map((p) => ({
+      number: p.number, title: text(p.title, 300), url: https(p.url), draft: p.draft === true, author: text(p.author, 100),
+      head: text(p.head, 200), base: text(p.base, 200), review: ['approved', 'changes', 'required'].includes(p.review) ? p.review : null,
+      conflict: p.conflict === true, ci: ci(p.ci), updatedAt: iso(p.updatedAt) })) };
+}
+
 /** A host's load (scripts/bridge/resources.mjs): CPU %, memory and each GPU, numbers and a GPU model name only. */
 function parseResources(r) {
   if (!r || typeof r !== 'object') return null;
@@ -139,7 +161,9 @@ export function parseHostPush(body) {
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
-  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, resources: parseResources(body.resources), config: parseConfigSummary(body.config),
+  // Repos ride a push only when the host has a new reading: absent means "unchanged", not "none".
+  const repos = Array.isArray(body.repos) ? body.repos.slice(0, MAX_REPOS).map(parseRepo).filter(Boolean) : undefined;
+  return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, ...(repos ? { repos } : {}), resources: parseResources(body.resources), config: parseConfigSummary(body.config),
     configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean) };
 }
 

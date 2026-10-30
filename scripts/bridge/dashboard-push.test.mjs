@@ -116,3 +116,15 @@ test('push: config changes from the reply are applied and reported on the next p
   assert.deepEqual(bodies[3].configResults, [], 'reported once');
   assert.deepEqual(bodies[0].config, { editable: {} });
 });
+
+test('push: a forge reading rides once per version, again only if that push failed', async () => {
+  const bodies = [];
+  let reading = null, fail = false;
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', sessions: () => [], repos: () => reading,
+    fetch: async (url, init) => { bodies.push(JSON.parse(init.body)); return fail ? { ok: false, status: 500 } : { ok: true, json: async () => ({ accepted: true }) }; } });
+  await push.tick();
+  reading = { version: 1, list: [{ key: 'github.com/o/r' }] };
+  fail = true; await push.tick();
+  fail = false; await push.tick(); await push.tick();
+  assert.deepEqual(bodies.map((b) => b.repos?.length ?? null), [null, 1, 1, null]);
+});

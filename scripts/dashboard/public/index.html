@@ -23,6 +23,15 @@
     background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
   h1 { font-size: 20px; margin: 0; }
+  /* Code: a check state as one glyph, a list of PRs and branches inside a repo card. */
+  .ci { display: inline-block; min-width: 1.2em; text-align: center; font-weight: 700; }
+  .ci-success { color: var(--ok); } .ci-failure { color: var(--bad); } .ci-pending { color: var(--warn); } .ci-none { color: var(--hint); }
+  .code-h { margin-top: 10px; color: var(--hint); font-size: var(--t3); font-weight: 600; }
+  .code-item { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); gap: 0 6px; padding: 6px 0; border-top: 1px solid var(--sep); }
+  .code-item .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .code-item .sub { grid-column: 2; }
+  .code-item .waiting { grid-column: 1 / -1; }
+  .code-item.link { cursor: pointer; } .qrows > .code-item { padding: 10px 12px; } .qrows > .code-item:first-child { border-top: 0; }
   /* Force update: an icon beside the data's age (its hint names it). */
   .icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; margin-left: 4px; vertical-align: middle; border: 0; border-radius: 50%;
     font: inherit; font-size: 16px; font-weight: 700; line-height: 1; color: var(--accent-fg); background: var(--accent); cursor: pointer; }
@@ -115,9 +124,9 @@
   .tab-badge { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
     background: var(--warn); color: #fff; font: 600 10px/16px system-ui, sans-serif; font-style: normal; text-align: center; }
   /* Usage: totals, a bar per day split by agent, then ranked lists. */
-  .usage-range { display: flex; gap: 4px; margin-bottom: 10px; }
-  .usage-range button { border: 0; border-radius: 8px; padding: 4px 10px; font: inherit; font-size: var(--t3); background: var(--card); color: var(--hint); cursor: pointer; }
-  .usage-range button[aria-pressed="true"] { color: var(--fg); font-weight: 700; }
+  .range { display: flex; gap: 4px; margin-bottom: 10px; }
+  .range button { border: 0; border-radius: 8px; padding: 4px 10px; font: inherit; font-size: var(--t3); background: var(--card); color: var(--hint); cursor: pointer; }
+  .range button[aria-pressed="true"] { color: var(--fg); font-weight: 700; }
   .usage-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-bottom: 12px; }
   .usage-totals > div { background: var(--card); border-radius: 12px; padding: 8px 10px; }
   .usage-totals b { display: block; font-size: var(--t1); }
@@ -236,12 +245,14 @@
     <button role="tab" data-tab="sessions"><span class="label"></span> <b id="n-sessions"></b></button>
     <button role="tab" data-tab="quota"><span class="label"></span> <b id="n-quota"></b><i class="tab-dot" id="quota-dot" hidden></i></button>
     <button role="tab" data-tab="usage"><span class="label"></span></button>
+    <button role="tab" data-tab="code"><span class="label"></span> <b id="n-code"></b><i class="tab-dot" id="code-dot" hidden></i></button>
     <button role="tab" data-tab="events"><span class="label"></span> <b id="n-events"></b><i class="tab-badge" id="events-badge" hidden></i></button>
     <button role="tab" data-tab="config"><span class="label"></span></button>
   </nav>
   <div id="banner" class="banner"></div>
   <section id="quota-view" class="view" data-view="quota" hidden></section>
   <section id="usage-view" class="view" data-view="usage" hidden></section>
+  <section id="code-view" class="view" data-view="code" hidden></section>
   <section id="events-view" class="view" data-view="events" hidden></section>
   <section id="config-view" class="view" data-view="config" hidden></section>
   <div class="view" data-view="sessions">

@@ -36,7 +36,8 @@ export class Registry {
     // A boot dated ahead of this clock would outrank every later boot: refused (5 min skew).
     if (push.bootAt > this.now() + 300000) return { accepted: false };
     if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false };
-    this.hosts.set(hostId, { ...push, receivedAt: this.now() });
+    // A push without repos means the host's forge reading is unchanged: its last one stands.
+    this.hosts.set(hostId, { ...push, repos: push.repos ?? prev?.repos ?? [], receivedAt: this.now() });
     const configChanges = this.#settle(hostId, push.configResults);
     const merged = new Map(this.accounts().map((a) => [a.key, a]));
     // Alerts are about quota windows: a balance has none.
@@ -115,9 +116,22 @@ export class Registry {
     return [...byKey.values()].sort((a, b) => { const x = order(a), y = order(b); return x[0] - y[0] || x[1].localeCompare(y[1]) || x[2].localeCompare(y[2]); });
   }
 
+  /** Repositories as the hosts that can reach their forge saw them: one per repo, the freshest reading, with every host that sees it. */
+  repos() {
+    const byKey = new Map();
+    for (const [id, p] of this.hosts) {
+      for (const r of p?.repos ?? []) {
+        const held = byKey.get(r.key);
+        const hosts = [...(held?.hosts ?? []), id].sort();
+        byKey.set(r.key, !held || r.at > held.at ? { ...r, hosts } : { ...held, hosts });
+      }
+    }
+    return [...byKey.values()].sort((a, b) => String(b.pushedAt).localeCompare(String(a.pushedAt)));
+  }
+
   snapshot() {
     return { schemaVersion: SCHEMA_VERSION, generatedAt: new Date(this.now()).toISOString(),
-      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), events: this.events,
+      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), repos: this.repos(), events: this.events,
       configKeys: configKeysMeta(),
       configPending: [...this.changes.values()].map(({ id, key, value, at, host }) => ({ id, key, value, at: new Date(at).toISOString(), host: host ?? null })) };
   }

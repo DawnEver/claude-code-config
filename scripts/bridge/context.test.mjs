@@ -37,7 +37,7 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
   fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '1:abc', allowedUserIds: ['42', 'x'], approvalsFromTelegram: true } }));
   try {
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }), {
-      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli', 'vscode'], dashboard: null, dashboardError: null, billing: [], projects: { a: { chatId: -100, projectInTitle: 'always' } },
+      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli', 'vscode'], dashboard: null, dashboardError: null, billing: [], forges: [], projects: { a: { chatId: -100, projectInTitle: 'always' } },
     });
     fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { codexSources: ['cli', 'vscode', 7] } }));
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }).codexSources, ['cli', 'vscode']);
@@ -59,7 +59,7 @@ test('readBridgeConfig: a leftover bridge.alerts is ignored (Telegram quota aler
 });
 
 test('gitContext uses hints first and reads this checkout otherwise', () => {
-  assert.deepEqual(gitContext('/nowhere', { originUrl: 'https://x/o/proj.git', branch: 'feat/x' }), { project: 'proj', branch: 'feat/x' });
+  assert.deepEqual(gitContext('/nowhere', { originUrl: 'https://x/o/proj.git', branch: 'feat/x' }), { repo: 'x/o/proj', project: 'proj', branch: 'feat/x' });
   const here = gitContext(path.resolve(import.meta.dirname, '..', '..'));
   assert.ok(here.project);
   assert.ok(here.branch);

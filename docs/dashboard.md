@@ -205,6 +205,41 @@ the provider cache) reads it every 15 min in the background (`BalanceReader`). A
 reader in `READERS`: DeepSeek has one (`/user/balance`, per currency). Anthropic and OpenAI expose
 no balance to an API key — only spend, through an Admin key — so they read as `no balance API`.
 
+## Code
+
+What each code forge's repositories are doing: branches, open PRs and each head's CI, linked
+to the sessions working on them.
+
+**Read by the hosts that can reach each forge** (`scripts/bridge/forges.mjs`). A forge inside a
+private network is read by the hosts on that network, a public one by any; the gateway never
+reaches a forge and never holds a token. Each host uses its own token: `gh auth token` for
+GitHub, else the git credential store entry for the forge host (store one with
+`git credential approve`). A forge this host cannot reach, or has no token for, is simply not
+this host's to report. Sources are configuration, in the shared settings:
+
+```json
+"bridge": { "forges": [
+  { "kind": "github", "owner": "<owner>" },
+  { "kind": "gitea", "base": "https://<gitea host>", "repos": ["<org>/<repo>"] } ] }
+```
+
+`owner` reads all of an owner's repos, `repos` the listed ones (both narrow together on GitHub).
+A kind is one adapter onto one model — `Repo {key, branches, pulls}`, `Branch {name, sha, at,
+author, ci}`, `Pull {number, head, base, review, conflict, ci}` — so adding GitLab is adding an
+adapter. GitHub is one GraphQL query per 50 repos, newest push first, stopping at a year of
+inactivity; Gitea (and Forgejo) is REST per repo, CI from each head's combined commit status,
+which Gitea Actions reports. `ci` is `success | failure | pending | null`.
+
+**One repo, one record.** Its key is `<forge host>/<owner>/<name>` (`scripts/shared/repo-key.mjs`).
+Hosts read every 5 min; a reading rides the dashboard push only when new, and the registry keeps
+each host's last one, merging by key (freshest, with every host that sees it). A session carries
+the key of its working tree's origin, so the tab links a session to its branch, PR and CI exactly.
+
+**The tab** (`view.mjs codeView`): a range (24h / 7d / 30d / 1y, 30d by default, kept per device)
+picks repos with activity in it; *Needs attention* lists a failing default branch, failing or
+conflicting PRs, and failing branches a session works on; each repo is a folded row (`foldRow`,
+the same component as the Quota accounts) opening to its open PRs and active branches.
+
 ## Config
 
 The dashboard shows each host's config and may change a fixed few keys — behaviour that grants

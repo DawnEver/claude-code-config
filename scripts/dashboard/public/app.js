@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -33,7 +33,7 @@ const tr = (key, vars) => t(key, lang, vars);
 const agoText = (ms) => ago(new Date(ms).toISOString(), Date.now(), lang);
 // The open tab survives a reopen: a #quota / #events link opens that tab; otherwise the last
 // one used; sessions the first time.
-const TABS = ['sessions', 'quota', 'usage', 'events', 'config'];
+const TABS = ['sessions', 'quota', 'usage', 'code', 'events', 'config'];
 const hashTab = location.hash.slice(1);
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
 // Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
@@ -67,6 +67,9 @@ const topicSeen = (() => { try { return JSON.parse(store.get('dashboard.topicSee
 // Usage (the store's report, docs/usage.md): fetched when its tab opens and every few minutes while open.
 const USAGE_RANGES = [1, 7, 30, 90, 365];   // 1: the last 24 h, by hour
 const USAGE_EVERY_MS = 5 * 60000;
+// The Code tab's activity range, kept on this device: 30 days the first time.
+const CODE_RANGES = [1, 7, 30, 365];
+let codeDays = CODE_RANGES.includes(Number(store.get('dashboard.codeDays'))) ? Number(store.get('dashboard.codeDays')) : 30;
 let usageDays = USAGE_RANGES.includes(Number(store.get('dashboard.usageDays'))) ? Number(store.get('dashboard.usageDays')) : 30;
 let usage = null;        // {key, report, at} | {key, error, at}
 // The Usage filter: selected values per dimension ('' = no project); kept per device.
@@ -280,39 +283,60 @@ function headline(q) {
  * elsewhere a reference row (`refTo`) that opens to that host's own sessions the same way.
  */
 function accountRow(q, hostId) {
-  const id = `${hostId}|${q.key}`;
-  const open = openRows.has(id);
   const ref = Boolean(q.refTo);
   const using = hostSessions(q.key, hostId);
-  const row = el('div', `qrow${ref ? ' qref' : ''} v-${q.verdict}${q.stale ? ' stale' : ''}${open ? ' open' : ''}`);
+  const meta = [];
+  if (q.email && !ref) { const e = el('span', null, emailName(q.email)); e.title = q.email; meta.push(e); }
+  if (using.length) meta.push({ folded: tr('quota.inUse', { n: using.length }) });
+  if (q.sharedWith.length && !ref) meta.push(tr('quota.sharedAlso', { hosts: q.sharedWith.join(', ') }));
+  if (q.kind === 'balance' && q.at && !ref) meta.push(agoText(q.at));
+  const row = foldRow(`${hostId}|${q.key}`, {
+    cls: `${ref ? 'qref ' : ''}v-${q.verdict}${q.stale ? ' stale' : ''}`,
+    name: el('span', `agent ${q.agent ?? q.provider}`, accountName(q)), headline: headline(q),
+    right: ref ? el('span', 'see', tr('quota.see', { host: q.refTo })) : null,
+    title: ref ? tr('quota.oneBudget', { host: q.refTo }) : null,
+    folded: () => (!ref && q.windows.length ? [quotaMini(q)] : []),
+    open: () => [ref ? sessionsPart(using) : accountDetail(q, hostId)],
+    meta, warns: ref ? [] : [...(q.verdict === 'short' || q.verdict === 'exhausted' ? [verdictText(q, { withReset: false, lang })] : []), ...q.problems],
+  });
+  if (q.stale && q.at) { const c = el('span', 'clock', ' ◷'); c.title = tr('quota.reading', { ago: agoText(q.at) }); row.querySelector('.sub')?.append(c); }
+  return row;
+}
+
+function quotaMini(q) {
+  const mini = el('div', 'qmini');
+  for (const w of q.windows) {
+    const cell = el('div');
+    cell.append(kCell(w, q), bar(w, q.stale), leftCell(w, q.stale), resetCell(w));
+    mini.append(cell);
+  }
+  return mini;
+}
+
+/**
+ * The one foldable row every card list uses (accounts, repositories): a name, a headline and a
+ * chevron (or `right`) on top; folded, a glance (`folded`); tapped, its detail (`open`) in place;
+ * then a meta line (a part `{folded}` shows only while folded) and warnings. Its open state is
+ * kept by `id` across polls, and a host header can open every row of the host at once.
+ */
+function foldRow(id, { cls = '', name, headline: head, right = null, title = null, folded = () => [], open: detail = () => [], meta = [], warns = [] }) {
+  const open = openRows.has(id);
+  const row = el('div', `qrow ${cls}${open ? ' open' : ''}`);
   row.setAttribute('role', 'button');
   row.setAttribute('aria-expanded', String(open));
   row.tabIndex = 0;
+  if (title) row.title = title;
   const top = el('div', 'qrow-top');
-  top.append(el('span', `agent ${q.agent ?? q.provider}`, accountName(q)), headline(q),
-    ref ? el('span', 'see', tr('quota.see', { host: q.refTo })) : el('span', 'chev', open ? '⌄' : '›'));
-  row.append(top);
-  if (ref) row.title = tr('quota.oneBudget', { host: q.refTo });
-  if (open) row.append(ref ? sessionsPart(using) : accountDetail(q, hostId));
-  else if (!ref && q.windows.length) {
-    const mini = el('div', 'qmini');
-    for (const w of q.windows) {
-      const cell = el('div');
-      cell.append(kCell(w, q), bar(w, q.stale), leftCell(w, q.stale), resetCell(w));
-      mini.append(cell);
-    }
-    row.append(mini);
+  top.append(name, head, right ?? el('span', 'chev', open ? '⌄' : '›'));
+  row.append(top, ...(open ? detail() : folded()));
+  // A part is a node or text; a falsy one (a `cond && text` that did not hold) is left out.
+  const parts = meta.map((m) => (m?.folded !== undefined ? (open ? null : m.folded) : m)).filter(Boolean);
+  if (parts.length) {
+    const line = el('div', 'sub');
+    parts.forEach((p, i) => line.append(...(i ? [' · '] : []), p));
+    row.append(line);
   }
-  const meta = el('div', 'sub');
-  const add = (part) => { if (meta.childNodes.length) meta.append(' · '); meta.append(part); };
-  if (q.email && !ref) { const e = el('span', null, emailName(q.email)); e.title = q.email; add(e); }
-  if (!open && using.length) add(tr('quota.inUse', { n: using.length }));
-  if (q.sharedWith.length && !ref) add(tr('quota.sharedAlso', { hosts: q.sharedWith.join(', ') }));
-  if (q.kind === 'balance' && q.at && !ref) add(agoText(q.at));
-  if (q.stale && q.at) { const c = el('span', 'clock', ' ◷'); c.title = tr('quota.reading', { ago: agoText(q.at) }); meta.append(c); }
-  if (meta.childNodes.length) row.append(meta);
-  if (!ref && (q.verdict === 'short' || q.verdict === 'exhausted')) row.append(el('div', 'warn', verdictText(q, { withReset: false, lang })));
-  if (!ref) for (const p of q.problems) row.append(el('div', 'warn', p));
+  for (const w of warns) row.append(el('div', 'warn', w));
   const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
   row.addEventListener('click', toggle);
   row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
@@ -719,14 +743,7 @@ function usageList(titleKey, rows, dim) {
 function renderUsage() {
   const box = $('usage-view');
   box.replaceChildren();
-  const range = el('div', 'usage-range');
-  for (const d of USAGE_RANGES) {
-    const b = el('button', null, d === 1 ? '24h' : d === 365 ? '1y' : `${d}d`);
-    b.setAttribute('aria-pressed', String(d === usageDays));
-    b.addEventListener('click', () => { usageDays = d; store.set('dashboard.usageDays', String(d)); renderUsage(); fetchUsage(true); });
-    range.append(b);
-  }
-  box.append(range);
+  box.append(rangePicker(USAGE_RANGES, usageDays, (d) => { usageDays = d; store.set('dashboard.usageDays', String(d)); renderUsage(); fetchUsage(true); }));
   if (mock) return box.append(el('div', 'qrows empty', tr('usage.mock')));
   const picked = Object.entries(usageFilter).flatMap(([d, vs]) => vs.map((v) => [d, v]));
   if (picked.length) {
@@ -765,6 +782,90 @@ function renderUsage() {
   restoreScroll();
 }
 
+/** The one range picker (Usage, Code): 24h, 7d, …, 1y; `pick(days)` on a tap. */
+function rangePicker(ranges, current, pick) {
+  const range = el('div', 'range');
+  for (const d of ranges) {
+    const b = el('button', null, d === 1 ? '24h' : d === 365 ? '1y' : `${d}d`);
+    b.setAttribute('aria-pressed', String(d === current));
+    b.addEventListener('click', () => pick(d));
+    range.append(b);
+  }
+  return range;
+}
+
+// ── Code: what each forge's repositories are doing, as the hosts that reach them read it ──
+
+const CI_GLYPH = { success: '✓', failure: '✗', pending: '●' };
+function ciBadge(ci) {
+  const b = el('span', `ci ci-${ci ?? 'none'}`, CI_GLYPH[ci] ?? '–');
+  b.title = tr(`code.ci.${ci ?? 'none'}`);
+  return b;
+}
+const openUrl = (url) => (tg?.openLink ? tg.openLink(url) : window.open(url, '_blank', 'noopener'));
+const timeAgo = (t) => (t ? agoText(Date.parse(t)) : null);
+
+/** One PR or branch inside a repo card: its CI glyph, its title, a meta line; a tap opens it on the forge. */
+function codeItem(ci, title, meta, url, sessions = []) {
+  // A div, not a button: a session row (itself a button) may sit inside it.
+  const item = el('div', `code-item${url ? ' link' : ''}`);
+  if (url) { item.setAttribute('role', 'link'); item.tabIndex = 0; }
+  item.append(ciBadge(ci), el('span', 'title', title), el('span', 'sub', meta.filter(Boolean).join(' · ')));
+  if (sessions.length) { const list = el('div', 'waiting'); for (const s of sessions) list.append(sessionRow(s, { withHost: true })); item.append(list); }
+  if (url) item.addEventListener('click', (e) => { e.stopPropagation(); openUrl(url); });
+  return item;
+}
+
+function repoDetail(r) {
+  const box = el('div', 'qdetail');
+  box.addEventListener('click', (e) => e.stopPropagation());
+  if (r.pulls.length) {
+    box.append(el('div', 'code-h', tr('code.openPulls')));
+    for (const p of r.pulls) box.append(codeItem(p.ci, `#${p.number} ${p.title ?? ''}`, [`${p.head} → ${p.base}`, p.author, p.draft && tr('code.draft'),
+      p.review && tr(`code.review.${p.review}`), p.conflict && tr('code.conflict'), timeAgo(p.updatedAt)], p.url));
+  }
+  box.append(el('div', 'code-h', tr('code.activeBranches')));
+  for (const b of r.branches) {
+    box.append(codeItem(b.ci, b.name, [b.name === r.defaultBranch && '★', b.author, timeAgo(b.at), b.pull && `#${b.pull.number}`],
+      r.url && `${r.url}/${r.forge === 'github' ? 'tree' : 'src/branch'}/${encodeURIComponent(b.name)}`, b.sessions));
+  }
+  return box;
+}
+
+/** A repository as a card row, folded like an account: its default branch's CI, then PRs and branches. */
+function repoRow(r) {
+  const working = r.branches.reduce((n, b) => n + b.sessions.length, 0);
+  const head = el('span', 'left');
+  head.append(ciBadge(r.mainCi), ` ${r.defaultBranch ?? ''}`);
+  return foldRow(`code|${r.key}`, {
+    name: el('span', 'agent', r.name), headline: head,
+    open: () => [repoDetail(r)],
+    meta: [r.forge === 'github' ? 'GitHub' : 'Gitea', tr('code.pulls', { n: r.pulls.length }), tr('code.branches', { n: r.branches.length }),
+      working && tr('quota.inUse', { n: working }), timeAgo(r.pushedAt) && tr('code.pushed', { ago: timeAgo(r.pushedAt) })],
+    warns: r.error ? [r.error] : [],
+  });
+}
+
+function renderCode() {
+  const box = $('code-view');
+  box.replaceChildren();
+  box.append(rangePicker(CODE_RANGES, codeDays, (d) => { codeDays = d; store.set('dashboard.codeDays', String(d)); render(); }));
+  if (!(snapshot.repos ?? []).length) { box.append(el('div', 'qrows empty', tr('code.none'))); return; }
+  const v = codeView(snapshot, codeDays);
+  if (v.attention.length) {
+    const list = el('div', 'qrows');
+    for (const a of v.attention) {
+      const url = a.pull?.url ?? (a.repo.url && a.branch ? `${a.repo.url}/${a.repo.forge === 'github' ? 'tree' : 'src/branch'}/${encodeURIComponent(a.branch)}` : a.repo.url);
+      list.append(codeItem('failure', tr(`code.att.${a.kind}`, { repo: a.repo.name, branch: a.branch, n: a.pull?.number }), [], url, a.sessions ?? []));
+    }
+    box.append(el('div', 'section-h', tr('code.attention')), list);
+  }
+  const rows = el('div', 'qrows');
+  for (const r of v.repos) rows.append(repoRow(r));
+  box.append(el('div', 'section-h', tr('code.repos', { n: v.repos.length })), rows);
+  if (v.inactive) box.append(el('div', 'note', tr('code.inactive', { n: v.inactive })));
+}
+
 function renderTabs() {
   // Looking at the events marks them seen (after this render still shows which were new).
   const n = tabs(snapshot, Date.now(), seenAt, [], shownFrom, accounts);
@@ -772,6 +873,9 @@ function renderTabs() {
   $('n-sessions').textContent = String(n.sessions);
   $('n-quota').textContent = String(n.quota);
   $('quota-dot').hidden = !n.alert;
+  const code = codeView(snapshot, codeDays);
+  $('n-code').textContent = (snapshot.repos ?? []).length ? String(code.repos.length) : '';
+  $('code-dot').hidden = !code.attention.length;
   $('n-events').textContent = String(n.events);
   $('events-badge').hidden = !n.unseen || tab === 'events';
   $('events-badge').textContent = String(n.unseen);
@@ -826,6 +930,7 @@ function render() {
   // Each view on its own: a fault in one tab must not leave the others blank.
   isolated(renderQuota);
   isolated(renderEvents);
+  if (tab === 'code') isolated(renderCode);
   if (tab === 'usage') isolated(renderUsage);
   // The config form is rebuilt only when its data changed and nobody is editing a shared value:
   // a poll must not wipe a value being typed.

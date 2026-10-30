@@ -90,3 +90,15 @@ Local `npm run dashboard -- deploy` needs `wrangler login`. Check what is live w
   all kinds, folded by default. Unknown sessions: gateway only.
 - `app-smoke.test.mjs`: fake DOM, renders every tab of the mock; catches ReferenceErrors.
 - Brand colours once in CSS vars: --claude #d97757, --codex #10a37f, --deepseek #4d6bfe.
+
+## Code tab (P1)
+- Gitea is only reachable inside the university network: forges are read by HOSTS (bridge/forges.mjs), never the
+  Worker; each host's own token (gh auth token, else `git credential fill` for the forge host,
+  fetchKey now takes no username). Unreachable/no token -> host reports nothing.
+- `bridge.forges` (shared settings) = sources; adapters github (GraphQL, 50/page, stop at 1y idle)
+  and gitea (REST, CI = combined commit status). Repo key = shared/repo-key.mjs; sessions carry
+  `repo` from their origin, so session<->branch is exact.
+- Repos ride the push only when a new reading exists (ForgeReader.version); registry keeps each
+  host's last; merges by key. Range 24h/7d/30d/1y (default 30d). `foldRow` is now the one
+  foldable row (accounts + repos); `rangePicker` shared by Usage and Code.
+- Live run here: 29 GitHub repos, 2 Gitea repos, ~11 s, ~22 KB. P2 = history in D1, P3 = webhooks.
