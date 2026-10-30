@@ -121,8 +121,8 @@ function sessionRow(s, { withHost = false, inProject = false } = {}) {
   const status = displayStatus(s);
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
   // The platform the session spends: a provider's own mark (ccds, cods), else the agent's maker.
-  const brand = LOGOS[s.provider] ? s.provider : s.agent === 'claude' ? 'anthropic' : 'openai';
-  const avatar = el('span', `avatar ${s.agent} ${brand}`);
+  const brand = LOGOS[s.provider] ? s.provider : s.agent === 'claude' ? 'claude' : 'openai';
+  const avatar = el('span', `avatar ${s.agent} b-${brand}`);
   avatar.append(logo(brand));
   avatar.append(el('span', 'dot'));
   const body = el('div', 'main');
