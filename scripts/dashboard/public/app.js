@@ -339,7 +339,7 @@ function renderQuota() {
     head.setAttribute('aria-expanded', String(expanded));
     head.tabIndex = 0;
     const toggle = () => {
-      const ids = h.accounts.filter((q) => !q.refTo).map((q) => `${h.id}|${q.key}`);
+      const ids = [...h.accounts, ...bills].map((x) => `${h.id}|${x.key}`);
       if (expanded) { openHosts.delete(h.id); ids.forEach((id) => openRows.delete(id)); }
       else { openHosts.add(h.id); ids.forEach((id) => openRows.add(id)); }
       tg?.HapticFeedback?.selectionChanged?.();
@@ -361,14 +361,7 @@ function billingRows(bills, hostId = null) {
     const row = el('div', 'qrow brow');
     row.title = b.hosts.join(', ');
     row.append(el('span', 'k', b.name), el('span', b.error ? 'muted' : 'left', b.error ?? b.amounts), el('span', 'muted', b.age));
-    rows.append(row);
-    const using = hostId === null ? [] : billingSessions(snapshot, b).filter((u) => u.hostId === hostId);
-    if (using.length) {
-      const list = el('div', 'waiting');
-      for (const u of using) list.append(sessionRow(u));
-      list.addEventListener('click', (e) => e.stopPropagation());
-      rows.append(el('div', 'note', tr('quota.inUse', { n: using.length })), list);
-    }
+    rows.append(hostId === null ? row : withSessions(row, `${hostId}|${b.key}`, billingSessions(snapshot, b).filter((u) => u.hostId === hostId)));
   }
   return rows;
 }
@@ -405,10 +398,26 @@ function quotaRef(q, hostId) {
   if (q.bind) left.textContent += ` ${tr(`quota.${pref.unit}`)}`;
   row.append(el('span', `agent ${q.agent}`, accountName(q)), left, el('span', 'see', tr('quota.see', { host: q.refTo })));
   row.title = tr('quota.oneBudget', { host: q.refTo });
-  const using = hostSessions(q.key, hostId);
+  return withSessions(row, `${hostId}|${q.key}`, hostSessions(q.key, hostId));
+}
+
+/**
+ * A row followed by this host's sessions on it, folded like an account row: the count shows,
+ * the list opens on a tap (or with the host header). Nothing in use, the bare row.
+ */
+function withSessions(row, id, using) {
   if (!using.length) return row;
-  const box = el('div');
-  box.append(row, el('div', 'note', tr('quota.inUse', { n: using.length })), sessionList(using));
+  const open = openRows.has(id);
+  const box = el('div', 'folded');
+  const note = el('div', 'note toggle', `${tr('quota.inUse', { n: using.length })} ${open ? '⌄' : '›'}`);
+  note.setAttribute('role', 'button');
+  note.setAttribute('aria-expanded', String(open));
+  note.tabIndex = 0;
+  const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
+  note.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  note.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  box.append(row, note);
+  if (open) box.append(sessionList(using));
   return box;
 }
 
