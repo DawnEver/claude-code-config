@@ -46,9 +46,23 @@ const REVIEW = { APPROVED: 'approved', CHANGES_REQUESTED: 'changes', REVIEW_REQU
 const unreachable = (e) => e?.name === 'TimeoutError' || e?.name === 'AbortError' || (e instanceof TypeError && e.message === 'fetch failed');
 
 /** A request that throws on a network failure (this host cannot reach the forge) and on an HTTP error. */
-async function getJson(fetch, url, token, init = {}) {
-  const res = await fetch(url, { ...init, headers: { Accept: 'application/json', Authorization: `${init.scheme ?? 'Bearer'} ${token}`, ...init.headers },
-    signal: AbortSignal.timeout(TIMEOUT_MS) });
+/** Waits before each retry of a transient failure: two retries, so three attempts in all. */
+export const RETRY_DELAYS_MS = [1000, 3000];
+const transient = (status) => status === 429 || status >= 500;
+
+async function getJson(fetch, url, token, init = {}, delays = init.delays ?? RETRY_DELAYS_MS) {
+  let res;
+  // A network blip, a timeout or a 5xx/429 is tried again; a definite answer (401, 404) is not.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(url, { ...init, headers: { Accept: 'application/json', Authorization: `${init.scheme ?? 'Bearer'} ${token}`, ...init.headers },
+        signal: AbortSignal.timeout(TIMEOUT_MS) });
+      if (!transient(res.status) || attempt >= delays.length) break;
+    } catch (e) {
+      if (!unreachable(e) || attempt >= delays.length) throw e;
+    }
+    await new Promise((ok) => setTimeout(ok, delays[attempt]));
+  }
   if (!res.ok) {
     const e = new Error(res.status === 401 ? 'HTTP 401: the token is refused (expired or revoked)' : `HTTP ${res.status}`);
     e.http = true;
@@ -68,12 +82,12 @@ const GITHUB_QUERY = `query($login: String!, $after: String) { repositoryOwner(l
 
 const ADAPTERS = {
   /** GitHub: one GraphQL page of up to 50 repos, newest push first, until a repo idle past the horizon. */
-  async github(src, { token, fetch, now }) {
+  async github(src, { token, fetch, now, delays }) {
     const out = [];
     for (const owner of src.owner ? [src.owner] : [...new Set(src.repos.map((full) => full.split('/')[0]))]) {
       for (let after = null; ;) {
         const body = await getJson(fetch, 'https://api.github.com/graphql', token,
-          { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: GITHUB_QUERY, variables: { login: owner, after } }) });
+          { method: 'POST', delays, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: GITHUB_QUERY, variables: { login: owner, after } }) });
         if (body.errors?.length) throw Object.assign(new Error(body.errors[0].message), { http: true });
         const page = body.data?.repositoryOwner?.repositories;
         if (!page) break;
@@ -91,9 +105,9 @@ const ADAPTERS = {
   },
 
   /** Gitea (and Forgejo): REST per repo; each branch and PR head's combined commit status. */
-  async gitea(src, { token, fetch, now }) {
+  async gitea(src, { token, fetch, now, delays }) {
     const api = `${src.base}/api/v1`;
-    const get = (p) => getJson(fetch, `${api}${p}`, token, { scheme: 'token' });
+    const get = (p) => getJson(fetch, `${api}${p}`, token, { scheme: 'token', delays });
     let names = [...src.repos];
     if (src.owner) {
       const list = await get(`/orgs/${src.owner}/repos?limit=50`).catch((e) => (e.http ? get(`/users/${src.owner}/repos?limit=50`) : Promise.reject(e)));
@@ -153,10 +167,10 @@ export const sourceId = (src) => `${src.kind}|${new URL(src.base).host}|${src.ow
  * (a refused token, an HTTP error), or `{unavailable}` when this host cannot read it at all (no
  * token, the forge unreachable) — then the gateway asks another host. A fault in this code throws.
  */
-export async function readSource(src, { token, fetch = globalThis.fetch, now = Date.now }) {
+export async function readSource(src, { token, fetch = globalThis.fetch, now = Date.now, delays = RETRY_DELAYS_MS }) {
   if (!token) return { unavailable: `no token for ${new URL(src.base).host}${src.keyUsername ? ` (${src.keyUsername})` : ''}` };
   try {
-    const repos = await ADAPTERS[src.kind](src, { token, fetch, now });
+    const repos = await ADAPTERS[src.kind](src, { token, fetch, now, delays });
     return { repos: repos.map((r) => ({ ...r, pinned: !src.show || src.show.some((n) => n.toLowerCase() === r.name.toLowerCase()) })) };
   } catch (e) {
     if (unreachable(e)) return { unavailable: `${new URL(src.base).host} unreachable` };

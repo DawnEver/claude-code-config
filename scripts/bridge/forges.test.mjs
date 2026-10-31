@@ -71,7 +71,7 @@ test('gitea: REST per repo — branches newest first, open PRs, each head\'s com
 test('one reading per source: repos, the forge refusing, or this host unable to read; a fault throws', async () => {
   const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: ['team/b'], keyUsername: 'dashboard' };
   assert.deepEqual(await readSource(src, { token: null, now: () => NOW }), { unavailable: 'no token for git.example.org (dashboard)' });
-  assert.deepEqual(await readSource(src, { token: 't', fetch: async () => { throw new TypeError('fetch failed'); }, now: () => NOW }), { unavailable: 'git.example.org unreachable' });
+  assert.deepEqual(await readSource(src, { token: 't', fetch: async () => { throw new TypeError('fetch failed'); }, now: () => NOW, delays: [0, 0] }), { unavailable: 'git.example.org unreachable' });
   await assert.rejects(readSource(src, { token: 't', fetch: async () => { throw new RangeError('a bug'); }, now: () => NOW }), /a bug/, 'a fault is said, not hidden');
   const { repos: [r] } = await readSource(src, { token: 't', fetch: async () => ({ ok: false, status: 401 }), now: () => NOW });
   assert.deepEqual([r.key, r.pinned], ['git.example.org/team/a', false], 'a repo the forge refused is still that repo, with its error');
@@ -106,4 +106,23 @@ test('a refused credential gets git\'s own round: rejected, filled again (renewe
   await new Promise((ok) => setTimeout(ok, 0));
   assert.deepEqual(settled, [['expired', false], ['renewed', true]]);
   assert.equal(r.outbox()[0].repos[0].error, null);
+});
+
+test('a network blip or a 5xx is tried twice more before it counts; a definite answer is not retried', async () => {
+  const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
+  const ok = { '/api/v1/repos/team/a': { full_name: 'team/a', html_url: 'https://git.example.org/team/a', default_branch: 'main', updated_at: day(1) },
+    '/api/v1/repos/team/a/branches?limit=50': [], '/api/v1/repos/team/a/pulls?state=open&limit=30': [] };
+  let calls = 0;
+  const flaky = (failures, fail) => async (url) => (++calls <= failures ? fail() : { ok: true, json: async () => ok[url.replace('https://git.example.org', '')] });
+  const read = (fetch) => readSource(src, { token: 't', fetch, now: () => NOW, delays: [0, 0] });
+  const { repos: [r] } = await read(flaky(2, () => { throw new TypeError('fetch failed'); }));
+  assert.equal(r.error, null, 'two blips, then read');
+  calls = 0;
+  const { repos: [s] } = await read(flaky(2, () => ({ ok: false, status: 502 })));
+  assert.equal(s.error, null, 'two 502s, then read');
+  calls = 0;
+  assert.deepEqual(await read(flaky(3, () => { throw new TypeError('fetch failed'); })), { unavailable: 'git.example.org unreachable' }, 'three in a row: unreachable');
+  calls = 0;
+  const { repos: [u] } = await read(async () => { calls++; return { ok: false, status: 404 }; });
+  assert.deepEqual([u.error, calls], ['HTTP 404', 1], 'a 404 is an answer, asked once');
 });

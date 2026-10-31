@@ -5,7 +5,7 @@ import { fetchKey, keyFingerprint, sessionUsername } from './credential-key.mjs'
 test('fetchKey asks git credential fill for https://<username>@<host> with prompts off', () => {
   let call;
   const run = (cmd, args, opts) => { call = { cmd, args, opts }; return { status: 0, stdout: 'protocol=https\nhost=h\nusername=u\npassword=sk-1\r\n' }; };
-  assert.deepEqual(fetchKey({ host: 'api.deepseek.com', username: 'api-key-session', run }), { key: 'sk-1' });
+  assert.deepEqual(fetchKey({ host: 'api.deepseek.com', username: 'api-key-session', run }), { key: 'sk-1', username: 'u' });
   assert.equal(call.cmd, 'git');
   assert.deepEqual(call.args, ['credential', 'fill']);
   assert.equal(call.opts.input, 'protocol=https\nhost=api.deepseek.com\nusername=api-key-session\n\n');
