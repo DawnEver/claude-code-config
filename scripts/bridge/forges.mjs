@@ -12,7 +12,7 @@
 // `ci` is the head commit's combined check state: 'success' | 'failure' | 'pending' | null (none).
 
 import { spawnSync } from 'child_process';
-import { fetchKey, settleKey } from '../shared/credential-key.mjs';
+import { fetchKey } from '../shared/credential-key.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
 
 const TIMEOUT_MS = 20000;
@@ -180,24 +180,19 @@ export async function readSource(src, { token, fetch = globalThis.fetch, now = D
 }
 
 /**
- * This host's credential for a forge, the one its git already uses: GitHub's `gh` login, else
- * the git credential store for the forge host — whatever helper fills it (a stored API token, Git
- * Credential Manager's OAuth login, ...). `settle(ok)` reports back as git does after a request,
- * so an expired OAuth token is renewed by its helper exactly as on the next `git pull`. Null when none.
+ * This host's credential for a forge: GitHub's `gh` login, else the git credential store for the
+ * forge host (`keyUsername` picks one when it holds several). For unattended reading store a
+ * long-lived read-only API token there; an OAuth login a git helper renews only with a browser
+ * expires within hours. Null when none.
  */
 export function forgeToken(src, { run = spawnSync } = {}) {
   if (src.kind === 'github') {
     const gh = run('gh', ['auth', 'token'], { encoding: 'utf8', windowsHide: true });
     if (gh.status === 0 && gh.stdout?.trim()) return { token: gh.stdout.trim() };
   }
-  const host = new URL(src.base).host;
-  const got = fetchKey({ host, username: src.keyUsername, run });
-  if (!got.key) return null;
-  return { token: got.key, settle: (ok) => settleKey({ host, username: got.username, key: got.key, ok, run }) };
+  const got = fetchKey({ host: new URL(src.base).host, username: src.keyUsername, run });
+  return got.key ? { token: got.key } : null;
 }
-
-/** A reading the forge refused for its credential: the whole source, or any repo in it. */
-const refused = (r) => [r.error, ...(r.repos ?? []).map((x) => x.error)].some((e) => e?.startsWith('HTTP 401'));
 
 /**
  * The host's side of the gateway's lease (registry.mjs forge leases): the push declares which
@@ -232,20 +227,12 @@ export class ForgeReader {
   }
 
   /**
-   * One read with git's own credential round: refused, the credential is rejected and filled
-   * again (its helper renews it if it can) and the read retried once; a credential that worked is
-   * approved, so the helper keeps what it renewed.
+   * One read with this host's credential. A refused one is reported, never rejected from the
+   * store: a helper that cannot renew without a browser (Git Credential Manager's OAuth login on
+   * some forges) would lose the user's git login for it.
    */
   async #read(src) {
-    let cred = this.token(src);
-    let r = await this.readOne(src, { token: cred?.token, now: this.now });
-    if (refused(r) && cred?.settle) {
-      cred.settle(false);
-      cred = this.token(src);
-      if (cred?.token) r = await this.readOne(src, { token: cred.token, now: this.now });
-    }
-    if (cred?.settle && (r.repos || r.error) && !refused(r)) cred.settle(true);
-    return r;
+    return this.readOne(src, { token: this.token(src)?.token, now: this.now });
   }
 
   /** The readings to send with the next push. */
