@@ -16,6 +16,8 @@
     --claude: #d97757; --codex: #10a37f; --deepseek: #4d6bfe;
     /* Three type levels by importance: headline (what is left, who needs you), key fact (use, reset, warning), secondary. */
     --t1: 16px; --t2: 14px; --t3: 12px;
+    /* One column width for every responsive layout. */
+    --col: 340px;
   }
   * { box-sizing: border-box; min-width: 0; }
   html, body { overflow-x: clip; }   /* clip, not hidden: hidden makes body a scroll box and breaks the sticky tab bar */
@@ -33,8 +35,8 @@
   .code-item .waiting { grid-column: 1 / -1; }
   .code-item.link { cursor: pointer; }
   /* Independent things (each repo, each item needing attention) are separate cards, spaced apart. */
-  .cards { display: grid; gap: 8px; margin-bottom: 14px; }
-  .cards > * { background: var(--card); border-radius: 14px; overflow: hidden; }
+  .cards { margin-bottom: 14px; }
+  .cards > * { margin-bottom: 8px; background: var(--card); border-radius: 14px; overflow: hidden; }
   .cards > .code-item { padding: 10px 12px; } .cards > * { border-top: 0 !important; }
   /* Force update: an icon beside the data's age (its hint names it). */
   .icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; margin-left: 4px; vertical-align: middle; border: 0; border-radius: 50%;
@@ -236,11 +238,12 @@
      scale with the viewport. No cap. */
   body { padding: clamp(12px, 2vw, 32px) clamp(12px, 2.5vw, 40px) calc(clamp(16px, 2vw, 32px) + env(safe-area-inset-bottom)); }
   h1 { font-size: clamp(20px, 1.2vw + 14px, 28px); }
-  /* Packed: hosts flow down each column and fill the gaps. */
-  #hosts, .quota-hosts { column-width: 340px; column-gap: 14px; }
-  #hosts > .host, .quota-hosts > .host { break-inside: avoid; }
-  /* auto-fill here: a lone session keeps card width instead of spanning the window. */
-  .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 0 14px; }
+  /* The one responsive layout (Sessions, Accounts, Code): blocks flow down as many --col-wide
+     columns as fit, each kept whole, filling the gaps. */
+  .columns { column-width: var(--col); column-gap: 14px; }
+  .columns > * { break-inside: avoid; }
+  /* Rows inside a block (sessions on an account, a repo): the same width, a lone one keeps it. */
+  .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--col), 100%), 1fr)); gap: 0 14px; }
   .selects select { max-width: 320px; }
   /* One interaction language for everything that opens, toggles or navigates: a pointer, a tint
      on hover (only where hover exists), a deeper tint while pressed, and a keyboard focus ring. */
@@ -278,7 +281,7 @@
   <div class="view" data-view="sessions">
   <nav id="chips" class="chips" aria-label="Status"></nav>
   <div id="selects" class="selects"></div>
-  <main id="hosts"></main>
+  <main id="hosts" class="columns"></main>
   </div>
   <footer id="version"></footer>
   <script type="module" src="app.js"></script>
