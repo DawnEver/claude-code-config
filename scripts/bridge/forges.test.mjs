@@ -124,16 +124,30 @@ test('a network blip or a 5xx is tried twice more before it counts; a definite a
   assert.deepEqual([u.error, calls], ['HTTP 404', 1], 'a 404 is an answer, asked once');
 });
 
-test('a refused credential is reported and the credential store is only read, never written or rejected', async () => {
+test('a refused OAuth login is renewed once through git (as a git pull does), then read once more; the store is never written', async () => {
   const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
-  const gitCalls = [];
-  const run = (cmd, args) => { gitCalls.push(args[1]); return cmd === 'git' && args[1] === 'fill' ? { status: 0, stdout: 'username=u\npassword=expired\n' } : { status: 1 }; };
-  const readOne = async () => ({ repos: [{ key: 'git.example.org/team/a', error: 'HTTP 401: the token is refused (expired or revoked)' }] });
-  const r = new ForgeReader({ sources: [src], now: () => NOW, token: (s) => forgeToken(s, { run }), readOne });
+  let stored = 'expired';
+  const git = [];
+  const run = (cmd, args) => { git.push(args.join(' ')); return { status: 0, stdout: `username=OAUTH_USER
+password=${stored}
+` }; };
+  const exec = (cmd, args, opts, cb) => { git.push(args.join(' ')); assert.equal(opts.env.GCM_INTERACTIVE, process.env.GCM_INTERACTIVE, 'the user\'s own environment'); stored = 'fresh'; setTimeout(cb, 0); };
+  const reads = [];
+  const readOne = async (s, { token }) => { reads.push(token); return { repos: [{ key: 'git.example.org/team/a', error: token === 'fresh' ? null : 'HTTP 401: the token is refused (expired or revoked)' }] }; };
+  const r = new ForgeReader({ sources: [src], now: () => NOW, token: (s) => forgeToken(s, { run, exec }), readOne });
   r.assign(r.ids());
-  await new Promise((ok) => setTimeout(ok, 0));
-  assert.match(r.outbox()[0].repos[0].error, /^HTTP 401/);
-  assert.deepEqual(gitCalls, ['fill'], 'only `git credential fill`: no reject, approve or ls-remote');
+  await new Promise((ok) => setTimeout(ok, 5));
+  assert.deepEqual(reads, ['expired', 'fresh']);
+  assert.deepEqual(git.slice(0, 3), ['credential fill', 'ls-remote --heads https://git.example.org/team/a.git', 'credential fill']);
+  assert.ok(git.every((c) => c === 'credential fill' || c.startsWith('ls-remote')), 'no reject, no approve');
+  assert.equal(r.outbox()[0].repos[0].error, null);
+  // Still refused after the renewal: reported, not retried again.
+  stored = 'expired'; reads.length = 0;
+  const r2 = new ForgeReader({ sources: [src], now: () => NOW, token: (s) => forgeToken(s, { run, exec: (c, a, o, cb) => setTimeout(cb, 0) }), readOne });
+  r2.assign(r2.ids());
+  await new Promise((ok) => setTimeout(ok, 5));
+  assert.equal(reads.length, 2, 'one retry');
+  assert.match(r2.outbox()[0].repos[0].error, /^HTTP 401/);
 });
 
 test('history: read after a good reading, a year back the first time, then from the stored cursor; an unfinished window is continued, not dropped', async () => {

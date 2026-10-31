@@ -236,11 +236,11 @@ this host's to report. Sources are configuration, in the shared settings:
 `owner` reads all of an owner's repos, `repos` the listed ones (both narrow together on GitHub).
 `show` lists the repos the tab shows by default (absent: all); each device may choose others in
 Config › Code, and *Back to the defaults* returns to `show`. The credential is the one the host's git already uses — GitHub's `gh` login, else the git
-credential store entry for the forge host (`keyUsername` picks one by username). The store is only ever read. An OAuth login (Git Credential Manager)
-expires within hours and cannot be renewed unattended: both a reject-and-fill and a
-non-interactive `git ls-remote` (on whose 401 git rejects the credential itself) deleted the
-user's git login. For unattended reading, store a long-lived read-only API token under its own
-username and name it in `keyUsername`.
+credential store entry for the forge host (`keyUsername` picks one by username). An OAuth login (Git Credential Manager)
+expires within hours: refused, the reader runs one `git ls-remote` of a repo of the source, in
+the user's own environment, exactly as their `git pull` does — GCM renews the login there with its
+refresh token — and reads once more. The store is never written by the reader. Forcing GCM
+non-interactive (`GCM_INTERACTIVE=never`) stopped that renewal and git then dropped the login.
 
 **Nothing fails silently.** An error never replaces a good reading; a source never read well
 shows its error on its repos, listed first under *Needs attention*. The daemon logs one
