@@ -21,8 +21,9 @@ class Node {
   get textContent() { return this.ownText + this.children.map((c) => c.textContent).join(''); }
   get childNodes() { return this.children; }
   set textContent(v) { this.children = []; this.ownText = String(v); }
-  append(...n) { for (const c of n) this.children.push(typeof c === 'string' ? text(c) : c); }
-  prepend(...n) { this.children.unshift(...n.map((c) => (typeof c === 'string' ? text(c) : c))); }
+  append(...n) { for (const c of n) { const x = typeof c === 'string' ? text(c) : c; x.parent = this; this.children.push(x); } }
+  prepend(...n) { this.children.unshift(...n.map((c) => { const x = typeof c === 'string' ? text(c) : c; x.parent = this; return x; })); }
+  replaceWith(n) { const i = this.parent.children.indexOf(this); this.parent.children[i] = n; n.parent = this.parent; }
   replaceChildren(...n) { this.children = []; this.ownText = ''; this.append(...n); }
   setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'id') this.id = String(v); }
   getAttribute(k) { return this.attrs[k] ?? null; }
@@ -62,7 +63,7 @@ function documentFrom(html) {
     if (n.id) byId.set(n.id, n);
   }
   return {
-    body, documentElement: new Node('html'), activeElement: null, hidden: false, title: '', listeners: {},
+    body, documentElement: Object.assign(new Node('html'), { scrollHeight: 0 }), activeElement: null, hidden: false, title: '', listeners: {},
     getElementById: (id) => byId.get(id) ?? null,
     querySelectorAll: (sel) => body.querySelectorAll(sel),
     querySelector: (sel) => body.querySelector(sel),
@@ -79,7 +80,7 @@ test('the page renders every tab from the example data, and no view throws', asy
   const memory = new Map();
   Object.assign(globalThis, {
     document: doc,
-    window: { addEventListener() {}, scrollTo() {}, scrollY: 0, open() {} },
+    window: { addEventListener() {}, scrollTo() {}, scrollY: 0, innerHeight: 800, open() {} },
     location: { search: '?mock', hash: '', pathname: '/', reload() {} },
     localStorage: { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, String(v)) },
   });
@@ -115,6 +116,13 @@ test('the page renders every tab from the example data, and no view throws', asy
     assert.ok(shown.length > 0 && text.includes('OAuth token refresh') && !text.includes('Landing page redesign'), 'only that project\'s sessions');
     tabs[0].dispatch('click');
     assert.ok(doc.getElementById('quota-view').querySelectorAll('.qrow').length > 0, 'the Quota tab lists accounts');
+    // Opening a row redraws that row alone: every other row of the view is the same node as before.
+    tabs.find((b) => b.dataset.tab === 'quota').dispatch('click');
+    const before = doc.getElementById('quota-view').querySelectorAll('.qrow');
+    before[0].dispatch('click');
+    const after = doc.getElementById('quota-view').querySelectorAll('.qrow');
+    assert.notEqual(after[0], before[0], 'the tapped row was redrawn');
+    assert.ok(after.slice(1).every((x, i) => x === before[i + 1]), 'no other row was rebuilt');
     // An API balance is an account like any other: a row in the card of the host that reads it.
     const balance = doc.getElementById('quota-view').querySelectorAll('.deepseek');
     assert.equal(balance.length, 1);

@@ -322,7 +322,8 @@ function quotaMini(q) {
  * then a meta line (a part `{folded}` shows only while folded) and warnings. Its open state is
  * kept by `id` across polls, and a host header can open every row of the host at once.
  */
-function foldRow(id, { cls = '', name, headline: head, right = null, title = null, folded = () => [], open: detail = () => [], meta = [], warns = [], go = null }) {
+function foldRow(id, opts) {
+  const { cls = '', name, headline: head, right = null, title = null, folded = () => [], open: detail = () => [], meta = [], warns = [], go = null } = opts;
   const open = openRows.has(id);
   const row = el('div', `qrow ${cls}${open ? ' open' : ''}`);
   row.setAttribute('role', go ? 'link' : 'button');
@@ -342,7 +343,14 @@ function foldRow(id, { cls = '', name, headline: head, right = null, title = nul
     row.append(line);
   }
   for (const w of warns) row.append(el('div', 'warn', w));
-  const toggle = () => { open ? openRows.delete(id) : openRows.add(id); tg?.HapticFeedback?.selectionChanged?.(); render(); };
+  // Opening or folding redraws this row alone, in place: the rest of the page and its scroll stay put.
+  const toggle = () => {
+    open ? openRows.delete(id) : openRows.add(id);
+    tg?.HapticFeedback?.selectionChanged?.();
+    const next = foldRow(id, opts);
+    row.replaceWith(next);
+    next.focus({ preventScroll: true });
+  };
   const tap = go ?? toggle;
   if (go) {
     chev.setAttribute('aria-label', tr(open ? 'row.fold' : 'row.open'));
@@ -950,11 +958,20 @@ function renderTabs() {
 // lands or the reader scrolls by hand.
 const scrollAt = (() => { try { return JSON.parse(store.get('dashboard.scroll')) ?? {}; } catch { return {}; } })();
 let restoring = tab;
+let restoreTries = 0;
+/**
+ * Back to the tab's saved position once the page is tall enough to hold it, then never again
+ * (a redraw keeps the reader's own position). Content that never grows that tall stops the
+ * attempt after a few redraws, at the nearest position: no later redraw pulls the page back.
+ */
 function restoreScroll() {
   if (restoring !== tab) return;
   const y = scrollAt[tab] ?? 0;
-  window.scrollTo(0, y);
-  if (Math.abs(window.scrollY - y) < 2) restoring = null;
+  const max = document.documentElement.scrollHeight - window.innerHeight;
+  if (max < y && ++restoreTries < 20) return;
+  window.scrollTo(0, Math.min(y, Math.max(0, max)));
+  restoring = null;
+  restoreTries = 0;
 }
 let scrollSave = null;
 window.addEventListener('scroll', () => {
@@ -974,6 +991,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     store.set('dashboard.scroll', JSON.stringify(scrollAt));
     tab = b.dataset.tab;
     restoring = tab;
+    restoreTries = 0;
     if (tab === 'events') shownFrom = seenAt;
     if (tab === 'usage') { renderUsage(); fetchUsage(); }
     configShown = null;
@@ -992,9 +1010,11 @@ function render() {
   $('updated').textContent = snapshot.mock ? tr('app.exampleData') : lastOk && snapshot.demo ? tr('app.demoData', { ago: agoText(lastOk) })
     : lastOk ? tr('app.data', { ago: agoText(lastOk) }) : '';
   renderTabs();
-  // Each view on its own: a fault in one tab must not leave the others blank.
-  isolated(renderQuota);
-  isolated(renderEvents);
+  // Only the tab in view is drawn (another is drawn when shown), each on its own: a fault in one
+  // must not blank another. A redraw keeps the reader where they were on the page.
+  const y = window.scrollY;
+  if (tab === 'quota') isolated(renderQuota);
+  if (tab === 'events') isolated(renderEvents);
   if (tab === 'code') isolated(renderCode);
   if (tab === 'usage') isolated(renderUsage);
   // The config form is rebuilt only when its data changed and nobody is editing a shared value:
@@ -1005,7 +1025,8 @@ function render() {
     if (key !== configShown && !editing) { configShown = key; renderConfig(); }
   }
   if (tab === 'events' && snapshot.events?.length) { seenAt = snapshot.events[0].at; store.set('dashboard.eventsSeenAt', seenAt); }
-  isolated(() => { renderChips(); renderSelects(); renderHosts(); });
+  if (tab === 'sessions') isolated(() => { renderChips(); renderSelects(); renderHosts(); });
+  if (!restoring && Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
   restoreScroll();
 }
 
