@@ -82,7 +82,7 @@ test('one reading per source: repos, the forge refusing, or this host unable to 
 test('the reader reads only what the gateway assigns, once at a time, and keeps each reading until delivered', async () => {
   const src = { kind: 'github', base: 'https://github.com', owner: 'o', repos: [] };
   let reads = 0, release;
-  const r = new ForgeReader({ sources: [src], now: () => NOW, token: () => 't',
+  const r = new ForgeReader({ sources: [src], now: () => NOW, token: () => ({ token: 't' }),
     readOne: () => { reads++; return new Promise((ok) => { release = () => ok({ repos: [{ key: 'github.com/o/r' }] }); }); } });
   assert.deepEqual(r.ids(), ['github|github.com|o|']);
   r.assign(['github|github.com|o|', 'unknown']); r.assign(['github|github.com|o|']);
@@ -92,4 +92,18 @@ test('the reader reads only what the gateway assigns, once at a time, and keeps 
   assert.deepEqual(out, [{ source: 'github|github.com|o|', at: NOW, repos: [{ key: 'github.com/o/r' }] }]);
   r.delivered(out);
   assert.deepEqual(r.outbox(), []);
+});
+
+test('a refused credential gets git\'s own round: rejected, filled again (renewed by its helper), retried, then approved', async () => {
+  const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
+  const settled = [];
+  let fills = 0;
+  const token = () => { const t = ++fills === 1 ? 'expired' : 'renewed'; return { token: t, settle: (ok) => settled.push([t, ok]) }; };
+  const readOne = async (s, { token: t }) => (t === 'expired' ? { repos: [{ key: 'git.example.org/team/a', error: 'HTTP 401: the token is refused (expired or revoked)' }] }
+    : { repos: [{ key: 'git.example.org/team/a', error: null }] });
+  const r = new ForgeReader({ sources: [src], now: () => NOW, token, readOne });
+  r.assign(r.ids());
+  await new Promise((ok) => setTimeout(ok, 0));
+  assert.deepEqual(settled, [['expired', false], ['renewed', true]]);
+  assert.equal(r.outbox()[0].repos[0].error, null);
 });

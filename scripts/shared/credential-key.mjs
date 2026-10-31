@@ -47,5 +47,16 @@ export function fetchKey({ host, username = null, run = spawnSync }) {
         + `store one: python -m ai_lab.auth login <provider> --task ${SESSION_TASK}`,
     };
   }
-  return { key: password };
+  return { key: password, username: /^username=(.*)$/m.exec(String(res.stdout))?.[1]?.replace(/\r$/, '') ?? username };
+}
+
+/**
+ * Tell the credential helper how a key it gave fared, as git itself does after a request:
+ * `approve` stores it (a helper that just renewed an OAuth token keeps the new one), `reject`
+ * marks it bad (so the next `fill` renews it from the helper's refresh token, or finds none).
+ */
+export function settleKey({ host, username, key, ok, run = spawnSync }) {
+  const input = `protocol=https\nhost=${host}\n${username ? `username=${username}\n` : ''}password=${key}\n\n`;
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_ASKPASS: '', SSH_ASKPASS: '' };
+  run('git', ['credential', ok ? 'approve' : 'reject'], { input, encoding: 'utf8', env, windowsHide: true });
 }
