@@ -14,17 +14,21 @@
     --ok: #34c759; --warn: #ff9500; --bad: #ff3b30; --run: #0a84ff; --idle: #8e8e93;
     /* The platforms' own brand colours, defined once: Claude's terracotta, OpenAI's green, DeepSeek's blue. */
     --claude: #d97757; --codex: #10a37f; --deepseek: #4d6bfe;
-    /* Three type levels by importance: headline (what is left, who needs you), key fact (use, reset, warning), secondary. */
-    --t1: 16px; --t2: 14px; --t3: 12px;
+    /* Every text size, by importance, from one scale (Config › Text size sets --scale): title, body,
+       headline (what is left, who needs you), key fact (use, reset, warning), secondary, and the
+       smallest marks (chart axes, tab badges). No other size is written anywhere. */
+    --scale: 1;
+    --t0: calc(20px * var(--scale)); --tb: calc(15px * var(--scale));
+    --t1: calc(16px * var(--scale)); --t2: calc(14px * var(--scale)); --t3: calc(12px * var(--scale)); --t4: calc(10px * var(--scale));
     /* One column width for every responsive layout. */
     --col: 340px;
   }
   * { box-sizing: border-box; min-width: 0; }
   html, body { overflow-x: clip; }   /* clip, not hidden: hidden makes body a scroll box and breaks the sticky tab bar */
-  body { margin: 0; padding: 12px 12px calc(16px + env(safe-area-inset-bottom)); font: 15px/1.35 -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  body { margin: 0; padding: 12px 12px calc(16px + env(safe-area-inset-bottom)); font: var(--tb)/1.35 -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
   .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-  h1 { font-size: 20px; margin: 0; }
+  h1 { font-size: var(--t0); margin: 0; }
   /* Code: a check state as one glyph, a list of PRs and branches inside a repo card. */
   .ci { display: inline-block; min-width: 1.2em; text-align: center; font-weight: 700; }
   .ci-success { color: var(--ok); } .ci-failure { color: var(--bad); } .ci-pending { color: var(--warn); } .ci-none { color: var(--hint); }
@@ -40,7 +44,7 @@
   .cards > .code-item { padding: 10px 12px; } .cards > * { border-top: 0 !important; }
   /* Force update: an icon beside the data's age (its hint names it). */
   .icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; margin-left: 4px; vertical-align: middle; border: 0; border-radius: 50%;
-    font: inherit; font-size: 16px; font-weight: 700; line-height: 1; color: var(--accent-fg); background: var(--accent); cursor: pointer; }
+    font: inherit; font-size: var(--t1); font-weight: 700; line-height: 1; color: var(--accent-fg); background: var(--accent); cursor: pointer; }
   /* The build, at the foot of every tab: what is deployed, and a button to load it fresh. */
   #version { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px; margin: 28px 0 12px;
     color: var(--hint); font-size: var(--t3); }
@@ -94,7 +98,7 @@
   .list .chat + .chat { border-top: 1px solid var(--sep); }
   .chat.link { cursor: pointer; }
   .avatar { position: relative; flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
-    color: #fff; font-weight: 700; font-size: 18px; background: var(--idle); }
+    color: #fff; font-weight: 700; background: var(--idle); }
   .avatar.claude { background: var(--claude); } .avatar.codex { background: var(--codex); }
   /* The platform's own mark in its own colour on white, as the platforms show it. */
   .avatar[class*=" b-"] { background: #fff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
@@ -106,7 +110,7 @@
   .chat-bottom .sub { flex: 1; margin-top: 2px; font-size: var(--t2); }
   .chat-time { flex: none; color: var(--hint); font-size: var(--t3); } .chat-time.fresh { color: var(--accent); }
   .badge { flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); color: var(--accent-fg);
-    font: 600 13px/22px system-ui, sans-serif; text-align: center; }
+    font: 600 var(--t3)/22px system-ui, sans-serif; text-align: center; }
   .badge.at { padding: 0; width: 22px; }
 
   /* Machine load under each host header, Sessions and Quota (Config: this device). */
@@ -128,7 +132,7 @@
   .tabs button b { font-weight: 600; margin-left: 4px; opacity: .7; }
   .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px color-mix(in srgb, var(--fg) 15%, transparent); }
   .tab-badge { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
-    background: var(--warn); color: #fff; font: 600 10px/16px system-ui, sans-serif; font-style: normal; text-align: center; }
+    background: var(--warn); color: #fff; font: 600 var(--t4)/16px system-ui, sans-serif; font-style: normal; text-align: center; }
   /* Usage: totals, a bar per day split by agent, then ranked lists. */
   .range { display: flex; gap: 4px; margin-bottom: 10px; }
   .range button { border: 0; border-radius: 8px; padding: 4px 10px; font: inherit; font-size: var(--t3); background: var(--card); color: var(--hint); cursor: pointer; }
@@ -165,9 +169,10 @@
   .qrow.stale { opacity: .75; }
   .qrow-top .chev { color: var(--hint); width: 12px; text-align: center; }
   /* A row whose tap goes elsewhere opens its detail from the chevron: a button of its own, a larger target. */
-  .qrow-top button.chev { width: 28px; margin: -6px -8px -6px 0; padding: 6px 0; border: 0; border-radius: 8px; background: none; font: inherit; font-size: var(--t2); cursor: pointer; }
+  /* A row's jump elsewhere (a repo to its sessions): an icon of its own beside the chevron; the row's tap opens it. */
+  .qrow-top button.go { padding: 2px 6px; margin: -4px 0; border: 0; border-radius: 8px; background: none; color: var(--accent); font: inherit; font-size: var(--t1); font-weight: 700; cursor: pointer; }
   .qdetail { margin-top: 2px; } .qrow + .qrow { border-top: 1px solid var(--sep); }
-  .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: baseline; }
+  .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: auto; gap: 8px; align-items: baseline; }
   .qrow-top { font-size: var(--t1); } .qrow-top .left { font-weight: 700; }
   .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left { color: var(--bad); }
   /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
@@ -192,7 +197,7 @@
   .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 9px; background: var(--sep); }
   .seg button { border: 0; border-radius: 7px; padding: 5px 10px; font: inherit; font-size: var(--t3); font-weight: 600; background: none; color: var(--hint); cursor: pointer; white-space: nowrap; }
   .seg button[aria-checked="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px color-mix(in srgb, var(--fg) 15%, transparent); }
-  .hint { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--sep); color: var(--hint); font-size: 11px; cursor: help; }
+  .hint { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--sep); color: var(--hint); font-size: var(--t4); cursor: help; }
   .mark { font-size: var(--t3); font-weight: 600; padding: 1px 6px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); cursor: help; }
   .change { margin-top: 4px; } .change.ok { color: var(--ok); } .change.bad { color: var(--bad); white-space: normal; } .change.pending { color: var(--warn); }
   .dev { margin-top: 18px; } .dev summary { cursor: pointer; }
@@ -222,7 +227,7 @@
   .win-sub > .forecast { font-size: var(--t2); font-weight: 600; color: var(--fg); } .win-sub > .forecast.hot { color: var(--warn); }
   .trend-wrap { grid-column: 2; }
   .trend .now { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1.5px solid var(--fg); opacity: .6; }
-  .axis { position: relative; height: 13px; margin-top: 2px; font-size: 10px; color: var(--hint); }
+  .axis { position: relative; height: 13px; margin-top: 2px; font-size: var(--t4); color: var(--hint); }
   .axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
   .axis span::before { content: ''; position: absolute; left: 50%; top: -4px; height: 3px; border-left: 1px solid var(--sep); }
   .trend { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 18px; border-bottom: 1px dashed var(--sep); }
@@ -237,7 +242,7 @@
   /* Responsive, continuously: columns appear as the width allows (one per ~340 px). Spacing and the title
      scale with the viewport. No cap. */
   body { padding: clamp(12px, 2vw, 32px) clamp(12px, 2.5vw, 40px) calc(clamp(16px, 2vw, 32px) + env(safe-area-inset-bottom)); }
-  h1 { font-size: clamp(20px, 1.2vw + 14px, 28px); }
+  h1 { font-size: clamp(var(--t0), calc(1.2vw + 14px * var(--scale)), calc(28px * var(--scale))); }
   /* The one responsive layout (Sessions, Accounts, Code): blocks flow down as many --col-wide
      columns as fit, each kept whole, filling the gaps. */
   .columns { column-width: var(--col); column-gap: 14px; }
@@ -249,11 +254,12 @@
      on hover (only where hover exists), a deeper tint while pressed, and a keyboard focus ring. */
   :root { --hover: color-mix(in srgb, var(--fg) 5%, transparent); --press: color-mix(in srgb, var(--fg) 10%, transparent); }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle, .note.link, .note.toggle) { transition: background-color .12s; }
-  :is(.chip, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button) { transition: filter .12s, background-color .12s; }
+  :is(.chip, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go) { transition: filter .12s, background-color .12s; }
   @media (hover: hover) {
     :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):hover { background: var(--hover); }
     :is(.note.link, .note.toggle, .commit):hover { text-decoration: underline; }
     :is(.chip, .range button, .seg button, .tabs [data-tab]):hover { filter: brightness(.95); }
+    .qrow-top .go:hover { background: var(--hover); }
     :is(.icon-btn, .cfg-edit button):hover { filter: brightness(1.1); }
   }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):active { background: var(--press); }

@@ -58,7 +58,10 @@ const PREFS = {
   clock: ['24', '12'], date: ['day', 'iso', 'off'], replyStyle: ['ago', 'clock'], unit: ['used', 'left'],
   groupBy: ['project', 'host'], groupOrder: ['host', 'urgency'], openAt: ['latest', 'first'], pinTabs: ['on', 'off'],
   load: ['compact', 'detailed', 'off'], codeAttention: ['off', 'on'], codeRepoLayout: ['columns', 'list'], codeItemLayout: ['list', 'columns'],
+  textSize: ['m', 's', 'l', 'xl'],
 };
+// Text size: the one --scale every size in index.html is computed from.
+const TEXT_SCALE = { s: 0.9, m: 1, l: 1.12, xl: 1.25 };
 const pref = Object.fromEntries(Object.entries(PREFS).map(([k, vals]) => [k, vals.includes(store.get(`dashboard.${k}`)) ? store.get(`dashboard.${k}`) : vals[0]]));
 const timeFormat = () => ({ clock: pref.clock, date: pref.date, lang });
 let deployed = null;   // the live version from /api/health: {commit, id, at}
@@ -96,6 +99,7 @@ function applyLang() {
   $('force-update').setAttribute('aria-label', tr('app.forceUpdate'));
   for (const b of document.querySelectorAll('#tabs [data-tab]')) b.querySelector('.label').textContent = tr(`tab.${b.dataset.tab}`);
   document.body.classList.toggle('pin-tabs', pref.pinTabs === 'on');
+  document.documentElement.style.setProperty('--scale', String(TEXT_SCALE[pref.textSize]));
 }
 
 function openTopic(s) {
@@ -326,14 +330,19 @@ function foldRow(id, opts) {
   const { cls = '', name, headline: head, right = null, title = null, folded = () => [], open: detail = () => [], meta = [], warns = [], go = null } = opts;
   const open = openRows.has(id);
   const row = el('div', `qrow ${cls}${open ? ' open' : ''}`);
-  row.setAttribute('role', go ? 'link' : 'button');
-  if (!go) row.setAttribute('aria-expanded', String(open));
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-expanded', String(open));
   row.tabIndex = 0;
   if (title) row.title = title;
   const top = el('div', 'qrow-top');
-  // `go`: the row's own tap goes there (e.g. a repo to its sessions); its detail opens from the chevron alone.
-  const chev = right ?? el(go ? 'button' : 'span', 'chev', open ? '⌄' : '›');
-  top.append(name, head, chev);
+  // A tap opens or folds the row, as everywhere; `go` ({label, to}) adds a jump icon of its own (a repo to its sessions).
+  const jump = go && el('button', 'go', '↗');
+  if (jump) {
+    jump.title = go.label;
+    jump.setAttribute('aria-label', go.label);
+    jump.addEventListener('click', (e) => { e.stopPropagation(); go.to(); });
+  }
+  top.append(name, head, ...(jump ? [jump] : []), right ?? el('span', 'chev', open ? '⌄' : '›'));
   row.append(top, ...(open ? detail() : folded()));
   // A part is a node or text; a falsy one (a `cond && text` that did not hold) is left out.
   const parts = meta.map((m) => (m?.folded !== undefined ? (open ? null : m.folded) : m)).filter(Boolean);
@@ -351,14 +360,8 @@ function foldRow(id, opts) {
     row.replaceWith(next);
     next.focus({ preventScroll: true });
   };
-  const tap = go ?? toggle;
-  if (go) {
-    chev.setAttribute('aria-label', tr(open ? 'row.fold' : 'row.open'));
-    chev.setAttribute('aria-expanded', String(open));
-    chev.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-  }
-  row.addEventListener('click', tap);
-  row.addEventListener('keydown', (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); tap(); } });
+  row.addEventListener('click', toggle);
+  row.addEventListener('keydown', (e) => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(); } });
   return row;
 }
 
@@ -623,6 +626,7 @@ function displaySection() {
       prefRow('openAt', 'cfg.openAt', 'cfg.openAt.hint', [tr('cfg.openAt.latest'), tr('cfg.openAt.first')])]),
     ...codeReposGroup(),
     ...cfgGroup('cfg.layout', [
+      prefRow('textSize', 'cfg.textSize', null, [tr('cfg.textSize.m'), tr('cfg.textSize.s'), tr('cfg.textSize.l'), tr('cfg.textSize.xl')]),
       prefRow('pinTabs', 'cfg.pinTabs', 'cfg.pinTabs.hint', [tr('cfg.pinTabs.on'), tr('cfg.pinTabs.off')]),
       prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.compact'), tr('cfg.load.detailed'), tr('cfg.load.off')])]),
     ]),
@@ -919,8 +923,7 @@ function repoRow(r) {
   // The repo's project as its sessions name it (their origin's repo name), else the repo's own name.
   const project = sessionsOf(snapshot).find((s) => s.repo === r.key)?.project ?? r.name.split('/').pop();
   return foldRow(`code|${r.key}`, {
-    name: el('span', 'agent', r.name), headline: head, go: () => showProject(project),
-    title: tr('code.toSessions', { project }),
+    name: el('span', 'agent', r.name), headline: head, go: { label: tr('code.toSessions', { project }), to: () => showProject(project) },
     open: () => [repoDetail(r)],
     // A repo not read has no counts to give: its forge and the error say all there is.
     meta: [r.forge === 'github' ? 'GitHub' : 'Gitea', ...(r.error ? [] : [tr('code.pulls', { n: r.pulls.length }), tr('code.branches', { n: r.branches.length }),

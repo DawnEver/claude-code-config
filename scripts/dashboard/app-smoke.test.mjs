@@ -9,7 +9,7 @@ import fs from 'node:fs';
 /** Just enough of an element for app.js: tree, text, classes, attributes, events, simple selectors. */
 class Node {
   constructor(tag) {
-    Object.assign(this, { tag, children: [], attrs: {}, className: '', hidden: false, dataset: {}, style: {}, listeners: {}, value: '', ownText: '' });
+    Object.assign(this, { tag, children: [], attrs: {}, className: '', hidden: false, dataset: {}, style: { setProperty() {} }, listeners: {}, value: '', ownText: '' });
     this.classList = {
       add: (...c) => { this.className = [...new Set([...this.#classes(), ...c])].join(' '); },
       remove: (...c) => { this.className = this.#classes().filter((x) => !c.includes(x)).join(' '); },
@@ -107,10 +107,10 @@ test('the page renders every tab from the example data, and no view throws', asy
     tabs[0].dispatch('click');
     assert.deepEqual(errors, [], 'a view threw while rendering');
     assert.ok(doc.getElementById('hosts').querySelectorAll('.chat').length > 0, 'the Sessions tab lists sessions');
-    // A repo's own tap goes to the Sessions tab, narrowed to its project.
+    // A repo's jump icon goes to the Sessions tab, narrowed to its project (its own tap opens it).
     tabs.find((b) => b.dataset.tab === 'code').dispatch('click');
     const repo = doc.getElementById('code-view').querySelectorAll('.qrow').find((r) => r.textContent.includes('example/backend-api'));
-    repo.dispatch('click');
+    repo.querySelectorAll('button').find((b) => b.classList.contains('go')).dispatch('click');
     assert.equal(tabs[0].getAttribute('aria-selected'), 'true', 'the repo went to Sessions');
     const shown = doc.getElementById('hosts').querySelectorAll('.chat');
     const text = doc.getElementById('hosts').textContent;
