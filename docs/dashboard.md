@@ -260,7 +260,10 @@ store, D1 tables `forge_commits` and `forge_pulls` (migration 0003), keyed by sh
 repeat or a second host's copy is one row. The host holding a source's lease reads what changed
 since its cursor (`~/.claude/bridge/forge-history-<home>.json`; a year back the first time, an
 hour of overlap after) for the repos pushed or with a PR touched since, and hands it to the usage
-push, which sends it in batches; the cursor moves only once all are stored. An opened repo card
+push, which sends it in batches; the cursor moves only once all are stored. A read takes at
+most ten pages per kind per repo, newest first; a window not finished (a busy repo's year) is
+kept with where it stopped — a page on Gitea, a GraphQL cursor or, past search's 1000-result
+cap, the oldest update read on GitHub — and the next read continues it, so history is never cut. An opened repo card
 fetches `GET /api/code/history?repo=&days=&tz=` (usage-store.mjs `forgeHistory`: every hour or
 day of the range, zeros included) and draws commits and PRs with the one `barChart` the Usage
 tab uses. A host that takes a lease for the first time reads its year again: harmless, keyed rows.

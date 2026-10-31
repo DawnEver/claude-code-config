@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { forgeSources, forgeToken, readSource, sourceId, ForgeReader } from './forges.mjs';
+import { forgeSources, forgeToken, readSource, sourceId, ForgeReader, readHistory } from './forges.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
 
 const NOW = Date.parse('2026-10-30T12:00:00Z');
@@ -136,18 +136,23 @@ test('a refused credential is reported and the credential store is only read, ne
   assert.deepEqual(gitCalls, ['fill'], 'only `git credential fill`: no reject, approve or ls-remote');
 });
 
-test('history: read after a good reading, from the cursor (a year back the first time), handed to the usage push, cursor moved once stored', async () => {
+test('history: read after a good reading, a year back the first time, then from the stored cursor; an unfinished window is continued, not dropped', async () => {
   const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
   const cursorFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'forge-')), 'cursor.json');
   const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
   const asked = [];
   let t = NOW;
   const r = new ForgeReader({ sources: [src], now: () => t, token: () => ({ token: 't' }), cursorFile,
-    readOne: async () => ({ repos: [{ key: 'git.example.org/team/a', name: 'team/a', pushedAt: day(0), error: null }] }),
-    readHistory: async (s, { since }) => { asked.push(since); return { commits: [{ repo: 'git.example.org/team/a', sha: 'a1b2c3d', at: NOW }], pulls: [] }; } });
+    readOne: async () => ({ repos: [{ key: 'git.example.org/team/a', name: 'team/a', defaultBranch: 'main', pushedAt: new Date(t).toISOString(), error: null }] }),
+    readHistory: async (s, { windows }) => {
+      asked.push(windows);
+      // The first read stops at a page cap: its window comes back unfinished.
+      return { commits: [{ repo: 'git.example.org/team/a', sha: 'a1b2c3d', at: NOW }], pulls: [],
+        rest: asked.length === 1 ? [{ ...windows[0], commits: 21, pulls: false }] : [] };
+    } });
   const settle = () => new Promise((ok) => setTimeout(ok, 0));
   r.assign(r.ids()); await settle(); await settle();
-  assert.equal(asked[0], NOW - 366 * 86400000, 'a year back the first time');
+  assert.deepEqual(asked[0], [{ name: 'team/a', key: 'git.example.org/team/a', branch: 'main', since: NOW - 366 * 86400000, until: NOW }], 'a year back the first time');
   const h = r.takeHistory();
   assert.deepEqual([h.commits.length, h.pulls.length], [1, 0]);
   r.assign(r.ids()); await settle(); await settle();
@@ -156,5 +161,50 @@ test('history: read after a good reading, from the cursor (a year back the first
   assert.equal(r.takeHistory(), null);
   t = NOW + 600000;
   r.assign(r.ids()); await settle(); await settle();
-  assert.equal(asked[1], NOW - 3600000, 'from the stored cursor, an hour of overlap');
+  assert.deepEqual(asked[1], [
+    { name: 'team/a', key: 'git.example.org/team/a', branch: 'main', since: NOW - 366 * 86400000, until: NOW, commits: 21, pulls: false },
+    { name: 'team/a', key: 'git.example.org/team/a', branch: 'main', since: NOW - 3600000, until: NOW + 600000 },
+  ], 'the unfinished window continued where it stopped, and a new one from the cursor with an hour of overlap');
+  r.takeHistory().stored();
+  t = NOW + 1200000;
+  r.assign(r.ids()); await settle(); await settle();
+  assert.equal(asked[2].length, 1, 'a finished window is not asked again');
+});
+
+test('readHistory gitea: a window over the page cap returns where it stopped, and the next read continues one page back', async () => {
+  const src = { kind: 'gitea', base: 'https://git.example.org' };
+  const w = { name: 'team/a', key: 'git.example.org/team/a', branch: 'main', since: NOW - 86400000, until: NOW };
+  const urls = [];
+  const full = (n) => Array.from({ length: 50 }, (_, i) => ({ sha: `${n}-${i}`, number: n * 100 + i, created_at: day(1), commit: { committer: { date: day(1) } } }));
+  const fetch = async (u) => { urls.push(u); return { ok: true, status: 200, json: async () => (u.includes('/commits') ? full(Number(/page=(\d+)/.exec(u)[1])) : []) }; };
+  const one = await readHistory(src, { token: 't', windows: [w], fetch, delays: [] });
+  assert.equal(one.commits.length, 20 * 50);
+  assert.deepEqual(one.rest, [{ ...w, commits: 21, pulls: false }]);
+  assert.ok(urls.some((u) => u.includes('/issues?type=pulls') && u.includes('before=')), 'pull requests read within the window');
+  urls.length = 0;
+  await readHistory(src, { token: 't', windows: one.rest, fetch, delays: [] });
+  assert.match(urls[0], /page=20&/, 'one page back from where it stopped');
+  assert.ok(!urls.some((u) => u.includes('/issues')), 'a finished kind is not asked again');
+});
+
+test('readHistory github: commits continue from the cursor; pull requests past the 1000 search cap continue below the oldest update read', async () => {
+  const src = { kind: 'github', base: 'https://github.com' };
+  const w = { name: 'o/a', key: 'github.com/o/a', branch: 'main', since: NOW - 86400000, until: NOW };
+  const asked = [];
+  const fetch = async (u, init) => {
+    const { query, variables } = JSON.parse(init.body);
+    asked.push(variables);
+    if (query.includes('history(')) return { ok: true, status: 200, json: async () => ({ data: { repository: { defaultBranchRef: { target: { history: {
+      pageInfo: { hasNextPage: true, endCursor: `c${asked.length}` }, nodes: [{ oid: `s${asked.length}`, committedDate: day(1), author: { name: 'x' } }] } } } } } }) };
+    const n = asked.filter((v) => v.q).length;
+    return { ok: true, status: 200, json: async () => ({ data: { search: { pageInfo: { hasNextPage: n % 10 !== 0, endCursor: `p${n}` },
+      nodes: Array.from({ length: 100 }, (_, i) => ({ number: n * 100 + i, createdAt: day(2), updatedAt: new Date(NOW - n * 60000 - i * 1000).toISOString(), author: { login: 'x' } })) } } }) };
+  };
+  const one = await readHistory(src, { token: 't', windows: [w], fetch, delays: [] });
+  assert.equal(one.rest[0].commits, 'c10', 'commits: the cursor after the last page read');
+  assert.equal(one.rest[0].pulls, new Date(NOW - 10 * 60000 - 99000).toISOString().replace(/\.\d+Z$/, 'Z'), 'pulls: the oldest update read');
+  asked.length = 0;
+  await readHistory(src, { token: 't', windows: one.rest, fetch, delays: [] });
+  assert.equal(asked[0].after, 'c10');
+  assert.ok(asked.find((v) => v.q).q.includes(`..${one.rest[0].pulls} `), 'the search asks only below it');
 });
