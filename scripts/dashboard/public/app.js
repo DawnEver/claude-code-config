@@ -581,10 +581,20 @@ function prefRow(key, labelKey, hintKey, labels) {
 }
 
 /** A group of settings: its heading and a card of rows. */
+/** A settings group as one block — its heading (none for `null`) and its card — kept whole by the columns layout. */
 function cfgGroup(titleKey, rows) {
   const card = el('div', 'cfg');
   card.append(...rows);
-  return [el('div', 'cfg-h', tr(titleKey)), card];
+  const group = el('div', 'block');
+  group.append(...(titleKey ? [el('div', 'cfg-h', tr(titleKey))] : []), card);
+  return [group];
+}
+
+/** Blocks flowing into the one responsive layout (index.html `.columns`). */
+function columns(blocks) {
+  const box = el('div', 'columns');
+  box.append(...blocks);
+  return box;
 }
 
 function displaySection() {
@@ -600,7 +610,8 @@ function displaySection() {
   }));
   return [
     el('div', 'section-h', tr('cfg.display')),
-    cfgGroup('cfg.language', [languages])[1],   // its row names it: no heading
+    columns([
+    ...cfgGroup(null, [languages]),   // its row names it: no heading
     ...cfgGroup('cfg.time', [
       prefRow('clock', 'cfg.clock', null, [tr('cfg.clock.24'), tr('cfg.clock.12')]),
       prefRow('date', 'cfg.date', 'cfg.date.hint', [formatTime(sample, { date: 'day', lang }).split(' ').slice(0, -1).join(' '), '2026-10-21', tr('cfg.date.off')]),
@@ -614,6 +625,7 @@ function displaySection() {
     ...cfgGroup('cfg.layout', [
       prefRow('pinTabs', 'cfg.pinTabs', 'cfg.pinTabs.hint', [tr('cfg.pinTabs.on'), tr('cfg.pinTabs.off')]),
       prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.compact'), tr('cfg.load.detailed'), tr('cfg.load.off')])]),
+    ]),
   ];
 }
 
@@ -712,11 +724,11 @@ function sharedSection() {
   const v = configView(snapshot);
   const out = [el('div', 'section-h', tr('cfg.shared'))];
   if (!v.hosts.length) return [...out, el('div', 'empty', tr('cfg.noHosts'))];
-  for (const g of CONFIG_GROUPS) {
+  const groups = CONFIG_GROUPS.flatMap((g) => {
     const rows = v.rows.filter((r) => r.group === g);
-    if (rows.length) out.push(...cfgGroup(`cfg.group.${g}`, rows.map(configRow)));
-  }
-  return [...out, el('div', 'muted', tr('cfg.onlyThese'))];
+    return rows.length ? cfgGroup(`cfg.group.${g}`, rows.map(configRow)) : [];
+  });
+  return [...out, columns(groups), el('div', 'muted', tr('cfg.onlyThese'))];
 }
 
 /** Settings for whoever works on the dashboard itself, collapsed by default. */
@@ -796,7 +808,9 @@ function usageList(titleKey, rows, dim) {
     row.title = tr('usage.share', { n: r.turns, pct: Math.round(r.share * 100) });
     box.append(row);
   }
-  return [el('div', 'section-h', tr(titleKey)), rows.length ? box : el('div', 'qrows empty', tr('usage.none'))];
+  const block = el('div', 'block');
+  block.append(el('div', 'section-h', tr(titleKey)), rows.length ? box : el('div', 'qrows empty', tr('usage.none')));
+  return block;
 }
 
 function renderUsage() {
@@ -837,7 +851,7 @@ function renderUsage() {
   const axis = el('div', 'usage-axis');
   const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
   axis.append(el('span', null, tick(v.days[0])), el('span', null, tr('usage.axis', { unit: v.unit })), el('span', null, tick(v.days.at(-1))));
-  box.append(totals, chart, axis, ...usageList('usage.projects', v.projects, 'project'), ...usageList('usage.models', v.models, 'model'), ...usageList('usage.machines', v.machines, 'machine'));
+  box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
   restoreScroll();
 }
 
