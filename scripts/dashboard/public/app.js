@@ -57,7 +57,7 @@ let hostList = [];   // hostsView(snapshot): the one host model the Sessions and
 const PREFS = {
   clock: ['24', '12'], date: ['day', 'iso', 'off'], replyStyle: ['ago', 'clock'], unit: ['used', 'left'],
   groupBy: ['project', 'host'], groupOrder: ['host', 'urgency'], openAt: ['latest', 'first'], pinTabs: ['on', 'off'],
-  load: ['detailed', 'compact', 'off'], codeAttention: ['off', 'on'],
+  load: ['compact', 'detailed', 'off'], codeAttention: ['off', 'on'], codeRepoLayout: ['columns', 'list'], codeItemLayout: ['list', 'columns'],
 };
 const pref = Object.fromEntries(Object.entries(PREFS).map(([k, vals]) => [k, vals.includes(store.get(`dashboard.${k}`)) ? store.get(`dashboard.${k}`) : vals[0]]));
 const timeFormat = () => ({ clock: pref.clock, date: pref.date, lang });
@@ -613,7 +613,7 @@ function displaySection() {
     ...codeReposGroup(),
     ...cfgGroup('cfg.layout', [
       prefRow('pinTabs', 'cfg.pinTabs', 'cfg.pinTabs.hint', [tr('cfg.pinTabs.on'), tr('cfg.pinTabs.off')]),
-      prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.detailed'), tr('cfg.load.compact'), tr('cfg.load.off')])]),
+      prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.compact'), tr('cfg.load.detailed'), tr('cfg.load.off')])]),
   ];
 }
 
@@ -625,6 +625,9 @@ function codeReposGroup() {
   const all = snapshot?.repos ?? [];
   if (!all.length) return [];
   const attention = prefRow('codeAttention', 'cfg.codeAttention', 'cfg.codeAttention.hint', [tr('cfg.code.off'), tr('cfg.code.on')]);
+  // Two independent layouts, either or both: the repo cards, and the PRs and branches inside one.
+  const layouts = [prefRow('codeRepoLayout', 'cfg.codeRepos', null, [tr('cfg.layout.columns'), tr('cfg.layout.list')]),
+    prefRow('codeItemLayout', 'cfg.codeItems', null, [tr('cfg.layout.list'), tr('cfg.layout.columns')])];
   const shown = new Set(codeRepos ?? all.filter((r) => r.pinned !== false).map((r) => r.key));
   const rows = all.map((r) => {
     const row = el('div', 'cfg-row cfg-top');
@@ -641,7 +644,7 @@ function codeReposGroup() {
     reset.addEventListener('click', () => { saveCodeRepos(null); redrawConfig(); });
     rows.push(reset);
   }
-  return cfgGroup('cfg.code', [attention, ...rows]);
+  return cfgGroup('cfg.code', [attention, ...layouts, ...rows]);
 }
 
 // Edits are a request to the gateway, applied by a host: the row shows it queued, handed over, then the outcome.
@@ -881,16 +884,16 @@ function codeItem(ci, title, meta, url, sessions = []) {
 function repoDetail(r) {
   const box = el('div', 'qdetail');
   box.addEventListener('click', (e) => e.stopPropagation());
-  if (r.pulls.length) {
-    box.append(el('div', 'code-h', tr('code.openPulls')));
-    for (const p of r.pulls) box.append(codeItem(p.ci, `#${p.number} ${p.title ?? ''}`, [`${p.head} → ${p.base}`, p.author, p.draft && tr('code.draft'),
-      p.review && tr(`code.review.${p.review}`), p.conflict && tr('code.conflict'), timeAgo(p.updatedAt)], p.url));
-  }
-  box.append(el('div', 'code-h', tr('code.activeBranches')));
-  for (const b of r.branches) {
-    box.append(codeItem(b.ci, b.name, [b.name === r.defaultBranch && '★', b.author, timeAgo(b.at), b.pull && `#${b.pull.number}`],
-      r.url && `${r.url}/${r.forge === 'github' ? 'tree' : 'src/branch'}/${encodeURIComponent(b.name)}`, b.sessions));
-  }
+  // PRs and branches as a list, or flowing into columns (Config › Code, this device).
+  const section = (titleKey, items) => {
+    const list = el('div', pref.codeItemLayout === 'columns' ? 'columns' : '');
+    list.append(...items);
+    box.append(el('div', 'code-h', tr(titleKey)), list);
+  };
+  if (r.pulls.length) section('code.openPulls', r.pulls.map((p) => codeItem(p.ci, `#${p.number} ${p.title ?? ''}`, [`${p.head} → ${p.base}`, p.author, p.draft && tr('code.draft'),
+    p.review && tr(`code.review.${p.review}`), p.conflict && tr('code.conflict'), timeAgo(p.updatedAt)], p.url)));
+  section('code.activeBranches', r.branches.map((b) => codeItem(b.ci, b.name, [b.name === r.defaultBranch && '★', b.author, timeAgo(b.at), b.pull && `#${b.pull.number}`],
+    r.url && `${r.url}/${r.forge === 'github' ? 'tree' : 'src/branch'}/${encodeURIComponent(b.name)}`, b.sessions)));
   return box;
 }
 
@@ -927,7 +930,7 @@ function renderCode() {
     }
     box.append(el('div', 'section-h', tr('code.attention')), list);
   }
-  const rows = el('div', 'cards columns');
+  const rows = el('div', `cards${pref.codeRepoLayout === 'columns' ? ' columns' : ''}`);
   for (const r of v.repos) rows.append(repoRow(r));
   box.append(el('div', 'section-h', tr('code.repos', { n: v.repos.length })), rows);
   if (v.inactive) box.append(el('div', 'note', tr('code.inactive', { n: v.inactive })));
