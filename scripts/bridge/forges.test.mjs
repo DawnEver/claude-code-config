@@ -147,3 +147,26 @@ test('forgeToken renews through git for the credential\'s own account, asynchron
   await pending;
   assert.deepEqual(calls, [['git', 'ls-remote', '--heads', 'https://OAUTH_USER@git.example.org/team/a.git', 'never']]);
 });
+
+test('history: read after a good reading, from the cursor (a year back the first time), handed to the usage push, cursor moved once stored', async () => {
+  const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
+  const cursorFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'forge-')), 'cursor.json');
+  const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
+  const asked = [];
+  let t = NOW;
+  const r = new ForgeReader({ sources: [src], now: () => t, token: () => ({ token: 't' }), cursorFile,
+    readOne: async () => ({ repos: [{ key: 'git.example.org/team/a', name: 'team/a', pushedAt: day(0), error: null }] }),
+    readHistory: async (s, { since }) => { asked.push(since); return { commits: [{ repo: 'git.example.org/team/a', sha: 'a1b2c3d', at: NOW }], pulls: [] }; } });
+  const settle = () => new Promise((ok) => setTimeout(ok, 0));
+  r.assign(r.ids()); await settle(); await settle();
+  assert.equal(asked[0], NOW - 366 * 86400000, 'a year back the first time');
+  const h = r.takeHistory();
+  assert.deepEqual([h.commits.length, h.pulls.length], [1, 0]);
+  r.assign(r.ids()); await settle(); await settle();
+  assert.equal(asked.length, 1, 'not read again while the last is unsent');
+  h.stored();
+  assert.equal(r.takeHistory(), null);
+  t = NOW + 600000;
+  r.assign(r.ids()); await settle(); await settle();
+  assert.equal(asked[1], NOW - 3600000, 'from the stored cursor, an hour of overlap');
+});

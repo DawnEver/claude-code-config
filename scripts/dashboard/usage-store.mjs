@@ -15,6 +15,11 @@ const insert = (table, cols, conflict, update) => `INSERT INTO ${table} (${cols.
 const TURN_VALUES = TURN_COLS.filter((c) => !['agent', 'session', 'turn', 'model'].includes(c));
 
 const SQL = {
+  // A commit is what it is: sent again (or by another host), nothing changes.
+  commit: `INSERT INTO forge_commits (repo, sha, at, author) VALUES (?, ?, ?, ?) ON CONFLICT (repo, sha) DO NOTHING`,
+  // A pull request moves on (merged, closed): the newest reading of it stands.
+  pull: insert('forge_pulls', ['repo', 'number', 'created_at', 'merged_at', 'closed_at', 'author'], 'repo, number',
+    'merged_at = excluded.merged_at, closed_at = excluded.closed_at, author = excluded.author'),
   // A re-sent turn that did not change is no write (nor a usage_hours trigger).
   turn: insert('turns', TURN_COLS, 'agent, session, turn, model', `${TURN_VALUES.map((c) => `${c} = excluded.${c}`).join(', ')}
   WHERE (${TURN_VALUES.map((c) => `turns.${c}`).join(', ')}) IS NOT (${TURN_VALUES.map((c) => `excluded.${c}`).join(', ')})`),
@@ -39,9 +44,35 @@ export async function ingest(db, machine, batch, now = Date.now()) {
     ...batch.costs.map((r) => db.prepare(SQL.cost).bind(r.agent, r.session, r.model, machine, r.cost_usd, now)),
     ...batch.quota.map((r) => db.prepare(SQL.quota).bind(r.account, r.agent, r.span, r.window_start, r.window_ms, r.used, r.observed_at)),
     ...batch.resources.map((r) => db.prepare(SQL.resources).bind(...RES_COLS.map((c) => (c === 'machine' ? machine : r[c])))),
+    ...(batch.commits ?? []).map((r) => db.prepare(SQL.commit).bind(r.repo, r.sha, r.at, r.author)),
+    ...(batch.pulls ?? []).map((r) => db.prepare(SQL.pull).bind(r.repo, r.number, r.created_at, r.merged_at, r.closed_at, r.author)),
   ];
   if (stmts.length) await db.batch(stmts);
-  return { turns: batch.turns.length, costs: batch.costs.length, quota: batch.quota.length, resources: batch.resources.length };
+  return { turns: batch.turns.length, costs: batch.costs.length, quota: batch.quota.length, resources: batch.resources.length,
+    commits: batch.commits?.length ?? 0, pulls: batch.pulls?.length ?? 0 };
+}
+
+/**
+ * One repository's history over the last `days` (1 = the last 24 h, by hour; else by day on the
+ * viewer's clock, `tzOffsetMin` east of UTC): commits on its default branch, pull requests opened
+ * and merged, per bucket, every bucket of the range present (zeros included) so a chart is even.
+ */
+export async function forgeHistory(db, { repo, days, tzOffsetMin = 0, now = Date.now() }) {
+  const hourly = days === 1;
+  const step = hourly ? 3600000 : 86400000;
+  const shift = hourly ? 0 : tzOffsetMin * 60000;
+  // Buckets aligned on the viewer's hours or days, the last one holding now.
+  const last = Math.floor((now + shift) / step) * step - shift;
+  const first = last - (hourly ? 23 : days - 1) * step;
+  const bucket = (t) => Math.floor((t + shift - (first + shift)) / step);
+  const commits = await db.prepare('SELECT at FROM forge_commits WHERE repo = ? AND at >= ?').bind(repo, first).all();
+  const pulls = await db.prepare('SELECT created_at, merged_at FROM forge_pulls WHERE repo = ? AND (created_at >= ? OR merged_at >= ?)').bind(repo, first, first).all();
+  const out = Array.from({ length: Math.round((last - first) / step) + 1 }, (_, i) => ({ at: first + i * step, commits: 0, opened: 0, merged: 0 }));
+  const add = (t, k) => { const i = bucket(t); if (t >= first && out[i]) out[i][k]++; };
+  for (const c of commits.results) add(c.at, 'commits');
+  for (const p of pulls.results) { add(p.created_at, 'opened'); if (p.merged_at) add(p.merged_at, 'merged'); }
+  return { repo, unit: hourly ? 'hour' : 'day', buckets: out,
+    totals: { commits: out.reduce((n, b) => n + b.commits, 0), opened: out.reduce((n, b) => n + b.opened, 0), merged: out.reduce((n, b) => n + b.merged, 0) } };
 }
 
 const SUMS = ['input', 'cache_read', 'cache_write', 'output', 'active_ms', 'turns'];

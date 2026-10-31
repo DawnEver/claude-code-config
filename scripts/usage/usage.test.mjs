@@ -9,7 +9,7 @@ import { UsageScanner, sources } from './scan.mjs';
 import { HourlyResources, UsagePush, quotaRows } from './push.mjs';
 import { table } from './query.mjs';
 import { parseUsageBatch, readOnlySql, USAGE_SCHEMA_VERSION } from '../shared/usage-schema.mjs';
-import { ingest, query, report } from '../dashboard/usage-store.mjs';
+import { forgeHistory, ingest, query, report } from '../dashboard/usage-store.mjs';
 import { createApi } from '../dashboard/api.mjs';
 import { newHostToken } from '../dashboard/auth.mjs';
 import { bindUsageDb } from '../dashboard/deploy.mjs';
@@ -369,7 +369,7 @@ test('api: usage and query only for the host by its token; the store absent is a
   assert.equal((await post('host-a/usage', batch, 'Bearer nope-nope-nope-nope')).status, 401);
   const res = await post('host-a/usage', batch);
   assert.equal(res.status, 200);
-  assert.deepEqual((await res.json()).stored, { turns: 1, costs: 0, quota: 0, resources: 0 });
+  assert.deepEqual((await res.json()).stored, { turns: 1, costs: 0, quota: 0, resources: 0, commits: 0, pulls: 0 });
   assert.equal(db.sqlite.prepare('SELECT machine FROM turns').get().machine, 'host-a', 'the machine is the authenticated host, never the body');
   assert.equal((await post('host-a/usage', { schemaVersion: 0 })).status, 400);
   const q = await post('host-a/query', { sql: 'SELECT COUNT(*) AS n FROM turns' });
@@ -448,4 +448,24 @@ test('codex rollout: a user-role message marks a human turn', () => {
     { timestamp: iso(2), type: 'response_item', payload: { type: 'message', role: 'user', content: [] } },
     { timestamp: iso(3), type: 'token_usage_record', payload: { turn_id: 'T', usage: usage(1, 0, 1, 0) } }]));
   assert.equal(r.turns[0].origin, 'human');
+});
+
+test('forge history: commits and PRs are kept once however often sent, and bucketed by hour or day', async () => {
+  const db = fakeD1();
+  const now = Date.parse('2026-10-31T12:30:00Z');
+  const H = 3600000, D = 24 * H;
+  const repo = 'git.example.org/team/a';
+  const batch = parseUsageBatch({ schemaVersion: USAGE_SCHEMA_VERSION,
+    commits: [{ repo, sha: 'a'.repeat(40), at: now - 2 * H, author: 'alice' }, { repo, sha: 'b'.repeat(40), at: now - 3 * D }, { repo: 'bad key', sha: 'c'.repeat(40), at: now }],
+    pulls: [{ repo, number: 7, created_at: now - 5 * D, merged_at: null, closed_at: null, author: 'bob' }] });
+  assert.deepEqual([batch.commits.length, batch.pulls.length], [2, 1], 'a malformed row is dropped');
+  await ingest(db, 'host-a', batch);
+  await ingest(db, 'host-b', batch);   // the same reading from another host: no second row
+  await ingest(db, 'host-a', parseUsageBatch({ schemaVersion: USAGE_SCHEMA_VERSION,
+    pulls: [{ repo, number: 7, created_at: now - 5 * D, merged_at: now - 1 * H, closed_at: now - 1 * H, author: 'bob' }] }));
+  const day = await forgeHistory(db, { repo, days: 1, now });
+  assert.deepEqual([day.unit, day.buckets.length, day.totals], ['hour', 24, { commits: 1, opened: 0, merged: 1 }]);
+  const week = await forgeHistory(db, { repo, days: 7, now });
+  assert.deepEqual([week.unit, week.buckets.length, week.totals], ['day', 7, { commits: 2, opened: 1, merged: 1 }]);
+  assert.equal(week.buckets.at(-1).commits, 1, 'today holds the commit two hours ago');
 });

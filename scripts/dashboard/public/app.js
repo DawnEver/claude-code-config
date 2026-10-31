@@ -845,18 +845,28 @@ function renderUsage() {
   total(String(v.totals.turns), 'usage.turnsLabel');
   if (v.totals.cacheHit != null) total(`${Math.round(v.totals.cacheHit * 100)}%`, 'usage.cacheHit', 'usage.cacheHitTitle');
   if (v.totals.costUsd != null) total(`$${Math.round(v.totals.costUsd)}`, 'usage.apiValue', 'usage.apiValueTitle');
+  const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) }),
+    segs: ['claude', 'codex'].map((a) => ({ cls: a, pct: d[`${a}Pct`] })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
+  box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
+  restoreScroll();
+}
+
+/**
+ * The one bar chart (Usage, Code): a column per bucket, each a stack of segments sized in % of
+ * the chart's height, with the bucket's own title; under it an axis of [first, middle, last].
+ */
+function barChart(points, ticks) {
   const chart = el('div', 'usage-days');
-  for (const d of v.days) {
+  for (const p of points) {
     const col = el('div', 'd');
-    col.title = tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) });
-    for (const a of ['claude', 'codex']) { const seg = el('div', a); seg.style.height = `${d[`${a}Pct`]}%`; col.append(seg); }
+    col.title = p.title;
+    for (const s of p.segs) { const seg = el('div', s.cls); seg.style.height = `${s.pct}%`; col.append(seg); }
     chart.append(col);
   }
   const axis = el('div', 'usage-axis');
-  const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
-  axis.append(el('span', null, tick(v.days[0])), el('span', null, tr('usage.axis', { unit: v.unit })), el('span', null, tick(v.days.at(-1))));
-  box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
-  restoreScroll();
+  axis.append(...ticks.map((t) => el('span', null, t)));
+  return [chart, axis];
 }
 
 /** The one range picker (Usage, Code): 24h, 7d, …, 1y; `pick(days)` on a tap. */
@@ -899,9 +909,46 @@ function codeItem(ci, title, meta, url, sessions = []) {
   return item;
 }
 
+// Each repo's history per range (api/code/history: the usage store's forge rows), fetched when its
+// card opens and kept USAGE_EVERY_MS: an open card redrawn by a poll asks nothing.
+const codeHistory = new Map();
+function historyOf(r) {
+  if (mock || !tg?.initData) return { note: 'code.history.none' };
+  const key = `${r.key}|${codeDays}`;
+  const held = codeHistory.get(key);
+  if (!held || (!held.loading && Date.now() - held.at > USAGE_EVERY_MS)) {
+    codeHistory.set(key, { ...held, loading: true });
+    const q = new URLSearchParams({ repo: r.key, days: String(codeDays), tz: String(tzOffsetMin()) });
+    fetch(`api/code/history?${q}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((value) => codeHistory.set(key, { at: Date.now(), value }), (e) => codeHistory.set(key, { at: Date.now(), error: e.message }))
+      .finally(() => { if (tab === 'code') render(); });
+  }
+  return codeHistory.get(key);
+}
+
+/** A repo's commits, then its pull requests opened and merged, per hour or day of the range: the one bar chart. */
+function historyCharts(r) {
+  const box = el('div', 'code-history');
+  const h = historyOf(r);
+  if (h.note || !h.value) { box.append(el('div', 'muted', h.note ? tr(h.note) : h.error ? tr('code.history.error', { error: h.error }) : tr('app.loading'))); return box; }
+  const v = h.value;
+  const label = (b) => { const d = new Date(b.at); return v.unit === 'hour' ? `${String(d.getHours()).padStart(2, '0')}:00` : `${d.getMonth() + 1}/${d.getDate()}`; };
+  const ends = (mid) => [label(v.buckets[0]), mid, label(v.buckets.at(-1))];
+  const top = (k) => Math.max(1, ...v.buckets.map(k));
+  const maxC = top((b) => b.commits), maxP = top((b) => b.opened + b.merged);
+  box.append(el('div', 'sub', tr('code.history.totals', v.totals)),
+    ...barChart(v.buckets.map((b) => ({ title: `${label(b)} · ${tr('code.history.commits', { n: b.commits })}`, segs: [{ cls: 'commits', pct: (b.commits / maxC) * 100 }] })),
+      ends(tr('code.history.commitsAxis', { unit: v.unit }))),
+    ...barChart(v.buckets.map((b) => ({ title: `${label(b)} · ${tr('code.history.prs', b)}`,
+      segs: [{ cls: 'merged', pct: (b.merged / maxP) * 100 }, { cls: 'opened', pct: (b.opened / maxP) * 100 }] })), ends(tr('code.history.prsAxis', { unit: v.unit }))));
+  return box;
+}
+
 function repoDetail(r) {
   const box = el('div', 'qdetail');
   box.addEventListener('click', (e) => e.stopPropagation());
+  box.append(historyCharts(r));
   // PRs and branches as a list, or flowing into columns (Config › Code, this device).
   const section = (titleKey, items) => {
     const list = el('div', pref.codeItemLayout === 'columns' ? 'columns' : '');

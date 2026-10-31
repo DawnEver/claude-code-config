@@ -993,7 +993,7 @@ export async function main() {
       codexSeriesFile: account => path.join(BRIDGE_RUNTIME_DIR, `codex-usage-${homeKey}-${createHash('sha256').update(account?.email ?? 'unknown').digest('hex').slice(0, 16)}.jsonl`) });
     const balances = new BalanceReader({ entries: config.balances, log });
     // The code forges this host can reach (Code tab): its own tokens, read every few minutes.
-    const forges = new ForgeReader({ sources: config.forges, log });
+    const forges = new ForgeReader({ sources: config.forges, log, cursorFile: path.join(BRIDGE_RUNTIME_DIR, `forge-history-${homeKey}.json`) });
     // A dashboard edit is written to the settings file; the change check above then hands over.
     const onConfigChanges = (changes) => {
       const results = changes.map((c) => ({ id: c.id, ...applyConfigChange(c) }));
@@ -1001,7 +1001,7 @@ export async function main() {
       return results;
     };
     // The usage store (docs/usage.md): the transcripts' turns, each quota window, hourly load.
-    const usage = new UsagePush({ url: config.dashboard.url, hostToken: config.dashboard.hostToken, machine, log, accounts: () => lastAccounts,
+    const usage = new UsagePush({ url: config.dashboard.url, hostToken: config.dashboard.hostToken, machine, log, accounts: () => lastAccounts, history: () => forges.takeHistory(),
       scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
         sources: () => usageSources(os.homedir(), { machine, codexHome }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),

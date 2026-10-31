@@ -12,6 +12,8 @@
 // `ci` is the head commit's combined check state: 'success' | 'failure' | 'pending' | null (none).
 
 import { execFile, spawnSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import { fetchKey } from '../shared/credential-key.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
 
@@ -207,6 +209,62 @@ export function forgeToken(src, { run = spawnSync, exec = execFile } = {}) {
 /** A reading the forge refused for its credential: the whole source, or any repo in it. */
 const refused = (r) => [r.error, ...(r.repos ?? []).map((x) => x.error)].some((e) => e?.startsWith('HTTP 401'));
 
+const HISTORY_QUERY = `query($owner: String!, $name: String!, $since: GitTimestamp!, $after: String) { repository(owner: $owner, name: $name) {
+  defaultBranchRef { target { ... on Commit { history(since: $since, first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor } nodes { oid committedDate author { name user { login } } } } } } }
+  pullRequests(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}, states: [OPEN, MERGED, CLOSED]) {
+    nodes { number createdAt mergedAt closedAt updatedAt author { login } } } } }`;
+const MAX_PAGES = 10;   // a year of a busy repo: ~1000 commits per read at most; the next read continues
+const ms = (t) => (t ? Date.parse(t) : null);
+
+/**
+ * The commits on each repo's default branch and its pull requests updated since `since` (ms):
+ * {commits: [{repo, sha, at, author}], pulls: [{repo, number, created_at, merged_at, closed_at, author}]}.
+ * Only repos pushed or with a PR touched since then are asked: an idle repo costs nothing.
+ */
+export async function readHistory(src, { token, repos, since, fetch = globalThis.fetch, delays = RETRY_DELAYS_MS }) {
+  const commits = [], pulls = [];
+  const active = repos.filter((r) => !r.error && (Date.parse(r.pushedAt) >= since || r.pulls?.some((p) => Date.parse(p.updatedAt) >= since)));
+  for (const r of active) {
+    if (src.kind === 'github') {
+      const [owner, name] = r.name.split('/');
+      for (let after = null, page = 0; page < MAX_PAGES; page++) {
+        const body = await getJson(fetch, 'https://api.github.com/graphql', token, { method: 'POST', delays, headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ query: HISTORY_QUERY, variables: { owner, name, since: new Date(since).toISOString(), after } }) });
+        const repo = body.data?.repository;
+        const h = repo?.defaultBranchRef?.target?.history;
+        for (const c of h?.nodes ?? []) commits.push({ repo: r.key, sha: c.oid, at: ms(c.committedDate), author: c.author?.user?.login ?? c.author?.name ?? null });
+        if (page === 0) {
+          for (const p of repo?.pullRequests?.nodes ?? []) {
+            if (ms(p.updatedAt) < since) break;
+            pulls.push({ repo: r.key, number: p.number, created_at: ms(p.createdAt), merged_at: ms(p.mergedAt), closed_at: ms(p.closedAt), author: p.author?.login ?? null });
+          }
+        }
+        if (!h?.pageInfo?.hasNextPage) break;
+        after = h.pageInfo.endCursor;
+      }
+    } else {
+      const api = `${src.base}/api/v1/repos/${r.name}`;
+      const get = (p) => getJson(fetch, `${api}${p}`, token, { scheme: 'token', delays });
+      const iso = encodeURIComponent(new Date(since).toISOString());
+      for (let page = 1; page <= MAX_PAGES * 2; page++) {
+        const list = await get(`/commits?sha=${encodeURIComponent(r.defaultBranch ?? '')}&since=${iso}&limit=50&page=${page}&stat=false&verification=false&files=false`);
+        for (const c of list) commits.push({ repo: r.key, sha: c.sha, at: ms(c.commit?.committer?.date ?? c.created), author: c.author?.login ?? c.commit?.author?.name ?? null });
+        if (list.length < 50) break;
+      }
+      for (let page = 1, more = true; more && page <= MAX_PAGES; page++) {
+        const list = await get(`/pulls?state=all&sort=recentupdate&limit=50&page=${page}`);
+        for (const p of list) {
+          if (ms(p.updated_at) < since) { more = false; break; }
+          pulls.push({ repo: r.key, number: p.number, created_at: ms(p.created_at), merged_at: ms(p.merged_at), closed_at: ms(p.closed_at), author: p.user?.login ?? null });
+        }
+        if (list.length < 50) more = false;
+      }
+    }
+  }
+  return { commits, pulls };
+}
+
 /**
  * The host's side of the gateway's lease (registry.mjs forge leases): the push declares which
  * sources this host is configured for (`ids`); the gateway answers which to read now, at most one
@@ -215,8 +273,9 @@ const refused = (r) => [r.error, ...(r.repos ?? []).map((x) => x.error)].some((e
  * harmless: the gateway keeps one reading per source, replaced whole.
  */
 export class ForgeReader {
-  constructor({ sources = [], log = () => {}, now = Date.now, token = forgeToken, readOne = readSource }) {
-    Object.assign(this, { sources, log, now, token, readOne });
+  constructor({ sources = [], log = () => {}, now = Date.now, token = forgeToken, readOne = readSource, readHistory: history = readHistory, cursorFile = null }) {
+    Object.assign(this, { sources, log, now, token, readOne, readHistory: history, cursorFile });
+    this.history = new Map();   // source id -> {commits, pulls, cursor} not yet stored
     this.byId = new Map(sources.map((s) => [sourceId(s), s]));
     this.running = new Set();
     this.out = new Map();   // source id -> reading not yet delivered
@@ -232,12 +291,47 @@ export class ForgeReader {
       this.running.add(id);
       this.#read(src)
         .catch((e) => ({ error: `fault: ${String(e.message ?? e).slice(0, 160)}` }))
-        .then((r) => {
+        .then(async (r) => {
           this.out.set(id, { source: id, at: this.now(), ...r });
           this.log(`forges: ${id} -> ${r.repos ? `${r.repos.length} repos` : r.error ? `error: ${r.error}` : `unavailable: ${r.unavailable}`}`);
+          if (r.repos?.some((x) => !x.error)) await this.#history(src, id, r.repos);
         })
         .finally(() => this.running.delete(id));
     }
+  }
+
+  /**
+   * The source's commits and pull requests since this host last sent them (a year back the first
+   * time), queued for the usage push (`takeHistory`). The cursor moves only once the push stored
+   * them, and overlaps by an hour: rows are keyed by sha and number, so a repeat is harmless.
+   */
+  async #history(src, id, repos) {
+    if (this.history.has(id)) return;   // still waiting to be sent
+    const cursors = this.#cursors();
+    const since = cursors[id] ?? this.now() - HORIZON_MS;
+    const started = this.now();
+    try {
+      const got = await this.readHistory(src, { token: this.token(src)?.token, repos, since });
+      this.history.set(id, { ...got, cursor: started - 3600000 });
+    } catch (e) { this.log(`forges: ${id} history: ${String(e.message ?? e).slice(0, 160)}`); }
+  }
+
+  #cursors() {
+    try { return this.cursorFile ? JSON.parse(fs.readFileSync(this.cursorFile, 'utf8')) : {}; } catch { return {}; }
+  }
+
+  /** For the usage push: every queued commit and pull request, and `stored()` once the push took them all. */
+  takeHistory() {
+    if (!this.history.size) return null;
+    const held = [...this.history];
+    return {
+      commits: held.flatMap(([, h]) => h.commits), pulls: held.flatMap(([, h]) => h.pulls),
+      stored: () => {
+        const cursors = this.#cursors();
+        for (const [id, h] of held) { cursors[id] = h.cursor; if (this.history.get(id) === h) this.history.delete(id); }
+        if (this.cursorFile) { fs.mkdirSync(path.dirname(this.cursorFile), { recursive: true }); fs.writeFileSync(this.cursorFile, JSON.stringify(cursors)); }
+      },
+    };
   }
 
   /**

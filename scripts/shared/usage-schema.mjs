@@ -71,13 +71,33 @@ function parseResources(r) {
   return ['cpu_sum', 'cpu_max', 'mem_sum', 'mem_max', 'mem_total'].every((k) => out[k] !== null) ? out : null;
 }
 
+const repo = (v) => (typeof v === 'string' && v.length <= 200 && /^[a-z0-9.-]+\/[\w.-]+\/[\w.-]+$/.test(v) ? v : null);
+
+/** A commit on a repository's default branch (scripts/bridge/forges.mjs readHistory). */
+function parseCommit(r) {
+  const key = repo(r?.repo);
+  const sha = typeof r?.sha === 'string' && /^[0-9a-f]{7,64}$/.test(r.sha) ? r.sha : null;
+  const at = epoch(r?.at);
+  return key && sha && at !== null ? { repo: key, sha, at, author: text(r.author, 100) } : null;
+}
+
+/** A pull request: when it opened, merged and closed. */
+function parsePull(r) {
+  const key = repo(r?.repo);
+  const number = int(r?.number, 1, 1e9);
+  const created = epoch(r?.created_at);
+  const opt = (v) => (v == null ? null : epoch(v));
+  return key && number !== null && created !== null
+    ? { repo: key, number, created_at: created, merged_at: opt(r.merged_at), closed_at: opt(r.closed_at), author: text(r.author, 100) } : null;
+}
+
 const list = (v, parse) => (Array.isArray(v) ? v.slice(0, MAX_USAGE_ROWS).map(parse).filter(Boolean) : []);
 
-/** A host's usage POST body -> {turns, costs, quota, resources} or null. Bad rows are dropped, not fatal. */
+/** A host's usage POST body -> {turns, costs, quota, resources, commits, pulls} or null. Bad rows are dropped, not fatal. */
 export function parseUsageBatch(body) {
   if (!body || body.schemaVersion !== USAGE_SCHEMA_VERSION) return null;
   return { turns: list(body.turns, parseTurn), costs: list(body.costs, parseCost), quota: list(body.quota, parseQuota),
-    resources: list(body.resources, parseResources) };
+    resources: list(body.resources, parseResources), commits: list(body.commits, parseCommit), pulls: list(body.pulls, parsePull) };
 }
 
 // Statements that change anything. REPLACE is also a string function, so only its statement forms count.

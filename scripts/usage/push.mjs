@@ -42,8 +42,9 @@ export function quotaRows(accounts, now) {
 }
 
 export class UsagePush {
-  constructor({ url, hostToken, machine, scanner, accounts = () => [], everyMs = 5 * 60000, log = () => {}, fetch = globalThis.fetch, timeoutMs = 30000, now = Date.now }) {
-    Object.assign(this, { url: `${url}/api/hosts/${machine}/usage`, hostToken, scanner, accounts, everyMs, log, fetch, timeoutMs, now });
+  constructor({ url, hostToken, machine, scanner, accounts = () => [], history = () => null, everyMs = 5 * 60000, log = () => {}, fetch = globalThis.fetch, timeoutMs = 30000, now = Date.now }) {
+    // `history`: the forges' commits and pull requests to store (forges.mjs ForgeReader takeHistory).
+    Object.assign(this, { url: `${url}/api/hosts/${machine}/usage`, hostToken, scanner, accounts, history, everyMs, log, fetch, timeoutMs, now });
     this.hourly = new HourlyResources();
     this.resources = [];
     this.running = false;
@@ -90,6 +91,16 @@ export class UsagePush {
         batch.commit();
         if (!batch.more) break;
         this.log(`usage: backfill sent ${batch.turns.length} turns, continuing`);
+      }
+      // The forges' history, in batches; its cursor moves only once every batch is stored.
+      const history = this.history();
+      if (history) {
+        for (const kind of ['commits', 'pulls']) {
+          for (let i = 0; i < history[kind].length; i += MAX_USAGE_ROWS) {
+            await this.post({ turns: [], costs: [], quota: [], resources: [], [kind]: history[kind].slice(i, i + MAX_USAGE_ROWS) });
+          }
+        }
+        history.stored();
       }
       if (this.lastError) this.log('usage: push restored');
       this.lastError = null;

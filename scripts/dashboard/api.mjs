@@ -1,12 +1,12 @@
 // scripts/dashboard/api.mjs — the gateway's HTTP API on Web-standard Request/Response, so the
 // same code runs in the Worker's Durable Object and in Node tests.
 
-import { SCHEMA_VERSION, isHostId, parseConfigChange, parseHostPush } from '../shared/dashboard-schema.mjs';
+import { SCHEMA_VERSION, isHostId, isRepoKey, parseConfigChange, parseHostPush } from '../shared/dashboard-schema.mjs';
 import { Registry } from './registry.mjs';
 import { TELEGRAM_PUBLIC_KEY, verifyHostToken, verifyInitData } from './auth.mjs';
 import { parseUsageBatch } from '../shared/usage-schema.mjs';
 import { USAGE_FILTER_MAX } from './public/shared/vocab.mjs';
-import { FILTER_DIMS, ingest, query, report } from './usage-store.mjs';
+import { FILTER_DIMS, forgeHistory, ingest, query, report } from './usage-store.mjs';
 
 const MAX_BODY = 256 * 1024;
 const MAX_CONFIG_BODY = 4096;   // one {key, value}
@@ -117,6 +117,21 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       return json(202, { id: registry.requestChange(change, who.userId) });
     }
     if (url.pathname === '/api/dashboard') return json(200, registry.snapshot());
+    if (url.pathname === '/api/code/history') {
+      // One repository's commits and pull requests per hour or day (usage-store.mjs forgeHistory).
+      if (!db) return error(503, 'no_usage_store');
+      const repo = url.searchParams.get('repo') ?? '';
+      if (!isRepoKey(repo)) return error(400, 'bad_repo');
+      const days = [1, 7, 30, 365].includes(Number(url.searchParams.get('days'))) ? Number(url.searchParams.get('days')) : 30;
+      const tz = Math.min(840, Math.max(-720, Number(url.searchParams.get('tz')) || 0));
+      const key = JSON.stringify(['code', repo, days, tz]);
+      const held = reports.get(key);
+      if (held && now() - held.at < REPORT_TTL_MS) return json(200, held.value);
+      const value = await forgeHistory(db, { repo, days, tzOffsetMin: tz, now: now() });
+      for (const [k, r] of reports) if (now() - r.at >= REPORT_TTL_MS) reports.delete(k);
+      reports.set(key, { at: now(), value });
+      return json(200, value);
+    }
     if (url.pathname === '/api/usage') {
       if (!db) return error(503, 'no_usage_store');
       const days = Math.min(366, Math.max(1, Number(url.searchParams.get('days')) || 30));

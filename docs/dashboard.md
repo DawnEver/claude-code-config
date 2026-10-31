@@ -257,6 +257,16 @@ which Gitea Actions reports. `ci` is `success | failure | pending | null`.
 a reading rides the next dashboard push and stays in the host's outbox until a push is accepted. A session carries
 the key of its working tree's origin, so the tab links a session to its branch, PR and CI exactly.
 
+**History** (commits on each default branch, pull requests opened and merged) lives in the usage
+store, D1 tables `forge_commits` and `forge_pulls` (migration 0003), keyed by sha and number so a
+repeat or a second host's copy is one row. The host holding a source's lease reads what changed
+since its cursor (`~/.claude/bridge/forge-history-<home>.json`; a year back the first time, an
+hour of overlap after) for the repos pushed or with a PR touched since, and hands it to the usage
+push, which sends it in batches; the cursor moves only once all are stored. An opened repo card
+fetches `GET /api/code/history?repo=&days=&tz=` (usage-store.mjs `forgeHistory`: every hour or
+day of the range, zeros included) and draws commits and PRs with the one `barChart` the Usage
+tab uses. A host that takes a lease for the first time reads its year again: harmless, keyed rows.
+
 **The tab** (`view.mjs codeView`): a range (24h / 7d / 30d / 1y, 30d by default, kept per device)
 picks repos with activity in it; *Needs attention* lists a failing default branch, failing or
 conflicting PRs, and failing branches a session works on; each repo is a folded row (`foldRow`,
