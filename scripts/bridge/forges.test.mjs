@@ -150,39 +150,36 @@ password=${stored}
   assert.match(r2.outbox()[0].repos[0].error, /^HTTP 401/);
 });
 
-test('history: read after a good reading, a year back the first time, then from the stored cursor; an unfinished window is continued, not dropped', async () => {
+test('history: the year before the first read is backfill within a daily row budget, continued where it stopped; what is new is read whole', async () => {
   const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
   const cursorFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'forge-')), 'cursor.json');
   const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
   const asked = [];
   let t = NOW;
+  const w = { name: 'team/a', key: 'git.example.org/team/a', branch: 'main' };
   const r = new ForgeReader({ sources: [src], now: () => t, token: () => ({ token: 't' }), cursorFile,
-    readOne: async () => ({ repos: [{ key: 'git.example.org/team/a', name: 'team/a', defaultBranch: 'main', pushedAt: new Date(t).toISOString(), error: null }] }),
-    readHistory: async (s, { windows }) => {
-      asked.push(windows);
-      // The first read stops at a page cap: its window comes back unfinished.
-      return { commits: [{ repo: 'git.example.org/team/a', sha: 'a1b2c3d', at: NOW }], pulls: [],
-        rest: asked.length === 1 ? [{ ...windows[0], commits: 21, pulls: false }] : [] };
+    readOne: async () => ({ repos: [{ ...w, defaultBranch: 'main', pushedAt: new Date(t).toISOString(), error: null }] }),
+    readHistory: async (s, { windows, budget }) => {
+      asked.push({ windows, budget });
+      // A backfill read uses its whole budget and stops unfinished.
+      const n = budget === undefined ? 1 : budget;
+      return { commits: Array.from({ length: n }, (_, i) => ({ repo: w.key, sha: `s${asked.length}-${i}`, at: NOW })), pulls: [],
+        rest: budget === undefined ? [] : windows.map((x) => ({ ...x, commits: 21, pulls: false })) };
     } });
   const settle = () => new Promise((ok) => setTimeout(ok, 0));
-  r.assign(r.ids()); await settle(); await settle();
-  assert.deepEqual(asked[0], [{ name: 'team/a', key: 'git.example.org/team/a', branch: 'main', since: NOW - 366 * 86400000, until: NOW }], 'a year back the first time');
-  const h = r.takeHistory();
-  assert.deepEqual([h.commits.length, h.pulls.length], [1, 0]);
-  r.assign(r.ids()); await settle(); await settle();
-  assert.equal(asked.length, 1, 'not read again while the last is unsent');
-  h.stored();
-  assert.equal(r.takeHistory(), null);
-  t = NOW + 600000;
-  r.assign(r.ids()); await settle(); await settle();
-  assert.deepEqual(asked[1], [
-    { name: 'team/a', key: 'git.example.org/team/a', branch: 'main', since: NOW - 366 * 86400000, until: NOW, commits: 21, pulls: false },
-    { name: 'team/a', key: 'git.example.org/team/a', branch: 'main', since: NOW - 3600000, until: NOW + 600000 },
-  ], 'the unfinished window continued where it stopped, and a new one from the cursor with an hour of overlap');
+  const round = async () => { r.assign(r.ids()); await settle(); await settle(); };
+  await round();
+  assert.deepEqual(asked, [{ windows: [{ ...w, since: NOW - 366 * 86400000, until: NOW }], budget: 15000 }], 'the first read: only the year, as backfill');
   r.takeHistory().stored();
-  t = NOW + 1200000;
-  r.assign(r.ids()); await settle(); await settle();
-  assert.equal(asked[2].length, 1, 'a finished window is not asked again');
+  t = NOW + 600000;
+  await round();
+  assert.equal(asked.length, 2, 'the budget is spent today: no backfill read');
+  assert.deepEqual(asked[1].windows, [{ ...w, since: NOW - 3600000, until: NOW + 600000 }], 'what is new, from the cursor with an hour of overlap');
+  assert.equal(asked[1].budget, undefined, 'read whole');
+  r.takeHistory().stored();
+  t = NOW + 86400000;
+  await round();
+  assert.deepEqual(asked.at(-1), { windows: [{ ...w, since: NOW - 366 * 86400000, until: NOW, commits: 21, pulls: false }], budget: 15000 }, 'the next day continues where it stopped');
 });
 
 test('readHistory gitea: a window over the page cap returns where it stopped, and the next read continues one page back', async () => {

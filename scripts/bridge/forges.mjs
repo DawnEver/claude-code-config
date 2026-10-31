@@ -209,6 +209,13 @@ const COMMITS_QUERY = `query($owner: String!, $name: String!, $since: GitTimesta
     pageInfo { hasNextPage endCursor } nodes { oid committedDate author { name user { login } } } } } } } } }`;
 const PULLS_QUERY = `query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 100, after: $after) {
   pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number createdAt mergedAt closedAt updatedAt author { login } } } } }`;
+/**
+ * The usage store bills rows written (D1's free plan: 100k a day, shared with turns and quota); a
+ * year of busy repos is tens of thousands of commits, so this host backfills at most this many a
+ * day and finishes over the next days. What is new is never held back.
+ */
+const BACKFILL_ROWS_PER_DAY = 15000;
+const BUDGET_KEY = '$backfill';   // in the cursor file, beside the source ids (which hold '|')
 const MAX_PAGES = 10;   // pages per kind per window per read; a window not finished is continued by the next read
 const ms = (t) => (t ? Date.parse(t) : null);
 const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
@@ -221,8 +228,10 @@ const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
  * year of a busy repo is read over several reads, never cut at a page cap.
  * Returns {commits: [{repo, sha, at, author}], pulls: [{repo, number, created_at, merged_at, closed_at, author}], rest}.
  */
-export async function readHistory(src, { token, windows, fetch = globalThis.fetch, delays = RETRY_DELAYS_MS }) {
+export async function readHistory(src, { token, windows, budget = Infinity, fetch = globalThis.fetch, delays = RETRY_DELAYS_MS }) {
   const commits = [], pulls = [], rest = [];
+  // A page is started only while the budget lasts; a window it stops is continued like any other.
+  const room = () => commits.length + pulls.length < budget;
   const commit = (w, sha, at, author) => commits.push({ repo: w.key, sha, at, author });
   const pull = (w, p, author) => pulls.push({ repo: w.key, number: p.number, created_at: ms(p.created_at ?? p.createdAt),
     merged_at: ms(p.pull_request?.merged_at ?? p.mergedAt), closed_at: ms(p.closed_at ?? p.closedAt), author });
@@ -234,7 +243,7 @@ export async function readHistory(src, { token, windows, fetch = globalThis.fetc
         { method: 'POST', delays, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, variables }) });
       if (next.commits !== false) {
         let after = next.commits ?? null;
-        for (let page = 0; after !== false && page < MAX_PAGES; page++) {
+        for (let page = 0; after !== false && page < MAX_PAGES && room(); page++) {
           const h = (await gql(COMMITS_QUERY, { owner, name, since: iso(w.since), until: iso(w.until), after })).data?.repository?.defaultBranchRef?.target?.history;
           for (const c of h?.nodes ?? []) commit(w, c.oid, ms(c.committedDate), c.author?.user?.login ?? c.author?.name ?? null);
           after = h?.pageInfo?.hasNextPage ? h.pageInfo.endCursor : false;
@@ -245,7 +254,7 @@ export async function readHistory(src, { token, windows, fetch = globalThis.fetc
         // Search answers at most 1000 per query, so the position is the oldest update reached:
         // sorted newest first, everything later is read, and the next read asks only before it.
         let upto = next.pulls ?? iso(w.until), after = null, oldest = null, inQuery = 0, done = false;
-        for (let page = 0; page < MAX_PAGES; page++) {
+        for (let page = 0; page < MAX_PAGES && room(); page++) {
           const r = (await gql(PULLS_QUERY, { q: `repo:${owner}/${name} is:pr updated:${iso(w.since)}..${upto} sort:updated-desc`, after })).data?.search;
           for (const p of r?.nodes ?? []) {
             if (!p.number) continue;
@@ -266,7 +275,7 @@ export async function readHistory(src, { token, windows, fetch = globalThis.fetc
       // is re-read in case an entry left the window and shifted the rest forward.
       if (next.commits !== false) {
         let page = Math.max(1, (next.commits ?? 1) - 1), end = page + MAX_PAGES * 2;
-        for (; page < end; page++) {
+        for (; page < end && room(); page++) {
           const list = await get(`/commits?sha=${encodeURIComponent(w.branch ?? '')}&${span}&until=${encodeURIComponent(iso(w.until))}&limit=50&page=${page}&stat=false&verification=false&files=false`);
           for (const c of list) commit(w, c.sha, ms(c.commit?.committer?.date ?? c.created), c.author?.login ?? c.commit?.author?.name ?? null);
           if (list.length < 50) { page = false; break; }
@@ -275,7 +284,7 @@ export async function readHistory(src, { token, windows, fetch = globalThis.fetc
       }
       if (next.pulls !== false) {
         let page = Math.max(1, (next.pulls ?? 1) - 1), end = page + MAX_PAGES;
-        for (; page < end; page++) {
+        for (; page < end && room(); page++) {
           const list = await get(`/issues?type=pulls&state=all&${span}&before=${encodeURIComponent(iso(w.until))}&limit=50&page=${page}`);
           for (const p of list) pull(w, p, p.user?.login ?? null);
           if (list.length < 50) { page = false; break; }
@@ -332,13 +341,27 @@ export class ForgeReader {
    */
   async #history(src, id, repos) {
     if (this.history.has(id)) return;   // still waiting to be sent
-    const { at = this.now() - HORIZON_MS, rest = [] } = this.#cursors()[id] ?? {};
+    const cursors = this.#cursors();
     const started = this.now();
-    const fresh = repos.filter((r) => !r.error && (Date.parse(r.pushedAt) >= at || r.pulls?.some((p) => Date.parse(p.updatedAt) >= at)))
-      .map((r) => ({ name: r.name, key: r.key, branch: r.defaultBranch ?? null, since: at, until: started }));
+    const first = !cursors[id];
+    const { at = started, rest = [] } = cursors[id] ?? {};
+    const window = (r, since) => ({ name: r.name, key: r.key, branch: r.defaultBranch ?? null, since, until: started });
+    const good = repos.filter((r) => !r.error);
+    // What changed since the cursor is read whole: it is small, and skipping it would lose it. The
+    // year before a source's first read is backfill, read within the day's budget (BACKFILL_ROWS_PER_DAY).
+    const fresh = first ? [] : good.filter((r) => Date.parse(r.pushedAt) >= at || r.pulls?.some((p) => Date.parse(p.updatedAt) >= at)).map((r) => window(r, at));
+    const backfill = first ? good.filter((r) => Date.parse(r.pushedAt) >= started - HORIZON_MS).map((r) => window(r, started - HORIZON_MS)) : rest;
+    const day = new Date(started).toISOString().slice(0, 10);
+    const spent = cursors[BUDGET_KEY]?.day === day ? cursors[BUDGET_KEY].rows : 0;
     try {
-      const got = await this.readHistory(src, { token: this.token(src)?.token, windows: [...rest, ...fresh] });
-      this.history.set(id, { ...got, cursor: { at: started - 3600000, rest: got.rest } });
+      const token = this.token(src)?.token;
+      const now = fresh.length ? await this.readHistory(src, { token, windows: fresh }) : { commits: [], pulls: [], rest: [] };
+      const old = backfill.length && spent < BACKFILL_ROWS_PER_DAY
+        ? await this.readHistory(src, { token, windows: backfill, budget: BACKFILL_ROWS_PER_DAY - spent })
+        : { commits: [], pulls: [], rest: backfill };
+      const rows = old.commits.length + old.pulls.length;
+      this.history.set(id, { commits: [...now.commits, ...old.commits], pulls: [...now.pulls, ...old.pulls],
+        cursor: { at: started - 3600000, rest: [...old.rest, ...now.rest] }, spent: { day, rows } });
     } catch (e) { this.log(`forges: ${id} history: ${String(e.message ?? e).slice(0, 160)}`); }
   }
 
@@ -354,7 +377,12 @@ export class ForgeReader {
       commits: held.flatMap(([, h]) => h.commits), pulls: held.flatMap(([, h]) => h.pulls),
       stored: () => {
         const cursors = this.#cursors();
-        for (const [id, h] of held) { cursors[id] = h.cursor; if (this.history.get(id) === h) this.history.delete(id); }
+        for (const [id, h] of held) {
+          cursors[id] = h.cursor;
+          const b = cursors[BUDGET_KEY];
+          cursors[BUDGET_KEY] = { day: h.spent.day, rows: (b?.day === h.spent.day ? b.rows : 0) + h.spent.rows };
+          if (this.history.get(id) === h) this.history.delete(id);
+        }
         if (this.cursorFile) { fs.mkdirSync(path.dirname(this.cursorFile), { recursive: true }); fs.writeFileSync(this.cursorFile, JSON.stringify(cursors)); }
       },
     };

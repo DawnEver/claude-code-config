@@ -16,10 +16,11 @@ const TURN_VALUES = TURN_COLS.filter((c) => !['agent', 'session', 'turn', 'model
 
 const SQL = {
   // A commit is what it is: sent again (or by another host), nothing changes.
-  commit: `INSERT INTO forge_commits (repo, sha, at, author) VALUES (?, ?, ?, ?) ON CONFLICT (repo, sha) DO NOTHING`,
-  // A pull request moves on (merged, closed): the newest reading of it stands.
+  commit: `INSERT INTO forge_commits (repo, at, sha, author) VALUES (?, ?, ?, ?) ON CONFLICT (repo, at, sha) DO NOTHING`,
+  // A pull request moves on (merged, closed): the newest reading of it stands; one unchanged is no write.
   pull: insert('forge_pulls', ['repo', 'number', 'created_at', 'merged_at', 'closed_at', 'author'], 'repo, number',
-    'merged_at = excluded.merged_at, closed_at = excluded.closed_at, author = excluded.author'),
+    'merged_at = excluded.merged_at, closed_at = excluded.closed_at, author = excluded.author '
+    + 'WHERE (forge_pulls.merged_at, forge_pulls.closed_at, forge_pulls.author) IS NOT (excluded.merged_at, excluded.closed_at, excluded.author)'),
   // A re-sent turn that did not change is no write (nor a usage_hours trigger).
   turn: insert('turns', TURN_COLS, 'agent, session, turn, model', `${TURN_VALUES.map((c) => `${c} = excluded.${c}`).join(', ')}
   WHERE (${TURN_VALUES.map((c) => `turns.${c}`).join(', ')}) IS NOT (${TURN_VALUES.map((c) => `excluded.${c}`).join(', ')})`),
@@ -44,7 +45,7 @@ export async function ingest(db, machine, batch, now = Date.now()) {
     ...batch.costs.map((r) => db.prepare(SQL.cost).bind(r.agent, r.session, r.model, machine, r.cost_usd, now)),
     ...batch.quota.map((r) => db.prepare(SQL.quota).bind(r.account, r.agent, r.span, r.window_start, r.window_ms, r.used, r.observed_at)),
     ...batch.resources.map((r) => db.prepare(SQL.resources).bind(...RES_COLS.map((c) => (c === 'machine' ? machine : r[c])))),
-    ...(batch.commits ?? []).map((r) => db.prepare(SQL.commit).bind(r.repo, r.sha, r.at, r.author)),
+    ...(batch.commits ?? []).map((r) => db.prepare(SQL.commit).bind(r.repo, r.at, r.sha, r.author)),
     ...(batch.pulls ?? []).map((r) => db.prepare(SQL.pull).bind(r.repo, r.number, r.created_at, r.merged_at, r.closed_at, r.author)),
   ];
   if (stmts.length) await db.batch(stmts);

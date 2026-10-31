@@ -263,7 +263,13 @@ hour of overlap after) for the repos pushed or with a PR touched since, and hand
 push, which sends it in batches; the cursor moves only once all are stored. A read takes at
 most ten pages per kind per repo, newest first; a window not finished (a busy repo's year) is
 kept with where it stopped — a page on Gitea, a GraphQL cursor or, past search's 1000-result
-cap, the oldest update read on GitHub — and the next read continues it, so history is never cut. An opened repo card
+cap, the oldest update read on GitHub — and the next read continues it, so history is never cut.
+D1 bills rows written (free plan: 100k a day, shared with turns and quota), so the year before a
+source's first read is backfill: a host reads at most 15k rows of it a day (`BACKFILL_ROWS_PER_DAY`,
+counted in the cursor file) and finishes over the next days, while what is new since the cursor
+is always read whole. `forge_commits` is a WITHOUT ROWID table keyed (repo, at, sha) — one row
+written per commit (migration 0004; the first schema wrote three) — and an unchanged pull
+request or re-sent commit writes nothing. An opened repo card
 fetches `GET /api/code/history?repo=&days=&tz=` (usage-store.mjs `forgeHistory`: every hour or
 day of the range, zeros included) and draws commits and PRs with the one `barChart` the Usage
 tab uses. A host that takes a lease for the first time reads its year again: harmless, keyed rows.
