@@ -13,8 +13,12 @@ description: Code tab forge reads leased by the gateway, git-style credential re
 - Readings ride the push from an outbox until accepted; a reading replaces the record whole
   (idempotent); an error never replaces a good reading; "no host can read it" shows reasons.
 - Credentials = what the host's git uses: `gh auth token`, else `git credential fill` for the
-  forge host; on 401 reject → fill again (GCM renews OAuth) → retry → approve (settleKey).
-  The Gitea token was a GCM OAuth token that expires in hours: never treat it as a PAT.
+  forge host. The Gitea one is a GCM OAuth token (provider generic) that expires in hours.
+- NEVER `git credential reject` it ourselves: done once with GCM_INTERACTIVE=never, GCM could not
+  renew outside git's flow and the user's git login was deleted ("no token"). A plain `git pull`
+  renewed it silently (new fingerprint, API 200). So on 401 the reader runs a non-interactive
+  `git ls-remote` of a listed repo (git's own flow) and re-reads; store never written.
+  Unverified end-to-end on a real expiry; fallback = read-only PAT named by keyUsername.
 - Every forge request retries network/timeout/5xx/429 twice (1 s, 3 s); 401/404 not retried.
 - Lesson: a failed read with no pushedAt was filtered out by the activity range -> silent.
   Unread repos now always show; the daemon logs one `forges:` line per reading.
