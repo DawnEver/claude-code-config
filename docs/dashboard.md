@@ -342,8 +342,7 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    `npm run dashboard -- set-menu`. It checks the token belongs to `botId`, sets the button and
    reads it back. Open the dashboard bot -> **Dashboard**.
 6. **Daemons** pick the config up within a minute: each checks its config and code revision
-   every minute and hands over to a fresh daemon on a change (as `ensure.mjs` does at session
-   start). A configured but unusable block logs
+   every minute and hands over to a fresh daemon on a change (`ensure.mjs --replace`). A configured but unusable block logs
    `dashboard: off (<reason>)`.
 
 ## API

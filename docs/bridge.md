@@ -304,8 +304,11 @@ Requires Anthropic auth: on a third-party provider (`ccds`) Claude Code drops ch
    The service is optional: every session start runs `scripts/bridge/ensure.mjs` (Claude
    SessionStart hook; `codex.js` before launching Codex). It is a no-op without a bot
    token or when a daemon on the current source is running, starts a detached daemon when
-   none is, and replaces one running older source (channels and the Codex adapter
-   reconnect). Concurrent session starts are safe: the daemon takes the exclusive
+   none is. A running daemon on older source or config is left to hand itself over (its own
+   check, within a minute): a burst of session starts during an edit (subagents, reviewers)
+   once restarted it every few seconds. Only `ensure.mjs --replace` kills it — the daemon's
+   own handover, and the SessionStart pull that must serve the pulled code — and logs
+   `ensure: replacing daemon <pid>` (channels and the Codex adapter reconnect). Concurrent session starts are safe: the daemon takes the exclusive
    `~/.claude/bridge/daemon.lock` before polling Telegram, so at most one survives. A lock
    or runtime file written before the last boot is stale even if its pid was reused.
 

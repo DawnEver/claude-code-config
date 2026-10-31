@@ -51,9 +51,14 @@ export function acquireDaemonLock(file = LOCK_FILE, { pid = process.pid, alive =
   return null;
 }
 
+const LOG_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.log');
 function spawnDaemon() {
-  const log = path.join(BRIDGE_RUNTIME_DIR, 'daemon.log');
-  spawn(process.execPath, [DAEMON, '--log', log], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  spawn(process.execPath, [DAEMON, '--log', LOG_FILE], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+}
+/** One line in the daemon's log, in its format: a replacement is never silent. */
+function logLine(message) {
+  try { fs.appendFileSync(LOG_FILE, `[bridge ${new Date().toISOString()}] ${message}
+`); } catch { /* the log is best effort */ }
 }
 
 /**
@@ -67,8 +72,14 @@ export function daemonRunning({ runtimeFile = RUNTIME_FILE, alive = isAlive, sta
   } catch { return false; }
 }
 
-/** @returns {'unconfigured'|'running'|'started'|'restarted'|'different-home'} */
-export async function ensureDaemon({ runtimeFile = RUNTIME_FILE, configured = () => { const c = readBridgeConfig(); return !!(c.botToken || c.dashboard); }, codexHome = resolveCodexHome(),
+/**
+ * Start the daemon when none runs. A running one whose source or config changed is left to hand
+ * itself over (its own check, within a minute): replacing it here, on every session start, made
+ * a burst of starts (subagents, reviewers) during an edit restart it every few seconds. Only
+ * `replace` — the daemon's own handover, or a pull that must serve the pulled code now — kills it.
+ * @returns {'unconfigured'|'running'|'stale'|'started'|'restarted'|'different-home'}
+ */
+export async function ensureDaemon({ replace = false, log = logLine, runtimeFile = RUNTIME_FILE, configured = () => { const c = readBridgeConfig(); return !!(c.botToken || c.dashboard); }, codexHome = resolveCodexHome(),
   revision = bridgeSourceRevision, configRevision = bridgeConfigRevision, alive = isAlive, stale = predatesBoot, kill = (pid) => process.kill(pid), start = spawnDaemon,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   if (!configured()) return 'unconfigured';
@@ -81,6 +92,8 @@ export async function ensureDaemon({ runtimeFile = RUNTIME_FILE, configured = ()
     if (key(runningHome) !== key(codexHome)) return 'different-home';
     // The daemon reads its config once: a config change replaces it like a source change.
     if (rt.sourceRevision === revision() && rt.configRevision === configRevision()) return 'running';
+    if (!replace) return 'stale';
+    log(`ensure: replacing daemon ${pid} (source or config changed)`);
     try { kill(pid); } catch { /* already gone */ }
     for (let i = 0; i < 50 && alive(pid); i++) await sleep(100);
     start();
@@ -92,5 +105,5 @@ export async function ensureDaemon({ runtimeFile = RUNTIME_FILE, configured = ()
 
 if (isMain(import.meta.url)) {
   setTimeout(() => process.exit(0), 8000).unref();
-  ensureDaemon().catch(() => {}).finally(() => process.exit(0));
+  ensureDaemon({ replace: process.argv.includes('--replace') }).catch(() => {}).finally(() => process.exit(0));
 }

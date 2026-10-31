@@ -983,7 +983,7 @@ export async function main() {
       if (bridgeSourceRevision() === sourceRevision && bridgeConfigRevision() === startConfig) return;
       handedOver = true;
       log('config or source changed: handing over to a fresh daemon');
-      spawn(process.execPath, [fileURLToPath(new URL('./ensure.mjs', import.meta.url))], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      spawn(process.execPath, [fileURLToPath(new URL('./ensure.mjs', import.meta.url)), '--replace'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     } catch (e) { log(`change check: ${e.message}`); }
   }, 60000).unref();
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
