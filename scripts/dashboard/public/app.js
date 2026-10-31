@@ -57,7 +57,7 @@ let hostList = [];   // hostsView(snapshot): the one host model the Sessions and
 const PREFS = {
   clock: ['24', '12'], date: ['day', 'iso', 'off'], replyStyle: ['ago', 'clock'], unit: ['used', 'left'],
   groupBy: ['project', 'host'], groupOrder: ['host', 'urgency'], openAt: ['latest', 'first'], pinTabs: ['on', 'off'],
-  load: ['detailed', 'compact', 'off'],
+  load: ['detailed', 'compact', 'off'], codeAttention: ['off', 'on'],
 };
 const pref = Object.fromEntries(Object.entries(PREFS).map(([k, vals]) => [k, vals.includes(store.get(`dashboard.${k}`)) ? store.get(`dashboard.${k}`) : vals[0]]));
 const timeFormat = () => ({ clock: pref.clock, date: pref.date, lang });
@@ -624,6 +624,7 @@ function displaySection() {
 function codeReposGroup() {
   const all = snapshot?.repos ?? [];
   if (!all.length) return [];
+  const attention = prefRow('codeAttention', 'cfg.codeAttention', 'cfg.codeAttention.hint', [tr('cfg.code.off'), tr('cfg.code.on')]);
   const shown = new Set(codeRepos ?? all.filter((r) => r.pinned !== false).map((r) => r.key));
   const rows = all.map((r) => {
     const row = el('div', 'cfg-row cfg-top');
@@ -640,7 +641,7 @@ function codeReposGroup() {
     reset.addEventListener('click', () => { saveCodeRepos(null); redrawConfig(); });
     rows.push(reset);
   }
-  return cfgGroup('cfg.code', rows);
+  return cfgGroup('cfg.code', [attention, ...rows]);
 }
 
 // Edits are a request to the gateway, applied by a host: the row shows it queued, handed over, then the outcome.
@@ -917,7 +918,8 @@ function renderCode() {
   box.append(rangePicker(CODE_RANGES, codeDays, (d) => { codeDays = d; store.set('dashboard.codeDays', String(d)); render(); }));
   if (!(snapshot.repos ?? []).length) { box.append(el('div', 'qrows empty', tr('code.none'))); return; }
   const v = codeView(snapshot, codeDays, Date.now(), codeRepos);
-  if (v.attention.length) {
+  // Needs attention is shown only on a device that asked for it (Config › Code).
+  if (pref.codeAttention === 'on' && v.attention.length) {
     const list = el('div', 'cards');
     for (const a of v.attention) {
       const url = a.pull?.url ?? (a.repo.url && a.branch ? `${a.repo.url}/${a.repo.forge === 'github' ? 'tree' : 'src/branch'}/${encodeURIComponent(a.branch)}` : a.repo.url);
@@ -945,7 +947,7 @@ function renderTabs() {
   $('quota-dot').hidden = !n.alert;
   const code = codeView(snapshot, codeDays, Date.now(), codeRepos);
   $('n-code').textContent = (snapshot.repos ?? []).length ? String(code.repos.length) : '';
-  $('code-dot').hidden = !code.attention.length;
+  $('code-dot').hidden = pref.codeAttention !== 'on' || !code.attention.length;
   $('n-events').textContent = String(n.events);
   $('events-badge').hidden = !n.unseen || tab === 'events';
   $('events-badge').textContent = String(n.unseen);

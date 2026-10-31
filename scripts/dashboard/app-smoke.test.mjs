@@ -77,7 +77,8 @@ function documentFrom(html) {
 test('the page renders every tab from the example data, and no view throws', async () => {
   const errors = [];
   const doc = documentFrom(fs.readFileSync(new URL('./public/index.html', import.meta.url), 'utf8'));
-  const memory = new Map();
+  // This device shows Needs attention (off by default), so that path renders too.
+  const memory = new Map([['dashboard.codeAttention', 'on']]);
   Object.assign(globalThis, {
     document: doc,
     window: { addEventListener() {}, scrollTo() {}, scrollY: 0, innerHeight: 800, open() {} },
