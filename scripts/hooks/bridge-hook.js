@@ -47,9 +47,19 @@ const SPOOL_TTL_MS = 60 * 60000;
 const SPOOL_MAX = 100;   // newest kept; a daemon down for long should not flood the Topic
 const NOTIFICATION_STATES = { permission_prompt: 'waiting-approval', elicitation_dialog: 'waiting-input', idle_prompt: 'idle' };
 
+/** How a Telegram message delivered through the Stop hook begins (deliverOutput writes it). */
+const TELEGRAM_MESSAGE = 'Message from Telegram';
+
+/**
+ * Where the text still to mirror begins: a message typed here, a message from Telegram by the
+ * channel (an `isMeta` entry whose origin is the channel), or any Stop-hook continuation (a
+ * Telegram message delivered through the Stop hook, or a plugin's feedback) — the Stop before it
+ * already mirrored everything up to there. Missing those repeated the earlier answer before the new one.
+ */
 const isRealUser = (e) => {
-  if (e?.type !== 'user' || e.isMeta) return false;
+  if (e?.type !== 'user') return false;
   const c = e.message?.content;
+  if (e.isMeta) return e.origin?.kind === 'channel' || (typeof c === 'string' && c.startsWith('Stop hook feedback:'));
   if (typeof c === 'string') return true;
   return Array.isArray(c) && c.some((b) => b?.type === 'text');
 };
@@ -177,7 +187,7 @@ export function answerOutput(toolInput, answers) {
 /** Stop output that continues the session with queued Telegram messages, or null. */
 export function deliverOutput(deliver) {
   if (!Array.isArray(deliver) || !deliver.length) return null;
-  const msgs = deliver.map((d) => `Message from Telegram${d?.user ? ` (${d.user})` : ''}:\n${String(d?.text ?? '')}`);
+  const msgs = deliver.map((d) => `${TELEGRAM_MESSAGE}${d?.user ? ` (${d.user})` : ''}:\n${String(d?.text ?? '')}`);
   return { decision: 'block', reason: msgs.join('\n\n') };
 }
 

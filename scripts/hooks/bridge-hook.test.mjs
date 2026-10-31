@@ -150,3 +150,15 @@ test('spooled calls replay oldest first, marked; the first refusal or the budget
     await flushSpool({ file, send: async () => assert.fail('nothing spooled') });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('turnTexts: a message from Telegram starts a turn — by the channel or through the Stop hook', () => {
+  const say = (text) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  const viaChannel = JSON.stringify({ type: 'user', isMeta: true, origin: { kind: 'channel', server: 'session-bridge' }, message: { content: '<channel source="session-bridge">B</channel>' } });
+  const viaStop = JSON.stringify({ type: 'user', isMeta: true, message: { content: 'Stop hook feedback:\nMessage from Telegram (u):\nB' } });
+  const otherMeta = JSON.stringify({ type: 'user', isMeta: true, message: { content: 'Stop hook feedback:\nrun the review' } });
+  for (const b of [viaChannel, viaStop]) {
+    assert.deepEqual(turnTexts([JSON.stringify({ type: 'user', message: { content: 'A?' } }), say('AAAA'), b, say('C')].join('\n')), ['C'], 'the reply to B is C alone, not AAAA again');
+  }
+  assert.deepEqual(turnTexts([JSON.stringify({ type: 'user', message: { content: 'A?' } }), say('AAAA'), otherMeta, say('C')].join('\n')), ['C'],
+    'any Stop-hook continuation: the Stop before it already mirrored AAAA');
+});
