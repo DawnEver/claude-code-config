@@ -11,7 +11,7 @@
 //   Branch {name, sha, at, author, ci}   Pull {number, title, url, draft, author, head, base, review, conflict, ci, updatedAt}
 // `ci` is the head commit's combined check state: 'success' | 'failure' | 'pending' | null (none).
 
-import { spawnSync } from 'child_process';
+import { execFile, spawnSync } from 'child_process';
 import { fetchKey } from '../shared/credential-key.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
 
@@ -187,16 +187,21 @@ export async function readSource(src, { token, fetch = globalThis.fetch, now = D
  * for a new OAuth token. The store is never written here: a direct reject once removed the
  * user's git login when the helper could not renew outside git's own flow. Null when none.
  */
-export function forgeToken(src, { run = spawnSync } = {}) {
+export function forgeToken(src, { run = spawnSync, exec = execFile } = {}) {
   if (src.kind === 'github') {
     const gh = run('gh', ['auth', 'token'], { encoding: 'utf8', windowsHide: true });
     if (gh.status === 0 && gh.stdout?.trim()) return { token: gh.stdout.trim() };
   }
   const got = fetchKey({ host: new URL(src.base).host, username: src.keyUsername, run });
   if (!got.key) return null;
-  const repo = src.repos[0];
-  return { token: got.key, renew: repo && (() => run('git', ['ls-remote', '--heads', `${src.base}/${repo}.git`], { encoding: 'utf8', windowsHide: true, timeout: 30000,
-    stdio: ['ignore', 'ignore', 'ignore'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_ASKPASS: '', SSH_ASKPASS: '' } })) };
+  // The account that credential belongs to, in the URL, so git renews that one and no other.
+  const user = got.username ? `${encodeURIComponent(got.username)}@` : '';
+  const url = (repo) => `${src.base.replace('://', `://${user}`)}/${repo}.git`;
+  return { token: got.key,
+    // `repo`: one the source lists, else one it just read (an owner-only source lists none).
+    // Asynchronous: a slow forge must not hold the daemon's Telegram, IPC or pushes.
+    renew: (repo) => new Promise((done) => exec('git', ['ls-remote', '--heads', url(repo)], { windowsHide: true, timeout: 30000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_ASKPASS: '', SSH_ASKPASS: '' } }, () => done())) };
 }
 
 /** A reading the forge refused for its credential: the whole source, or any repo in it. */
@@ -215,6 +220,7 @@ export class ForgeReader {
     this.byId = new Map(sources.map((s) => [sourceId(s), s]));
     this.running = new Set();
     this.out = new Map();   // source id -> reading not yet delivered
+    this.known = new Map();   // source id -> a repo it last read: what git renews an owner-only source's login with
   }
 
   ids() { return [...this.byId.keys()]; }
@@ -241,8 +247,12 @@ export class ForgeReader {
   async #read(src) {
     const cred = this.token(src);
     const r = await this.readOne(src, { token: cred?.token, now: this.now });
-    if (!refused(r) || !cred?.renew) return r;
-    cred.renew();
+    const id = sourceId(src);
+    const seen = r.repos?.find((x) => x.name && !x.error)?.name;
+    if (seen) this.known.set(id, seen);
+    const repo = src.repos[0] ?? seen ?? this.known.get(id);
+    if (!refused(r) || !cred?.renew || !repo) return r;
+    await cred.renew(repo);
     const again = this.token(src);
     return again?.token && again.token !== cred.token ? this.readOne(src, { token: again.token, now: this.now }) : r;
   }

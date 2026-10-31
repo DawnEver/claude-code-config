@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { forgeSources, readSource, sourceId, ForgeReader } from './forges.mjs';
+import { forgeSources, forgeToken, readSource, sourceId, ForgeReader } from './forges.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
 
 const NOW = Date.parse('2026-10-30T12:00:00Z');
@@ -134,4 +134,16 @@ test('a refused OAuth token is renewed by git itself (ls-remote), then the read 
   await new Promise((ok) => setTimeout(ok, 0));
   assert.equal(renewed, 1);
   assert.equal(r.outbox()[0].repos[0].error, null);
+});
+
+test('forgeToken renews through git for the credential\'s own account, asynchronously, on any repo of the source', async () => {
+  const run = (cmd, args) => (cmd === 'git' && args[1] === 'fill' ? { status: 0, stdout: 'username=OAUTH_USER\npassword=tok\n' } : { status: 1 });
+  const calls = [];
+  const exec = (cmd, args, opts, cb) => { calls.push([cmd, ...args, opts.env.GCM_INTERACTIVE]); setTimeout(cb, 0); };
+  const cred = forgeToken({ kind: 'gitea', base: 'https://git.example.org', owner: 'team', repos: [], keyUsername: null }, { run, exec });
+  assert.equal(cred.token, 'tok');
+  const pending = cred.renew('team/a');
+  assert.ok(pending instanceof Promise, 'never blocks the daemon');
+  await pending;
+  assert.deepEqual(calls, [['git', 'ls-remote', '--heads', 'https://OAUTH_USER@git.example.org/team/a.git', 'never']]);
 });
