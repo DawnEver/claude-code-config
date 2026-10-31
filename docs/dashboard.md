@@ -235,12 +235,14 @@ this host's to report. Sources are configuration, in the shared settings:
 
 `owner` reads all of an owner's repos, `repos` the listed ones (both narrow together on GitHub).
 `show` lists the repos the tab shows by default (absent: all); each device may choose others in
-Config › Code, and *Back to the defaults* returns to `show`. The credential is GitHub's `gh` login, else the git credential store entry for the forge host
-(`keyUsername` picks one by username). For a forge whose git login is an OAuth token (Git
-Credential Manager), store a long-lived read-only API token under its own username and name it
-in `keyUsername`: the OAuth token expires within hours and its helper may renew it only with a
-browser. A refused credential is reported, never rejected from the store — a reject would remove
-the user's own git login when the helper cannot renew it (it did, once).
+Config › Code, and *Back to the defaults* returns to `show`. The credential is the one the host's git already uses — GitHub's `gh` login, else the git
+credential store entry for the forge host (`keyUsername` picks one by username). An OAuth login
+(Git Credential Manager) expires within hours: refused, the reader lets git renew it the way a
+`git pull` does — a non-interactive `git ls-remote` of a listed repo, during which the helper
+trades its refresh token for a new one — and retries once. It never writes the store itself: a
+direct reject once removed the user's git login when the helper could not renew outside git's
+own flow. A host whose helper cannot renew without a browser keeps reporting the refusal; there,
+store a long-lived read-only API token under its own username and name it in `keyUsername`.
 
 **Nothing fails silently.** An error never replaces a good reading; a source never read well
 shows its error on its repos, listed first under *Needs attention*. The daemon logs one

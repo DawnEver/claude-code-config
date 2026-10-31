@@ -123,3 +123,15 @@ test('a network blip or a 5xx is tried twice more before it counts; a definite a
   const { repos: [u] } = await read(async () => { calls++; return { ok: false, status: 404 }; });
   assert.deepEqual([u.error, calls], ['HTTP 404', 1], 'a 404 is an answer, asked once');
 });
+
+test('a refused OAuth token is renewed by git itself (ls-remote), then the read is retried; nothing is removed from the store', async () => {
+  const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
+  let renewed = 0, current = 'expired';
+  const token = () => ({ token: current, renew: () => { renewed++; current = 'fresh'; } });
+  const readOne = async (s, { token: t }) => ({ repos: [{ key: 'git.example.org/team/a', error: t === 'fresh' ? null : 'HTTP 401: the token is refused (expired or revoked)' }] });
+  const r = new ForgeReader({ sources: [src], now: () => NOW, token, readOne });
+  r.assign(r.ids());
+  await new Promise((ok) => setTimeout(ok, 0));
+  assert.equal(renewed, 1);
+  assert.equal(r.outbox()[0].repos[0].error, null);
+});
