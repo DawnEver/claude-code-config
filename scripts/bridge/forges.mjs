@@ -11,7 +11,7 @@
 //   Branch {name, sha, at, author, ci}   Pull {number, title, url, draft, author, head, base, review, conflict, ci, updatedAt}
 // `ci` is the head commit's combined check state: 'success' | 'failure' | 'pending' | null (none).
 
-import { execFile, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fetchKey } from '../shared/credential-key.mjs';
@@ -182,32 +182,21 @@ export async function readSource(src, { token, fetch = globalThis.fetch, now = D
 }
 
 /**
- * This host's credential for a forge, the one its git already uses: GitHub's `gh` login, else
- * the git credential store for the forge host (`keyUsername` picks one when it holds several).
- * `renew()` lets git renew it the way a `git pull` does — a real, non-interactive `git ls-remote`
- * of a listed repo, during which a helper such as Git Credential Manager trades its refresh token
- * for a new OAuth token. The store is never written here: a direct reject once removed the
- * user's git login when the helper could not renew outside git's own flow. Null when none.
+ * This host's credential for a forge: GitHub's `gh` login, else the git credential store for the
+ * forge host (`keyUsername` picks one when it holds several). It is only ever read. Renewing an
+ * expired OAuth login outside a person's own git run — a reject and fill, or a non-interactive
+ * `git ls-remote` (on whose 401 git itself rejects) — deleted the user's git login twice where
+ * Git Credential Manager cannot renew without a browser. For unattended reading, store a
+ * long-lived read-only API token under its own username and name it in `keyUsername`. Null when none.
  */
-export function forgeToken(src, { run = spawnSync, exec = execFile } = {}) {
+export function forgeToken(src, { run = spawnSync } = {}) {
   if (src.kind === 'github') {
     const gh = run('gh', ['auth', 'token'], { encoding: 'utf8', windowsHide: true });
     if (gh.status === 0 && gh.stdout?.trim()) return { token: gh.stdout.trim() };
   }
   const got = fetchKey({ host: new URL(src.base).host, username: src.keyUsername, run });
-  if (!got.key) return null;
-  // The account that credential belongs to, in the URL, so git renews that one and no other.
-  const user = got.username ? `${encodeURIComponent(got.username)}@` : '';
-  const url = (repo) => `${src.base.replace('://', `://${user}`)}/${repo}.git`;
-  return { token: got.key,
-    // `repo`: one the source lists, else one it just read (an owner-only source lists none).
-    // Asynchronous: a slow forge must not hold the daemon's Telegram, IPC or pushes.
-    renew: (repo) => new Promise((done) => exec('git', ['ls-remote', '--heads', url(repo)], { windowsHide: true, timeout: 30000,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never', GIT_ASKPASS: '', SSH_ASKPASS: '' } }, () => done())) };
+  return got.key ? { token: got.key } : null;
 }
-
-/** A reading the forge refused for its credential: the whole source, or any repo in it. */
-const refused = (r) => [r.error, ...(r.repos ?? []).map((x) => x.error)].some((e) => e?.startsWith('HTTP 401'));
 
 const HISTORY_QUERY = `query($owner: String!, $name: String!, $since: GitTimestamp!, $after: String) { repository(owner: $owner, name: $name) {
   defaultBranchRef { target { ... on Commit { history(since: $since, first: 100, after: $after) {
@@ -279,7 +268,6 @@ export class ForgeReader {
     this.byId = new Map(sources.map((s) => [sourceId(s), s]));
     this.running = new Set();
     this.out = new Map();   // source id -> reading not yet delivered
-    this.known = new Map();   // source id -> a repo it last read: what git renews an owner-only source's login with
   }
 
   ids() { return [...this.byId.keys()]; }
@@ -334,21 +322,9 @@ export class ForgeReader {
     };
   }
 
-  /**
-   * One read with this host's credential; refused, git renews it (forgeToken `renew`) and the
-   * read is retried once with what the store then holds. Still refused, it is reported.
-   */
+  /** One read with this host's credential; a refused one is reported, the store left as it is. */
   async #read(src) {
-    const cred = this.token(src);
-    const r = await this.readOne(src, { token: cred?.token, now: this.now });
-    const id = sourceId(src);
-    const seen = r.repos?.find((x) => x.name && !x.error)?.name;
-    if (seen) this.known.set(id, seen);
-    const repo = src.repos[0] ?? seen ?? this.known.get(id);
-    if (!refused(r) || !cred?.renew || !repo) return r;
-    await cred.renew(repo);
-    const again = this.token(src);
-    return again?.token && again.token !== cred.token ? this.readOne(src, { token: again.token, now: this.now }) : r;
+    return this.readOne(src, { token: this.token(src)?.token, now: this.now });
   }
 
   /** The readings to send with the next push. */

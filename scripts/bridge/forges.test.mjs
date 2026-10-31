@@ -124,28 +124,16 @@ test('a network blip or a 5xx is tried twice more before it counts; a definite a
   assert.deepEqual([u.error, calls], ['HTTP 404', 1], 'a 404 is an answer, asked once');
 });
 
-test('a refused OAuth token is renewed by git itself (ls-remote), then the read is retried; nothing is removed from the store', async () => {
+test('a refused credential is reported and the credential store is only read, never written or rejected', async () => {
   const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
-  let renewed = 0, current = 'expired';
-  const token = () => ({ token: current, renew: () => { renewed++; current = 'fresh'; } });
-  const readOne = async (s, { token: t }) => ({ repos: [{ key: 'git.example.org/team/a', error: t === 'fresh' ? null : 'HTTP 401: the token is refused (expired or revoked)' }] });
-  const r = new ForgeReader({ sources: [src], now: () => NOW, token, readOne });
+  const gitCalls = [];
+  const run = (cmd, args) => { gitCalls.push(args[1]); return cmd === 'git' && args[1] === 'fill' ? { status: 0, stdout: 'username=u\npassword=expired\n' } : { status: 1 }; };
+  const readOne = async () => ({ repos: [{ key: 'git.example.org/team/a', error: 'HTTP 401: the token is refused (expired or revoked)' }] });
+  const r = new ForgeReader({ sources: [src], now: () => NOW, token: (s) => forgeToken(s, { run }), readOne });
   r.assign(r.ids());
   await new Promise((ok) => setTimeout(ok, 0));
-  assert.equal(renewed, 1);
-  assert.equal(r.outbox()[0].repos[0].error, null);
-});
-
-test('forgeToken renews through git for the credential\'s own account, asynchronously, on any repo of the source', async () => {
-  const run = (cmd, args) => (cmd === 'git' && args[1] === 'fill' ? { status: 0, stdout: 'username=OAUTH_USER\npassword=tok\n' } : { status: 1 });
-  const calls = [];
-  const exec = (cmd, args, opts, cb) => { calls.push([cmd, ...args, opts.env.GCM_INTERACTIVE]); setTimeout(cb, 0); };
-  const cred = forgeToken({ kind: 'gitea', base: 'https://git.example.org', owner: 'team', repos: [], keyUsername: null }, { run, exec });
-  assert.equal(cred.token, 'tok');
-  const pending = cred.renew('team/a');
-  assert.ok(pending instanceof Promise, 'never blocks the daemon');
-  await pending;
-  assert.deepEqual(calls, [['git', 'ls-remote', '--heads', 'https://OAUTH_USER@git.example.org/team/a.git', 'never']]);
+  assert.match(r.outbox()[0].repos[0].error, /^HTTP 401/);
+  assert.deepEqual(gitCalls, ['fill'], 'only `git credential fill`: no reject, approve or ls-remote');
 });
 
 test('history: read after a good reading, from the cursor (a year back the first time), handed to the usage push, cursor moved once stored', async () => {
