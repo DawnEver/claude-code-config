@@ -47,7 +47,8 @@
 
 ## Git
 
-- Imperative conventional commits; tests before commit/push; never force-push shared branches; retry 3× before reporting blocked. On Windows Bash use heredocs, not PowerShell here-strings, for multi-line messages.
+- In a family repo (one adopting dev-lab), its git and development rules are dev-lab's (`dev_lab.dev.rules`, rendered into the repo's `.claude/rules/`); elsewhere, the repo's own rules.
+- On Windows Bash use heredocs, not PowerShell here-strings, for multi-line messages.
 
 ## Memory
 
