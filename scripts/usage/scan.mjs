@@ -102,14 +102,16 @@ export class UsageScanner {
         const subagent = src.agent === 'claude' && path.basename(path.dirname(file)) === 'subagents';
         const t = src.agent === 'claude' ? claudeTranscript(text, { subagent }) : codexTranscript(text);
         await yieldNow();   // a large file must not hold the daemon's event loop
-        const mark = { size: st.size, mtimeMs: st.mtimeMs, sent: t.turns.length, costs: JSON.stringify(t.costs) };
+        // A price goes with its session's last turn end: the report's range test (usage-store.mjs report).
+        const lastAt = t.turns.reduce((m, r) => Math.max(m, r.ended_at), 0) || null;
+        const mark = { size: st.size, mtimeMs: st.mtimeMs, sent: t.turns.length, costs: JSON.stringify([t.costs, lastAt]) };
         if (!t.session) { pending[file] = mark; continue; }
         const account = src.account();
         for (const r of t.turns.slice(Math.max(0, (was?.sent ?? 0) - 1))) {
           const { cwd, ...row } = r;
           turns.push({ ...row, agent: src.agent, session: t.session, account, seat: src.seat, project: this.projectOf(cwd, t.repositoryUrl) });
         }
-        if (mark.costs !== was?.costs) for (const c of t.costs) costs.push({ agent: src.agent, session: t.session, ...c });
+        if (mark.costs !== was?.costs) for (const c of t.costs) costs.push({ agent: src.agent, session: t.session, ...c, last_at: lastAt });
         pending[file] = mark;
         if (turns.length >= limit) full = true;
       }

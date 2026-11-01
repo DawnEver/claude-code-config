@@ -51,8 +51,14 @@ Tokens mean the same on both hosts: `input` uncached, `cache_read`, `cache_write
 - Budget (free tier: 100k rows written, 5M read a day). D1 counts every row a query scans, so
   no reader of the Usage tab scans `turns`: triggers roll each turn into `usage_hours` (one row
   per UTC hour, agent, project, model and machine; `migrations/0002_usage_hours.sql`), and a
-  report reads only that and `session_costs` by `updated_at`. A re-sent turn that did not change
-  is no write. The Worker also holds each range's report 5 min (`REPORT_TTL_MS`, api.mjs).
+  report reads only that and `session_costs` by `last_at` (the session's last turn end, sent
+  with its price; before migration 0005 a report scanned all of `turns`, ~40k rows). Writes are
+  billed per row and per index entry, so nothing is written that did not change: a re-sent turn,
+  price, pull request or commit, or a quota reading no higher than the stored one, is no write;
+  `turns` carries no index beyond its key, and `forge_commits` is its own index. Forge
+  backfill is capped per host per day (docs/dashboard.md "Code"). Measure with
+  `npx wrangler d1 insights agents-usage --timePeriod 1d --sort-by writes --sort-type sum`
+  (its 24 h are rolling, not the quota's UTC day). The Worker also holds each range's report 5 min (`REPORT_TTL_MS`, api.mjs).
   Before the rollup, an open Usage tab read ~110k rows per report and spent the 5M in a day
   (2026-10-26). Ad-hoc `npm run usage` queries over `turns` still scan what they touch.
 

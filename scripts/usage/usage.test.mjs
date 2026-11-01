@@ -297,7 +297,8 @@ test('store: a session\'s cost falls in the range of its last turn, not of when 
     turnRow({ session: 'OLD', ...at('2026-10-10T10:00:00Z') }), turnRow({ session: 'NEW', ...at('2026-10-29T10:00:00Z') })] });
   // A backfill: both prices arrive now.
   await ingest(db, 'host-a', { turns: [], quota: [], resources: [], costs: [
-    { agent: 'claude', session: 'OLD', model: 'claude-opus-5-5', cost_usd: 10 }, { agent: 'claude', session: 'NEW', model: 'claude-opus-5-5', cost_usd: 2 }] }, now);
+    { agent: 'claude', session: 'OLD', model: 'claude-opus-5-5', cost_usd: 10, last_at: at('2026-10-10T10:00:00Z').ended_at },
+    { agent: 'claude', session: 'NEW', model: 'claude-opus-5-5', cost_usd: 2, last_at: at('2026-10-29T10:00:00Z').ended_at }] }, now);
   assert.equal((await report(db, { days: 7, now })).costUsd, 2);
   assert.equal((await report(db, { days: 30, now })).costUsd, 12);
 });
@@ -309,7 +310,7 @@ test('store: a filter narrows series, totals and cost; each list is a facet of t
   const t = (session, project, model, machine, output) => ({ machine, row: turnRow({ session, turn: session, project, model, output, input: 0, cache_read: 0, cache_write: 0, ...at }) });
   const rows = [t('a', 'p1', 'm1', 'host-a', 10), t('b', 'p2', 'm1', 'host-a', 20), t('c', 'p1', 'm2', 'host-b', 40), t('d', null, 'm2', 'host-a', 80)];
   for (const { machine, row } of rows) {
-    await ingest(db, machine, { turns: [row], quota: [], resources: [], costs: [{ agent: 'claude', session: row.session, model: row.model, cost_usd: row.output }] });
+    await ingest(db, machine, { turns: [row], quota: [], resources: [], costs: [{ agent: 'claude', session: row.session, model: row.model, cost_usd: row.output, last_at: row.ended_at }] });
   }
   const host = (r) => Object.fromEntries(r.map((x) => [x.k, x.output]));
   const out = (r) => r.daily.reduce((n, d) => n + d.output, 0);
@@ -333,7 +334,7 @@ test('store: a filter narrows series, totals and cost; each list is a facet of t
   // One session, two models in two projects: a project filter prices only its own model's share.
   const mixed = [turnRow({ session: 'X', turn: 'x1', project: 'p1', model: 'm1', ...at }), turnRow({ session: 'X', turn: 'x2', project: 'p2', model: 'm2', ...at })];
   await ingest(db, 'host-a', { turns: mixed, quota: [], resources: [], costs: [
-    { agent: 'claude', session: 'X', model: 'm1', cost_usd: 1 }, { agent: 'claude', session: 'X', model: 'm2', cost_usd: 9 }] });
+    { agent: 'claude', session: 'X', model: 'm1', cost_usd: 1, last_at: mixed[0].ended_at }, { agent: 'claude', session: 'X', model: 'm2', cost_usd: 9, last_at: mixed[1].ended_at }] });
   assert.equal((await report(db, { days: 7, now, filter: { project: ['p1'], model: ['m2'] } })).costUsd, 40, 'session c only: X ran m2 in p2, not p1');
   assert.equal((await report(db, { days: 7, now, filter: { project: ['p2'] } })).costUsd, 9 + 20);
 });

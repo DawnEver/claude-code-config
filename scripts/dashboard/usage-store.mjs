@@ -25,11 +25,13 @@ const SQL = {
   turn: insert('turns', TURN_COLS, 'agent, session, turn, model', `${TURN_VALUES.map((c) => `${c} = excluded.${c}`).join(', ')}
   WHERE (${TURN_VALUES.map((c) => `turns.${c}`).join(', ')}) IS NOT (${TURN_VALUES.map((c) => `excluded.${c}`).join(', ')})`),
   // updated_at is when the price last changed (not the report's range test: see report).
-  cost: insert('session_costs', ['agent', 'session', 'model', 'machine', 'cost_usd', 'updated_at'], 'agent, session, model',
-    'cost_usd = excluded.cost_usd, machine = excluded.machine, updated_at = excluded.updated_at WHERE session_costs.cost_usd IS NOT excluded.cost_usd'),
-  // Use only grows within a window: keep the highest reading.
+  cost: insert('session_costs', ['agent', 'session', 'model', 'machine', 'cost_usd', 'updated_at', 'last_at'], 'agent, session, model',
+    'cost_usd = excluded.cost_usd, machine = excluded.machine, updated_at = excluded.updated_at, last_at = COALESCE(excluded.last_at, session_costs.last_at) '
+    + 'WHERE (session_costs.cost_usd, session_costs.last_at) IS NOT (excluded.cost_usd, COALESCE(excluded.last_at, session_costs.last_at))'),
+  // Use only grows within a window: a reading is written only when it is higher (every push re-sends
+  // each window; rewriting an unchanged one cost a row each time), with when it was seen.
   quota: insert('quota_windows', ['account', 'agent', 'span', 'window_start', 'window_ms', 'used', 'observed_at'], 'account, span, window_start',
-    'used = MAX(used, excluded.used), observed_at = MAX(observed_at, excluded.observed_at)'),
+    'used = excluded.used, observed_at = excluded.observed_at WHERE excluded.used > quota_windows.used'),
   // An hour two daemons sampled (a hand-over) is the sum of both.
   resources: insert('resources', RES_COLS, 'machine, hour',
     'samples = samples + excluded.samples, cpu_sum = cpu_sum + excluded.cpu_sum, cpu_max = MAX(cpu_max, excluded.cpu_max), '
@@ -42,7 +44,7 @@ const SQL = {
 export async function ingest(db, machine, batch, now = Date.now()) {
   const stmts = [
     ...batch.turns.map((r) => db.prepare(SQL.turn).bind(...TURN_COLS.map((c) => (c === 'machine' ? machine : r[c])))),
-    ...batch.costs.map((r) => db.prepare(SQL.cost).bind(r.agent, r.session, r.model, machine, r.cost_usd, now)),
+    ...batch.costs.map((r) => db.prepare(SQL.cost).bind(r.agent, r.session, r.model, machine, r.cost_usd, now, r.last_at ?? null)),
     ...batch.quota.map((r) => db.prepare(SQL.quota).bind(r.account, r.agent, r.span, r.window_start, r.window_ms, r.used, r.observed_at)),
     ...batch.resources.map((r) => db.prepare(SQL.resources).bind(...RES_COLS.map((c) => (c === 'machine' ? machine : r[c])))),
     ...(batch.commits ?? []).map((r) => db.prepare(SQL.commit).bind(r.repo, r.at, r.sha, r.author)),
@@ -116,8 +118,9 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now(),
   const since = Math.floor((now + off) / ms - buckets + 1) * ms - off;
   const sel = Object.fromEntries(FILTER_DIMS.map((d) => [d, filter[d]?.length ? new Set(filter[d]) : null]));
   const all = (sql, ...args) => db.prepare(sql).bind(...args).all().then((r) => r.results);
-  // A session's price falls in the range its last turn ended in. Not updated_at: that is when
-  // the price arrived, so a backfill would put every past session into the current week.
+  // A session's price falls in the range its last turn ended in (last_at, sent with the price).
+  // Not updated_at: that is when the price arrived, so a backfill would put every past session
+  // into the current week.
   // A price is per session, model and machine; its project is its turns'.
   const ins = (list) => list.map(() => '?').join(', ');
   const costWhere = [
@@ -130,7 +133,7 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now(),
   const [hours, cost] = await Promise.all([
     all('SELECT * FROM usage_hours WHERE hour > ?', since - 3600000),
     all(`SELECT SUM(cost_usd) AS usd FROM session_costs c
-      WHERE (SELECT MAX(ended_at) FROM turns t WHERE t.agent = c.agent AND t.session = c.session) >= ?${costWhere.map((w) => ` AND ${w}`).join('')}`,
+      WHERE c.last_at >= ?${costWhere.map((w) => ` AND ${w}`).join('')}`,
     since, ...(sel.model ? filter.model : []), ...(sel.machine ? filter.machine : []), ...(sel.project ? filter.project : [])),
   ]);
   const keeps = (r, except) => FILTER_DIMS.every((d) => d === except || !sel[d] || sel[d].has(r[d]));

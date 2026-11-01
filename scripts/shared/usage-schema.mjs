@@ -44,7 +44,7 @@ function parseCost(r) {
   const session = id(r?.session);
   const model = text(r?.model, 100);
   const cost = real(r?.cost_usd, 0, 1e6);
-  return a && session && model && cost !== null ? { agent: a, session, model, cost_usd: cost } : null;
+  return a && session && model && cost !== null ? { agent: a, session, model, cost_usd: cost, last_at: epoch(r?.last_at) } : null;
 }
 
 function parseQuota(r) {

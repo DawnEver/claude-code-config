@@ -52,7 +52,7 @@ CREATE TABLE quota_windows (
   window_start INTEGER NOT NULL,
   window_ms INTEGER NOT NULL,
   used REAL NOT NULL,           -- percent of the window's quota, 0..100
-  observed_at INTEGER NOT NULL, -- the last reading
+  observed_at INTEGER NOT NULL, -- when `used` was read (a reading is stored only when higher)
   PRIMARY KEY (account, span, window_start)
 );
 
