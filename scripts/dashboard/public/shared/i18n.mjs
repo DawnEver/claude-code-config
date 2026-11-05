@@ -139,6 +139,7 @@ const TABLE = {
   'code.ci.pending': { en: 'CI running', zh: 'CI 运行中' },
   'code.ci.none': { en: 'no CI', zh: '无 CI' },
   'code.toSessions': { en: (v) => `Sessions of ${v.project}`, zh: (v) => `查看 ${v.project} 的会话` },
+  'code.sessionsChip': { en: 'Sessions', zh: '会话' },
   'code.history.none': { en: 'History shows in Telegram (none in the example data)', zh: '历史分布在 Telegram 中显示（示例数据没有）' },
   'code.history.error': { en: (v) => `History not available: ${v.error}`, zh: (v) => `历史数据不可用：${v.error}` },
   'code.history.totals': { en: (v) => `${plural(v.commits, 'commit')} · ${plural(v.opened, 'PR')} opened · ${v.merged} merged`, zh: (v) => `${v.commits} 个提交 · 新开 ${v.opened} 个 PR · 合并 ${v.merged} 个` },

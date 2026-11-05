@@ -335,8 +335,9 @@ function foldRow(id, opts) {
   row.tabIndex = 0;
   if (title) row.title = title;
   const top = el('div', 'qrow-top');
-  // A tap opens or folds the row, as everywhere; `go` ({label, to}) adds a jump icon of its own (a repo to its sessions).
-  const jump = go && el('button', 'go', '↗');
+  // A tap opens or folds the row, as everywhere; `go` ({label, to}) adds an in-app jump of its own (a repo to its sessions):
+  // a labelled pill, not an arrow — an arrow reads as an external link to the forge.
+  const jump = go && el('button', 'go', tr('code.sessionsChip'));
   if (jump) {
     jump.title = go.label;
     jump.setAttribute('aria-label', go.label);

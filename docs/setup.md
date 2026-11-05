@@ -124,19 +124,50 @@ so they apply however Codex was started (including the shared app-server daemon)
 
 ## Adding a host to the fleet
 
-1. Clone this repo **outside** any synced folder; install Node, Git, and the CLIs.
-2. Wait for the cloud client to finish downloading the sync dir, then
-   `node scripts/setup/setup.js --sync-dir "<cloud>/Sync/cc-config" --machine <NAME>`
-   (`<NAME>` unique per host; `--init-sync-dir` only on the very first host).
-   This links the payload, including the shared `private-markers` denylist, and sets the
-   public-hygiene pre-commit hook.
-3. Configure provider keys through the credential store and this host's transport secrets
-   in `~/.claude/claude_env_settings.local.json` (for
-   the bridge, a bot of its own — [`bridge.md`](bridge.md) § Setup steps 2–3, 6).
-   Re-run setup: with a bot token or valid dashboard configuration it installs the collector
-   service and registers the channel; telemetry-only mode never polls or writes Telegram.
-4. `npm run doctor` must report no FAIL. Its WARNs name what this host still lacks:
-   `machine-name`, `private-markers-missing`, `bridge-host`.
+Everything below is per user account; nothing needs admin rights.
+
+1. **Tools on the user PATH.** Node (e.g. via fnm: add `%APPDATA%\fnm\aliases\default`),
+   Git, Claude Code (`~/.local/bin`, which is also where setup puts `ccc`/`ccds`), Codex, and
+   `uv`. Set the *user* PATH (`[Environment]::SetEnvironmentVariable('Path', …, 'User')`),
+   then open a new terminal — an already-running session and its `!` shell keep the old PATH.
+   Setup installs `ccc`/`ccds` only when it finds `claude`, so it must be on PATH first.
+2. **Clone, outside any synced folder**, this repo and its sibling ai-lab
+   (`git clone https://github.com/DawnEver/ai-lab.git`), then `uv sync` in ai-lab to build
+   `.venv` — its python is the provider catalogue ([`providers.md`](providers.md)).
+3. **Setup.** Wait for the cloud client to finish downloading the sync dir, then
+   ```sh
+   node scripts/setup/setup.js --sync-dir "<cloud>/Sync/cc-config" --machine <NAME> \
+     --ai-lab-python "<ai-lab>/.venv/Scripts/python.exe"
+   ```
+   `<NAME>` is unique per host and is what `seats[].machines` in the shared
+   `claude_env_settings.json` names; `--init-sync-dir` only on the very first host.
+   This links the payload (including `private-markers`), the seat dirs, and the
+   public-hygiene pre-commit hook. If it WARNs that a repo copy is "detached and newer",
+   compare it with the template: equal means an earlier run without `--sync-dir` seeded it —
+   delete it and re-run. Plain files in `~/.claude` are re-linked with `--replace` (it keeps a
+   `*.setup-bak`).
+4. **Plugins.** If doctor reports `plugin-enabled-not-installed`:
+   `claude plugin install <name>@cc-market` for each.
+5. **Seats.** For each seat listed for this machine: `ccc --seat <alias>`, then `/login`.
+6. **Provider keys.** `<ai-lab python> -m ai_lab.auth login <provider> --task session`
+   (reads the key without echo; enables `ccds`/`cods`).
+7. **Bridge.** A bot of its own in `~/.claude/claude_env_settings.local.json` (`bridge.botToken`),
+   then re-run setup ([`bridge.md`](bridge.md) § Setup). In Telegram, add the bot to every
+   project group and the fallback group as **admin with Manage Topics**; until then the
+   daemon log shows `createForumTopic … chat not found`.
+8. **Dashboard.** `npx wrangler login` (if OAuth fails with `request_forbidden`, sign in to
+   dash.cloudflare.com in the default browser first), then `npm run dashboard -- host-token`
+   ([`dashboard.md`](dashboard.md) § Setup). The daemon picks the token up within a minute,
+   but the new Worker config can take ~5 minutes to reach every edge: `dashboard: push failed
+   (HTTP 401)` in `~/.claude/bridge/daemon.log` in that window is expected and clears with
+   `dashboard: push restored`. Only if 401 persists beyond that, run `npm run dashboard -- deploy`.
+9. **Managed antivirus.** Sophos' behaviour detection (`Cleanup_3c`, source 7) can quarantine
+   `scripts/setup/setup.js` right after a run — links, a HKCU Run key, PATH and child processes
+   look like persistence. Symptom: `git status` shows ` D scripts/setup/setup.js` and doctor
+   fails with `ERR_MODULE_NOT_FOUND`; proof: `C:\ProgramData\Sophos\…\SophosSafestore.log`.
+   `git restore` it, and ask IT for an exclusion on the repo path — do not work around it.
+10. **Verify.** `npm run doctor` must report no FAIL. Its WARNs name what this host still lacks:
+   `machine-name`, `private-markers-missing`, `bridge-host`. Logs: `~/.claude/bridge/daemon.log`.
 
 ## Upgrading an existing install
 
