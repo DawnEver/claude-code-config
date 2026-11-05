@@ -66,7 +66,7 @@
         "git": "magenta",
         "gitBranch": "cyan",
         "label": "dim",
-        "custom": "208",
+        "custom": 208,
         "barFilled": "█",
         "barEmpty": "░"
     }

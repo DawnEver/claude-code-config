@@ -137,13 +137,31 @@ export function getCodexLinks(baseSourceDir = sourceDir) {
 // into ~/.claude. It is therefore NOT tracked: while it was, `git checkout`/`pull` was the
 // writer that replaced the inode and broke the link §10 describes. The tracked file is
 // config.template.json; materialise the real one from it when absent.
+// It also repairs a 256-color index written as a string ("208"): claude-hud accepts only the
+// number and rejects the whole config otherwise. The template once shipped one, so every host
+// copied it; the write is in place (same inode) so the ~/.claude hard link stays intact.
 export function ensureClaudeHudConfig(repoRoot = sourceDir) {
   const dir = path.join(repoRoot, 'claude_plugins', 'claude-hud');
   const real = path.join(dir, 'config.json');
   const template = path.join(dir, 'config.template.json');
-  if (fs.existsSync(real) || !fs.existsSync(template)) return false;
-  fs.copyFileSync(template, real);
-  return true;
+  if (!fs.existsSync(real)) {
+    if (!fs.existsSync(template)) return false;
+    fs.copyFileSync(template, real);
+    return true;
+  }
+  let config;
+  try { config = JSON.parse(fs.readFileSync(real, 'utf8')); } catch { return false; }
+  const colors = config?.colors;
+  if (!colors || typeof colors !== 'object') return false;
+  let changed = false;
+  for (const [key, value] of Object.entries(colors)) {
+    if (typeof value === 'string' && /^\d{1,3}$/.test(value) && Number(value) <= 255) {
+      colors[key] = Number(value);
+      changed = true;
+    }
+  }
+  if (changed) fs.writeFileSync(real, `${JSON.stringify(config, null, 4)}\n`);
+  return changed;
 }
 
 export function removeExisting(destPath) {

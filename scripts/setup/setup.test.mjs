@@ -299,6 +299,23 @@ test('ensureClaudeHudConfig: never clobbers the machine-tuned config', async () 
     '{"lineLayout":"expanded","maxWidth":120}');
 });
 
+test('ensureClaudeHudConfig: repairs a 256-color index written as a string, in place', async () => {
+  const { ensureClaudeHudConfig } = await import('./setup.js');
+  const repo = tmp('repo');
+  const dir = path.join(repo, 'claude_plugins', 'claude-hud');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.template.json'), '{}');
+  const real = path.join(dir, 'config.json');
+  fs.writeFileSync(real, JSON.stringify({ maxWidth: 120, colors: { custom: '208', label: 'dim', git: '#ff8800' } }));
+  const linked = path.join(repo, 'linked.json');
+  fs.linkSync(real, linked);   // the ~/.claude side of the hard link
+
+  assert.equal(ensureClaudeHudConfig(repo), true);
+  const fixed = JSON.parse(fs.readFileSync(linked, 'utf8'));
+  assert.deepEqual(fixed, { maxWidth: 120, colors: { custom: 208, label: 'dim', git: '#ff8800' } });
+  assert.equal(ensureClaudeHudConfig(repo), false);
+});
+
 test('a seat dir links what Claude Code reads from its config dir, and the base dir plugins', () => {
   assert.deepEqual(SEAT_LINKS.map((l) => l.dest).sort(), ['CLAUDE.md', 'keybindings.json', 'output-styles', 'plugins', 'settings.json', 'skills']);
   const plugins = SEAT_LINKS.find((l) => l.dest === 'plugins');
