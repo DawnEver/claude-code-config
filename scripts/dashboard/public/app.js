@@ -121,16 +121,41 @@ function badges(s) {
   return out;
 }
 
+/** Running tasks listed under a session at most; the rest are counted (the tasks icon lists all). */
+const TASK_LINES = 5;
+// Sessions whose full task list is open (this page's life): opened by the tasks icon, never the row.
+const tasksOpen = new Set();
+
+/** The tasks icon: how many tasks; a tap lists them all or folds them, and never opens the Topic. */
+function tasksButton(s, open, redraw) {
+  const btn = el('span', `tasks-btn${open ? ' on' : ''}`);
+  btn.setAttribute('role', 'button');
+  btn.setAttribute('tabindex', '0');
+  btn.setAttribute('aria-expanded', String(open));
+  btn.setAttribute('aria-label', tr(open ? 'session.tasksHide' : 'session.tasksShow'));
+  btn.title = btn.getAttribute('aria-label');
+  btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h2M4 12h2M4 18h2M9 6h11M9 12h11M9 18h11"/></svg>';
+  btn.append(el('b', null, String(s.tasks.length)));
+  const toggle = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!tasksOpen.delete(s.id)) tasksOpen.add(s.id);
+    tg?.HapticFeedback?.selectionChanged?.();
+    redraw();
+  };
+  btn.addEventListener('click', toggle);
+  btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') toggle(e); });
+  return btn;
+}
+
 /**
  * One session as Telegram lists a chat: the agent as avatar (its status as the dot on it), the
  * name and the time of the last activity, then its state and where it runs (`withHost`, or in a
  * project group `inProject`: the machine); on the right the messages the Topic got since you
  * last spoke there, and @ while a mention waits for you. Counts only: no message text reaches the dashboard.
  */
-/** Running tasks listed under a session at most; the rest are counted. */
-const TASK_LINES = 5;
-
-function sessionRow(s, { withHost = false, inProject = false } = {}) {
+function sessionRow(s, opts = {}) {
+  const { withHost = false, inProject = false } = opts;
   const status = displayStatus(s);
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
   // The platform the session spends: a provider's own mark (ccds, cods), else the agent's maker.
@@ -153,10 +178,16 @@ function sessionRow(s, { withHost = false, inProject = false } = {}) {
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
   // No reading of it anywhere: name what it spends — the platform for an API-key session, else the seat.
   else if (s.provider || s.seat) sub.append(document.createTextNode(` · ${s.provider ? providerName(s.provider) : s.seat}`));
-  bottom.append(sub, ...badges(s));
+  const open = tasksOpen.has(s.id) && tasks.all.length > 0;
+  bottom.append(sub, ...(tasks.all.length ? [tasksButton(s, open, () => row.replaceWith(sessionRow(s, opts)))] : []), ...badges(s));
   body.append(top, bottom);
-  // What runs now, one line each: kind, how long, what (a command, an agent's description).
-  if (tasks.running.length) {
+  if (open) {
+    // Every task listed: status, kind, how long it ran (or runs so far), what.
+    const list = el('div', 'tasks all');
+    for (const x of tasks.all) list.append(el('div', `task t-${x.status}`, `${tr(`task.status.${x.status}`)} · ${tr(`task.${x.kind}`)} ${x.for} · ${x.label}`));
+    body.append(list);
+  } else if (tasks.running.length) {
+    // What runs now, one line each: kind, how long, what (a command, an agent's description).
     const list = el('div', 'tasks');
     for (const x of tasks.running.slice(0, TASK_LINES)) list.append(el('div', 'task', `${tr(`task.${x.kind}`)} ${x.for} · ${x.label}`));
     if (tasks.running.length > TASK_LINES) list.append(el('div', 'task', tr('session.tasksMore', { n: tasks.running.length - TASK_LINES })));

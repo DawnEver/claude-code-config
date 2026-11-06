@@ -141,13 +141,14 @@ export const sessionLabel = (s, lang = 'en') => s.name ?? s.project ?? t('sessio
 
 /**
  * A session's tasks (scripts/bridge/tasks.mjs) as its row shows them: how many shells and
- * subagents run now, each running one with how long it has run (oldest first, as listed), and
- * how many failed lately.
+ * subagents run now, each running one with how long it has run (oldest first, as listed), how
+ * many failed lately, and `all` of them as listed, each with how long it ran (or runs so far).
  */
 export function taskView(tasks = [], now = Date.now()) {
-  const running = tasks.filter((x) => x.status === 'running');
+  const all = tasks.map((x) => ({ ...x, for: countdown(x.endedAt ?? now, x.startedAt) }));
+  const running = all.filter((x) => x.status === 'running');
   return { shells: running.filter((x) => x.kind === 'shell').length, agents: running.filter((x) => x.kind === 'agent').length,
-    failed: tasks.filter((x) => x.status === 'failed').length, running: running.map((x) => ({ ...x, for: countdown(now, x.startedAt) })) };
+    failed: tasks.filter((x) => x.status === 'failed').length, running, all };
 }
 
 /** A chat list's time column: the clock today, the weekday within a week, else the date. */

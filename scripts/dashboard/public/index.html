@@ -110,6 +110,11 @@
   .chat-bottom .sub { flex: 1; margin-top: 2px; font-size: var(--t2); }
   .tasks { margin-top: 3px; }
   .task { color: var(--hint); font-size: var(--t3); font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tasks.all .task { white-space: normal; overflow-wrap: anywhere; padding: 1px 0; }
+  .task.t-failed { color: var(--warn); }
+  .tasks-btn { display: inline-flex; align-items: center; gap: 3px; flex: none; padding: 2px 7px; border-radius: 10px; background: var(--press); color: var(--hint); font-size: var(--t3); cursor: pointer; }
+  .tasks-btn.on { color: var(--accent); }
+  .tasks-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
   .chat-time { flex: none; color: var(--hint); font-size: var(--t3); } .chat-time.fresh { color: var(--accent); }
   .badge { flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); color: var(--accent-fg);
     font: 600 var(--t3)/22px system-ui, sans-serif; text-align: center; }

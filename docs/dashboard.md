@@ -73,7 +73,8 @@ no API, no authentication.
   then those ended within 10 min with their end and status (`completed`, `failed`, `stopped`);
   at most 50, each label (the command, or the agent's type and description) one line of at
   most 200 characters. The row says how many shells and agents run and lists each running
-  one with how long it has run. Claude: `bridge-hook.js` reports a Bash or Agent call's start
+  one with how long it has run; its tasks icon (with the count) lists every task, ended ones
+  too, with status and how long it ran — a tap there never opens the Topic, the row still does. Claude: `bridge-hook.js` reports a Bash or Agent call's start
   (PreToolUse) and end (PostToolUse, PostToolUseFailure); a call run in the background ends
   when a later turn end no longer finds it open in the transcript (`backgroundTasks`: started
   minus notified or stopped; Monitors are not counted; Claude wakes when one ends). Codex:
