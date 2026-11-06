@@ -8,7 +8,18 @@ import { TASK_LABEL_MAX, MAX_TASKS } from '../dashboard/public/shared/vocab.mjs'
 /** An ended task stays listed this long, so a short one is seen at all. */
 export const ENDED_KEEP_MS = 10 * 60000;
 
-const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, TASK_LABEL_MAX);
+const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+
+// A leading `cd <dir> &&` (or `;`), repeated: where it runs, not what it does.
+const LEADING_CD = /^(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*)+/;
+// A home directory, as Windows, Git Bash, macOS or Linux spell it: shown as ~.
+const HOME = /(?:[A-Za-z]:[\\/]|\/[a-z]\/)Users[\\/][^\\/\s"']+|\/(?:Users|home)\/[^/\s"']+/g;
+
+/** What a task is called: one line, a shell's command without its leading cd and with ~ for home; bounded. */
+export function taskLabel(kind, label) {
+  const line = oneLine(label);
+  return (kind === 'shell' ? line.replace(LEADING_CD, '').replace(HOME, '~') : line).slice(0, TASK_LABEL_MAX);
+}
 
 export class TaskBoard {
   constructor() {
@@ -19,8 +30,10 @@ export class TaskBoard {
   start(id, { kind, label, at, background = false }) {
     const held = this.tasks.get(id);
     if (held?.kind) return;
-    this.tasks.set(id, { id, kind, label: oneLine(label), background: !!background, status: held?.status ?? 'running',
-      startedAt: at, endedAt: held?.endedAt ?? null });
+    // A foreground start stamped before the last turn end arrived late (async hooks): that turn ended it.
+    const settled = !background && !held && this.settledAt >= at;
+    this.tasks.set(id, { id, kind, label: taskLabel(kind, label), background: !!background, status: held?.status ?? (settled ? 'completed' : 'running'),
+      startedAt: at, endedAt: held?.endedAt ?? (settled ? this.settledAt : null) });
   }
 
   /** A task ended (`status` one of TASK_STATUSES but running). The first end stands. */
@@ -35,6 +48,15 @@ export class TaskBoard {
   settleBackground(openIds, at) {
     const open = new Set(openIds);
     for (const t of this.tasks.values()) if (t.background && t.status === 'running' && !open.has(t.id)) this.end(t.id, { status: 'completed', at });
+  }
+
+  /**
+   * The turn ended: every foreground call of it has returned, so a foreground task still running
+   * lost its end (an async hook dropped, a daemon handover) and ends now. Background ones run on.
+   */
+  settleForeground(at) {
+    this.settledAt = Math.max(this.settledAt ?? 0, at);
+    for (const t of this.tasks.values()) if (!t.background && t.status === 'running') this.end(t.id, { status: 'completed', at });
   }
 
   /** The session ended: nothing it started runs on. */

@@ -902,11 +902,11 @@ test('view: a session tasks — what runs now by kind, each for how long (oldest
     { id: 'c', kind: 'shell', label: 'false', background: false, status: 'failed', startedAt: NOW - 90000, endedAt: NOW - 60000 },
     { id: 'd', kind: 'shell', label: 'ls', background: false, status: 'completed', startedAt: NOW - 90000, endedAt: NOW - 80000 }];
   const v = taskView(tasks, NOW);
-  assert.deepEqual([v.shells, v.agents, v.failed], [1, 1, 1]);
+  assert.deepEqual([v.running.length, v.failed], [2, 1]);
   assert.deepEqual(v.running.map((t) => [t.id, t.for]), [['a', '12m'], ['b', '1m']]);
   assert.deepEqual(v.all.map((t) => [t.id, t.status, t.for]), [['a', 'running', '12m'], ['b', 'running', '1m'], ['c', 'failed', '1m'], ['d', 'completed', '0m']],
     'every task, as listed: running for how long so far, ended for how long it ran');
-  assert.deepEqual(taskView(undefined, NOW), { shells: 0, agents: 0, failed: 0, running: [], all: [] });
+  assert.deepEqual(taskView(undefined, NOW), { failed: 0, running: [], all: [] });
   const parsed = parseHostPush(push({ sessions: [session({ tasks: [...tasks, { id: 'x', kind: 'daemon', status: 'running', startedAt: NOW }] })] })).sessions[0];
   assert.deepEqual(parsed.tasks.map((t) => t.id), ['a', 'b', 'c', 'd'], 'an unknown kind is dropped at the boundary');
 });

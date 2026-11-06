@@ -403,7 +403,9 @@ export class ClaudeAdapter extends EventEmitter {
     const at = Number.isFinite(m.at) ? m.at : this.now();
     if (m.task?.op === 'start') s.tasks.start(m.task.id, { ...m.task, at });
     if (m.task?.op === 'end') s.tasks.end(m.task.id, { status: m.task.status, at });
-    // The background tasks the transcript still sees running at a turn end: every other has ended.
+    // A turn end: every foreground call has returned; of the background ones, those the transcript
+    // still sees running run on, every other has ended.
+    if (m.kind === 'final') s.tasks.settleForeground(at);
     if (m.background) s.tasks.settleBackground(m.background, at);
     // Async hooks may land out of order: a state stamped earlier never overwrites a later one.
     if (!(m.at < s.stateAt)) {

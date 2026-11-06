@@ -129,9 +129,9 @@ export function backgroundTasks(jsonl, { now = Date.now(), maxAgeMs = 24 * 36000
 // The tools whose calls are tasks (tasks.mjs): a shell, and an agent (`Task` is its older name).
 const TASK_TOOLS = { Bash: 'shell', Agent: 'agent', Task: 'agent' };
 
-/** What a tool call is, as a task: the command, or the agent's type and description. */
+/** What a tool call is, as a task: a shell's description (what it does), else its command; an agent's type and description. */
 function taskLabel(kind, input = {}) {
-  if (kind === 'shell') return String(input.command ?? '');
+  if (kind === 'shell') return String(input.description || input.command || '');
   return [input.subagent_type, input.description].filter(Boolean).join(': ');
 }
 

@@ -75,6 +75,7 @@ test('taskFor: a shell or an agent call is a task — started, ended, failed, or
   const p = (event, tool, input = {}, extra = {}) => mirrorFor({ hook_event_name: event, session_id: 's', tool_name: tool, tool_use_id: 'u1', tool_input: input, ...extra }, {});
   assert.deepEqual(p('PreToolUse', 'Bash', { command: 'npm test' }),
     { sessionId: 's', kind: 'activity', state: 'running', task: { op: 'start', id: 'u1', kind: 'shell', label: 'npm test', background: false } });
+  assert.equal(p('PreToolUse', 'Bash', { command: 'cd x && npm test', description: 'Run the unit tests' }).task.label, 'Run the unit tests', 'what it does, when said');
   assert.deepEqual(p('PreToolUse', 'Agent', { subagent_type: 'Explore', description: 'find hooks', run_in_background: true }).task,
     { op: 'start', id: 'u1', kind: 'agent', label: 'Explore: find hooks', background: true });
   assert.deepEqual(p('PreToolUse', 'Task', { description: 'old name' }).task.kind, 'agent');

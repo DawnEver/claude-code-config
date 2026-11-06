@@ -71,10 +71,16 @@ no API, no authentication.
 - **Tasks**: a session carries `tasks`, the shells and subagents it runs besides its own turn
   (`TaskBoard` in `scripts/bridge/tasks.mjs`, one per session): running ones with their start,
   then those ended within 10 min with their end and status (`completed`, `failed`, `stopped`);
-  at most 50, each label (the command, or the agent's type and description) one line of at
-  most 200 characters. The row says how many shells and agents run and lists each running
-  one with how long it has run; its tasks icon (with the count) lists every task, ended ones
-  too, with status and how long it ran — a tap there never opens the Topic, the row still does. Claude: `bridge-hook.js` reports a Bash or Agent call's start
+  at most 50, each label one line of at most 200 characters: a Claude shell's `description`
+  (what it does), else its command without a leading `cd … &&` and with `~` for home; an
+  agent's type and description. Each task is one line of three columns — a kind tag (`>_`
+  shell, `agent`, each its own colour), what it does (a `bg` mark when in the background),
+  how long it ran or runs so far — and its state is the line's colour (ended dimmed, failed
+  red). Folded, the row lists what runs; its tasks icon (counting what runs) lists every task,
+  ended ones too, with labels in full — a tap there never opens the Topic, the row still does.
+  A turn end ends every foreground task still running (its end hook was lost; a foreground
+  call cannot outlive its turn), and a foreground start stamped before that turn end arrived
+  late and counts as ended. Claude: `bridge-hook.js` reports a Bash or Agent call's start
   (PreToolUse) and end (PostToolUse, PostToolUseFailure); a call run in the background ends
   when a later turn end no longer finds it open in the transcript (`backgroundTasks`: started
   minus notified or stopped; Monitors are not counted; Claude wakes when one ends). Codex:
