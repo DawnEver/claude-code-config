@@ -63,6 +63,15 @@ test('a shell is labelled by what it does: its description, else the command wit
   assert.deepEqual(b.list(5).map((t) => t.label), ['Run the unit tests', 'git status && ls', 'python -m pytest ~/my repo/tests', 'cat ~/notes.md']);
 });
 
+test('a monitor runs until it expires; a turn end and the transcript leave it alone', () => {
+  const b = new TaskBoard();
+  b.start('m1', { kind: 'monitor', label: 'errors in deploy.log', at: 1000, background: true, until: 1000 + 300000 });
+  b.settleForeground(2000);
+  b.settleBackground([], 2000);
+  assert.deepEqual(ids(b, 2000), ['m1'], 'not a shell the transcript tracks: it is not ended by a turn end');
+  assert.deepEqual(ids(b, 301000), [], 'gone once it expired');
+});
+
 test('closing a session ends everything it ran; the list is bounded', () => {
   const b = new TaskBoard();
   for (let i = 0; i < MAX_TASKS + 10; i++) b.start(`t${i}`, { kind: 'shell', label: String(i), at: i });

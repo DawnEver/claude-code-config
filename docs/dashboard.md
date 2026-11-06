@@ -68,13 +68,18 @@ no API, no authentication.
   `unknown`, and `ended` for the instant a session is going down — an ended session is
   dropped from the next push rather than listed. The UI never infers a status.
   A session whose host reports `unknown` is not listed at all.
-- **Tasks**: a session carries `tasks`, the shells and subagents it runs besides its own turn
+- **Tasks**: a session carries `tasks`, what it runs besides its own turn, by kind (`TASK_KINDS`
+  in `public/shared/vocab.mjs`): `shell` (Claude Bash, a Codex command), `powershell` (Claude's
+  PowerShell tool; a Codex command run by powershell/pwsh, labelled by its script), `monitor`
+  (Claude's Monitor: always in the background, ends when its `timeout_ms` expires — default 5 min,
+  at most 30 — or the session ends), `agent` (a Claude Agent call, a Codex subagent)
   (`TaskBoard` in `scripts/bridge/tasks.mjs`, one per session): only what runs now, each with
   its start — an ended task is never reported (the board remembers it 10 min only so a late
   start cannot revive it); at most 50, each label one line of at most 200 characters: a Claude shell's `description`
   (what it does), else its command without a leading `cd … &&` and with `~` for home; an
   agent's type and description. Each task is one line of three columns — a kind tag (`>_`
-  shell, `agent`, each its own colour), what it does (a `bg` mark when in the background),
+  shell, `PS`, `mon`, `agent`, each its own colour; outlined, with a `bg` mark, when it runs in
+  the background — a Codex unified-exec session too), what it does,
   how long it has run. Folded, the row lists the first five, each cut to a line; its tasks icon
   (counting what runs) lists all of them with labels in full — a tap there never opens the
   Topic, the row still does.

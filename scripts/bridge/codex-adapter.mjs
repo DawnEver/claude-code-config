@@ -21,6 +21,9 @@ import { isProvider } from '../shared/dashboard-schema.mjs';
 import { TaskBoard } from './tasks.mjs';
 
 const COMMAND_END = { completed: 'completed', failed: 'failed', declined: 'stopped' };
+// A command run by PowerShell (a path to it, quoted or not, or the bare name), and the script it runs.
+const POWERSHELL = /^\s*(?:"[^"]*[\\/])?(?:[^\s"]*[\\/])?(?:powershell|pwsh)(?:\.exe)?"?(?:\s|$)/i;
+const POWERSHELL_BODY = /^\s*(?:"[^"]*"|\S+)\s+(?:-\w+\s+)*-(?:Command|c)\s+(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(.+))$/i;
 const AGENT_RUNNING = ['pendingInit', 'running'];
 const AGENT_END = { completed: 'completed', errored: 'failed', interrupted: 'stopped', shutdown: 'stopped' };
 
@@ -31,7 +34,13 @@ const AGENT_END = { completed: 'completed', errored: 'failed', interrupted: 'sto
  */
 export function trackItem(board, item, at) {
   if (item?.type === 'commandExecution' && typeof item.id === 'string') {
-    board.start(item.id, { kind: 'shell', label: item.command, at: item.status === 'inProgress' ? at : at - (item.durationMs ?? 0) });
+    // Its kind by what runs it: a PowerShell (as Codex runs a command on Windows), else a shell. A
+    // unified-exec session is a terminal kept open: it runs in the background of the turn.
+    const kind = POWERSHELL.test(item.command ?? '') ? 'powershell' : 'shell';
+    // A PowerShell is labelled by the script it runs, not by the path to powershell.exe.
+    const body = kind === 'powershell' ? POWERSHELL_BODY.exec(item.command) : null;
+    board.start(item.id, { kind, label: body ? body[1] ?? body[2] ?? body[3] : item.command, background: item.source === 'unifiedExecStartup',
+      at: item.status === 'inProgress' ? at : at - (item.durationMs ?? 0) });
     if (COMMAND_END[item.status]) board.end(item.id, { status: COMMAND_END[item.status], at });
   }
   if (item?.type === 'collabAgentToolCall') {

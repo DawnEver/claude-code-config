@@ -79,6 +79,13 @@ test('taskFor: a shell or an agent call is a task — started, ended, failed, or
   assert.deepEqual(p('PreToolUse', 'Agent', { subagent_type: 'Explore', description: 'find hooks', run_in_background: true }).task,
     { op: 'start', id: 'u1', kind: 'agent', label: 'Explore: find hooks', background: true });
   assert.deepEqual(p('PreToolUse', 'Task', { description: 'old name' }).task.kind, 'agent');
+  assert.deepEqual(p('PreToolUse', 'PowerShell', { command: 'Get-ChildItem', description: 'List the files' }).task,
+    { op: 'start', id: 'u1', kind: 'powershell', label: 'List the files', background: false });
+  assert.deepEqual(p('PreToolUse', 'Monitor', { command: 'tail -f x.log', description: 'errors in x.log', timeout_ms: 600000 }).task,
+    { op: 'start', id: 'u1', kind: 'monitor', label: 'errors in x.log', background: true, timeoutMs: 600000 }, 'a monitor always watches in the background, until it expires');
+  assert.equal(p('PreToolUse', 'Monitor', { ws: { url: 'wss://x.test/s' }, description: '', timeout_ms: 9e6 }).task.timeoutMs, 1800000, 'capped as Claude Code caps it');
+  assert.equal(p('PreToolUse', 'Monitor', { ws: { url: 'wss://x.test/s' } }).task.label, 'wss://x.test/s');
+  assert.equal(p('PostToolUse', 'Monitor', { description: 'x' }).task, undefined, 'its call returns at once: it still watches');
   assert.deepEqual(p('PostToolUse', 'Bash', { command: 'ls' }).task, { op: 'end', id: 'u1', status: 'completed' });
   assert.equal(p('PostToolUse', 'Bash', { command: 'npm run dev', run_in_background: true }).task, undefined, 'still running: its end is read at a later Stop');
   assert.deepEqual(p('PostToolUseFailure', 'Bash', { command: 'false' }).task, { op: 'end', id: 'u1', status: 'failed' });

@@ -127,11 +127,12 @@ const TASK_LINES = 5;
 const tasksOpen = new Set();
 
 /**
- * One running task, three columns: what kind (a tag, coloured per kind), what it does (a
- * background one marked), how long it has run. Full: the label wraps instead of being cut.
+ * One running task, three columns: what kind (a tag, coloured per kind: shell, PowerShell,
+ * monitor, subagent; outlined when it runs in the background), what it does (a background one
+ * marked), how long it has run. Full: the label wraps instead of being cut.
  */
 function taskLine(x, full) {
-  const row = el('div', `task k-${x.kind}`);
+  const row = el('div', `task k-${x.kind}${x.background ? ' bg' : ''}`);
   row.append(el('span', 'tk', tr(`task.tag.${x.kind}`)));
   const what = el('span', `tl${full ? ' full' : ''}`, x.label);
   if (x.background) what.prepend(el('span', 'tb', tr('task.bg')));

@@ -111,7 +111,11 @@
   /* A session's running tasks: kind tag | what it does | how long. Kind is the tag's colour. */
   .tasks { display: grid; gap: 3px; margin-top: 5px; }
   .task { --kind: var(--run); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 7px; font-size: var(--t3); color: var(--fg); }
+  .task.k-powershell { --kind: #30b0c7; }
+  .task.k-monitor { --kind: #ff9f0a; }
   .task.k-agent { --kind: #af52de; }
+  /* In the background: the tag outlined, not filled. */
+  .task.bg .tk { background: none; box-shadow: inset 0 0 0 1px var(--kind); }
   .task .tk { min-width: 3.2em; padding: 0 5px; border-radius: 5px; text-align: center; font-family: ui-monospace, monospace; font-weight: 600;
     color: var(--kind); background: color-mix(in srgb, var(--kind) 14%, transparent); }
   .task .tl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

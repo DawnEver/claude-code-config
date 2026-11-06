@@ -687,3 +687,16 @@ test('trackItem: a command runs from its inProgress item to its end; each subage
   trackItem(b, { type: 'collabAgentToolCall', id: 'k2', tool: 'wait', status: 'completed', agentsStates: { a1: { status: 'completed' } } }, 9000);
   assert.deepEqual(b.list(9000).map((t) => t.id), ['c3'], 'the subagent ended as agentsStates says');
 });
+
+test('trackItem: a command run by PowerShell is a PowerShell, labelled by its script; an exec session kept open is in the background', async () => {
+  const { TaskBoard } = await import('./tasks.mjs');
+  const b = new TaskBoard();
+  trackItem(b, { type: 'commandExecution', id: 'p1', status: 'inProgress',
+    command: '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "Get-ChildItem -Recurse"' }, 1);
+  trackItem(b, { type: 'commandExecution', id: 'p2', status: 'inProgress', command: "pwsh -c 'npm test'" }, 2);
+  trackItem(b, { type: 'commandExecution', id: 's1', status: 'inProgress', command: 'npm run dev', source: 'unifiedExecStartup' }, 3);
+  trackItem(b, { type: 'commandExecution', id: 's2', status: 'inProgress', command: 'echo powershell' }, 4);
+  assert.deepEqual(b.list(5).map((t) => [t.id, t.kind, t.label, t.background]), [
+    ['p1', 'powershell', 'Get-ChildItem -Recurse', false], ['p2', 'powershell', 'npm test', false],
+    ['s1', 'shell', 'npm run dev', true], ['s2', 'shell', 'echo powershell', false]]);
+});

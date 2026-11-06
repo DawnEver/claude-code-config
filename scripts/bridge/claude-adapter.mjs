@@ -38,7 +38,9 @@ import { TaskBoard } from './tasks.mjs';
 /** A hook's task (bridge-hook.js taskFor), checked at the IPC boundary; null when malformed. */
 function parseTask(t) {
   if (!t || typeof t.id !== 'string' || !t.id || t.id.length > 128) return null;
-  if (t.op === 'start' && TASK_KINDS.includes(t.kind)) return { op: 'start', id: t.id, kind: t.kind, label: String(t.label ?? ''), background: t.background === true };
+  if (t.op === 'start' && TASK_KINDS.includes(t.kind)) return { op: 'start', id: t.id, kind: t.kind, label: String(t.label ?? ''), background: t.background === true,
+    // A monitor's watch, in ms: it expires on its own (bridge-hook.js caps it as Claude Code does).
+    ...(Number.isSafeInteger(t.timeoutMs) && t.timeoutMs > 0 && t.timeoutMs <= 3600000 ? { timeoutMs: t.timeoutMs } : {}) };
   if (t.op === 'end' && TASK_STATUSES.includes(t.status) && t.status !== 'running') return { op: 'end', id: t.id, status: t.status };
   return null;
 }
@@ -401,7 +403,7 @@ export class ClaudeAdapter extends EventEmitter {
     const s = this.sessions.get(id);
     // Tasks: each start and end is its own fact, applied in any order (TaskBoard keeps the first end).
     const at = Number.isFinite(m.at) ? m.at : this.now();
-    if (m.task?.op === 'start') s.tasks.start(m.task.id, { ...m.task, at });
+    if (m.task?.op === 'start') s.tasks.start(m.task.id, { ...m.task, at, until: m.task.timeoutMs ? at + m.task.timeoutMs : null });
     if (m.task?.op === 'end') s.tasks.end(m.task.id, { status: m.task.status, at });
     // A turn end: every foreground call has returned; of the background ones, those the transcript
     // still sees running run on, every other has ended.

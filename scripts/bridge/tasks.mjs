@@ -24,17 +24,20 @@ export function taskLabel(kind, label) {
 
 export class TaskBoard {
   constructor() {
-    this.tasks = new Map();   // id -> {id, kind, label, background, status, startedAt, endedAt}
+    this.tasks = new Map();   // id -> {id, kind, label, background, status, startedAt, endedAt, until?}
   }
 
-  /** A task started. Hooks run async: its end may already be here, and a second start changes nothing. */
-  start(id, { kind, label, at, background = false }) {
+  /**
+   * A task started. Hooks run async: its end may already be here, and a second start changes
+   * nothing. `until`: when it expires on its own (a monitor's deadline).
+   */
+  start(id, { kind, label, at, background = false, until = null }) {
     const held = this.tasks.get(id);
     if (held?.kind) return;
     // A foreground start stamped before the last turn end arrived late (async hooks): that turn ended it.
     const settled = !background && !held && this.settledAt >= at;
     this.tasks.set(id, { id, kind, label: taskLabel(kind, label), background: !!background, status: held?.status ?? (settled ? 'completed' : 'running'),
-      startedAt: at, endedAt: held?.endedAt ?? (settled ? this.settledAt : null) });
+      startedAt: at, endedAt: held?.endedAt ?? (settled ? this.settledAt : null), until });
   }
 
   /** A task ended (`status` one of TASK_STATUSES but running). The first end stands. */
@@ -45,10 +48,13 @@ export class TaskBoard {
     this.tasks.set(id, { ...(held ?? { id, kind: null, label: '', background: false, startedAt: at }), status, endedAt: at });
   }
 
-  /** The background tasks still open are `openIds` (the transcript says so): any other running background task has ended. */
+  /**
+   * The background shells and agents still open are `openIds` (the transcript says so): any other
+   * running one has ended. A task with its own deadline (a monitor) is not the transcript's to end.
+   */
   settleBackground(openIds, at) {
     const open = new Set(openIds);
-    for (const t of this.tasks.values()) if (t.background && t.status === 'running' && !open.has(t.id)) this.end(t.id, { status: 'completed', at });
+    for (const t of this.tasks.values()) if (t.background && !t.until && t.status === 'running' && !open.has(t.id)) this.end(t.id, { status: 'completed', at });
   }
 
   /**
@@ -65,8 +71,9 @@ export class TaskBoard {
     for (const t of this.tasks.values()) if (t.status === 'running') this.end(t.id, { status, at });
   }
 
-  /** The running tasks, oldest first, bounded. Forgets ended ones past ENDED_KEEP_MS. */
+  /** The running tasks, oldest first, bounded. Ends the expired; forgets ended ones past ENDED_KEEP_MS. */
   list(now) {
+    for (const t of this.tasks.values()) if (t.status === 'running' && t.until && t.until <= now) this.end(t.id, { status: 'completed', at: t.until });
     for (const [id, t] of this.tasks) if (t.status !== 'running' && now - t.endedAt > ENDED_KEEP_MS) this.tasks.delete(id);
     return [...this.tasks.values()].filter((t) => t.kind && t.status === 'running').sort((a, b) => a.startedAt - b.startedAt)
       .slice(0, MAX_TASKS).map(({ id, kind, label, background, startedAt }) => ({ id, kind, label, background, startedAt }));

@@ -134,11 +134,14 @@ test('the page renders every tab from the example data, and no view throws', asy
     globalThis.window.open = () => { opened++; };
     const tasksBtn = () => doc.getElementById('hosts').querySelectorAll('.tasks-btn')[0];
     const full = () => doc.getElementById('hosts').querySelectorAll('.tl').filter((x) => x.classList.contains('full')).length;
-    assert.equal(tasksBtn()?.textContent, '3', 'a session running tasks has the icon, counting them');
+    assert.equal(tasksBtn()?.textContent, '5', 'a session running tasks has the icon, counting them');
     assert.equal(full(), 0, 'folded: each label cut to a line');
+    const kinds = doc.getElementById('hosts').querySelectorAll('.task').map((x) => [x.className, x.querySelectorAll('.tk')[0]?.textContent]);
+    assert.deepEqual(kinds, [['task k-agent bg', 'agent'], ['task k-shell', '>_'], ['task k-shell bg', '>_'], ['task k-monitor bg', 'mon'], ['task k-powershell', 'PS']],
+      'every kind its own tag; a background one marked on the row');
     tasksBtn().dispatch('click');
     assert.equal(opened, 0, 'the icon does not open the Topic');
-    assert.equal(full(), 3, 'open: every running task, labels in full');
+    assert.equal(full(), 5, 'open: every running task, labels in full');
     tasksBtn().dispatch('click');
     assert.equal(full(), 0, 'a second tap folds it');
     doc.getElementById('hosts').querySelectorAll('.chat').find((x) => x.classList.contains('link')).dispatch('click');

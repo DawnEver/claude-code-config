@@ -126,28 +126,33 @@ export function backgroundTasks(jsonl, { now = Date.now(), maxAgeMs = 24 * 36000
   return [...open.values()];
 }
 
-// The tools whose calls are tasks (tasks.mjs): a shell, and an agent (`Task` is its older name).
-const TASK_TOOLS = { Bash: 'shell', Agent: 'agent', Task: 'agent' };
+// The tools whose calls are tasks (tasks.mjs), by kind: a Bash or PowerShell shell, a monitor,
+// and an agent (`Task` is its older name).
+const TASK_TOOLS = { Bash: 'shell', PowerShell: 'powershell', Monitor: 'monitor', Agent: 'agent', Task: 'agent' };
+// How long a monitor watches when its call says nothing, and at most (Claude Code's own limits).
+const MONITOR_DEFAULT_MS = 300000, MONITOR_MAX_MS = 1800000;
 
-/** What a tool call is, as a task: a shell's description (what it does), else its command; an agent's type and description. */
+/** What a tool call is, as a task: what it says it does, else its command (a monitor: its socket); an agent's type and description. */
 function taskLabel(kind, input = {}) {
-  if (kind === 'shell') return String(input.description || input.command || '');
-  return [input.subagent_type, input.description].filter(Boolean).join(': ');
+  if (kind === 'agent') return [input.subagent_type, input.description].filter(Boolean).join(': ');
+  return String(input.description || input.command || input.ws?.url || '');
 }
 
 /**
- * The task a PreToolUse / PostToolUse / PostToolUseFailure of a shell or an agent reports, or
- * null: started; ended (completed or failed); or, run in the background, still running — its
- * end is read from the transcript at a later Stop (backgroundTasks).
+ * The task a PreToolUse / PostToolUse / PostToolUseFailure of a shell, a monitor or an agent
+ * reports, or null: started; ended (completed or failed); or, run in the background, still
+ * running — a shell's or an agent's end is read from the transcript at a later Stop
+ * (backgroundTasks); a monitor always watches in the background, until it expires (`timeoutMs`).
  */
 export function taskFor(payload) {
   const kind = TASK_TOOLS[payload?.tool_name];
   const id = payload?.tool_use_id;
   if (!kind || typeof id !== 'string') return null;
   const input = payload.tool_input ?? {};
-  const background = input.run_in_background === true;
+  const background = kind === 'monitor' || input.run_in_background === true;
+  const monitor = kind === 'monitor' ? { timeoutMs: Math.min(Number(input.timeout_ms) > 0 ? Number(input.timeout_ms) : MONITOR_DEFAULT_MS, MONITOR_MAX_MS) } : {};
   switch (payload.hook_event_name) {
-    case 'PreToolUse': return { op: 'start', id, kind, label: taskLabel(kind, input), background };
+    case 'PreToolUse': return { op: 'start', id, kind, label: taskLabel(kind, input), background, ...monitor };
     case 'PostToolUse': return background ? null : { op: 'end', id, status: 'completed' };
     case 'PostToolUseFailure': return { op: 'end', id, status: payload.is_interrupt ? 'stopped' : 'failed' };
     default: return null;
