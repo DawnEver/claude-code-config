@@ -33,9 +33,6 @@
             "WebFetch",
             "Monitor",
             "NotebookEdit",
-            "Bash(rm -rf .claude/worktrees/*)",
-            "Bash(git worktree remove *)",
-            "Bash(git worktree prune)",
             "mcp__session-bridge__send_attachment",
             "mcp__session-bridge__reply"
         ],
