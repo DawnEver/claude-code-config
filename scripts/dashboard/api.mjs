@@ -14,7 +14,7 @@ export const REPORT_TTL_MS = 5 * 60000;
 
 /**
  * DASHBOARD_CONFIG (JSON): {botId, allowedUserIds, hosts: {machine: sha256}, ttlSeconds?,
- * offlineAlertSeconds?, alertLang?, initDataMaxAgeSeconds?, ratePerMinute?}. Malformed = throws: a gateway that cannot
+ * offlineAlertSeconds?, offlineAlertExclude?, alertLang?, initDataMaxAgeSeconds?, ratePerMinute?}. Malformed = throws: a gateway that cannot
  * authenticate anyone must fail loudly, not serve 401s.
  */
 export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
@@ -32,6 +32,8 @@ export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
     ttlSeconds: c.ttlSeconds > 0 ? c.ttlSeconds : 60,
     // A host silent this long is alerted offline: well past ttlSeconds, so a restart or a network blip says nothing.
     offlineAlertSeconds: c.offlineAlertSeconds > 0 ? c.offlineAlertSeconds : 300,
+    // Hosts never alerted offline (a laptop that sleeps): still listed, still shown offline.
+    offlineAlertExclude: (Array.isArray(c.offlineAlertExclude) ? c.offlineAlertExclude : []).filter((id) => id in hosts),
     alertLang: ['en', 'zh'].includes(c.alertLang) ? c.alertLang : 'en',
     initDataMaxAgeSeconds: c.initDataMaxAgeSeconds > 0 ? c.initDataMaxAgeSeconds : 86400,
     ratePerMinute: c.ratePerMinute > 0 ? c.ratePerMinute : 120,
@@ -56,7 +58,7 @@ async function body(request, max) {
  */
 export function createApi(config, { now = Date.now, log = () => {}, store = null, db = null, notify = () => {} } = {}) {
   const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000,
-    offlineAlertMs: config.offlineAlertSeconds * 1000, now, store, notify });
+    offlineAlertMs: config.offlineAlertSeconds * 1000, offlineAlertExclude: config.offlineAlertExclude, now, store, notify });
   const hits = new Map();   // client -> requests in the current minute
   // The Usage tab's report per (days, tz), kept REPORT_TTL_MS: polls of an open tab cost no reads.
   const reports = new Map();

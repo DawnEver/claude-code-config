@@ -26,8 +26,9 @@ export const FORGE_SKIP_MS = 30 * 60000;
 export const FORGE_FORGET_MS = 24 * 3600000;
 
 export class Registry {
-  constructor({ hosts = [], ttlMs = 60000, offlineAlertMs = 300000, now = Date.now, store = null, notify = () => {} } = {}) {
+  constructor({ hosts = [], ttlMs = 60000, offlineAlertMs = 300000, offlineAlertExclude = [], now = Date.now, store = null, notify = () => {} } = {}) {
     Object.assign(this, { ttlMs, offlineAlertMs, now, store, notify });
+    this.offlineAlertExclude = new Set(offlineAlertExclude);   // hosts never alerted offline
     this.startedAt = now();   // a host not heard from since this start is counted silent from it
     this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
     this.alerted = new Map(Object.entries(store?.get('alerted') ?? {}));   // account key -> what was last alerted (quota-model.mjs quotaAlertsFor)
@@ -130,7 +131,7 @@ export class Registry {
     const now = this.now();
     let next = null, changed = false;
     for (const [id, p] of this.hosts) {
-      if (this.down.has(id)) continue;
+      if (this.down.has(id) || this.offlineAlertExclude.has(id)) continue;
       const due = (p?.receivedAt ?? this.startedAt) + this.offlineAlertMs;
       if (due > now) { next = Math.min(next ?? due, due); continue; }
       const lastSeen = p ? new Date(p.receivedAt).toISOString() : null;

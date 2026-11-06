@@ -922,3 +922,13 @@ test('search: every term in any field, across hosts, sessions, tasks, accounts, 
   assert.equal(task.session.id, '0b6c4e1a-1111', 'a task opens its session');
   assert.equal(searchAll({ ...m, hosts: [] }, 'x', { now: NOW, max: 1 }).length <= 1, true, 'bounded');
 });
+
+test('offline: a host in offlineAlertExclude is never alerted; an unknown id there is dropped', () => {
+  let t = NOW;
+  const sent = [];
+  const r = new Registry({ hosts: ['host-a', 'host-b'], now: () => t, offlineAlertMs: 300000, offlineAlertExclude: ['host-b'], notify: (a) => { sent.push(a); } });
+  t += 400000;
+  assert.equal(r.sweep(), null);
+  assert.deepEqual(sent.map((a) => a.host), ['host-a']);
+  assert.deepEqual(parseDashboardConfig({ botId: 1, hosts: { 'host-a': 'a'.repeat(64) }, offlineAlertExclude: ['host-a', 'nope'] }).offlineAlertExclude, ['host-a']);
+});

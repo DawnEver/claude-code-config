@@ -85,7 +85,10 @@ no API, no authentication.
   session it last reported carries `stale: true`, shown as `Stale`, not as its last state.
   Keep `ttlSeconds` at least three times every host's `everySeconds`. A host silent for
   `offlineAlertSeconds` (shared `bridge.dashboard.offlineAlertSeconds`, default 300) is alerted
-  offline once; its next push watches it again, without an alert (see Alerts).
+  offline once; its next push watches it again, without an alert (see Alerts). Hosts in
+  `bridge.dashboard.offlineAlertExclude` (e.g. a laptop that sleeps) are never alerted offline.
+  A Worker without `DASHBOARD_BOT_TOKEN` does not sweep at all, so no host is marked alerted for
+  an alert it could not send.
 - **Ordering**: a push carries `bootAt` (its daemon's start time, host clock) and `seq` (its
   tick). One not newer than the held push — an earlier boot, or the same boot's earlier tick —
   is refused, so a replaced daemon's in-flight push never overwrites its successor's. A boot
@@ -376,7 +379,7 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    **Membership deploy**: `host-token` runs it; by hand (`npm run dashboard -- deploy`) only
    after changing `botId`, `allowedUserIds`, `offlineAlertSeconds` or `alertLang`. It derives the
    Worker's `DASHBOARD_CONFIG` secret (`botId`, `allowedUserIds`, `hosts`, and the optional shared
-   `bridge.dashboard.offlineAlertSeconds` / `alertLang` — `en` or `zh`) from the merged config —
+   `bridge.dashboard.offlineAlertSeconds` / `offlineAlertExclude` / `alertLang` — `en` or `zh`) from the merged config —
    never a host token — and the `DASHBOARD_BOT_TOKEN` secret from this machine's
    `bridge.dashboard.botToken` when this machine has it (step 5). Any machine can deploy: one
    without the token leaves the uploaded secret in place, so one deploy from a machine that has

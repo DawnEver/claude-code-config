@@ -38,7 +38,7 @@ export function dashboardConfigFrom(bridge) {
   const url = new URL(g.url ?? 'missing:');
   if (url.protocol !== 'https:' || url.pathname !== '/') throw new Error('bridge.dashboard.url must be an https origin');
   const config = { botId: g.botId, allowedUserIds: bridge.allowedUserIds ?? [], hosts: g.hosts ?? {},
-    ...(g.offlineAlertSeconds ? { offlineAlertSeconds: g.offlineAlertSeconds } : {}), ...(g.alertLang ? { alertLang: g.alertLang } : {}) };
+    ...(g.offlineAlertSeconds ? { offlineAlertSeconds: g.offlineAlertSeconds } : {}), ...(g.offlineAlertExclude ? { offlineAlertExclude: g.offlineAlertExclude } : {}), ...(g.alertLang ? { alertLang: g.alertLang } : {}) };
   parseDashboardConfig(config);
   if (!config.allowedUserIds.length) throw new Error('bridge.allowedUserIds is empty: nobody could open the dashboard');
   return { domain: url.hostname, config };

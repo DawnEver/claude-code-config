@@ -35,7 +35,8 @@ export class DashboardHub extends DurableObject {
    * (the next push re-arms it). Each wake is a Durable Object request: keep it rare.
    */
   async #arm() {
-    if (this.armed) return;
+    // Without the bot token nothing can be sent: no host is marked alerted for an unsent alert.
+    if (this.armed || !this.env.DASHBOARD_BOT_TOKEN) return;
     const at = this.api.registry.sweep();
     if (at === null) return;
     await this.ctx.storage.setAlarm(at);
