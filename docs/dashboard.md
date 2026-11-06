@@ -222,8 +222,11 @@ no balance to an API key — only spend, through an Admin key — so they read a
 ## Alerts
 
 Everything that needs the human is sent by the dashboard bot to each allowed user's private
-chat (`notify.mjs`: `alertText` words it in `alertLang`, plain text, no parse mode). The registry
-judges what is worth telling, as data, and keeps no list of alerts:
+chat. `notify.mjs` is the one sender and the one shape: every message is an alert of a kind in
+its `ALERTS` table, worded in `alertLang` (i18n `alert.*`) as `<what happened>: <subject>`, a
+detail line, then a link; plain text, no parse mode. `npm run dashboard -- test-alert` sends a
+`test` alert through the same code with this machine's bot token (does the chat reach you?).
+The registry judges what is worth telling, as data, and keeps no list of alerts:
 
 | Alert | Raised by | Once per |
 | --- | --- | --- |

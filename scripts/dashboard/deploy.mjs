@@ -13,6 +13,9 @@
 //                                                      (code alone also deploys from CI on push)
 //   node scripts/dashboard/deploy.mjs usage-db     create the usage store (D1 `agents-usage`) if missing, bind it in
 //                                                      wrangler.jsonc, apply its migrations (docs/usage.md)
+//   node scripts/dashboard/deploy.mjs test-alert   send a `test` alert as the dashboard bot to every allowed user,
+//                                                      through the Worker's own sender (notify.mjs), with this
+//                                                      machine's bot token: does the alert chat reach you?
 //   node scripts/dashboard/deploy.mjs set-menu     point the dashboard bot's menu button at the url and
 //                                                      read it back; the bot token is this machine's local
 //                                                      bridge.dashboard.botToken, never synced or printed
@@ -29,6 +32,7 @@ import { writePrivateFile } from '../bridge/context.mjs';
 import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { newHostToken } from './auth.mjs';
 import { parseDashboardConfig } from './api.mjs';
+import { telegramNotifier } from './notify.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -112,6 +116,19 @@ function commitTag() {
   try { return `${git('rev-parse', '--short', 'HEAD')}${git('status', '--porcelain', '--', '.') ? '+' : ''}`; } catch { return ''; }
 }
 
+/** One `test` alert through notify.mjs, the code the Worker sends every alert with. */
+async function testAlert() {
+  const bridge = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {};
+  const { config } = dashboardConfigFrom(bridge);
+  const token = localBotToken();
+  menuRequest(bridge.dashboard, token);   // throws without this machine's token for botId
+  const { alertLang } = parseDashboardConfig(config);
+  const reached = await telegramNotifier({ token, chatIds: config.allowedUserIds, lang: alertLang, log: (m) => console.error(m) })
+    ({ kind: 'test', from: readMachineName() });
+  console.log(`test alert reached ${reached.length} of ${config.allowedUserIds.length} allowed users`);
+  if (reached.length < config.allowedUserIds.length) process.exitCode = 1;
+}
+
 /** The dashboard bot token: machine-local layer only, like every other secret here. */
 function localBotToken() {
   try { return JSON.parse(fs.readFileSync(LOCAL_ENV_SETTINGS_PATH, 'utf8')).bridge?.dashboard?.botToken ?? null; } catch { return null; }
@@ -146,8 +163,9 @@ export async function main([cmd] = process.argv.slice(2)) {
   if (cmd === 'host-token') return hostToken();
   if (cmd === 'deploy') return deploy();
   if (cmd === 'set-menu') return setMenu();
+  if (cmd === 'test-alert') return testAlert();
   if (cmd === 'usage-db') return usageDb();
-  throw new Error('usage: deploy.mjs host-token | deploy | usage-db | set-menu');
+  throw new Error('usage: deploy.mjs host-token | deploy | usage-db | set-menu | test-alert');
 }
 
 // exitCode, not exit(): exiting with fetch sockets still open trips a libuv assertion on Windows.

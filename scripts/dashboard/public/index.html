@@ -125,9 +125,10 @@
 
   /* Tabs: one question per view. */
   /* Too narrow for one row, the tabs wrap onto more rows: every tab stays in sight, none scrolls away. */
-  .search { margin: 0 0 10px; }
+  .search { position: relative; margin: 0 0 10px; }
+  .search-icon { position: absolute; left: 11px; top: 50%; width: 16px; height: 16px; transform: translateY(-50%); fill: none; stroke: var(--hint); stroke-width: 2.2; stroke-linecap: round; pointer-events: none; }
   .found-list { background: var(--card); border-radius: 14px; overflow: hidden; }
-  .search input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--card); color: inherit; font: inherit; font-size: var(--t2); }
+  .search input { width: 100%; box-sizing: border-box; padding: 8px 12px 8px 34px; border: 0; border-radius: 10px; background: var(--card); color: inherit; font: inherit; font-size: var(--t2); }
   .found { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: inherit; padding: 8px 12px; cursor: pointer; }
   .found + .found { border-top: 1px solid var(--sep); }
   .found .k { color: var(--hint); font-size: var(--t3); margin-right: 6px; }
@@ -285,7 +286,7 @@
     <button role="tab" data-tab="code"><span class="label"></span> <b id="n-code"></b><i class="tab-dot" id="code-dot" hidden></i></button>
     <button role="tab" data-tab="config"><span class="label"></span></button>
   </nav>
-  <div class="search"><input id="search" type="search" autocomplete="off" spellcheck="false"></div>
+  <div class="search"><svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="search" type="search" autocomplete="off" spellcheck="false"></div>
   <div id="banner" class="banner"></div>
   <section id="search-view" class="view" data-view="search" hidden></section>
   <section id="quota-view" class="view" data-view="quota" hidden></section>

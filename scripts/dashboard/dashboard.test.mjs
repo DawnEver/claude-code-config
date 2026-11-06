@@ -9,7 +9,7 @@ import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
-import { alertText, telegramNotifier } from './notify.mjs';
+import { alertText, telegramNotifier, ALERT_KINDS } from './notify.mjs';
 import { accountSessions, codeView, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, quotaView, stats, tabs, taskView, searchAll, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
@@ -331,15 +331,15 @@ test('alerts: a change once, judged on the merged account, so two hosts on one s
   const hit = account({ windows: [{ ...account().windows[0], used: 100, forecast: null }] });
   const accept = (host, seq, a) => () => r.accept(host, parseHostPush(push({ seq, accounts: [a] })));
   assert.deepEqual(added(sent, accept('host-a', 1, account())), [], 'a forecast run-out is not an alert');
-  assert.deepEqual(added(sent, accept('host-a', 2, hit)), ['Claude · team-a (a@example.com): 5h exhausted · resets in 3h 0m']);
+  assert.deepEqual(added(sent, accept('host-a', 2, hit)), ['Quota exhausted: Claude · team-a · a@example.com\n5h window · resets in 3h 0m']);
   assert.deepEqual(added(sent, accept('host-b', 1, hit)), [], 'the same condition from another host');
   assert.deepEqual(added(sent, accept('host-a', 3, hit)), [], 'an unchanged condition alerts once');
   const fine = { ...account().windows[0], forecast: { atReset: 80, eta: null, short: false } };
   assert.deepEqual(added(sent, accept('host-a', 4, account({ windows: [fine] }))), [], 'recovering is quiet');
   assert.equal(added(sent, accept('host-a', 5, hit)).length, 1, 'a relapse alerts again');
   const extra = account({ problems: ['wrong team, expected a@example.com · Team A'], extraReset: { at: NOW + HR, url: 'https://x.test/r' } });
-  assert.deepEqual(added(sent, accept('host-a', 6, extra)), ['Claude · team-a (a@example.com): wrong team, expected a@example.com · Team A',
-    'Claude · team-a (a@example.com): extra reset announced · in 1h 0m · https://x.test/r']);
+  assert.deepEqual(added(sent, accept('host-a', 6, extra)), ['Seat problem: Claude · team-a · a@example.com\nwrong team, expected a@example.com · Team A',
+    'Extra reset announced: Claude · team-a · a@example.com\nin 1h 0m\nhttps://x.test/r']);
   assert.deepEqual(Object.keys(sent.at(-1)).sort(), ['account', 'at', 'kind', 'url'], 'an alert is data, not a sentence');
   assert.equal('events' in r.snapshot(), false, 'no history is kept: alerts go to the chat');
 });
@@ -352,15 +352,20 @@ test('alerts: exhausted only; a forecast run-out and a healthy account say nothi
   assert.deepEqual(quotaAlertsFor(undefined, q()).events, [], 'runs out before reset: shown, not alerted');
 });
 
-test('alert text is worded on the clock it is sent at, in the chosen language', () => {
-  const e = { kind: 'exhausted', account: { agent: 'codex', label: null, email: null }, window: '5h', resetsAt: NOW + HR };
-  assert.equal(alertText(e, NOW), 'Codex: 5h exhausted · resets in 1h 0m');
-  assert.equal(alertText(e, NOW + 2 * HR), 'Codex: 5h exhausted', 'a passed reset is not counted down');
-  assert.equal(alertText({ kind: 'config-refused', key: 'k', value: 3, host: 'h', error: 'busy' }), 'config k = 3 refused by h: busy');
-  assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: new Date(NOW - 6 * 60000).toISOString() }, NOW), 'host-x is offline · silent for 6m');
-  assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: null }, NOW, 'zh'), 'host-x 已掉线');
+test('every message the bot sends has one shape — heading: subject, then detail, then link — worded on the send clock', () => {
+  const e = { kind: 'exhausted', account: { agent: 'codex', label: null, email: 'a@example.com' }, window: '5h', resetsAt: NOW + HR };
+  const lines = (...l) => l.join('\n');
+  assert.equal(alertText(e, NOW), lines('Quota exhausted: Codex · a@example.com', '5h window · resets in 1h 0m'));
+  assert.equal(alertText(e, NOW + 2 * HR), lines('Quota exhausted: Codex · a@example.com', '5h window'), 'a passed reset is not counted down');
+  assert.equal(alertText({ kind: 'config-refused', key: 'k', value: 3, host: 'h', error: 'busy' }), lines('Config change refused: k = 3', 'by h: busy'));
+  assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: new Date(NOW - 6 * 60000).toISOString() }, NOW), lines('Host offline: host-x', 'silent for 6m'));
+  assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: null }, NOW, 'zh'), lines('主机掉线：host-x', '自 dashboard 重启以来未上报'));
   assert.equal(alertText({ kind: 'turn-failed', host: 'host-x', agent: 'claude', project: 'p', session: 's', error: 'overloaded: 529', url: 'https://t.me/c/1/2' }),
-    'Claude turn failed on host-x · p · s\noverloaded: 529\nhttps://t.me/c/1/2');
+    lines('Turn failed: Claude · host-x · p · s', 'overloaded: 529', 'https://t.me/c/1/2'));
+  assert.equal(alertText({ kind: 'extra-reset', account: { agent: 'claude', label: 'team-a' }, at: NOW + HR, url: 'https://x.test/r' }, NOW),
+    lines('Extra reset announced: Claude · team-a', 'in 1h 0m', 'https://x.test/r'));
+  assert.equal(alertText({ kind: 'test', from: 'host-x' }, NOW, 'zh'), lines('测试：host-x', 'dashboard 的提醒会发到这里。'));
+  for (const kind of ALERT_KINDS) for (const lang of ['en', 'zh']) assert.doesNotMatch(alertText({ kind, account: {}, host: 'h' }, NOW, lang), /^alert\./, `${kind} ${lang} has its heading`);
 });
 
 test('a restart keeps what was alerted: no duplicate alert; storage is written only on a change', () => {
@@ -420,13 +425,14 @@ test('host alerts: a failed turn is sent once, even when its push is sent again'
   assert.deepEqual(sent.map((a) => [a.kind, a.host, a.error]), [['turn-failed', 'host-a', 'overloaded']]);
 });
 
-test('telegramNotifier: plain text to every allowed chat; a failure is logged without the token', async () => {
+test('telegramNotifier: plain text to every allowed chat, resolving those reached; a failure is logged without the token', async () => {
   const calls = [], logs = [];
   const fetch = async (url, init) => { calls.push([url, JSON.parse(init.body)]); return { status: 200, json: async () => (calls.length === 1 ? { ok: true } : { ok: false, description: 'Forbidden: bot was blocked by the user' }) }; };
   const notify = telegramNotifier({ token: '1:SECRET', chatIds: [11, 22], fetch, log: (m) => logs.push(m), now: () => NOW });
-  await notify({ kind: 'host-offline', host: 'host-x', lastSeen: null });
-  assert.deepEqual(calls.map(([, b]) => [b.chat_id, b.text, b.parse_mode]), [[11, 'host-x is offline', undefined], [22, 'host-x is offline', undefined]]);
-  assert.deepEqual(logs, ['alert host-offline to 22 not sent: Forbidden: bot was blocked by the user']);
+  assert.deepEqual(await notify({ kind: 'test', from: 'host-x' }), [11]);
+  const text = 'Test: host-x\nAlerts from the dashboard reach this chat.';
+  assert.deepEqual(calls.map(([, b]) => [b.chat_id, b.text, b.parse_mode]), [[11, text, undefined], [22, text, undefined]]);
+  assert.deepEqual(logs, ['alert test to 22 not sent: Forbidden: bot was blocked by the user']);
   assert.ok(!logs.join().includes('SECRET'));
 });
 

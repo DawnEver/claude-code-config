@@ -206,11 +206,20 @@ const TABLE = {
   'usage.machines': { en: 'Machines', zh: '机器' },
 
   // Alerts: what the gateway tells the human in the dashboard bot's chat (scripts/dashboard/notify.mjs)
-  'alert.extraReset': { en: (v) => `${v.who}extra reset announced${v.in ? ` · in ${v.in}` : ''}${v.url ? ` · ${v.url}` : ''}`, zh: (v) => `${v.who}已公布额外重置${v.in ? ` · ${v.in} 后` : ''}${v.url ? ` · ${v.url}` : ''}` },
-  'alert.configRefused': { en: (v) => `config ${v.key} = ${v.value} refused by ${v.host}: ${v.error}`, zh: (v) => `设置 ${v.key} = ${v.value} 被 ${v.host} 拒绝：${v.error}` },
-  'alert.hostOffline': { en: (v) => `${v.host} is offline${v.for ? ` · silent for ${v.for}` : ''}`, zh: (v) => `${v.host} 已掉线${v.for ? ` · 已 ${v.for} 无上报` : ''}` },
-  'alert.turnFailed': { en: (v) => `${v.agent} turn failed on ${v.host}${v.project ? ` · ${v.project}` : ''}${v.session ? ` · ${v.session}` : ''}\n${v.error}${v.url ? `\n${v.url}` : ''}`,
-    zh: (v) => `${v.agent} 的一轮在 ${v.host} 上失败${v.project ? ` · ${v.project}` : ''}${v.session ? ` · ${v.session}` : ''}\n${v.error}${v.url ? `\n${v.url}` : ''}` },
+  'alert.sep': { en: ': ', zh: '：' },
+  'alert.exhausted': { en: 'Quota exhausted', zh: '额度已耗尽' },
+  'alert.seat-problem': { en: 'Seat problem', zh: '席位异常' },
+  'alert.extra-reset': { en: 'Extra reset announced', zh: '已公布额外重置' },
+  'alert.host-offline': { en: 'Host offline', zh: '主机掉线' },
+  'alert.turn-failed': { en: 'Turn failed', zh: '对话轮次失败' },
+  'alert.config-refused': { en: 'Config change refused', zh: '设置修改被拒' },
+  'alert.test': { en: 'Test', zh: '测试' },
+  'alert.detail.window': { en: (v) => `${v.k} window${v.in ? ` · resets in ${v.in}` : ''}`, zh: (v) => `${v.k} 窗口${v.in ? ` · ${v.in} 后重置` : ''}` },
+  'alert.detail.in': { en: (v) => `in ${v.in}`, zh: (v) => `${v.in} 后` },
+  'alert.detail.silent': { en: (v) => `silent for ${v.for}`, zh: (v) => `已 ${v.for} 无上报` },
+  'alert.detail.neverSeen': { en: 'not heard from since the dashboard restarted', zh: '自 dashboard 重启以来未上报' },
+  'alert.detail.refusedBy': { en: (v) => `by ${v.host}: ${v.error}`, zh: (v) => `${v.host} 拒绝：${v.error}` },
+  'alert.detail.test': { en: 'Alerts from the dashboard reach this chat.', zh: 'dashboard 的提醒会发到这里。' },
 
   // Config: this device
   'cfg.display': { en: 'Display · this device', zh: '显示 · 本设备' },

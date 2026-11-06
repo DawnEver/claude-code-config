@@ -1,7 +1,15 @@
-// scripts/dashboard/notify.mjs — the gateway's one way to tell the human something: a message from
-// the dashboard bot in each allowed user's private chat (docs/dashboard.md "Alerts"). The registry
-// judges what is worth telling, as data ({kind, ...}); this words it and sends it. Plain text, no
-// parse mode: nothing a host reports can turn into markup or a link it did not write.
+// scripts/dashboard/notify.mjs — the one way the dashboard bot speaks: every message it sends is an
+// alert (data, {kind, ...}) worded here and sent by `telegramNotifier` (docs/dashboard.md "Alerts").
+// The Worker sends what the registry judges worth telling; `deploy.mjs test-alert` sends a `test`
+// alert through the same code. One shape for all of them:
+//
+//   <what happened>: <who or what>
+//   <detail>
+//   <link>
+//
+// ALERTS is the single table of kinds: each names its subject, detail and link; the words are
+// i18n keys (`alert.<kind>` the heading, `alert.detail.*` the details). Plain text, no parse
+// mode: nothing a host reports can turn into markup or a link it did not write.
 
 import { t } from './public/shared/i18n.mjs';
 import { agentName } from './public/shared/vocab.mjs';
@@ -9,40 +17,65 @@ import { countdown } from './public/view.mjs';
 
 const TELEGRAM_MAX = 4096;
 
-/** Who an alert is about, as one prefix: the account, else the host and session. */
-function who(a) {
-  if (a.account) return `${agentName(a.account.agent)}${a.account.label ? ` · ${a.account.label}` : ''}${a.account.email ? ` (${a.account.email})` : ''}: `;
-  return '';
-}
+/** An account as the alerts name it: agent, seat, email. */
+const accountOf = (a) => [agentName(a.account?.agent), a.account?.label, a.account?.email].filter(Boolean).join(' · ');
 
-/** An alert (registry.mjs) in words, on `now`'s clock: a countdown is to now, not to when it was judged. */
+/** Every kind the bot sends: subject, detail and link of an alert, worded on `now` in `lang`. */
+const ALERTS = {
+  exhausted: {
+    subject: (a) => accountOf(a),
+    detail: (a, now, lang) => t('alert.detail.window', lang, { k: a.window, in: a.resetsAt > now ? countdown(a.resetsAt, now) : null }),
+  },
+  'seat-problem': { subject: (a) => accountOf(a), detail: (a) => a.problem },
+  'extra-reset': {
+    subject: (a) => accountOf(a),
+    detail: (a, now, lang) => (a.at > now ? t('alert.detail.in', lang, { in: countdown(a.at, now) }) : null),
+    url: (a) => a.url,
+  },
+  'host-offline': {
+    subject: (a) => a.host,
+    detail: (a, now, lang) => (a.lastSeen ? t('alert.detail.silent', lang, { for: countdown(now, Date.parse(a.lastSeen)) }) : t('alert.detail.neverSeen', lang)),
+  },
+  'turn-failed': {
+    subject: (a) => [agentName(a.agent), a.host, a.project, a.session].filter(Boolean).join(' · '),
+    detail: (a) => a.error,
+    url: (a) => a.url,
+  },
+  'config-refused': {
+    subject: (a) => `${a.key} = ${JSON.stringify(a.value)}`,
+    detail: (a, now, lang) => t('alert.detail.refusedBy', lang, { host: a.host, error: a.error }),
+  },
+  test: { subject: (a) => a.from ?? null, detail: (a, now, lang) => t('alert.detail.test', lang) },
+};
+
+export const ALERT_KINDS = Object.keys(ALERTS);
+
+/** An alert (registry.mjs, or a test) as the message the bot sends, on `now`'s clock: a countdown is to now. */
 export function alertText(a, now = Date.now(), lang = 'en') {
-  const until = (at) => (at > now ? countdown(at, now) : null);
-  switch (a.kind) {
-    case 'exhausted': return `${who(a)}${t('quota.exhausted', lang, { k: a.window, reset: until(a.resetsAt) ? t('quota.resetSuffix', lang, { in: until(a.resetsAt) }) : '' })}`;
-    case 'seat-problem': return `${who(a)}${a.problem}`;
-    case 'extra-reset': return t('alert.extraReset', lang, { who: who(a), in: until(a.at), url: a.url });
-    case 'config-refused': return t('alert.configRefused', lang, { key: a.key, value: JSON.stringify(a.value), host: a.host, error: a.error });
-    case 'host-offline': return t('alert.hostOffline', lang, { host: a.host, for: a.lastSeen ? countdown(now, Date.parse(a.lastSeen)) : null });
-    case 'turn-failed': return t('alert.turnFailed', lang, { host: a.host, agent: agentName(a.agent), session: a.session, project: a.project, error: a.error, url: a.url });
-    default: return a.kind;
-  }
+  const k = ALERTS[a.kind];
+  if (!k) return a.kind;
+  const subject = k.subject(a);
+  return [`${t(`alert.${a.kind}`, lang)}${subject ? `${t('alert.sep', lang)}${subject}` : ''}`, k.detail?.(a, now, lang), k.url?.(a)].filter(Boolean).join('\n');
 }
 
 /**
  * `notify(alert)` sending each alert to every chat in `chatIds` (a user id is that user's private
- * chat with the bot). Never throws: a failure is logged without the token, and the next alert is tried.
+ * chat with the bot). Never throws: a failure is logged without the token, and the next chat is
+ * tried. Resolves the chats it reached.
  */
 export function telegramNotifier({ token, chatIds, lang = 'en', fetch = globalThis.fetch, log = () => {}, now = Date.now }) {
   return async (alert) => {
     const text = alertText(alert, now(), lang).slice(0, TELEGRAM_MAX);
+    const reached = [];
     for (const chatId of chatIds) {
       try {
         const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, { method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ chat_id: chatId, text, link_preview_options: { is_disabled: true } }) });
         const out = await res.json().catch(() => ({}));
-        if (!out.ok) log(`alert ${alert.kind} to ${chatId} not sent: ${out.description ?? `HTTP ${res.status}`}`);
+        if (out.ok) reached.push(chatId);
+        else log(`alert ${alert.kind} to ${chatId} not sent: ${out.description ?? `HTTP ${res.status}`}`);
       } catch (e) { log(`alert ${alert.kind} to ${chatId} not sent: ${e.message}`); }
     }
+    return reached;
   };
 }
