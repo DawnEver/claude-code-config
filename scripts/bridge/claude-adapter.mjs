@@ -35,6 +35,12 @@ import { isProvider } from '../shared/dashboard-schema.mjs';
 import { AGENTS, TASK_KINDS, TASK_STATUSES } from '../dashboard/public/shared/vocab.mjs';
 import { TaskBoard } from './tasks.mjs';
 
+/** One background task a turn end still sees open (bridge-hook.js backgroundTasks); null when malformed. */
+function parseOpen(t) {
+  if (!t || typeof t.id !== 'string' || !t.id || t.id.length > 128 || !TASK_KINDS.includes(t.kind) || !Number.isFinite(t.startedAt)) return null;
+  return { id: t.id, kind: t.kind, label: String(t.label ?? ''), startedAt: t.startedAt };
+}
+
 /** A hook's task (bridge-hook.js taskFor), checked at the IPC boundary; null when malformed. */
 function parseTask(t) {
   if (!t || typeof t.id !== 'string' || !t.id || t.id.length > 128) return null;
@@ -42,6 +48,7 @@ function parseTask(t) {
     // A monitor's watch, in ms: it expires on its own (bridge-hook.js caps it as Claude Code does).
     ...(Number.isSafeInteger(t.timeoutMs) && t.timeoutMs > 0 && t.timeoutMs <= 3600000 ? { timeoutMs: t.timeoutMs } : {}) };
   if (t.op === 'end' && TASK_STATUSES.includes(t.status) && t.status !== 'running') return { op: 'end', id: t.id, status: t.status };
+  if (t.op === 'background') return { op: 'background', id: t.id };
   return null;
 }
 
@@ -206,7 +213,7 @@ export class ClaudeAdapter extends EventEmitter {
           const r = this.#mirror({ ...ids(p), retry: p.retry === true, ...(Number.isFinite(p.at) ? { at: p.at } : {}), ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
             ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? ''),
             ...(Array.isArray(p.texts) ? { texts: p.texts.map(String) } : {}),
-            ...(Array.isArray(p.background) ? { background: p.background.filter((x) => typeof x === 'string').slice(0, 200) } : {}),
+            ...(Array.isArray(p.background) ? { background: p.background.map(parseOpen).filter(Boolean).slice(0, 200) } : {}),
             ...(parseTask(p.task) ? { task: parseTask(p.task) } : {}) });
           return { ok: true, routed: r !== false, ...(Array.isArray(r) ? { deliver: r } : {}) };
         }
@@ -405,6 +412,7 @@ export class ClaudeAdapter extends EventEmitter {
     const at = Number.isFinite(m.at) ? m.at : this.now();
     if (m.task?.op === 'start') s.tasks.start(m.task.id, { ...m.task, at, until: m.task.timeoutMs ? at + m.task.timeoutMs : null });
     if (m.task?.op === 'end') s.tasks.end(m.task.id, { status: m.task.status, at });
+    if (m.task?.op === 'background') s.tasks.toBackground(m.task.id);
     // A turn end: every foreground call has returned; of the background ones, those the transcript
     // still sees running run on, every other has ended.
     if (m.kind === 'final') s.tasks.settleForeground(at);

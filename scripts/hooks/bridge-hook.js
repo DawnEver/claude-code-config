@@ -103,22 +103,36 @@ function taskTexts(e) {
 }
 
 /**
- * The background tasks this transcript started and has not yet seen end, each by the tool call
- * that started it (its PreToolUse `tool_use_id`, how the adapter knows the task). Claude Code
- * wakes the session when one ends and that turn's Stop reports again, so the list corrects
- * itself. Tasks do not outlive their claude process, so a start older than `maxAgeMs` (a
- * resumed session's old shells) no longer counts.
+ * The background tasks this transcript started and has not yet seen end, each as its call made
+ * it — `{id, kind, label, startedAt}`, `id` the tool call that started it (its PreToolUse
+ * `tool_use_id`, how the adapter knows the task) — so the adapter can take them as the truth:
+ * end any other, and add one it lost (a daemon restart forgets them all). Claude Code wakes the
+ * session when one ends and that turn's Stop reports again, so the list corrects itself. Tasks
+ * do not outlive their claude process, so a start older than `maxAgeMs` (a resumed session's
+ * old shells) no longer counts.
  */
 export function backgroundTasks(jsonl, { now = Date.now(), maxAgeMs = 24 * 3600000 } = {}) {
-  const open = new Map();   // task id -> the tool call that started it
+  const calls = new Map();   // tool call id -> {kind, label, at} of a task tool's call
+  const open = new Map();    // task id -> its task, keyed so its end finds it
   for (const l of String(jsonl).split('\n')) {
     if (!l.trim()) continue;
     let e;
     try { e = JSON.parse(l); } catch { continue; }
-    const fresh = !(now - Date.parse(e.timestamp) > maxAgeMs);
+    const at = Date.parse(e.timestamp);
+    if (e.type === 'assistant' && Array.isArray(e.message?.content)) {
+      for (const b of e.message.content) {
+        const kind = b?.type === 'tool_use' && TASK_TOOLS[b.name];
+        if (kind) calls.set(b.id, { kind, label: taskLabel(kind, b.input), at });
+      }
+    }
+    const fresh = !(now - at > maxAgeMs);
     for (const [t, toolUseId] of taskTexts(e)) {
       const s = TASK_STARTED.exec(t);
-      if (s && fresh) open.set(s[1] ?? s[2], toolUseId ?? s[1] ?? s[2]);
+      if (s && fresh) {
+        const id = toolUseId ?? s[1] ?? s[2];
+        const call = calls.get(id);
+        open.set(s[1] ?? s[2], { id, kind: call?.kind ?? (s[2] ? 'agent' : 'shell'), label: call?.label ?? '', startedAt: call?.at ?? at });
+      }
       const d = TASK_ENDED.exec(t);
       if (d) open.delete(d[1] ?? d[2]);
     }
@@ -131,6 +145,10 @@ export function backgroundTasks(jsonl, { now = Date.now(), maxAgeMs = 24 * 36000
 const TASK_TOOLS = { Bash: 'shell', PowerShell: 'powershell', Monitor: 'monitor', Agent: 'agent', Task: 'agent' };
 // How long a monitor watches when its call says nothing, and at most (Claude Code's own limits).
 const MONITOR_DEFAULT_MS = 300000, MONITOR_MAX_MS = 1800000;
+
+// A tool response saying the call went on in the background (its text, or the shell's field).
+const WENT_BACKGROUND = /Async agent launched|Command running in background with ID|"backgroundTaskId":"/;
+const responseText = (r) => (typeof r === 'string' ? r : JSON.stringify(r ?? ''));
 
 /** What a tool call is, as a task: what it says it does, else its command (a monitor: its socket); an agent's type and description. */
 function taskLabel(kind, input = {}) {
@@ -153,7 +171,9 @@ export function taskFor(payload) {
   const monitor = kind === 'monitor' ? { timeoutMs: Math.min(Number(input.timeout_ms) > 0 ? Number(input.timeout_ms) : MONITOR_DEFAULT_MS, MONITOR_MAX_MS) } : {};
   switch (payload.hook_event_name) {
     case 'PreToolUse': return { op: 'start', id, kind, label: taskLabel(kind, input), background, ...monitor };
-    case 'PostToolUse': return background ? null : { op: 'end', id, status: 'completed' };
+    // Returned: done, unless it went to the background — asked to, or by itself (Claude Code moves
+    // a long shell or an agent there unasked): then it runs on, and a later Stop reads its end.
+    case 'PostToolUse': return background ? null : WENT_BACKGROUND.test(responseText(payload.tool_response)) ? { op: 'background', id } : { op: 'end', id, status: 'completed' };
     case 'PostToolUseFailure': return { op: 'end', id, status: payload.is_interrupt ? 'stopped' : 'failed' };
     default: return null;
   }

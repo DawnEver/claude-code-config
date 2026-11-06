@@ -49,7 +49,7 @@ test('claude status follows the turn edges the hooks report', async () => {
     await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: T + 200, task: { op: 'start', id: 'u2', kind: 'agent', label: 'Explore: x', background: true } });
     await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: T + 300, task: { op: 'end', id: 'u1', status: 'failed' } });
     await r.hook({ sessionId: 's', kind: 'activity', state: 'running', task: { op: 'start', id: 'u3', kind: 'rm -rf', label: 'x' } });
-    await r.hook({ sessionId: 's', kind: 'final', texts: [], background: ['u2'], at: T + 400 });
+    await r.hook({ sessionId: 's', kind: 'final', texts: [], background: [{ id: 'u2', kind: 'agent', label: 'Explore: x', startedAt: T + 200 }, { id: 'bad', kind: 'daemon', startedAt: 1 }], at: T + 400 });
     const snap = r.a.statusSnapshot('s');
     assert.equal(snap.state, 'idle');
     assert.deepEqual(snap.tasks.map((t) => [t.id, t.kind, t.startedAt]), [['u2', 'agent', T + 200]],

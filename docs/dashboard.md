@@ -86,9 +86,12 @@ no API, no authentication.
   A turn end ends every foreground task still running (its end hook was lost; a foreground
   call cannot outlive its turn), and a foreground start stamped before that turn end arrived
   late and counts as ended. Claude: `bridge-hook.js` reports a Bash or Agent call's start
-  (PreToolUse) and end (PostToolUse, PostToolUseFailure); a call run in the background ends
-  when a later turn end no longer finds it open in the transcript (`backgroundTasks`: started
-  minus notified or stopped; Monitors are not counted; Claude wakes when one ends). Codex:
+  (PreToolUse) and end (PostToolUse, PostToolUseFailure); a call that returns having gone to the
+  background — asked to, or by itself (Claude Code moves a long shell or an agent there unasked)
+  — runs on. Every turn end takes the transcript as the truth for background shells and agents
+  (`backgroundTasks`: started minus notified or stopped, each with its call's kind, label and
+  time; Monitors are not counted; Claude wakes when one ends): one not open there has ended, and
+  one open there that the board lost — a daemon restart, a dropped hook — is added back. Codex:
   `trackItem` in `codex-adapter.mjs` reads each `commandExecution` item from `inProgress` to
   its end, and each subagent by its thread from `collabAgentToolCall.agentsStates`. Live state
   only: no task is written to the usage store.

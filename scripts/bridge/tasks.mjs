@@ -48,13 +48,27 @@ export class TaskBoard {
     this.tasks.set(id, { ...(held ?? { id, kind: null, label: '', background: false, startedAt: at }), status, endedAt: at });
   }
 
+  /** A running task went on in the background (by itself, or as asked): a turn end no longer ends it. */
+  toBackground(id) {
+    const t = this.tasks.get(id);
+    if (t) t.background = true;
+  }
+
   /**
-   * The background shells and agents still open are `openIds` (the transcript says so): any other
-   * running one has ended. A task with its own deadline (a monitor) is not the transcript's to end.
+   * The background shells and agents still open are `open` ({id, kind, label, startedAt}: the
+   * transcript says so), taken as the truth: any other running one has ended, and one this board
+   * lost (a daemon restart, a dropped start) is added back. A task with its own deadline (a
+   * monitor) is not the transcript's to end.
    */
-  settleBackground(openIds, at) {
-    const open = new Set(openIds);
-    for (const t of this.tasks.values()) if (t.background && !t.until && t.status === 'running' && !open.has(t.id)) this.end(t.id, { status: 'completed', at });
+  settleBackground(open, at) {
+    const ids = new Set(open.map((t) => t.id));
+    for (const t of this.tasks.values()) if (t.background && !t.until && t.status === 'running' && !ids.has(t.id)) this.end(t.id, { status: 'completed', at });
+    for (const t of open) {
+      const held = this.tasks.get(t.id);
+      // Open by the transcript is running, whatever this board concluded (an async hook racing a turn end).
+      if (held?.kind) Object.assign(held, { background: true, status: 'running', endedAt: null });
+      else this.tasks.set(t.id, { id: t.id, kind: t.kind, label: taskLabel(t.kind, t.label), background: true, status: 'running', startedAt: t.startedAt, endedAt: null, until: null });
+    }
   }
 
   /**

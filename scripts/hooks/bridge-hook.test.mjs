@@ -42,11 +42,36 @@ test('backgroundTasks: shells and agents started minus those notified or stopped
     at(T, j({ type: 'attachment', attachment: { type: 'queued_command', prompt: '<task-notification>\n<task-id>ag1</task-id>\n<status>failed</status>' } })),
     at(T, result('{"message":"Successfully stopped task: sh3 (sleep 9)"}')),
   ];
-  assert.deepEqual(backgroundTasks(lines.join('\n'), { now }), ['toolu_sh2'], 'sh2 still runs, known by its tool call');
+  assert.deepEqual(backgroundTasks(lines.join('\n'), { now }), [{ id: 'toolu_sh2', kind: 'shell', label: '', startedAt: Date.parse(T) }],
+    'sh2 still runs, known by its tool call (no call entry: its result time, no label)');
   const payload = { hook_event_name: 'Stop', session_id: 's', transcript_path: path.join(os.tmpdir(), `bg-${process.pid}.jsonl`) };
-  fs.writeFileSync(payload.transcript_path, lines[1].replace(T, new Date().toISOString()));
-  try { assert.deepEqual(mirrorFor(payload), { sessionId: 's', kind: 'final', texts: [], background: ['toolu_sh2'] }, 'a textless turn end still reports its tasks'); }
+  const now2 = new Date().toISOString();
+  fs.writeFileSync(payload.transcript_path, lines[1].replace(T, now2));
+  try { assert.deepEqual(mirrorFor(payload), { sessionId: 's', kind: 'final', texts: [], background: [{ id: 'toolu_sh2', kind: 'shell', label: '', startedAt: Date.parse(now2) }] },
+    'a textless turn end still reports its tasks'); }
   finally { fs.rmSync(payload.transcript_path, { force: true }); }
+});
+
+test('backgroundTasks: each open task as its call made it — kind, label, when it was called — so a restarted daemon gets it back', () => {
+  const now = Date.parse('2026-10-30T12:00:00Z');
+  const at = (iso, o) => j({ ...JSON.parse(o), timestamp: iso });
+  const lines = [
+    at('2026-10-30T11:00:00Z', asst([{ type: 'tool_use', id: 'toolu_a', name: 'Agent', input: { subagent_type: 'Explore', description: 'find the hooks' } }])),
+    at('2026-10-30T11:00:02Z', user([{ type: 'tool_result', tool_use_id: 'toolu_a', content: [{ type: 'text', text: 'Async agent launched successfully. (internal; never quote the agentId below)\nagentId: a82b002cad3813945 (internal ID)' }] }])),
+    at('2026-10-30T11:01:00Z', asst([{ type: 'tool_use', id: 'toolu_p', name: 'PowerShell', input: { command: 'npm run dev', description: 'Start the dev server', run_in_background: true } }])),
+    at('2026-10-30T11:01:01Z', user([{ type: 'tool_result', tool_use_id: 'toolu_p', content: 'Command running in background with ID: bp1. Output is being written to: x' }])),
+  ];
+  assert.deepEqual(backgroundTasks(lines.join('\n'), { now }), [
+    { id: 'toolu_a', kind: 'agent', label: 'Explore: find the hooks', startedAt: Date.parse('2026-10-30T11:00:00Z') },
+    { id: 'toolu_p', kind: 'powershell', label: 'Start the dev server', startedAt: Date.parse('2026-10-30T11:01:00Z') }]);
+});
+
+test('taskFor: a call that went to the background by itself (no run_in_background) still runs when it returns', () => {
+  const post = (tool, response) => mirrorFor({ hook_event_name: 'PostToolUse', session_id: 's', tool_name: tool, tool_use_id: 'u1', tool_input: {}, tool_response: response }, {}).task;
+  assert.deepEqual(post('Agent', { content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: a1 (internal ID)' }] }), { op: 'background', id: 'u1' });
+  assert.deepEqual(post('Bash', { stdout: '', backgroundTaskId: 'b7' }), { op: 'background', id: 'u1' });
+  assert.deepEqual(post('Bash', 'Command running in background with ID: b8. Output is being written to: x'), { op: 'background', id: 'u1' });
+  assert.deepEqual(post('Bash', { stdout: 'done' }), { op: 'end', id: 'u1', status: 'completed' });
 });
 
 test('mirrorFor: prompt from payload, channel injections skipped, final prefers last_assistant_message', () => {

@@ -39,8 +39,30 @@ test('background tasks still open are what the transcript says: any other runnin
   b.start('u1', { kind: 'shell', label: 'npm run dev', at: 1, background: true });
   b.start('u2', { kind: 'agent', label: 'review', at: 2, background: true });
   b.start('u3', { kind: 'shell', label: 'ls', at: 3 });
-  b.settleBackground(['u2'], 10);
+  b.settleBackground([{ id: 'u2', kind: 'agent', label: 'review', startedAt: 2 }], 10);
   assert.deepEqual(ids(b, 10), ['u2', 'u3']);
+});
+
+test('the transcript gives back what the board lost: a restarted daemon, an agent that went to the background by itself', () => {
+  const b = new TaskBoard();
+  b.start('a1', { kind: 'agent', label: 'Explore: hooks', at: 5 });
+  b.settleForeground(6);   // the turn ended before the hook saying it went to the background landed
+  b.toBackground('a1');    // too late: it already ended
+  assert.deepEqual(ids(b, 7), []);
+  b.settleBackground([{ id: 'a1', kind: 'agent', label: 'Explore: hooks', startedAt: 5 }, { id: 'lost', kind: 'shell', label: 'npm run dev', startedAt: 1 }], 20);
+  assert.deepEqual(b.list(20), [
+    { id: 'lost', kind: 'shell', label: 'npm run dev', background: true, startedAt: 1 },
+    { id: 'a1', kind: 'agent', label: 'Explore: hooks', background: true, startedAt: 5 }], 'open by the transcript is running');
+  b.settleForeground(30);
+  assert.deepEqual(ids(b, 30), ['lost', 'a1'], 'and, in the background, a turn end leaves them be');
+});
+
+test('a call that went to the background on its own is not ended by the turn end', () => {
+  const b = new TaskBoard();
+  b.start('a2', { kind: 'agent', label: 'review', at: 1 });
+  b.toBackground('a2');
+  b.settleForeground(5);
+  assert.deepEqual(ids(b, 5), ['a2']);
 });
 
 test('a turn end ends every foreground task still running: its end was lost, it cannot outlive the turn', () => {
