@@ -678,12 +678,12 @@ test('trackItem: a command runs from its inProgress item to its end; each subage
   trackItem(b, { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'inProgress' }, 1000);
   trackItem(b, { type: 'commandExecution', id: 'c2', command: 'ls', status: 'completed', durationMs: 50 }, 1200);
   trackItem(b, { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'failed', exitCode: 1 }, 3000);
+  trackItem(b, { type: 'commandExecution', id: 'c3', command: 'cargo build', status: 'inProgress' }, 1500);
   trackItem(b, { type: 'collabAgentToolCall', id: 'k1', tool: 'spawnAgent', prompt: 'review the diff', status: 'completed',
     senderThreadId: 'main', receiverThreadIds: ['a1'], agentsStates: { a1: { status: 'running' } } }, 2000);
+  trackItem(b, { type: 'agentMessage', id: 'm', text: 'hi' }, 2500);
+  assert.deepEqual(b.list(3000).map((t) => [t.id, t.kind, t.label, t.startedAt]), [['c3', 'shell', 'cargo build', 1500], ['a1', 'agent', 'review the diff', 2000]],
+    'what runs: a command still in progress, a spawned subagent; ended commands are gone');
   trackItem(b, { type: 'collabAgentToolCall', id: 'k2', tool: 'wait', status: 'completed', agentsStates: { a1: { status: 'completed' } } }, 9000);
-  trackItem(b, { type: 'agentMessage', id: 'm', text: 'hi' }, 9000);
-  assert.deepEqual(b.list(9000).map((t) => [t.id, t.kind, t.label, t.status, t.startedAt, t.endedAt]), [
-    ['a1', 'agent', 'review the diff', 'completed', 2000, 9000],
-    ['c1', 'shell', 'npm test', 'failed', 1000, 3000],
-    ['c2', 'shell', 'ls', 'completed', 1150, 1200]]);
+  assert.deepEqual(b.list(9000).map((t) => t.id), ['c3'], 'the subagent ended as agentsStates says');
 });

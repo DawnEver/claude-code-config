@@ -3,27 +3,30 @@ import assert from 'node:assert/strict';
 import { TaskBoard, ENDED_KEEP_MS } from './tasks.mjs';
 import { TASK_LABEL_MAX, MAX_TASKS } from '../dashboard/public/shared/vocab.mjs';
 
-test('a task runs from its start to its end; the list is running first, then the recently ended', () => {
+const ids = (b, now) => b.list(now).map((t) => t.id);
+
+test('only what runs is listed, oldest first, with when it started; an ended task is gone', () => {
   const b = new TaskBoard();
-  b.start('t1', { kind: 'shell', label: 'npm test', at: 1000 });
   b.start('t2', { kind: 'agent', label: 'Explore: find the hooks', at: 2000, background: true });
-  b.end('t1', { status: 'failed', at: 5000 });
+  b.start('t1', { kind: 'shell', label: 'npm test', at: 1000 });
+  b.start('t3', { kind: 'shell', label: 'ls', at: 3000 });
+  b.end('t3', { status: 'failed', at: 5000 });
   assert.deepEqual(b.list(6000), [
-    { id: 't2', kind: 'agent', label: 'Explore: find the hooks', background: true, status: 'running', startedAt: 2000, endedAt: null },
-    { id: 't1', kind: 'shell', label: 'npm test', background: false, status: 'failed', startedAt: 1000, endedAt: 5000 }]);
-  assert.deepEqual(b.list(5000 + ENDED_KEEP_MS + 1).map((t) => t.id), ['t2'], 'an ended task is listed for a while, then dropped');
+    { id: 't1', kind: 'shell', label: 'npm test', background: false, startedAt: 1000 },
+    { id: 't2', kind: 'agent', label: 'Explore: find the hooks', background: true, startedAt: 2000 }]);
 });
 
-test('async hooks may arrive out of order: an end before its start, a start again, an end again — the first end stands', () => {
+test('async hooks may arrive out of order: an end before its start keeps it ended, until it is forgotten', () => {
   const b = new TaskBoard();
   b.end('t1', { status: 'completed', at: 3000 });
   b.start('t1', { kind: 'shell', label: 'ls', at: 1000 });
-  b.end('t1', { status: 'failed', at: 4000 });
-  const [t] = b.list(3000);
-  assert.deepEqual([t.status, t.startedAt, t.endedAt, t.label], ['completed', 1000, 3000, 'ls']);
+  assert.deepEqual(ids(b, 3000), [], 'the late start does not revive it');
+  b.end('t2', { status: 'completed', at: 3000 });
+  b.list(3000 + ENDED_KEEP_MS + 1);
+  assert.equal(b.tasks.size, 0, 'an ended task is remembered only ENDED_KEEP_MS');
 });
 
-test('labels are cut to LABEL_MAX characters on one line', () => {
+test('labels are cut to TASK_LABEL_MAX characters on one line', () => {
   const b = new TaskBoard();
   b.start('t', { kind: 'shell', label: `echo a\n  && ${'x'.repeat(500)}`, at: 1 });
   const [t] = b.list(1);
@@ -37,7 +40,7 @@ test('background tasks still open are what the transcript says: any other runnin
   b.start('u2', { kind: 'agent', label: 'review', at: 2, background: true });
   b.start('u3', { kind: 'shell', label: 'ls', at: 3 });
   b.settleBackground(['u2'], 10);
-  assert.deepEqual(b.list(10).map((t) => [t.id, t.status]), [['u2', 'running'], ['u3', 'running'], ['u1', 'completed']]);
+  assert.deepEqual(ids(b, 10), ['u2', 'u3']);
 });
 
 test('a turn end ends every foreground task still running: its end was lost, it cannot outlive the turn', () => {
@@ -45,11 +48,10 @@ test('a turn end ends every foreground task still running: its end was lost, it 
   b.start('f1', { kind: 'shell', label: 'npm test', at: 1 });
   b.start('g1', { kind: 'shell', label: 'npm run dev', at: 2, background: true });
   b.settleForeground(10);
-  assert.deepEqual(b.list(10).map((t) => [t.id, t.status, t.endedAt]), [['g1', 'running', null], ['f1', 'completed', 10]]);
+  assert.deepEqual(ids(b, 10), ['g1']);
   b.start('late', { kind: 'shell', label: 'ls', at: 8 });
   b.start('next', { kind: 'shell', label: 'pwd', at: 12 });
-  assert.deepEqual(b.list(12).filter((t) => ['late', 'next'].includes(t.id)).map((t) => [t.id, t.status]), [['next', 'running'], ['late', 'completed']],
-    'a start stamped before the turn end arrived late: that turn ended it');
+  assert.deepEqual(ids(b, 12), ['g1', 'next'], 'a start stamped before the turn end arrived late: that turn ended it');
 });
 
 test('a shell is labelled by what it does: its description, else the command without its leading cd and with ~ for home', () => {
@@ -66,5 +68,5 @@ test('closing a session ends everything it ran; the list is bounded', () => {
   for (let i = 0; i < MAX_TASKS + 10; i++) b.start(`t${i}`, { kind: 'shell', label: String(i), at: i });
   assert.equal(b.list(100).length, MAX_TASKS);
   b.endAll('stopped', 200);
-  assert.ok(b.list(200).every((t) => t.status === 'stopped' && t.endedAt === 200));
+  assert.deepEqual(b.list(200), []);
 });

@@ -127,21 +127,20 @@ const TASK_LINES = 5;
 const tasksOpen = new Set();
 
 /**
- * One task, three columns: what kind (a tag, coloured per kind), what it does, how long it ran or
- * runs so far. Its state is the row's colour (running, done dimmed, failed red); a background
- * task is marked; an ended one says how it ended. Full: the label wraps instead of being cut.
+ * One running task, three columns: what kind (a tag, coloured per kind), what it does (a
+ * background one marked), how long it has run. Full: the label wraps instead of being cut.
  */
 function taskLine(x, full) {
-  const row = el('div', `task k-${x.kind} t-${x.status}`);
+  const row = el('div', `task k-${x.kind}`);
   row.append(el('span', 'tk', tr(`task.tag.${x.kind}`)));
   const what = el('span', `tl${full ? ' full' : ''}`, x.label);
   if (x.background) what.prepend(el('span', 'tb', tr('task.bg')));
-  row.append(what, el('span', 'td', x.status === 'running' ? x.for : `${tr(`task.status.${x.status}`)} ${x.for}`));
-  row.title = [tr(`task.${x.kind}`), tr(`task.status.${x.status}`), x.background && tr('task.bgTitle'), x.label].filter(Boolean).join(' · ');
+  row.append(what, el('span', 'td', x.for));
+  row.title = [tr(`task.${x.kind}`), x.background && tr('task.bgTitle'), x.label].filter(Boolean).join(' · ');
   return row;
 }
 
-/** The tasks icon: how many run now (none: the icon alone); a tap lists them all or folds them, and never opens the Topic. */
+/** The tasks icon: how many run; a tap lists them all with labels in full, or folds them, and never opens the Topic. */
 function tasksButton(s, running, open, redraw) {
   const btn = el('span', `tasks-btn${open ? ' on' : ''}`);
   btn.setAttribute('role', 'button');
@@ -150,7 +149,7 @@ function tasksButton(s, running, open, redraw) {
   btn.setAttribute('aria-label', tr(open ? 'session.tasksHide' : 'session.tasksShow'));
   btn.title = btn.getAttribute('aria-label');
   btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h2M4 12h2M4 18h2M9 6h11M9 12h11M9 18h11"/></svg>';
-  if (running) btn.append(el('b', null, String(running)));
+  btn.append(el('b', null, String(running)));
   const toggle = (e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -185,24 +184,22 @@ function sessionRow(s, opts = {}) {
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
   const tasks = taskView(s.tasks, Date.now());
-  // What runs is its own lines below and the tasks icon's count; the line keeps only what failed.
-  const sub = el('span', 'sub', [statusLabel(status, lang),
-    tasks.failed && tr('session.tasksFailed', { n: tasks.failed }), replyTime(s, Date.now(), pref.replyStyle, lang), ...where,
+  // What runs is its own lines below and the tasks icon's count, not words on this line.
+  const sub = el('span', 'sub', [statusLabel(status, lang), replyTime(s, Date.now(), pref.replyStyle, lang), ...where,
     s.topic?.closed && tr('session.topicClosed')].filter(Boolean).join(' · '));
   // The account the session spends, as on the Quota tab (observation-only sessions have none).
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
   // No reading of it anywhere: name what it spends — the platform for an API-key session, else the seat.
   else if (s.provider || s.seat) sub.append(document.createTextNode(` · ${s.provider ? providerName(s.provider) : s.seat}`));
-  const open = tasksOpen.has(s.id) && tasks.all.length > 0;
-  bottom.append(sub, ...(tasks.all.length ? [tasksButton(s, tasks.running.length, open, () => row.replaceWith(sessionRow(s, opts)))] : []), ...badges(s));
+  const open = tasksOpen.has(s.id) && tasks.length > 0;
+  bottom.append(sub, ...(tasks.length ? [tasksButton(s, tasks.length, open, () => row.replaceWith(sessionRow(s, opts)))] : []), ...badges(s));
   body.append(top, bottom);
-  // Folded: what runs now (at most TASK_LINES). Open: every task, ended ones too, labels in full.
-  const shown = open ? tasks.all : tasks.running.slice(0, TASK_LINES);
-  if (shown.length) {
+  // Folded: the first TASK_LINES, cut to a line each. Open: all of them, labels in full.
+  if (tasks.length) {
     const list = el('div', `tasks${open ? ' all' : ''}`);
-    for (const x of shown) list.append(taskLine(x, open));
-    if (!open && tasks.running.length > TASK_LINES) list.append(el('div', 'task more', tr('session.tasksMore', { n: tasks.running.length - TASK_LINES })));
+    for (const x of open ? tasks : tasks.slice(0, TASK_LINES)) list.append(taskLine(x, open));
+    if (!open && tasks.length > TASK_LINES) list.append(el('div', 'task more', tr('session.tasksMore', { n: tasks.length - TASK_LINES })));
     body.append(list);
   }
   row.append(avatar, body);

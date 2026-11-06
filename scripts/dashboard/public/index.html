@@ -108,7 +108,7 @@
   .chat-top, .chat-bottom { display: flex; align-items: center; gap: 6px; }
   .chat-top .title { flex: 1; }
   .chat-bottom .sub { flex: 1; margin-top: 2px; font-size: var(--t2); }
-  /* A session's tasks: kind tag | what it does | how long. Kind is the tag's colour, state the row's. */
+  /* A session's running tasks: kind tag | what it does | how long. Kind is the tag's colour. */
   .tasks { display: grid; gap: 3px; margin-top: 5px; }
   .task { --kind: var(--run); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 7px; font-size: var(--t3); color: var(--fg); }
   .task.k-agent { --kind: #af52de; }
@@ -118,11 +118,6 @@
   .task .tl.full { white-space: normal; overflow-wrap: anywhere; }
   .task .tb { margin-right: 5px; padding: 0 4px; border-radius: 4px; border: 1px solid var(--sep); color: var(--hint); font-size: .9em; }
   .task .td { color: var(--hint); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .task:not(.t-running) { opacity: .55; }
-  .task:not(.t-running) .tk { color: var(--hint); background: color-mix(in srgb, var(--hint) 14%, transparent); }
-  .task.t-failed { opacity: 1; }
-  .task.t-failed .tk, .task.t-failed .td { color: var(--bad); background: none; }
-  .task.t-failed .tk { background: color-mix(in srgb, var(--bad) 14%, transparent); }
   .task.more { display: block; color: var(--hint); }
   .tasks-btn { display: inline-flex; align-items: center; gap: 3px; flex: none; padding: 2px 7px; border-radius: 10px; background: var(--press); color: var(--hint); font-size: var(--t3); cursor: pointer; }
   .tasks-btn.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }

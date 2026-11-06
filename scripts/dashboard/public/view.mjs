@@ -140,15 +140,10 @@ export function groupSessions(hosts, by = 'host', order = 'host') {
 export const sessionLabel = (s, lang = 'en') => s.name ?? s.project ?? t('session.unknownProject', lang);
 
 /**
- * A session's tasks (scripts/bridge/tasks.mjs) as its row shows them: the running ones with how
- * long they have run (oldest first, as listed), how many failed lately, and `all` of them as
- * listed, each with how long it ran (or runs so far).
+ * A session's running tasks (scripts/bridge/tasks.mjs: only what runs is reported), as listed
+ * (oldest first), each with how long it has run so far.
  */
-export function taskView(tasks = [], now = Date.now()) {
-  const all = tasks.map((x) => ({ ...x, for: countdown(x.endedAt ?? now, x.startedAt) }));
-  const running = all.filter((x) => x.status === 'running');
-  return { failed: tasks.filter((x) => x.status === 'failed').length, running, all };
-}
+export const taskView = (tasks = [], now = Date.now()) => tasks.map((x) => ({ ...x, for: countdown(now, x.startedAt) }));
 
 /** A chat list's time column: the clock today, the weekday within a week, else the date. */
 export function chatTime(iso, now = Date.now(), { clock = '24', lang = 'en' } = {}) {
@@ -508,7 +503,7 @@ export function searchAll(snapshot, query, { now = Date.now(), lang = 'en', max 
     if (hit(s.name, s.project, s.branch, s.hostId, s.agent, s.seat, s.account, s.provider, s.repo, s.id))
       add({ kind: 'session', title: sessionLabel(s, lang), sub: [statusLabel(s.status, lang), where].join(' · '), session: s, tab: 'sessions' });
     for (const x of s.tasks ?? []) {
-      if (hit(x.label, x.kind)) add({ kind: 'task', title: x.label, sub: [t(`task.${x.kind}`, lang), x.status === 'running' ? countdown(now, x.startedAt) : x.status, sessionLabel(s, lang), s.hostId].join(' · '), session: s, tab: 'sessions' });
+      if (hit(x.label, x.kind)) add({ kind: 'task', title: x.label, sub: [t(`task.${x.kind}`, lang), countdown(now, x.startedAt), sessionLabel(s, lang), s.hostId].join(' · '), session: s, tab: 'sessions' });
     }
   }
   for (const a of snapshot.accounts ?? []) {

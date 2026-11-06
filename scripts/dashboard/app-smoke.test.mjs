@@ -128,18 +128,19 @@ test('the page renders every tab from the example data, and no view throws', asy
     const balance = doc.getElementById('quota-view').querySelectorAll('.deepseek');
     assert.equal(balance.length, 1);
     assert.equal(balance[0].textContent, 'DeepSeek');
-    // The tasks icon lists every shell and agent of its session and never opens the Topic.
+    // The tasks icon counts what runs, opens it with labels in full, and never opens the Topic.
     tabs[0].dispatch('click');
     let opened = 0;
     globalThis.window.open = () => { opened++; };
     const tasksBtn = () => doc.getElementById('hosts').querySelectorAll('.tasks-btn')[0];
-    assert.ok(tasksBtn(), 'a session with tasks has the tasks icon');
+    const full = () => doc.getElementById('hosts').querySelectorAll('.tl').filter((x) => x.classList.contains('full')).length;
+    assert.equal(tasksBtn()?.textContent, '3', 'a session running tasks has the icon, counting them');
+    assert.equal(full(), 0, 'folded: each label cut to a line');
     tasksBtn().dispatch('click');
     assert.equal(opened, 0, 'the icon does not open the Topic');
-    const all = doc.getElementById('hosts').querySelectorAll('.task');
-    assert.ok(all.some((x) => x.textContent.includes('npm run lint')), 'an ended task is listed too');
+    assert.equal(full(), 3, 'open: every running task, labels in full');
     tasksBtn().dispatch('click');
-    assert.ok(!doc.getElementById('hosts').querySelectorAll('.task').some((x) => x.textContent.includes('npm run lint')), 'a second tap folds it');
+    assert.equal(full(), 0, 'a second tap folds it');
     doc.getElementById('hosts').querySelectorAll('.chat').find((x) => x.classList.contains('link')).dispatch('click');
     assert.equal(opened, 1, 'the row still opens its Topic');
     // The search replaces the tab's view with results; a result leading to a tab clears it and goes there.

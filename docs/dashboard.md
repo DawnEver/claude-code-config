@@ -69,15 +69,15 @@ no API, no authentication.
   dropped from the next push rather than listed. The UI never infers a status.
   A session whose host reports `unknown` is not listed at all.
 - **Tasks**: a session carries `tasks`, the shells and subagents it runs besides its own turn
-  (`TaskBoard` in `scripts/bridge/tasks.mjs`, one per session): running ones with their start,
-  then those ended within 10 min with their end and status (`completed`, `failed`, `stopped`);
-  at most 50, each label one line of at most 200 characters: a Claude shell's `description`
+  (`TaskBoard` in `scripts/bridge/tasks.mjs`, one per session): only what runs now, each with
+  its start — an ended task is never reported (the board remembers it 10 min only so a late
+  start cannot revive it); at most 50, each label one line of at most 200 characters: a Claude shell's `description`
   (what it does), else its command without a leading `cd … &&` and with `~` for home; an
   agent's type and description. Each task is one line of three columns — a kind tag (`>_`
   shell, `agent`, each its own colour), what it does (a `bg` mark when in the background),
-  how long it ran or runs so far — and its state is the line's colour (ended dimmed, failed
-  red). Folded, the row lists what runs; its tasks icon (counting what runs) lists every task,
-  ended ones too, with labels in full — a tap there never opens the Topic, the row still does.
+  how long it has run. Folded, the row lists the first five, each cut to a line; its tasks icon
+  (counting what runs) lists all of them with labels in full — a tap there never opens the
+  Topic, the row still does.
   A turn end ends every foreground task still running (its end hook was lost; a foreground
   call cannot outlive its turn), and a foreground start stamped before that turn end arrived
   late and counts as ended. Claude: `bridge-hook.js` reports a Bash or Agent call's start

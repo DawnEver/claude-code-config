@@ -13,9 +13,9 @@ export function mockDashboard(now = Date.now()) {
   return { schemaVersion: 1, generatedAt: t(0), mock: true, hosts: [
     { id: 'host-a', online: true, lastSeen: t(4), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: [], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
       { ...s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a', 'OAuth token refresh', 3), repo: 'github.com/example/backend-api',
-        tasks: [{ id: 'k1', kind: 'agent', label: 'Explore: where tokens refresh', background: true, status: 'running', startedAt: now - 12 * 60000, endedAt: null },
-          { id: 'k2', kind: 'shell', label: 'npm test -- auth', background: false, status: 'running', startedAt: now - 40000, endedAt: null },
-          { id: 'k3', kind: 'shell', label: 'npm run lint', background: false, status: 'failed', startedAt: now - 5 * 60000, endedAt: now - 4 * 60000 }] },
+        tasks: [{ id: 'k1', kind: 'agent', label: 'Explore: where tokens refresh', background: true, startedAt: now - 12 * 60000 },
+          { id: 'k2', kind: 'shell', label: 'Run the auth tests', background: false, startedAt: now - 40000 },
+          { id: 'k3', kind: 'shell', label: 'npm run build -- --watch --mode development --config ~/repo/frontend/vite.config.ts', background: true, startedAt: now - 3 * 60000 }] },
       s('host-a', false, '019a7f20-2222', 'codex', 'frontend', 'main', 'needs_approval', 40, { url: 'https://t.me/c/1000000001/13', closed: false }, null, 'Landing page redesign', 5, true)],
       resources: { cpu: 42, cores: 16, cpuModel: 'AMD Ryzen 9 7950X', mem: { used: 21e9, total: 34e9, type: 'DDR5' }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
     { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [

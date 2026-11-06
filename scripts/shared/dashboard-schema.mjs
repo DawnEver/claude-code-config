@@ -6,7 +6,7 @@
 import { isValidMachineName } from './machine.mjs';
 
 export const SCHEMA_VERSION = 1;
-import { AGENTS, STATUSES, TASK_KINDS, TASK_STATUSES, TASK_LABEL_MAX, MAX_TASKS } from '../dashboard/public/shared/vocab.mjs';
+import { AGENTS, STATUSES, TASK_KINDS, TASK_LABEL_MAX, MAX_TASKS } from '../dashboard/public/shared/vocab.mjs';
 
 export { AGENTS, STATUSES };
 /** Native session status (scripts/bridge/daemon.mjs STATUS_CODES). Freshness (`stale`) is separate, set by the gateway. */
@@ -48,7 +48,7 @@ function parseSession(s) {
     // The forge repository of its working tree (shared/repo-key.mjs): the Code tab's link to it.
     repo: isRepoKey(s.repo) ? s.repo : null,
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
-    // Its shells and subagents (scripts/bridge/tasks.mjs): running ones, then those ended lately.
+    // The shells and subagents it runs now (scripts/bridge/tasks.mjs).
     ...(Array.isArray(s.tasks) && s.tasks.length ? { tasks: s.tasks.slice(0, MAX_TASKS).map(parseTask).filter(Boolean) } : {}),
     unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,
     // Posts to the Topic ever (a running count: a page keeps what it has seen) and when the last one came.
@@ -59,13 +59,11 @@ function parseSession(s) {
   };
 }
 
-/** One task of a session (scripts/bridge/tasks.mjs TaskBoard.list): numbers, a kind, a status and a one-line label. */
+/** One running task of a session (scripts/bridge/tasks.mjs TaskBoard.list): a kind, a one-line label, when it started. */
 function parseTask(t) {
   const id = text(t?.id, 128);
-  if (!id || !TASK_KINDS.includes(t.kind) || !TASK_STATUSES.includes(t.status) || !epoch(t.startedAt)) return null;
-  const endedAt = t.status === 'running' ? null : epoch(t.endedAt);
-  if (t.status !== 'running' && !endedAt) return null;
-  return { id, kind: t.kind, label: text(t.label, TASK_LABEL_MAX) ?? '', background: t.background === true, status: t.status, startedAt: t.startedAt, endedAt };
+  if (!id || !TASK_KINDS.includes(t.kind) || !epoch(t.startedAt)) return null;
+  return { id, kind: t.kind, label: text(t.label, TASK_LABEL_MAX) ?? '', background: t.background === true, startedAt: t.startedAt };
 }
 
 export const MAX_ACCOUNTS = 40;

@@ -895,25 +895,19 @@ test('a forgotten source stays forgotten across a restart', () => {
   assert.deepEqual(new Registry({ hosts: ['a'], ttlMs: 600000, now: () => t, store }).snapshot().repos, []);
 });
 
-test('view: a session tasks — what runs now by kind, each for how long (oldest first), and what failed lately', () => {
+test('view: a session tasks — only what runs, as listed, each with how long it has run', () => {
   const tasks = [
-    { id: 'a', kind: 'agent', label: 'Explore: hooks', background: true, status: 'running', startedAt: NOW - 12 * 60000, endedAt: null },
-    { id: 'b', kind: 'shell', label: 'npm test', background: false, status: 'running', startedAt: NOW - 30000, endedAt: null },
-    { id: 'c', kind: 'shell', label: 'false', background: false, status: 'failed', startedAt: NOW - 90000, endedAt: NOW - 60000 },
-    { id: 'd', kind: 'shell', label: 'ls', background: false, status: 'completed', startedAt: NOW - 90000, endedAt: NOW - 80000 }];
-  const v = taskView(tasks, NOW);
-  assert.deepEqual([v.running.length, v.failed], [2, 1]);
-  assert.deepEqual(v.running.map((t) => [t.id, t.for]), [['a', '12m'], ['b', '1m']]);
-  assert.deepEqual(v.all.map((t) => [t.id, t.status, t.for]), [['a', 'running', '12m'], ['b', 'running', '1m'], ['c', 'failed', '1m'], ['d', 'completed', '0m']],
-    'every task, as listed: running for how long so far, ended for how long it ran');
-  assert.deepEqual(taskView(undefined, NOW), { failed: 0, running: [], all: [] });
-  const parsed = parseHostPush(push({ sessions: [session({ tasks: [...tasks, { id: 'x', kind: 'daemon', status: 'running', startedAt: NOW }] })] })).sessions[0];
-  assert.deepEqual(parsed.tasks.map((t) => t.id), ['a', 'b', 'c', 'd'], 'an unknown kind is dropped at the boundary');
+    { id: 'a', kind: 'agent', label: 'Explore: hooks', background: true, startedAt: NOW - 12 * 60000 },
+    { id: 'b', kind: 'shell', label: 'npm test', background: false, startedAt: NOW - 30000 }];
+  assert.deepEqual(taskView(tasks, NOW).map((t) => [t.id, t.for]), [['a', '12m'], ['b', '1m']]);
+  assert.deepEqual(taskView(undefined, NOW), []);
+  const parsed = parseHostPush(push({ sessions: [session({ tasks: [...tasks, { id: 'x', kind: 'daemon', startedAt: NOW }, { id: 'y', kind: 'shell', label: 'ls' }] })] })).sessions[0];
+  assert.deepEqual(parsed.tasks, tasks, 'an unknown kind or a task with no start is dropped at the boundary; nothing but these fields passes');
 });
 
 test('search: every term in any field, across hosts, sessions, tasks, accounts, repositories, branches, pull requests and config', () => {
   const m = mockDashboard(NOW);
-  m.hosts[0].sessions[0].tasks = [{ id: 't1', kind: 'shell', label: 'npm run migrate', background: false, status: 'running', startedAt: NOW - 60000, endedAt: null }];
+  m.hosts[0].sessions[0].tasks = [{ id: 't1', kind: 'shell', label: 'npm run migrate', background: false, startedAt: NOW - 60000 }];
   const kinds = (q) => searchAll(m, q, { now: NOW }).map((r) => `${r.kind}:${r.title}`);
   assert.deepEqual(searchAll(m, '  ', { now: NOW }), [], 'an empty query finds nothing');
   assert.ok(kinds('OAUTH').includes('session:OAuth token refresh'), 'case-insensitive, by session name');

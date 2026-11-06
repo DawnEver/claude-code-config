@@ -52,11 +52,10 @@ test('claude status follows the turn edges the hooks report', async () => {
     await r.hook({ sessionId: 's', kind: 'final', texts: [], background: ['u2'], at: T + 400 });
     const snap = r.a.statusSnapshot('s');
     assert.equal(snap.state, 'idle');
-    assert.deepEqual(snap.tasks.map((t) => [t.id, t.kind, t.status, t.startedAt, t.endedAt]), [['u2', 'agent', 'running', T + 200, null], ['u1', 'shell', 'failed', T + 100, T + 300]],
-      'idle with an agent still running; a malformed task is dropped at the boundary');
+    assert.deepEqual(snap.tasks.map((t) => [t.id, t.kind, t.startedAt]), [['u2', 'agent', T + 200]],
+      'idle with the background agent still running; the ended shell is gone; a malformed task is dropped at the boundary');
     await r.hook({ sessionId: 's', kind: 'final', text: 'all done', background: [], at: T + 500 });
-    assert.deepEqual(r.a.statusSnapshot('s').tasks.map((t) => [t.id, t.status, t.endedAt]), [['u2', 'completed', T + 500], ['u1', 'failed', T + 300]],
-      'a turn end with no background task open ends the agent');
+    assert.equal(r.a.statusSnapshot('s').tasks, undefined, 'a turn end with no background task open ends the agent: nothing runs');
     await r.a.inject('s', 'new task', 'user');
     ch.destroy();
     await new Promise((resolve) => setTimeout(resolve, 30));
