@@ -43,12 +43,20 @@ test('claude status follows the turn edges the hooks report', async () => {
     assert.equal(r.a.statusSnapshot('s').state, 'idle');
     assert.equal(r.a.answerApproval('p', true, 's'), true);
     assert.equal(r.a.statusSnapshot('s').state, 'idle');
-    await r.hook({ sessionId: 's', kind: 'final', texts: [], background: 2 });
-    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'idle', background: 2 }, 'idle with tasks still running');
-    await r.a.inject('s', 'new task', 'user');
-    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'running' }, 'a running turn shows no background count');
-    await r.hook({ sessionId: 's', kind: 'final', text: 'all done' });
-    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'idle' }, 'a turn end recounts');
+    const T = Date.now();
+    // Tasks: a shell and a background agent start; the shell ends; the agent runs past the turn.
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: T + 100, task: { op: 'start', id: 'u1', kind: 'shell', label: 'npm test', background: false } });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: T + 200, task: { op: 'start', id: 'u2', kind: 'agent', label: 'Explore: x', background: true } });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: T + 300, task: { op: 'end', id: 'u1', status: 'failed' } });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', task: { op: 'start', id: 'u3', kind: 'rm -rf', label: 'x' } });
+    await r.hook({ sessionId: 's', kind: 'final', texts: [], background: ['u2'], at: T + 400 });
+    const snap = r.a.statusSnapshot('s');
+    assert.equal(snap.state, 'idle');
+    assert.deepEqual(snap.tasks.map((t) => [t.id, t.kind, t.status, t.startedAt, t.endedAt]), [['u2', 'agent', 'running', T + 200, null], ['u1', 'shell', 'failed', T + 100, T + 300]],
+      'idle with an agent still running; a malformed task is dropped at the boundary');
+    await r.hook({ sessionId: 's', kind: 'final', text: 'all done', background: [], at: T + 500 });
+    assert.deepEqual(r.a.statusSnapshot('s').tasks.map((t) => [t.id, t.status, t.endedAt]), [['u2', 'completed', T + 500], ['u1', 'failed', T + 300]],
+      'a turn end with no background task open ends the agent');
     await r.a.inject('s', 'new task', 'user');
     ch.destroy();
     await new Promise((resolve) => setTimeout(resolve, 30));

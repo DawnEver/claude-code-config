@@ -328,11 +328,16 @@ chars; 429s honour `retry_after`.
 ## Approvals
 
 Notifications: every mirrored message is sent silently. What waits for the human — an
-approval, a question, a permission Notification, or a turn that ended `failed` (Codex
-`failed`; Claude `StopFailure`: an API error such as a rate limit) — arms a nudge: if after
+approval, a question, a permission Notification — arms a nudge: if after
 30 s the session has not moved (no later post, not running again), one `waiting for you` reply
 mentions each `allowedUserIds` user by id (`@you`), so it gets through a muted group or
 Topic. Handled at the machine within the grace, it mentions nobody.
+
+A turn that ended `failed` (Codex `failed`; Claude `StopFailure`: an API error such as a rate
+limit) posts a plain `[failed] …` line to its Topic and, with the dashboard configured, is
+alerted in the dashboard bot's private chat with a link to that line (`Bridge.onAlert` ->
+`DashboardPush.raise`; [`dashboard.md`](dashboard.md) "Alerts"). Without the dashboard the
+Topic is the only channel, so the failed line mentions the human there.
 
 Default: `approval needed on <machine>, answer locally or via official remote`, never
 answered. Opt-in per machine with `bridge.approvalsFromTelegram: true`: Accept/Decline
@@ -556,9 +561,10 @@ set, the daemon pushes a read-only snapshot of its sessions and its accounts' qu
 Telegram Mini App. Off the message path; a failing gateway only logs. See
 [`dashboard.md`](dashboard.md).
 
-Quota is state, read on demand in the dashboard. Its events (a window hitting its limit, a
-seat problem, an announced extra reset) live only in the dashboard's Events tab: the bridge
-posts nothing about quota to Telegram, and nothing to any group's General topic.
+Quota is state, read on demand in the dashboard. Its alerts (a window hitting its limit, a
+seat problem, an announced extra reset), like a host going offline, are sent by the dashboard
+bot to the private chat ([`dashboard.md`](dashboard.md) "Alerts"): the bridge posts nothing
+about quota to project groups, and nothing to any group's General topic.
 
 ## Claude seats (`scripts/shared/seats.mjs`)
 

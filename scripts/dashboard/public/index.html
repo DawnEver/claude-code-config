@@ -108,6 +108,8 @@
   .chat-top, .chat-bottom { display: flex; align-items: center; gap: 6px; }
   .chat-top .title { flex: 1; }
   .chat-bottom .sub { flex: 1; margin-top: 2px; font-size: var(--t2); }
+  .tasks { margin-top: 3px; }
+  .task { color: var(--hint); font-size: var(--t3); font-family: ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chat-time { flex: none; color: var(--hint); font-size: var(--t3); } .chat-time.fresh { color: var(--accent); }
   .badge { flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); color: var(--accent-fg);
     font: 600 var(--t3)/22px system-ui, sans-serif; text-align: center; }
@@ -119,9 +121,17 @@
   .res-m .k { color: var(--hint); font-weight: 600; white-space: nowrap; }
   .res-t { white-space: nowrap; text-align: right; }
   .res-about { grid-column: 1 / -1; overflow-wrap: anywhere; }
+  .res.tap { width: calc(100% - 8px); border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 
   /* Tabs: one question per view. */
   /* Too narrow for one row, the tabs wrap onto more rows: every tab stays in sight, none scrolls away. */
+  .search { margin: 0 0 10px; }
+  .found-list { background: var(--card); border-radius: 14px; overflow: hidden; }
+  .search input { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--card); color: inherit; font: inherit; font-size: var(--t2); }
+  .found { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: inherit; padding: 8px 12px; cursor: pointer; }
+  .found + .found { border-top: 1px solid var(--sep); }
+  .found .k { color: var(--hint); font-size: var(--t3); margin-right: 6px; }
+  .found .sub { white-space: normal; }
   .tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content;
     max-width: 100%; box-sizing: border-box; }
   .tabs::-webkit-scrollbar { display: none; }
@@ -156,10 +166,6 @@
   .usage-list .u .share { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--link, #2481cc); }
   .usage-list .u .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .usage-list .u .m { color: var(--hint); font-size: var(--t3); }
-  .event-list { background: var(--card); border-radius: 14px; overflow: hidden; }
-  .event { padding: 10px 12px; } .event + .event { border-top: 1px solid var(--sep); }
-  .event.new { border-left: 3px solid var(--warn); }
-  .event .text { font-size: var(--t2); overflow-wrap: anywhere; }
   .acct { display: inline-block; padding: 0 6px; border-radius: 6px; font-weight: 600; background: var(--sep); color: var(--fg); }
   .acct.v-short { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
   .acct.v-exhausted { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
@@ -277,14 +283,14 @@
     <button role="tab" data-tab="quota"><span class="label"></span> <b id="n-quota"></b><i class="tab-dot" id="quota-dot" hidden></i></button>
     <button role="tab" data-tab="usage"><span class="label"></span></button>
     <button role="tab" data-tab="code"><span class="label"></span> <b id="n-code"></b><i class="tab-dot" id="code-dot" hidden></i></button>
-    <button role="tab" data-tab="events"><span class="label"></span> <b id="n-events"></b><i class="tab-badge" id="events-badge" hidden></i></button>
     <button role="tab" data-tab="config"><span class="label"></span></button>
   </nav>
+  <div class="search"><input id="search" type="search" autocomplete="off" spellcheck="false"></div>
   <div id="banner" class="banner"></div>
+  <section id="search-view" class="view" data-view="search" hidden></section>
   <section id="quota-view" class="view" data-view="quota" hidden></section>
   <section id="usage-view" class="view" data-view="usage" hidden></section>
   <section id="code-view" class="view" data-view="code" hidden></section>
-  <section id="events-view" class="view" data-view="events" hidden></section>
   <section id="config-view" class="view" data-view="config" hidden></section>
   <div class="view" data-view="sessions">
   <nav id="chips" class="chips" aria-label="Status"></nav>

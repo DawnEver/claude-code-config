@@ -124,8 +124,9 @@ export class Bridge {
    */
   constructor({ telegram, adapters = [], config, machine, resolveContext = gitContext,
     topicCacheFile = null, log = () => {}, now = Date.now, alertGraceMs = ALERT_GRACE_MS,
-    uploadsDir = path.join(BRIDGE_RUNTIME_DIR, 'uploads'), telegramEnabled = true, cardFacts = () => ({}) }) {
-    Object.assign(this, { telegram, config, machine, resolveContext, log, now, alertGraceMs, uploadsDir, cardFacts });
+    uploadsDir = path.join(BRIDGE_RUNTIME_DIR, 'uploads'), telegramEnabled = true, cardFacts = () => ({}), onAlert = null }) {
+    // onAlert(alert): where an alert for the human goes when the dashboard is configured (DashboardPush.raise).
+    Object.assign(this, { telegram, config, machine, resolveContext, log, now, alertGraceMs, uploadsDir, cardFacts, onAlert });
     this.telegramEnabled = telegramEnabled;
     this.hosts = new Map(adapters.map((a) => [a.agent, a]));
     this.sessions = new Map();   // key -> session (lifecycle.mjs record + routing fields)
@@ -256,7 +257,7 @@ export class Bridge {
       unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
       lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
       ...(snap?.observationOnly ? { observationOnly: true } : {}),
-      status: statusCode(snap?.state), ...(snap?.background ? { background: snap.background } : {}),
+      status: statusCode(snap?.state), ...(snap?.tasks?.length ? { tasks: snap.tasks } : {}),
       lastActivityAt: new Date(s.lastActivity).toISOString(),
       topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed',
         ...(s.unread && s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}) } : null,
@@ -658,9 +659,15 @@ export class Bridge {
     if (s.progress?.timer) clearTimeout(s.progress.timer);
     s.progress = null;
     const body = text?.trim() ? text : `(turn ${status ?? 'completed'}, no message)`;
-    // A failed turn has stopped and waits for the human, like an approval.
-    await this.#send(s, status && status !== 'completed' ? `[${status}] ${body}` : body,
-      status === 'failed' ? { alert: [...this.allowed] } : { rich: true });
+    const line = status && status !== 'completed' ? `[${status}] ${body}` : body;
+    if (status !== 'failed') return void await this.#send(s, line, { rich: true });
+    // A failed turn has stopped and waits for the human. With the dashboard the alert is its bot's
+    // (onAlert: pushed to the gateway, sent to the private chat) and the Topic keeps a plain line;
+    // without it the Topic is the only channel, so the human is mentioned there.
+    if (!this.onAlert) return void await this.#send(s, line, { alert: [...this.allowed] });
+    const [post] = await this.#send(s, line);
+    this.onAlert({ kind: 'turn-failed', agent: s.agent, project: s.project ?? null, session: s.name ?? null, error: body,
+      topic: s.topicId && post ? { chatId: s.chatId, topicId: s.topicId, messageId: post.message_id } : null });
   }
 
   /** A side note outside the turn's answer; `alert` when it waits for the human. */
@@ -1009,6 +1016,8 @@ export async function main() {
       // Subscriptions and API balances alike: one list of the accounts this host can read.
       accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]), forges,
       resources: () => { const r = (lastResources = resources.read()); usage.sample(r); return r; }, onConfigChanges });
+    // Alerts for the human (a failed turn) go to the dashboard bot's chat, by the gateway.
+    bridge.onAlert = (a) => push.raise(a);
     push.start();
     usage.start();
   }

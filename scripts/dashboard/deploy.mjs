@@ -2,13 +2,14 @@
 // scripts/dashboard/deploy.mjs — operate the dashboard Worker (docs/dashboard.md).
 // Dashboard membership lives in one place, the shared `bridge.dashboard` block of
 // claude_env_settings.json: {url, botId, hosts: {machine: sha256}}. Everything the Worker
-// knows is derived from it here; the only secrets (host tokens, the dashboard bot token) never
-// leave the machine that owns them.
+// knows is derived from it here. A host token never leaves the machine that owns it (the Worker
+// keeps only its hash); the dashboard bot token goes only to the Worker, as a secret, to send alerts.
 //
 //   node scripts/dashboard/deploy.mjs host-token   join this host: mint its push token into this machine's
 //                                                      local settings and its hash into the shared hosts
 //                                                      map, then deploy (the Worker learns hosts only then)
-//   node scripts/dashboard/deploy.mjs deploy       upload DASHBOARD_CONFIG and deploy to the url's domain
+//   node scripts/dashboard/deploy.mjs deploy       upload DASHBOARD_CONFIG and DASHBOARD_BOT_TOKEN (the Worker
+//                                                      sends alerts as the dashboard bot) and deploy to the url's domain
 //                                                      (code alone also deploys from CI on push)
 //   node scripts/dashboard/deploy.mjs usage-db     create the usage store (D1 `agents-usage`) if missing, bind it in
 //                                                      wrangler.jsonc, apply its migrations (docs/usage.md)
@@ -36,7 +37,8 @@ export function dashboardConfigFrom(bridge) {
   const g = bridge.dashboard ?? {};
   const url = new URL(g.url ?? 'missing:');
   if (url.protocol !== 'https:' || url.pathname !== '/') throw new Error('bridge.dashboard.url must be an https origin');
-  const config = { botId: g.botId, allowedUserIds: bridge.allowedUserIds ?? [], hosts: g.hosts ?? {} };
+  const config = { botId: g.botId, allowedUserIds: bridge.allowedUserIds ?? [], hosts: g.hosts ?? {},
+    ...(g.offlineAlertSeconds ? { offlineAlertSeconds: g.offlineAlertSeconds } : {}), ...(g.alertLang ? { alertLang: g.alertLang } : {}) };
   parseDashboardConfig(config);
   if (!config.allowedUserIds.length) throw new Error('bridge.allowedUserIds is empty: nobody could open the dashboard');
   return { domain: url.hostname, config };
@@ -87,11 +89,18 @@ function usageDb() {
 }
 
 function deploy() {
-  const { domain, config } = dashboardConfigFrom(readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {});
+  const bridge = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {};
+  const { domain, config } = dashboardConfigFrom(bridge);
+  // The Worker sends every alert as the dashboard bot. A machine holding its token uploads it (a
+  // rotated token reaches the Worker this way); any other deploys without it and the Worker keeps
+  // the one uploaded before, since a deploy leaves secrets it does not name in place.
+  const token = localBotToken();
+  if (token) menuRequest(bridge.dashboard, token);   // throws unless the token is the shared botId's
+  else console.warn('no local bridge.dashboard.botToken: the Worker keeps its DASHBOARD_BOT_TOKEN (alerts are logged, not sent, until one machine with the token deploys once)');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-deploy-'));
   const secrets = path.join(dir, 'secrets.json');
   try {
-    writePrivateFile(secrets, JSON.stringify({ DASHBOARD_CONFIG: JSON.stringify(config) }));
+    writePrivateFile(secrets, JSON.stringify({ DASHBOARD_CONFIG: JSON.stringify(config), ...(token ? { DASHBOARD_BOT_TOKEN: token } : {}) }));
     wrangler(['deploy', '--config', WRANGLER, '--domain', domain, '--secrets-file', secrets, '--tag', commitTag()], { stdio: 'inherit' });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log(`deployed to https://${domain}/ (hosts: ${Object.keys(config.hosts).join(', ') || 'none'})`);

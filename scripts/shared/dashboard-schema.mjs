@@ -6,7 +6,7 @@
 import { isValidMachineName } from './machine.mjs';
 
 export const SCHEMA_VERSION = 1;
-import { AGENTS, STATUSES } from '../dashboard/public/shared/vocab.mjs';
+import { AGENTS, STATUSES, TASK_KINDS, TASK_STATUSES, TASK_LABEL_MAX, MAX_TASKS } from '../dashboard/public/shared/vocab.mjs';
 
 export { AGENTS, STATUSES };
 /** Native session status (scripts/bridge/daemon.mjs STATUS_CODES). Freshness (`stale`) is separate, set by the gateway. */
@@ -48,8 +48,8 @@ function parseSession(s) {
     // The forge repository of its working tree (shared/repo-key.mjs): the Code tab's link to it.
     repo: isRepoKey(s.repo) ? s.repo : null,
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
-    // Background tasks (shells, agents) an idle session left running.
-    ...(num(s.background, 1, 999) ? { background: s.background } : {}),
+    // Its shells and subagents (scripts/bridge/tasks.mjs): running ones, then those ended lately.
+    ...(Array.isArray(s.tasks) && s.tasks.length ? { tasks: s.tasks.slice(0, MAX_TASKS).map(parseTask).filter(Boolean) } : {}),
     unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,
     // Posts to the Topic ever (a running count: a page keeps what it has seen) and when the last one came.
     posted: num(s.posted, 0, Number.MAX_SAFE_INTEGER) ?? 0, lastPostAt: iso(s.lastPostAt),
@@ -57,6 +57,15 @@ function parseSession(s) {
     // The Topic, and the same Topic opened at its first unread post and at its latest post.
     topic: url ? { url, closed: t.closed === true, ...atMessage(t, 'firstUnread', 'firstUnreadUrl'), ...atMessage(t, 'lastPost', 'latestUrl') } : null,
   };
+}
+
+/** One task of a session (scripts/bridge/tasks.mjs TaskBoard.list): numbers, a kind, a status and a one-line label. */
+function parseTask(t) {
+  const id = text(t?.id, 128);
+  if (!id || !TASK_KINDS.includes(t.kind) || !TASK_STATUSES.includes(t.status) || !epoch(t.startedAt)) return null;
+  const endedAt = t.status === 'running' ? null : epoch(t.endedAt);
+  if (t.status !== 'running' && !endedAt) return null;
+  return { id, kind: t.kind, label: text(t.label, TASK_LABEL_MAX) ?? '', background: t.background === true, status: t.status, startedAt: t.startedAt, endedAt };
 }
 
 export const MAX_ACCOUNTS = 40;
@@ -166,10 +175,23 @@ function parseConfigSummary(c) {
       dashboardError: text(f.dashboardError, 200) } };
 }
 
+/**
+ * An alert the host raised itself (scripts/bridge/daemon.mjs): a failed turn. The gateway sends
+ * it as the dashboard bot (registry.mjs). `id` makes a push re-sent after a lost reply alert once;
+ * the link is built here from the Topic, like a session's, never taken from the host as a URL.
+ */
+function parseAlert(a) {
+  const id = typeof a?.id === 'string' && /^[\w-]{1,64}$/.test(a.id) ? a.id : null;
+  if (!id || a.kind !== 'turn-failed' || !AGENTS.includes(a.agent)) return null;
+  const t = a.topic;
+  return { id, kind: a.kind, agent: a.agent, project: text(a.project), session: text(a.session, 200), error: text(a.error, 1000) ?? 'unknown',
+    url: t ? topicUrl(t.chatId, t.topicId, t.messageId) : null };
+}
+
 const CHANGE_ID = /^[a-f0-9]{16,32}$/;
 const parseResult = (r) => (r && CHANGE_ID.test(r.id) ? { id: r.id, ok: r.ok === true, error: r.ok === true ? null : text(r.error, 200) ?? 'failed' } : null);
 
-/** A host's POST body -> {bootAt, seq, sessions, accounts, resources, config, configResults} or null. Unknown session entries are dropped, not fatal. */
+/** A host's POST body -> {bootAt, seq, sessions, accounts, forges, resources, config, configResults, alerts} or null. Unknown session entries are dropped, not fatal. */
 export function parseHostPush(body) {
   if (!body || body.schemaVersion !== SCHEMA_VERSION || !Array.isArray(body.sessions)) return null;
   if (!Number.isSafeInteger(body.bootAt) || body.bootAt < 1 || !Number.isSafeInteger(body.seq) || body.seq < 1) return null;
@@ -183,7 +205,8 @@ export function parseHostPush(body) {
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
   return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, forges: parseForges(body.forges), resources: parseResources(body.resources), config: parseConfigSummary(body.config),
-    configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean) };
+    configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean),
+    alerts: (Array.isArray(body.alerts) ? body.alerts : []).slice(0, 20).map(parseAlert).filter(Boolean) };
 }
 
 // The config keys the dashboard may change: defined in the page-loadable shared layer.

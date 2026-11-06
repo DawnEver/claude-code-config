@@ -5,7 +5,11 @@
 // Telegram path. `bootAt` (this daemon's start) + `seq` let the gateway drop a delayed push
 // from an older daemon or an earlier tick: both are this host's own clock and counter.
 
+import { randomUUID } from 'crypto';
 import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
+
+/** Alerts held for the gateway at most; the gateway reads as many per push. */
+export const MAX_ALERTS = 20;
 
 export class DashboardPush {
   constructor({ url, hostToken, machine, sessions, accounts = () => [], forges = null, resources = () => null, config = () => null, onConfigChanges = () => [], everySeconds = 15, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {
@@ -15,6 +19,12 @@ export class DashboardPush {
     this.inFlight = false;
     this.lastError = null;
     this.results = [];   // outcomes of config changes applied here, reported on the next push
+    this.alerts = [];    // alerts raised here (a failed turn), sent on every push until one is accepted
+  }
+
+  /** An alert for the human, sent by the gateway as the dashboard bot (registry.mjs). Bounded: the newest MAX_ALERTS. */
+  raise(alert) {
+    this.alerts = [...this.alerts, { id: randomUUID(), ...alert }].slice(-MAX_ALERTS);
   }
 
   body() {
@@ -24,7 +34,8 @@ export class DashboardPush {
     // the gateway answers which to read next, so a source is read by one host per interval.
     this.sending = this.forges ? this.forges.outbox() : [];
     return { schemaVersion: SCHEMA_VERSION, bootAt: this.bootAt, seq: ++this.seq, sessions: this.sessions(accounts), accounts,
-      ...(this.forges ? { forges: { sources: this.forges.ids(), readings: this.sending } } : {}), resources: this.resources(), config: this.config(), configResults: this.results };
+      ...(this.forges ? { forges: { sources: this.forges.ids(), readings: this.sending } } : {}), resources: this.resources(), config: this.config(), configResults: this.results,
+      alerts: (this.alertsSending = this.alerts) };
   }
 
   /** Off the message path: an unref'd timer, never awaited by Telegram routing. */
@@ -45,6 +56,7 @@ export class DashboardPush {
       const reply = await res.json().catch(() => ({}));
       if (reply.accepted !== true) throw new Error('refused as not newer than the one held');
       this.results = [];   // delivered with this push
+      this.alerts = this.alerts.filter((a) => !this.alertsSending.includes(a));
       if (this.forges) {
         this.forges.delivered(this.sending);
         this.forges.assign((Array.isArray(reply.forgeRead) ? reply.forgeRead : []).filter((id) => typeof id === 'string'));

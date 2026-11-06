@@ -14,7 +14,7 @@ export const REPORT_TTL_MS = 5 * 60000;
 
 /**
  * DASHBOARD_CONFIG (JSON): {botId, allowedUserIds, hosts: {machine: sha256}, ttlSeconds?,
- * initDataMaxAgeSeconds?, ratePerMinute?}. Malformed = throws: a gateway that cannot
+ * offlineAlertSeconds?, alertLang?, initDataMaxAgeSeconds?, ratePerMinute?}. Malformed = throws: a gateway that cannot
  * authenticate anyone must fail loudly, not serve 401s.
  */
 export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
@@ -30,6 +30,9 @@ export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
     hosts,
     publicKey,
     ttlSeconds: c.ttlSeconds > 0 ? c.ttlSeconds : 60,
+    // A host silent this long is alerted offline: well past ttlSeconds, so a restart or a network blip says nothing.
+    offlineAlertSeconds: c.offlineAlertSeconds > 0 ? c.offlineAlertSeconds : 300,
+    alertLang: ['en', 'zh'].includes(c.alertLang) ? c.alertLang : 'en',
     initDataMaxAgeSeconds: c.initDataMaxAgeSeconds > 0 ? c.initDataMaxAgeSeconds : 86400,
     ratePerMinute: c.ratePerMinute > 0 ? c.ratePerMinute : 120,
   };
@@ -47,11 +50,13 @@ async function body(request, max) {
 }
 
 /**
- * `store`: the Durable Object's key-value storage (events, alert state). `db`: the usage store
- * (D1, scripts/dashboard/usage-store.mjs); without it the usage routes answer 503.
+ * `store`: the Durable Object's key-value storage (alert state). `db`: the usage store
+ * (D1, scripts/dashboard/usage-store.mjs); without it the usage routes answer 503. `notify`:
+ * where alerts go (notify.mjs). The returned handler carries its `registry` (the Worker sweeps it).
  */
-export function createApi(config, { now = Date.now, log = () => {}, store = null, db = null } = {}) {
-  const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000, now, store });
+export function createApi(config, { now = Date.now, log = () => {}, store = null, db = null, notify = () => {} } = {}) {
+  const registry = new Registry({ hosts: Object.keys(config.hosts), ttlMs: config.ttlSeconds * 1000,
+    offlineAlertMs: config.offlineAlertSeconds * 1000, now, store, notify });
   const hits = new Map();   // client -> requests in the current minute
   // The Usage tab's report per (days, tz), kept REPORT_TTL_MS: polls of an open tab cost no reads.
   const reports = new Map();
@@ -152,8 +157,9 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
     return error(404, 'not_found');
   }
 
-  return (request) => route(request).catch((e) => {
+  const handle = (request) => route(request).catch((e) => {
     log(`request failed: ${e.message}`);   // never echoed to the client
     return error(500, 'internal');
   });
+  return Object.assign(handle, { registry });
 }

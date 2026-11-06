@@ -25,14 +25,14 @@ test('turnTexts: text blocks after the last real user message only', () => {
   assert.deepEqual(turnTexts('garbage\n' + user([{ type: 'text', text: 'q' }]) + '\n' + asst([{ type: 'text', text: 'a' }])), ['a']);
 });
 
-test('backgroundTasks: shells and agents started minus those notified or stopped; quoted text and old starts do not count', () => {
+test('backgroundTasks: shells and agents started minus those notified or stopped, by their tool call; quoted text and old starts do not count', () => {
   const now = Date.parse('2026-10-30T12:00:00Z');
   const at = (iso, o) => j({ ...JSON.parse(o), timestamp: iso });
-  const result = (text) => user([{ type: 'tool_result', tool_use_id: 't', content: text }]);
+  const result = (text, id = 't') => user([{ type: 'tool_result', tool_use_id: id, content: text }]);
   const T = '2026-10-30T11:00:00Z';
   const lines = [
     at(T, result('Command running in background with ID: sh1. Output is being written to: x')),
-    at(T, result('Command running in background with ID: sh2. Output is being written to: x')),
+    at(T, result('Command running in background with ID: sh2. Output is being written to: x', 'toolu_sh2')),
     at(T, result('Async agent launched successfully.\nagentId: ag1 (internal ID)')),
     at(T, result('Command running in background with ID: sh3.')),
     at('2026-10-28T00:00:00Z', result('Command running in background with ID: old1.')),
@@ -42,10 +42,10 @@ test('backgroundTasks: shells and agents started minus those notified or stopped
     at(T, j({ type: 'attachment', attachment: { type: 'queued_command', prompt: '<task-notification>\n<task-id>ag1</task-id>\n<status>failed</status>' } })),
     at(T, result('{"message":"Successfully stopped task: sh3 (sleep 9)"}')),
   ];
-  assert.equal(backgroundTasks(lines.join('\n'), { now }), 1, 'sh2 still runs');
+  assert.deepEqual(backgroundTasks(lines.join('\n'), { now }), ['toolu_sh2'], 'sh2 still runs, known by its tool call');
   const payload = { hook_event_name: 'Stop', session_id: 's', transcript_path: path.join(os.tmpdir(), `bg-${process.pid}.jsonl`) };
   fs.writeFileSync(payload.transcript_path, lines[1].replace(T, new Date().toISOString()));
-  try { assert.deepEqual(mirrorFor(payload), { sessionId: 's', kind: 'final', texts: [], background: 1 }, 'a textless turn end still reports its tasks'); }
+  try { assert.deepEqual(mirrorFor(payload), { sessionId: 's', kind: 'final', texts: [], background: ['toolu_sh2'] }, 'a textless turn end still reports its tasks'); }
   finally { fs.rmSync(payload.transcript_path, { force: true }); }
 });
 
@@ -56,7 +56,7 @@ test('mirrorFor: prompt from payload, channel injections skipped, final prefers 
   assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: '<channel source="session-bridge">x</channel>' }, env).text, '<channel source="session-bridge">x</channel>', 'passed through; the adapter unwraps it');
   assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, {}), null, 'no session id -> no-op');
   assert.deepEqual(mirrorFor({ hook_event_name: 'Stop', session_id: 's', last_assistant_message: 'bye' }, env),
-    { sessionId: 's', kind: 'final', texts: ['bye'] });
+    { sessionId: 's', kind: 'final', texts: ['bye'], background: [] });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-'));
   try {
     const tp = path.join(dir, 't.jsonl');
@@ -67,8 +67,22 @@ test('mirrorFor: prompt from payload, channel injections skipped, final prefers 
     assert.deepEqual(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: tp, last_assistant_message: 'not flushed yet' }, env).texts,
       ['checking', 'from transcript', 'not flushed yet'], 'a transcript lagging the last message');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  assert.deepEqual(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: '/nope' }, env), { sessionId: 's', kind: 'final', texts: [] },
+  assert.deepEqual(mirrorFor({ session_id: 's', hook_event_name: 'Stop', transcript_path: '/nope' }, env), { sessionId: 's', kind: 'final', texts: [], background: [] },
     'a textless turn end still ends the turn');
+});
+
+test('taskFor: a shell or an agent call is a task — started, ended, failed, or left running in the background', () => {
+  const p = (event, tool, input = {}, extra = {}) => mirrorFor({ hook_event_name: event, session_id: 's', tool_name: tool, tool_use_id: 'u1', tool_input: input, ...extra }, {});
+  assert.deepEqual(p('PreToolUse', 'Bash', { command: 'npm test' }),
+    { sessionId: 's', kind: 'activity', state: 'running', task: { op: 'start', id: 'u1', kind: 'shell', label: 'npm test', background: false } });
+  assert.deepEqual(p('PreToolUse', 'Agent', { subagent_type: 'Explore', description: 'find hooks', run_in_background: true }).task,
+    { op: 'start', id: 'u1', kind: 'agent', label: 'Explore: find hooks', background: true });
+  assert.deepEqual(p('PreToolUse', 'Task', { description: 'old name' }).task.kind, 'agent');
+  assert.deepEqual(p('PostToolUse', 'Bash', { command: 'ls' }).task, { op: 'end', id: 'u1', status: 'completed' });
+  assert.equal(p('PostToolUse', 'Bash', { command: 'npm run dev', run_in_background: true }).task, undefined, 'still running: its end is read at a later Stop');
+  assert.deepEqual(p('PostToolUseFailure', 'Bash', { command: 'false' }).task, { op: 'end', id: 'u1', status: 'failed' });
+  assert.deepEqual(p('PostToolUseFailure', 'Agent', {}, { is_interrupt: true }).task, { op: 'end', id: 'u1', status: 'stopped' });
+  assert.equal(p('PostToolUseFailure', 'Bash').state, 'running', 'a failed tool is still activity');
 });
 
 test('mirrorFor: StopFailure (a turn ended by an API error) is a failed final', () => {

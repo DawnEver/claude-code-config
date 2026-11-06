@@ -6,9 +6,10 @@
 // bridge daemon's Claude adapter (claude-adapter.mjs; 127.0.0.1, port + token from
 // runtime.json), naming the conversation id current in this claude process (payload.session_id):
 //   UserPromptSubmit -> prompt;  Stop -> final (every text block of the turn; the adapter
-//   drops blocks it already sent; with the count of background shells and agents still
-//   running, so an idle session shows them);  StopFailure -> failed final;
-//   PreToolUse / PostToolUse -> activity running (PostToolUse(AskUserQuestion) -> answer);
+//   drops blocks it already sent; with the background shells and agents still running, by
+//   their tool call, so the adapter ends the others);  StopFailure -> failed final;
+//   PreToolUse / PostToolUse / PostToolUseFailure -> activity running (PostToolUse(AskUserQuestion)
+//   -> answer), and for a shell or an agent its task: started, ended, or left in the background;
 //   Notification -> waiting-approval | waiting-input (with its message) | idle.
 // SessionEnd is not mirrored: it also fires on in-process /clear and /resume, and the end of
 // the process is already observed by the daemon as its channel's socket closing.
@@ -91,37 +92,66 @@ const TASK_ENDED = /^(?:<task-notification>\s*<task-id>([A-Za-z0-9]+)<\/task-id>
 
 const textOf = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (typeof b === 'string' ? b : b?.text ?? '')).join('') : '');
 
-/** The texts of a transcript entry that can carry a task's start or end. */
+/** The texts of a transcript entry that can carry a task's start or end, each with its tool call if a tool result. */
 function taskTexts(e) {
-  if (e?.type === 'attachment') return [textOf(e.attachment?.prompt)];
-  if (e?.type === 'queue-operation') return [textOf(e.content)];
+  if (e?.type === 'attachment') return [[textOf(e.attachment?.prompt)]];
+  if (e?.type === 'queue-operation') return [[textOf(e.content)]];
   if (e?.type !== 'user') return [];
   const c = e.message?.content;
-  if (!Array.isArray(c)) return [textOf(c)];
-  return c.map((b) => (b?.type === 'tool_result' ? textOf(b.content) : textOf([b])));
+  if (!Array.isArray(c)) return [[textOf(c)]];
+  return c.map((b) => (b?.type === 'tool_result' ? [textOf(b.content), b.tool_use_id] : [textOf([b])]));
 }
 
 /**
- * How many background tasks this transcript started and has not yet seen end. Claude Code
- * wakes the session when one ends and that turn's Stop counts again, so the number corrects
+ * The background tasks this transcript started and has not yet seen end, each by the tool call
+ * that started it (its PreToolUse `tool_use_id`, how the adapter knows the task). Claude Code
+ * wakes the session when one ends and that turn's Stop reports again, so the list corrects
  * itself. Tasks do not outlive their claude process, so a start older than `maxAgeMs` (a
  * resumed session's old shells) no longer counts.
  */
 export function backgroundTasks(jsonl, { now = Date.now(), maxAgeMs = 24 * 3600000 } = {}) {
-  const open = new Set();
+  const open = new Map();   // task id -> the tool call that started it
   for (const l of String(jsonl).split('\n')) {
     if (!l.trim()) continue;
     let e;
     try { e = JSON.parse(l); } catch { continue; }
     const fresh = !(now - Date.parse(e.timestamp) > maxAgeMs);
-    for (const t of taskTexts(e)) {
+    for (const [t, toolUseId] of taskTexts(e)) {
       const s = TASK_STARTED.exec(t);
-      if (s && fresh) open.add(s[1] ?? s[2]);
+      if (s && fresh) open.set(s[1] ?? s[2], toolUseId ?? s[1] ?? s[2]);
       const d = TASK_ENDED.exec(t);
       if (d) open.delete(d[1] ?? d[2]);
     }
   }
-  return open.size;
+  return [...open.values()];
+}
+
+// The tools whose calls are tasks (tasks.mjs): a shell, and an agent (`Task` is its older name).
+const TASK_TOOLS = { Bash: 'shell', Agent: 'agent', Task: 'agent' };
+
+/** What a tool call is, as a task: the command, or the agent's type and description. */
+function taskLabel(kind, input = {}) {
+  if (kind === 'shell') return String(input.command ?? '');
+  return [input.subagent_type, input.description].filter(Boolean).join(': ');
+}
+
+/**
+ * The task a PreToolUse / PostToolUse / PostToolUseFailure of a shell or an agent reports, or
+ * null: started; ended (completed or failed); or, run in the background, still running — its
+ * end is read from the transcript at a later Stop (backgroundTasks).
+ */
+export function taskFor(payload) {
+  const kind = TASK_TOOLS[payload?.tool_name];
+  const id = payload?.tool_use_id;
+  if (!kind || typeof id !== 'string') return null;
+  const input = payload.tool_input ?? {};
+  const background = input.run_in_background === true;
+  switch (payload.hook_event_name) {
+    case 'PreToolUse': return { op: 'start', id, kind, label: taskLabel(kind, input), background };
+    case 'PostToolUse': return background ? null : { op: 'end', id, status: 'completed' };
+    case 'PostToolUseFailure': return { op: 'end', id, status: payload.is_interrupt ? 'stopped' : 'failed' };
+    default: return null;
+  }
 }
 
 /** `Q -> A` lines of an answered AskUserQuestion, from its tool response or input. */
@@ -148,10 +178,10 @@ export function mirrorFor(payload) {
     if (payload.transcript_path) try { texts = turnTexts(fs.readFileSync(payload.transcript_path, 'utf8')); } catch { /* none */ }
     const last = typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message.trim() : '';
     if (last && texts.at(-1) !== last) texts.push(last);
-    let background = 0;
+    let background = [];
     if (payload.transcript_path) try { background = backgroundTasks(fs.readFileSync(payload.transcript_path, 'utf8')); } catch { /* none */ }
-    // A turn with no text still ends: idle, and its background count (0 clears a stale one).
-    return { ...base, kind: 'final', texts, ...(background ? { background } : {}) };
+    // A turn with no text still ends: idle, and its background tasks (none ends every other).
+    return { ...base, kind: 'final', texts, background };
   }
   // A turn ended by an API error fires StopFailure instead of Stop; it waits for the human.
   if (payload?.hook_event_name === 'StopFailure') {
@@ -160,7 +190,10 @@ export function mirrorFor(payload) {
   }
   const event = payload?.hook_event_name;
   if (event === 'PostToolUse' && payload.tool_name === 'AskUserQuestion') return { ...base, kind: 'answer', text: answerText(payload) };
-  if ((event === 'PreToolUse' && payload.tool_name !== 'AskUserQuestion') || event === 'PostToolUse') return { ...base, kind: 'activity', state: 'running' };
+  if ((event === 'PreToolUse' && payload.tool_name !== 'AskUserQuestion') || event === 'PostToolUse' || event === 'PostToolUseFailure') {
+    const task = taskFor(payload);
+    return { ...base, kind: 'activity', state: 'running', ...(task ? { task } : {}) };
+  }
   if (event === 'Notification') {
     const state = NOTIFICATION_STATES[payload.notification_type];
     if (!state) return null;

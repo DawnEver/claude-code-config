@@ -1,16 +1,18 @@
 // scripts/dashboard/registry.mjs — the gateway's only state. The last accepted push of each
 // host is an aggregate cache in memory, never an authority: the next round of pushes rebuilds
-// it. The events and what each account was last alerted for are history, which no push can
-// rebuild: they live in `store` (the Durable Object's storage), so a restart neither loses the
-// history nor re-alerts a standing condition. Time is the gateway's own clock (host clocks
-// may disagree): `lastSeen` is when a push arrived, and a host silent for `ttlMs` is offline
-// and every session it last reported is `stale`.
+// it. What was last alerted (each account's condition, the hosts alerted offline) is history no
+// push can rebuild: it lives in `store` (the Durable Object's storage), written only when it
+// changes, so a restart never re-alerts a standing condition. An alert is data handed to
+// `notify` (notify.mjs words and sends it); the registry keeps no list of them. Time is the
+// gateway's own clock (host clocks may disagree): `lastSeen` is when a push arrived, a host
+// silent for `ttlMs` is offline and every session it last reported is `stale`, and one silent
+// for `offlineAlertMs` is alerted once (sweep).
 
 import { SCHEMA_VERSION, configKeysMeta } from '../shared/dashboard-schema.mjs';
 import { quotaAlertsFor, quotaView } from './public/shared/quota-model.mjs';
 
-/** How many past events the dashboard keeps. */
-export const MAX_EVENTS = 50;
+/** How many alert ids hosts sent are remembered, so a push re-sent after a lost reply alerts once. */
+export const MAX_SEEN_ALERTS = 200;
 /** A change handed to a host that does not report it within this goes to the next host. */
 export const CHANGE_RETRY_MS = 120000;
 
@@ -24,13 +26,14 @@ export const FORGE_SKIP_MS = 30 * 60000;
 export const FORGE_FORGET_MS = 24 * 3600000;
 
 export class Registry {
-  constructor({ hosts = [], ttlMs = 60000, now = Date.now, store = null } = {}) {
-    Object.assign(this, { ttlMs, now, store });
+  constructor({ hosts = [], ttlMs = 60000, offlineAlertMs = 300000, now = Date.now, store = null, notify = () => {} } = {}) {
+    Object.assign(this, { ttlMs, offlineAlertMs, now, store, notify });
+    this.startedAt = now();   // a host not heard from since this start is counted silent from it
     this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
     this.alerted = new Map(Object.entries(store?.get('alerted') ?? {}));   // account key -> what was last alerted (quota-model.mjs quotaAlertsFor)
-    // Alerts and config changes as data ({at, kind, ...}), newest first; the page words them. An
-    // entry with no kind is from before events were data: dropped.
-    this.events = (store?.get('events') ?? []).filter((e) => e?.kind);
+    this.down = new Map(Object.entries(store?.get('down') ?? {}));   // host id alerted offline -> when (ISO, or null) it was last seen
+    this.seenAlerts = [];   // ids of host alerts already sent, newest first (MAX_SEEN_ALERTS)
+    this.configLast = new Map();   // config key -> the last outcome a host reported {outcome, value, host, at, error?}
     this.changes = new Map();   // pending config change id -> {id, key, value, by, at, host?, sentAt?}
     // Forge sources (bridge.forges), the one record of each: its last reading ({at, repos} or
     // {at, error}), the host holding its lease, and hosts that cannot read it until a time. Kept
@@ -40,9 +43,9 @@ export class Registry {
 
   /**
    * Accept a parsed push unless it is not newer than the one held: an older boot, or the same
-   * boot's earlier tick. Returns {accepted, configChanges}. The quota events this push's accounts
-   * now warrant are judged once here, on the merged view (so an account several hosts report
-   * alerts once), and kept as dashboard events; nothing is posted anywhere.
+   * boot's earlier tick. Returns {accepted, configChanges, forgeRead}. The quota alerts this push's
+   * accounts now warrant are judged once here, on the merged view (so an account several hosts
+   * report alerts once); the alerts the host raised itself (a failed turn) are sent too.
    */
   accept(hostId, push) {
     const prev = this.hosts.get(hostId);
@@ -50,16 +53,28 @@ export class Registry {
     if (push.bootAt > this.now() + 300000) return { accepted: false };
     if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false };
     this.hosts.set(hostId, { ...push, receivedAt: this.now() });
+    // Back: watched again, silently (only going offline is alerted).
+    if (this.down.has(hostId)) {
+      this.down.delete(hostId);
+      this.store?.put('down', Object.fromEntries(this.down));
+    }
+    for (const { id, ...alert } of push.alerts ?? []) {
+      if (this.seenAlerts.includes(id)) continue;
+      this.seenAlerts = [id, ...this.seenAlerts].slice(0, MAX_SEEN_ALERTS);
+      this.#alert({ ...alert, host: hostId });
+    }
     const forgeRead = this.#forges(hostId, push.forges ?? { sources: [], readings: [] });
     const configChanges = this.#settle(hostId, push.configResults);
     const merged = new Map(this.accounts().map((a) => [a.key, a]));
     // Alerts are about quota windows: a balance has none.
+    let changed = false;
     for (const key of new Set(push.accounts.filter((a) => a.kind === 'quota').map((a) => a.key))) {
       const { events, state } = quotaAlertsFor(this.alerted.get(key), quotaView(merged.get(key), this.now()));
-      this.alerted.set(key, state);
-      for (const e of events) this.#event(e);
+      // Written only when it changed: a push every few seconds must not cost a storage write each.
+      if (JSON.stringify(state) !== JSON.stringify(this.alerted.get(key))) { this.alerted.set(key, state); changed = true; }
+      for (const e of events) this.#alert(e);
     }
-    this.store?.put('alerted', Object.fromEntries(this.alerted));
+    if (changed) this.store?.put('alerted', Object.fromEntries(this.alerted));
     return { accepted: true, configChanges, forgeRead };
   }
 
@@ -100,9 +115,31 @@ export class Registry {
     return read;
   }
 
-  #event(e) {
-    this.events = [{ at: new Date(this.now()).toISOString(), ...e }, ...this.events].slice(0, MAX_EVENTS);
-    this.store?.put('events', this.events);
+  #alert(a) {
+    // A send that fails is the notifier's to log; it never fails the push that raised it.
+    try { Promise.resolve(this.notify({ at: new Date(this.now()).toISOString(), ...a })).catch(() => {}); } catch {}
+  }
+
+  /**
+   * Alert once each host silent for offlineAlertMs (a host not heard from since this start is
+   * counted from the start); its next push watches it again, without an alert. Returns when the next host
+   * would turn silent (ms), or null when every host is already alerted: the caller wakes then,
+   * never on a fixed timer, so an idle gateway costs nothing.
+   */
+  sweep() {
+    const now = this.now();
+    let next = null, changed = false;
+    for (const [id, p] of this.hosts) {
+      if (this.down.has(id)) continue;
+      const due = (p?.receivedAt ?? this.startedAt) + this.offlineAlertMs;
+      if (due > now) { next = Math.min(next ?? due, due); continue; }
+      const lastSeen = p ? new Date(p.receivedAt).toISOString() : null;
+      this.down.set(id, lastSeen);
+      changed = true;
+      this.#alert({ kind: 'host-offline', host: id, lastSeen });
+    }
+    if (changed) this.store?.put('down', Object.fromEntries(this.down));
+    return next;
   }
 
   /**
@@ -113,7 +150,6 @@ export class Registry {
     for (const [id, c] of this.changes) if (c.key === key) this.changes.delete(id);
     const id = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, '0')).join('');
     this.changes.set(id, { id, key, value, by, at: this.now() });
-    this.#event({ kind: 'config', key, value, outcome: 'requested' });
     return id;
   }
 
@@ -127,7 +163,8 @@ export class Registry {
       const c = this.changes.get(r.id);
       if (!c || c.host !== hostId) continue;
       this.changes.delete(r.id);
-      this.#event({ kind: 'config', key: c.key, value: c.value, outcome: r.ok ? 'applied' : 'refused', host: hostId, ...(r.ok ? {} : { error: r.error }) });
+      this.configLast.set(c.key, { outcome: r.ok ? 'applied' : 'refused', value: c.value, host: hostId, at: new Date(this.now()).toISOString(), ...(r.ok ? {} : { error: r.error }) });
+      if (!r.ok) this.#alert({ kind: 'config-refused', key: c.key, value: c.value, host: hostId, error: r.error });
     }
     const out = [];
     for (const c of this.changes.values()) {
@@ -195,8 +232,8 @@ export class Registry {
 
   snapshot() {
     return { schemaVersion: SCHEMA_VERSION, generatedAt: new Date(this.now()).toISOString(),
-      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), repos: this.repos(), events: this.events,
-      configKeys: configKeysMeta(),
+      hosts: [...this.hosts.keys()].sort().map((id) => this.host(id)), accounts: this.accounts(), repos: this.repos(),
+      configKeys: configKeysMeta(), configLast: Object.fromEntries(this.configLast),
       configPending: [...this.changes.values()].map(({ id, key, value, at, host }) => ({ id, key, value, at: new Date(at).toISOString(), host: host ?? null })) };
   }
 }

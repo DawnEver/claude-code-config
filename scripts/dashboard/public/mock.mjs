@@ -21,10 +21,8 @@ export function mockDashboard(now = Date.now()) {
       resources: { cpu: 7, cores: 10, cpuModel: 'Apple M2 Pro', mem: { used: 9e9, total: 17e9, type: 'LPDDR5' }, gpus: [] } },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
-  ], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }], events: [
-    { at: t(40), kind: 'exhausted', account: { agent: 'codex', label: null, email: 'bob@example.com' }, window: '5h', resetsAt: now + 3 * H },
-    { at: t(7200), kind: 'config', key: 'bridge.idleCloseMinutes', value: 30, outcome: 'applied', host: 'host-b' },
-  ], accounts: [
+  ], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }],
+  configLast: { 'bridge.idleCloseMinutes': { outcome: 'applied', value: 30, host: 'host-b', at: t(7200) } }, accounts: [
     { key: 'claude:a', kind: 'quota', agent: 'claude', label: 'team-a', email: 'alice@example.com', detail: 'Team A · Team Premium', problems: [],
       at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null, windows: [
         { k: '5h', used: 26, resetsAt: now + 24 * 60000, windowMs: 5 * H, cells: [0.4, 0.8, 1.2, 0.9, 1.6, 2, 1.1, 0.7, 0.9, null], forecast: { atReset: 31, eta: null, short: false } },

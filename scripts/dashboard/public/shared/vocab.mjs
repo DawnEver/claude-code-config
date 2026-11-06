@@ -28,3 +28,11 @@ export const QUOTA_STALE_MS = 15 * 60000;
 
 /** The Usage tab's filter: at most this many selected values per dimension (the page stops there, the API refuses more). */
 export const USAGE_FILTER_MAX = 20;
+
+// A session's tasks (scripts/bridge/tasks.mjs): what it runs besides its own turn.
+export const TASK_KINDS = ['shell', 'agent'];
+export const TASK_STATUSES = ['running', 'completed', 'failed', 'stopped'];
+/** A task's label (a command, an agent's description) is cut to this many characters. */
+export const TASK_LABEL_MAX = 200;
+/** Tasks listed per session at most: running ones first. */
+export const MAX_TASKS = 50;

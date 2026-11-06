@@ -90,7 +90,7 @@ test('the page renders every tab from the example data, and no view throws', asy
   try {
     await import('./public/app.js');
     const tabs = doc.querySelectorAll('#tabs [data-tab]');
-    assert.deepEqual(tabs.map((b) => b.dataset.tab), ['sessions', 'quota', 'usage', 'code', 'events', 'config']);
+    assert.deepEqual(tabs.map((b) => b.dataset.tab), ['sessions', 'quota', 'usage', 'code', 'config']);
     for (const b of tabs) {
       b.dispatch('click');
       // Open every foldable row of the tab once, so detail views render too: a row whose tap goes
@@ -128,6 +128,17 @@ test('the page renders every tab from the example data, and no view throws', asy
     const balance = doc.getElementById('quota-view').querySelectorAll('.deepseek');
     assert.equal(balance.length, 1);
     assert.equal(balance[0].textContent, 'DeepSeek');
+    // The search replaces the tab's view with results; a result leading to a tab clears it and goes there.
+    const search = doc.getElementById('search');
+    search.value = 'idleClose';
+    search.dispatch('input', { target: search });
+    assert.deepEqual(errors, [], 'the search threw while rendering');
+    assert.equal(doc.getElementById('search-view').hidden, false);
+    const found = doc.getElementById('search-view').querySelectorAll('.found');
+    assert.ok(found.length > 0, 'a shared setting is found');
+    found[0].dispatch('click');
+    assert.equal(doc.getElementById('search-view').hidden, true, 'the search is cleared');
+    assert.equal(tabs.find((b) => b.dataset.tab === 'config').getAttribute('aria-selected'), 'true', 'its tab is shown');
   } finally {
     console.error = consoleError;
   }

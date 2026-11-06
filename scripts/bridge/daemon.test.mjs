@@ -227,7 +227,7 @@ const ALICE = 42, MALLORY = 666;
 const baseConfig = { projects: { proj: { chatId: -100 } }, fallbackChatId: -999, allowedUserIds: [ALICE],
   approvalsFromTelegram: false, idleCloseMinutes: 30, deleteClosedAfterHours: 24 };
 
-function make({ config = {}, topicCacheFile = null, alertGraceMs = 20 } = {}) {
+function make({ config = {}, topicCacheFile = null, alertGraceMs = 20, onAlert = null } = {}) {
   const telegram = fakeTelegram();
   const hosts = { codex: fakeHost('codex'), claude: fakeHost('claude') };
   const logs = [];
@@ -235,7 +235,7 @@ function make({ config = {}, topicCacheFile = null, alertGraceMs = 20 } = {}) {
   const bridge = new Bridge({
     telegram, adapters: Object.values(hosts), machine: 'host-a', config: { ...baseConfig, ...config }, topicCacheFile,
     resolveContext: (cwd, h) => ({ project: cwd === '/proj' ? 'proj' : 'other', branch: h.branch ?? 'main' }),
-    log: (m) => logs.push(m), now: () => t, alertGraceMs,
+    log: (m) => logs.push(m), now: () => t, alertGraceMs, onAlert,
   });
   return { bridge, telegram, hosts, logs, at: (v) => { t = v; } };
 }
@@ -544,6 +544,20 @@ for (const agent of HOSTS) {
     await until(() => r.telegram.sent.length === 5);
     assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [null, null, null, [ALICE]]);
     assert.equal(r.telegram.sent.at(-1).text, 'waiting for you');
+  });
+
+  test(`${agent}: a failed turn is a plain line in the Topic and one alert for the dashboard bot's chat`, async () => {
+    const alerts = [];
+    const r = make({ onAlert: (a) => alerts.push(a) });
+    await live(r, agent, 'x');
+    r.hosts[agent].emit('final', { id: 'x', text: 'overloaded_error: 529', status: 'failed' });
+    await until(() => alerts.length === 1);
+    await new Promise((done) => setTimeout(done, 60));
+    const post = r.telegram.sent.at(-1);
+    assert.equal(post.text, '[failed] overloaded_error: 529');
+    assert.equal(r.telegram.sent.some((m) => m.alert), false, 'nobody is mentioned in the Topic');
+    assert.deepEqual(alerts, [{ kind: 'turn-failed', agent, project: 'proj', session: alerts[0].session, error: 'overloaded_error: 529',
+      topic: { chatId: post.chatId, topicId: post.threadId, messageId: post.message_id } }]);
   });
 
   test(`${agent}: handled at the machine within the grace, nobody is mentioned`, async () => {

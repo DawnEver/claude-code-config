@@ -22,6 +22,17 @@ const TABLE = {
   'app.title': { en: 'Agents Dashboard', zh: '智能体面板' },
   'app.loading': { en: 'Loading…', zh: '加载中…' },
   'app.forceUpdate': { en: 'Force update', zh: '强制更新' },
+  'search.placeholder': { en: 'Search sessions, commands, accounts, repos, settings…', zh: '搜索会话、命令、账户、仓库、设置…' },
+  'search.none': { en: 'Nothing matches', zh: '没有匹配项' },
+  'search.more': { en: (v) => `Showing the first ${v.n}: add a word to narrow it`, zh: (v) => `仅显示前 ${v.n} 项：再加一个词以缩小范围` },
+  'search.kind.host': { en: 'host', zh: '主机' },
+  'search.kind.session': { en: 'session', zh: '会话' },
+  'search.kind.task': { en: 'task', zh: '任务' },
+  'search.kind.account': { en: 'account', zh: '账户' },
+  'search.kind.repo': { en: 'repo', zh: '仓库' },
+  'search.kind.branch': { en: 'branch', zh: '分支' },
+  'search.kind.pull': { en: 'PR', zh: 'PR' },
+  'search.kind.config': { en: 'setting', zh: '设置' },
   'app.build': { en: (v) => `build ${v.at}`, zh: (v) => `构建 ${v.at}` },
   'app.commitDirty': { en: 'deployed from this commit plus uncommitted changes', zh: '基于此提交及未提交的改动部署' },
   'app.commitOpen': { en: 'open this commit on GitHub', zh: '在 GitHub 上打开此提交' },
@@ -40,7 +51,6 @@ const TABLE = {
   'tab.quota': { en: 'Accounts', zh: '账户' },
   'tab.usage': { en: 'Usage', zh: '用量' },
   'tab.code': { en: 'Code', zh: '代码' },
-  'tab.events': { en: 'Events', zh: '事件' },
   'tab.config': { en: 'Config', zh: '设置' },
 
   // Sessions
@@ -61,7 +71,12 @@ const TABLE = {
   'session.topicClosed': { en: 'Topic closed', zh: '话题已关闭' },
   'session.mention': { en: 'a mention waits for you', zh: '有人提到了你' },
   'session.unread': { en: 'messages since you last wrote in or opened this Topic', zh: '自你上次发言或打开此话题以来的消息' },
-  'session.background': { en: (v) => `${v.n} running in background`, zh: (v) => `后台 ${v.n} 个任务运行中` },
+  'session.tasks': { en: (v) => [v.shells && `${v.shells} shell${v.shells > 1 ? 's' : ''}`, v.agents && `${v.agents} agent${v.agents > 1 ? 's' : ''}`].filter(Boolean).join(', ') + ' running',
+    zh: (v) => `运行中：${[v.shells && `${v.shells} 个 shell`, v.agents && `${v.agents} 个子代理`].filter(Boolean).join('，')}` },
+  'session.tasksFailed': { en: (v) => `${v.n} failed lately`, zh: (v) => `近期失败 ${v.n}` },
+  'session.tasksMore': { en: (v) => `+${v.n} more`, zh: (v) => `另有 ${v.n} 个` },
+  'task.shell': { en: 'shell', zh: 'shell' },
+  'task.agent': { en: 'agent', zh: '子代理' },
   'session.unknownProject': { en: 'unknown project', zh: '未知项目' },
   'time.waiting': { en: (v) => `waiting ${v.span}`, zh: (v) => `等待 ${v.span}` },
   'time.idle': { en: (v) => `idle ${v.span}`, zh: (v) => `空闲 ${v.span}` },
@@ -190,12 +205,12 @@ const TABLE = {
   'usage.models': { en: 'Models', zh: '模型' },
   'usage.machines': { en: 'Machines', zh: '机器' },
 
-  // Events
-  'events.none': { en: 'No new events', zh: '没有新事件' },
-  'event.extraReset': { en: (v) => `${v.who}extra reset announced${v.in ? ` · in ${v.in}` : ''}${v.url ? ` · ${v.url}` : ''}`, zh: (v) => `${v.who}已公布额外重置${v.in ? ` · ${v.in} 后` : ''}${v.url ? ` · ${v.url}` : ''}` },
-  'event.config.requested': { en: (v) => `config ${v.key} = ${v.value} requested`, zh: (v) => `设置 ${v.key} = ${v.value} 已请求` },
-  'event.config.applied': { en: (v) => `config ${v.key} = ${v.value} applied by ${v.host}`, zh: (v) => `设置 ${v.key} = ${v.value} 已由 ${v.host} 应用` },
-  'event.config.refused': { en: (v) => `config ${v.key} = ${v.value} refused by ${v.host}: ${v.error}`, zh: (v) => `设置 ${v.key} = ${v.value} 被 ${v.host} 拒绝：${v.error}` },
+  // Alerts: what the gateway tells the human in the dashboard bot's chat (scripts/dashboard/notify.mjs)
+  'alert.extraReset': { en: (v) => `${v.who}extra reset announced${v.in ? ` · in ${v.in}` : ''}${v.url ? ` · ${v.url}` : ''}`, zh: (v) => `${v.who}已公布额外重置${v.in ? ` · ${v.in} 后` : ''}${v.url ? ` · ${v.url}` : ''}` },
+  'alert.configRefused': { en: (v) => `config ${v.key} = ${v.value} refused by ${v.host}: ${v.error}`, zh: (v) => `设置 ${v.key} = ${v.value} 被 ${v.host} 拒绝：${v.error}` },
+  'alert.hostOffline': { en: (v) => `${v.host} is offline${v.for ? ` · silent for ${v.for}` : ''}`, zh: (v) => `${v.host} 已掉线${v.for ? ` · 已 ${v.for} 无上报` : ''}` },
+  'alert.turnFailed': { en: (v) => `${v.agent} turn failed on ${v.host}${v.project ? ` · ${v.project}` : ''}${v.session ? ` · ${v.session}` : ''}\n${v.error}${v.url ? `\n${v.url}` : ''}`,
+    zh: (v) => `${v.agent} 的一轮在 ${v.host} 上失败${v.project ? ` · ${v.project}` : ''}${v.session ? ` · ${v.session}` : ''}\n${v.error}${v.url ? `\n${v.url}` : ''}` },
 
   // Config: this device
   'cfg.display': { en: 'Display · this device', zh: '显示 · 本设备' },
@@ -241,7 +256,7 @@ const TABLE = {
   'cfg.load.detailed': { en: 'Detailed', zh: '详细' },
   'cfg.load.compact': { en: 'Compact', zh: '简洁' },
   'cfg.load.off': { en: 'Off', zh: '关闭' },
-  'cfg.load.hint': { en: 'CPU, memory and GPU under each host; detailed adds the hardware line', zh: '每台主机下的 CPU、内存和 GPU；详细模式另显示硬件信息' },
+  'cfg.load.hint': { en: 'CPU, memory and GPU under each host; detailed adds the hardware line (in compact, tap the load of a host to show it)', zh: '每台主机下的 CPU、内存和 GPU；详细模式另显示硬件信息（简洁模式下点击负载即可展开）' },
   'cfg.demo': { en: 'Demo mode', zh: '演示模式' },
   'cfg.demo.hint': { en: 'Mask machines, accounts, projects and ids on this device (config edits off)', zh: '在本设备上隐藏机器、账号、项目和 ID（禁用设置修改）' },
 

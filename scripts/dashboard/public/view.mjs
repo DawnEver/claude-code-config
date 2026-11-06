@@ -139,6 +139,17 @@ export function groupSessions(hosts, by = 'host', order = 'host') {
 /** What a session is called: its own name (renamed or generated), else its project. */
 export const sessionLabel = (s, lang = 'en') => s.name ?? s.project ?? t('session.unknownProject', lang);
 
+/**
+ * A session's tasks (scripts/bridge/tasks.mjs) as its row shows them: how many shells and
+ * subagents run now, each running one with how long it has run (oldest first, as listed), and
+ * how many failed lately.
+ */
+export function taskView(tasks = [], now = Date.now()) {
+  const running = tasks.filter((x) => x.status === 'running');
+  return { shells: running.filter((x) => x.kind === 'shell').length, agents: running.filter((x) => x.kind === 'agent').length,
+    failed: tasks.filter((x) => x.status === 'failed').length, running: running.map((x) => ({ ...x, for: countdown(now, x.startedAt) })) };
+}
+
 /** A chat list's time column: the clock today, the weekday within a week, else the date. */
 export function chatTime(iso, now = Date.now(), { clock = '24', lang = 'en' } = {}) {
   const at = Date.parse(iso);
@@ -342,7 +353,7 @@ export function configView(snapshot) {
         differs: reporting.filter((h) => h.config.editable[key] !== value && !h.config.localOverrides.includes(key)).map((h) => ({ host: h.id, value: h.config.editable[key] })),
         overrides: reporting.filter((h) => h.config.localOverrides.includes(key)).map((h) => h.id),
         pending: (snapshot.configPending ?? []).find((c) => c.key === key) ?? null,
-        last: (snapshot.events ?? []).find((e) => e.kind === 'config' && e.key === key && e.outcome !== 'requested') ?? null };
+        last: snapshot.configLast?.[key] ?? null };
     }).filter((r) => r.meta),
     hosts: sortHosts(hosts),
   };
@@ -372,36 +383,12 @@ export function hostsView(snapshot, now = Date.now(), index = accountIndex(snaps
 }
 
 /**
- * The tabs, each answering one question: what runs (sessions), will
- * the quota last (quota), what happened (events: the alerts, as history). `alert` marks the
- * quota tab while an unread quota alert stands; `unseen` counts events newer than `seenAt`;
- * `events` counts what the Events tab lists (unread when it was opened, `shownFrom`).
+ * The tabs' counts: what runs (sessions), the accounts (quota). `alert` marks the quota tab while
+ * a quota alert stands. What happened is not kept here: alerts are sent to the dashboard bot's chat.
  */
-export function tabs(snapshot, now = Date.now(), seenAt = null, read = [], shownFrom = seenAt, index = accountIndex(snapshot, now)) {
-  const accounts = snapshot.accounts ?? [];
-  const events = snapshot.events ?? [];
-  return { sessions: sessionsOf(snapshot).length, quota: accounts.length, alert: quotaAlerts(snapshot, now, read, index).length > 0,
-    events: unreadEvents(events, shownFrom).length, unseen: events.filter((e) => !seenAt || e.at > seenAt).length };
+export function tabs(snapshot, now = Date.now(), read = [], index = accountIndex(snapshot, now)) {
+  return { sessions: sessionsOf(snapshot).length, quota: (snapshot.accounts ?? []).length, alert: quotaAlerts(snapshot, now, read, index).length > 0 };
 }
-
-/**
- * An event (registry.mjs: an alert or a config change, stored as data) in words, on the reader's
- * clock: a countdown is to now, not to when the event happened.
- */
-export function eventText(e, now = Date.now(), lang = 'en') {
-  const who = e.account ? `${accountName(e.account)}${e.account.email ? ` (${e.account.email})` : ''}: ` : '';
-  const until = (at) => (at > now ? countdown(at, now) : null);
-  switch (e.kind) {
-    case 'exhausted': return `${who}${t('quota.exhausted', lang, { k: e.window, reset: until(e.resetsAt) ? t('quota.resetSuffix', lang, { in: until(e.resetsAt) }) : '' })}`;
-    case 'seat-problem': return `${who}${e.problem}`;
-    case 'extra-reset': return t('event.extraReset', lang, { who, in: until(e.at), url: e.url });
-    case 'config': return t(`event.config.${e.outcome}`, lang, { key: e.key, value: JSON.stringify(e.value), host: e.host, error: e.error });
-    default: return e.kind;
-  }
-}
-
-/** The events the Events tab lists: those newer than the last visit (`seenAt`); read ones are cleared. */
-export const unreadEvents = (events = [], seenAt = null) => events.filter((e) => !seenAt || e.at > seenAt);
 
 const tokensOf = (r) => (r.input ?? 0) + (r.cache_read ?? 0) + (r.cache_write ?? 0) + (r.output ?? 0);
 
@@ -495,4 +482,52 @@ export function codeView(snapshot, days, now = Date.now(), chosen = null) {
   const ORDER = ['unreadable', 'main-failing', 'pr-failing', 'pr-conflict', 'session-failing'];
   attention.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind));
   return { repos, attention, inactive: all.length - repos.length, hidden: (snapshot.repos ?? []).length - all.length };
+}
+
+/** Search results at most: a search is to find a thing, not to list everything. */
+export const SEARCH_MAX = 100;
+
+/**
+ * Everything the dashboard shows, searched: hosts, sessions, their tasks, accounts, repositories,
+ * branches, pull requests and shared settings. A result matches when every term of `query`
+ * appears (case-insensitive) in any of its fields. Each result says where it leads: a `session`
+ * (its Topic), a `url` (the forge), else a `tab`. Results in that order, at most `max`.
+ */
+export function searchAll(snapshot, query, { now = Date.now(), lang = 'en', max = SEARCH_MAX } = {}) {
+  const terms = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return [];
+  const hit = (...fields) => { const hay = fields.flat().filter((f) => f !== null && f !== undefined && f !== '').join('\n').toLowerCase(); return terms.every((x) => hay.includes(x)); };
+  const out = [];
+  const add = (r) => out.push(r);
+  for (const h of snapshot.hosts ?? []) {
+    const r = h.resources;
+    if (hit(h.id, r?.cpuModel, (r?.gpus ?? []).map((g) => g.name))) add({ kind: 'host', title: h.id, sub: h.online ? t('sessions.count', lang, { n: h.sessions.length }) : '', tab: 'sessions' });
+  }
+  for (const s of sessionsOf(snapshot)) {
+    const where = [s.hostId, s.project, s.branch].filter(Boolean).join(' · ');
+    if (hit(s.name, s.project, s.branch, s.hostId, s.agent, s.seat, s.account, s.provider, s.repo, s.id))
+      add({ kind: 'session', title: sessionLabel(s, lang), sub: [statusLabel(s.status, lang), where].join(' · '), session: s, tab: 'sessions' });
+    for (const x of s.tasks ?? []) {
+      if (hit(x.label, x.kind)) add({ kind: 'task', title: x.label, sub: [t(`task.${x.kind}`, lang), x.status === 'running' ? countdown(now, x.startedAt) : x.status, sessionLabel(s, lang), s.hostId].join(' · '), session: s, tab: 'sessions' });
+    }
+  }
+  for (const a of snapshot.accounts ?? []) {
+    if (hit(a.label, a.email, a.detail, a.agent, a.provider, a.key, a.hosts))
+      add({ kind: 'account', title: accountName(a), sub: [a.email, a.detail].filter(Boolean).join(' · '), tab: 'quota' });
+  }
+  for (const r of snapshot.repos ?? []) {
+    if (hit(r.name, r.key)) add({ kind: 'repo', title: r.name, sub: r.error ?? r.key, url: r.url, tab: 'code' });
+    for (const b of r.branches ?? []) {
+      if (hit(b.name, b.author)) add({ kind: 'branch', title: `${r.name} ${b.name}`, sub: [b.author, b.ci].filter(Boolean).join(' · '),
+        url: r.url && `${r.url}/${r.forge === 'github' ? 'tree' : 'src/branch'}/${encodeURIComponent(b.name)}`, tab: 'code' });
+    }
+    for (const p of r.pulls ?? []) {
+      if (hit(`#${p.number}`, p.title, p.author, p.head, p.base)) add({ kind: 'pull', title: `#${p.number} ${p.title ?? ''}`.trim(), sub: [r.name, p.author, `${p.head} → ${p.base}`].filter(Boolean).join(' · '), url: p.url, tab: 'code' });
+    }
+  }
+  for (const row of configView(snapshot).rows) {
+    const label = configLabel(row.key, row.meta.key, lang);
+    if (hit(row.key, label)) add({ kind: 'config', title: label, sub: `${row.key} = ${JSON.stringify(row.value)}`, tab: 'config' });
+  }
+  return out.slice(0, max);
 }

@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, searchAll, SEARCH_MAX } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -31,15 +31,11 @@ let langChoice = LANGS.includes(store.get('dashboard.lang')) ? store.get('dashbo
 let lang = langChoice === 'auto' ? autoLang : langChoice;
 const tr = (key, vars) => t(key, lang, vars);
 const agoText = (ms) => ago(new Date(ms).toISOString(), Date.now(), lang);
-// The open tab survives a reopen: a #quota / #events link opens that tab; otherwise the last
+// The open tab survives a reopen: a #quota / #code link opens that tab; otherwise the last
 // one used; sessions the first time.
-const TABS = ['sessions', 'quota', 'usage', 'code', 'events', 'config'];
+const TABS = ['sessions', 'quota', 'usage', 'code', 'config'];
 const hashTab = location.hash.slice(1);
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
-// Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
-let seenAt = store.get('dashboard.eventsSeenAt');
-// The Events tab lists what was unread when it was opened: read events are cleared on the next visit.
-let shownFrom = seenAt;
 // Demo mode (Config › Developer, or `?demo`): the live data with every identity masked in this
 // browser, for showing the dashboard to others. A setting of this device only: nothing reaches the gateway.
 if (params.has('demo')) store.set('dashboard.demo', '1');
@@ -97,6 +93,8 @@ function applyLang() {
   $('title').textContent = tr('app.title');
   $('force-update').title = tr('app.forceUpdate');
   $('force-update').setAttribute('aria-label', tr('app.forceUpdate'));
+  $('search').placeholder = tr('search.placeholder');
+  $('search').setAttribute('aria-label', tr('search.placeholder'));
   for (const b of document.querySelectorAll('#tabs [data-tab]')) b.querySelector('.label').textContent = tr(`tab.${b.dataset.tab}`);
   document.body.classList.toggle('pin-tabs', pref.pinTabs === 'on');
   document.documentElement.style.setProperty('--scale', String(TEXT_SCALE[pref.textSize]));
@@ -129,6 +127,9 @@ function badges(s) {
  * project group `inProject`: the machine); on the right the messages the Topic got since you
  * last spoke there, and @ while a mention waits for you. Counts only: no message text reaches the dashboard.
  */
+/** Running tasks listed under a session at most; the rest are counted. */
+const TASK_LINES = 5;
+
 function sessionRow(s, { withHost = false, inProject = false } = {}) {
   const status = displayStatus(s);
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
@@ -143,7 +144,9 @@ function sessionRow(s, { withHost = false, inProject = false } = {}) {
   top.append(el('span', 'title', sessionLabel(s, lang)), time);
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
-  const sub = el('span', 'sub', [statusLabel(status, lang), status === 'idle' && s.background && tr('session.background', { n: s.background }), replyTime(s, Date.now(), pref.replyStyle, lang), ...where,
+  const tasks = taskView(s.tasks, Date.now());
+  const sub = el('span', 'sub', [statusLabel(status, lang), (tasks.shells || tasks.agents) && tr('session.tasks', tasks),
+    tasks.failed && tr('session.tasksFailed', { n: tasks.failed }), replyTime(s, Date.now(), pref.replyStyle, lang), ...where,
     s.topic?.closed && tr('session.topicClosed')].filter(Boolean).join(' · '));
   // The account the session spends, as on the Quota tab (observation-only sessions have none).
   const q = s.account && accounts.get(s.account);
@@ -152,6 +155,13 @@ function sessionRow(s, { withHost = false, inProject = false } = {}) {
   else if (s.provider || s.seat) sub.append(document.createTextNode(` · ${s.provider ? providerName(s.provider) : s.seat}`));
   bottom.append(sub, ...badges(s));
   body.append(top, bottom);
+  // What runs now, one line each: kind, how long, what (a command, an agent's description).
+  if (tasks.running.length) {
+    const list = el('div', 'tasks');
+    for (const x of tasks.running.slice(0, TASK_LINES)) list.append(el('div', 'task', `${tr(`task.${x.kind}`)} ${x.for} · ${x.label}`));
+    if (tasks.running.length > TASK_LINES) list.append(el('div', 'task', tr('session.tasksMore', { n: tasks.running.length - TASK_LINES })));
+    body.append(list);
+  }
   row.append(avatar, body);
   if (s.topic) { row.title = tr('session.openTopic'); row.addEventListener('click', () => openTopic(s)); }
   return row;
@@ -428,9 +438,23 @@ function renderQuota() {
 }
 
 /** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */
-function resourcesBox(r, online) {
+// Hosts whose load a tap opened to the detailed view in compact mode (this page's life only).
+const loadOpen = new Set();
+
+function resourcesBox(r, online, hostId) {
   const { meters, about } = resourceView(r);
-  const box = el('div', `res${online ? '' : ' stale-v'}`);
+  const detailed = pref.load === 'detailed' || loadOpen.has(hostId);
+  // Compact: a tap opens this host's load to the detailed view, and a second tap closes it.
+  const tappable = pref.load === 'compact' && !!about;
+  const box = el(tappable ? 'button' : 'div', `res${online ? '' : ' stale-v'}${tappable ? ' tap' : ''}`);
+  if (tappable) {
+    box.setAttribute('aria-expanded', String(detailed));
+    box.addEventListener('click', () => {
+      if (!loadOpen.delete(hostId)) loadOpen.add(hostId);
+      tg?.HapticFeedback?.selectionChanged?.();
+      box.replaceWith(resourcesBox(r, online, hostId));
+    });
+  }
   if (!meters.length) { box.append(el('span', 'muted', tr('host.noLoad'))); return box; }
   for (const m of meters) {
     const cell = el('div', 'res-m');
@@ -441,7 +465,7 @@ function resourcesBox(r, online) {
     cell.append(el('span', 'k', m.label), track, el('span', 'res-t', m.text));
     box.append(cell);
   }
-  if (about && pref.load === 'detailed') box.append(el('div', 'res-about muted', about));
+  if (about && detailed) box.append(el('div', 'res-about muted', about));
   return box;
 }
 
@@ -529,22 +553,8 @@ function hostSection(h, body) {
   const head = el('div', 'host-head');
   head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id),
     el('span', 'muted meta', h.online ? tr('sessions.count', { n: h.sessions.length }) : tr('host.offlineSeen', { ago: ago(h.lastSeen, Date.now(), lang) })));
-  section.append(head, ...(pref.load !== 'off' ? [resourcesBox(h.resources, h.online)] : []), ...body);
+  section.append(head, ...(pref.load !== 'off' ? [resourcesBox(h.resources, h.online, h.id)] : []), ...body);
   return section;
-}
-
-function renderEvents() {
-  const box = $('events-view');
-  box.replaceChildren();
-  const events = unreadEvents(snapshot.events, shownFrom);
-  if (!events.length) { box.append(el('div', 'empty', tr('events.none'))); return; }
-  const list = el('div', 'event-list');
-  for (const e of events) {
-    const row = el('div', 'event new');
-    row.append(el('div', 'text', eventText(e, Date.now(), lang)), el('div', 'muted', agoText(e.at)));
-    list.append(row);
-  }
-  box.append(list);
 }
 
 // ── Config: Display (this device), Shared settings (all hosts), Developer ──
@@ -1007,8 +1017,7 @@ function renderCode() {
 }
 
 function renderTabs() {
-  // Looking at the events marks them seen (after this render still shows which were new).
-  const n = tabs(snapshot, Date.now(), seenAt, [], shownFrom, accounts);
+  const n = tabs(snapshot, Date.now(), [], accounts);
   $('tabs').hidden = false;   // always: Config holds this device's settings, whatever data there is
   $('n-sessions').textContent = String(n.sessions);
   $('n-quota').textContent = String(n.quota);
@@ -1016,11 +1025,9 @@ function renderTabs() {
   const code = codeView(snapshot, codeDays, Date.now(), codeRepos);
   $('n-code').textContent = (snapshot.repos ?? []).length ? String(code.repos.length) : '';
   $('code-dot').hidden = pref.codeAttention !== 'on' || !code.attention.length;
-  $('n-events').textContent = String(n.events);
-  $('events-badge').hidden = !n.unseen || tab === 'events';
-  $('events-badge').textContent = String(n.unseen);
   for (const b of document.querySelectorAll('#tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-  for (const v of document.querySelectorAll('.view')) v.hidden = v.dataset.view !== tab;
+  // A search in progress replaces the tab's view with its results.
+  for (const v of document.querySelectorAll('.view')) v.hidden = v.dataset.view !== (query.trim() ? 'search' : tab);
 }
 
 // Each tab's scroll position, kept across tab switches and reopening the app. Content arrives
@@ -1062,7 +1069,6 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     tab = b.dataset.tab;
     restoring = tab;
     restoreTries = 0;
-    if (tab === 'events') shownFrom = seenAt;
     if (tab === 'usage') { renderUsage(); fetchUsage(); }
     configShown = null;
     configDirty = false;
@@ -1070,6 +1076,35 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     tg?.HapticFeedback?.selectionChanged?.();
     render();
   });
+}
+
+// The search box: everything the dashboard holds, searched in this page (searchAll in view.mjs).
+let query = '';
+
+function renderSearch() {
+  const box = $('search-view');
+  box.replaceChildren();
+  const found = searchAll(snapshot, query, { now: Date.now(), lang });
+  if (!found.length) { box.append(el('div', 'empty', tr('search.none'))); return; }
+  const list = el('div', 'found-list');
+  for (const r of found) {
+    const row = el('button', 'found');
+    const title = el('div', 'title');
+    title.append(el('span', 'k', tr(`search.kind.${r.kind}`)), document.createTextNode(r.title));
+    row.append(title, ...(r.sub ? [el('div', 'sub', r.sub)] : []));
+    row.addEventListener('click', () => {
+      if (r.session?.topic) return openTopic(r.session);
+      if (r.url) return openUrl(r.url);
+      // Elsewhere in the dashboard: clear the search and show that tab.
+      query = '';
+      $('search').value = '';
+      document.querySelector(`#tabs [data-tab="${r.tab}"]`)?.click();
+      render();
+    });
+    list.append(row);
+  }
+  box.append(list);
+  if (found.length === SEARCH_MAX) box.append(el('div', 'muted', tr('search.more', { n: SEARCH_MAX })));
 }
 
 function render() {
@@ -1083,8 +1118,8 @@ function render() {
   // Only the tab in view is drawn (another is drawn when shown), each on its own: a fault in one
   // must not blank another. A redraw keeps the reader where they were on the page.
   const y = window.scrollY;
+  if (query.trim()) { isolated(renderSearch); restoreScroll(); return; }
   if (tab === 'quota') isolated(renderQuota);
-  if (tab === 'events') isolated(renderEvents);
   if (tab === 'code') isolated(renderCode);
   if (tab === 'usage') isolated(renderUsage);
   // The config form is rebuilt only when its data changed and nobody is editing a shared value:
@@ -1094,7 +1129,6 @@ function render() {
     const editing = configDirty || document.activeElement?.matches?.('#config-view input, #config-view select');
     if (key !== configShown && !editing) { configShown = key; renderConfig(); }
   }
-  if (tab === 'events' && snapshot.events?.length) { seenAt = snapshot.events[0].at; store.set('dashboard.eventsSeenAt', seenAt); }
   if (tab === 'sessions') isolated(() => { renderChips(); renderSelects(); renderHosts(); });
   if (!restoring && Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
   restoreScroll();
@@ -1110,7 +1144,6 @@ function stop(messageKey) {
   $('hosts').replaceChildren();
   $('chips').replaceChildren();
   $('quota-view').replaceChildren();
-  $('events-view').replaceChildren();
   $('usage-view').replaceChildren();
   $('config-view').replaceChildren();
   $('tabs').hidden = true;
@@ -1204,3 +1237,4 @@ $('summary').replaceChildren(el('div', 'summary-head', tr('app.loading')));
 load();
 $('force-update').addEventListener('click', () => hardReload());
 if (!mock) { setInterval(load, POLL_MS); showVersion(); updateIfStale(); }
+$('search').addEventListener('input', (e) => { query = e.target.value; render(); });

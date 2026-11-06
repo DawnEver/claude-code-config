@@ -197,6 +197,19 @@
                     }
                 ]
             }
+        ],
+        "PostToolUseFailure": [
+            {
+                "matcher": "Bash|Agent|Task",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
+                        "timeout": 10,
+                        "async": true
+                    }
+                ]
+            }
         ]
     },
     "worktree": {

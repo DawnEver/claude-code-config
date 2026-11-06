@@ -11,7 +11,7 @@ Native session ── adapter.statusSnapshot ── Bridge.sessions        (daem
                                                  ▼
                                    dashboard-push.mjs  ── HTTPS POST, host bearer token ──▶ Cloudflare Worker
                                                                                           │ DashboardHub Durable Object
-Telegram ─ dashboard bot ─ Mini App (public/) ─ GET /api/dashboard, Authorization: tma <initData> ┘ (registry: pushes in memory, events in storage)
+Telegram ─ dashboard bot ─ Mini App (public/) ─ GET /api/dashboard, Authorization: tma <initData> ┘ (registry: pushes in memory, alert state in storage)
 ```
 
 **Optional, off by default.** Nothing here runs until a host is configured for it: the bridge
@@ -67,15 +67,25 @@ no API, no authentication.
   same codes label the status card): `working`, `idle`, `needs_approval`, `needs_input`,
   `unknown`, and `ended` for the instant a session is going down — an ended session is
   dropped from the next push rather than listed. The UI never infers a status.
-  A session whose host reports `unknown` is not listed at all. An `idle` Claude session
-  may carry `background`: the shells and agents its turn left running, counted from the
-  transcript at every turn end (`backgroundTasks` in `scripts/hooks/bridge-hook.js`: started
-  minus notified or stopped; Monitors are not counted). Claude wakes when one ends, so the
-  next turn end corrects it. Codex reports no such count.
+  A session whose host reports `unknown` is not listed at all.
+- **Tasks**: a session carries `tasks`, the shells and subagents it runs besides its own turn
+  (`TaskBoard` in `scripts/bridge/tasks.mjs`, one per session): running ones with their start,
+  then those ended within 10 min with their end and status (`completed`, `failed`, `stopped`);
+  at most 50, each label (the command, or the agent's type and description) one line of at
+  most 200 characters. The row says how many shells and agents run and lists each running
+  one with how long it has run. Claude: `bridge-hook.js` reports a Bash or Agent call's start
+  (PreToolUse) and end (PostToolUse, PostToolUseFailure); a call run in the background ends
+  when a later turn end no longer finds it open in the transcript (`backgroundTasks`: started
+  minus notified or stopped; Monitors are not counted; Claude wakes when one ends). Codex:
+  `trackItem` in `codex-adapter.mjs` reads each `commandExecution` item from `inProgress` to
+  its end, and each subagent by its thread from `collabAgentToolCall.agentsStates`. Live state
+  only: no task is written to the usage store.
 - **Freshness is separate.** `lastSeen` is the gateway's own clock at the last accepted push
   (host clocks are not trusted). A host silent for `ttlSeconds` (60) is Offline and every
   session it last reported carries `stale: true`, shown as `Stale`, not as its last state.
-  Keep `ttlSeconds` at least three times every host's `everySeconds`.
+  Keep `ttlSeconds` at least three times every host's `everySeconds`. A host silent for
+  `offlineAlertSeconds` (shared `bridge.dashboard.offlineAlertSeconds`, default 300) is alerted
+  offline once; its next push watches it again, without an alert (see Alerts).
 - **Ordering**: a push carries `bootAt` (its daemon's start time, host clock) and `seq` (its
   tick). One not newer than the held push — an earlier boot, or the same boot's earlier tick —
   is refused, so a replaced daemon's in-flight push never overwrites its successor's. A boot
@@ -102,9 +112,9 @@ no API, no authentication.
   preview: it would put conversation content on Cloudflare. `lastActivityAt` is the bridge's last
   mirrored activity (a session with no group configured stays at its `up` time).
 - The Durable Object keeps the last push of each host in memory only: when Cloudflare evicts or
-  restarts it, hosts and sessions are empty until the next push round (`everySeconds`). The events
-  and what each account was last alerted for are history no push can rebuild, so they live in its
-  storage: a restart neither loses them nor alerts a standing condition again.
+  restarts it, hosts and sessions are empty until the next push round (`everySeconds`). What
+  each account and host was last alerted for is history no push can rebuild, so it lives in its
+  storage, written only when it changes: a restart never alerts a standing condition again.
 
 ## Usage
 
@@ -134,14 +144,7 @@ app-server); the Worker never recomputes it.
   (`quotaView` in `public/view.mjs`). A reading older than 15 min is a floor (`≥` used,
   `≤` left) and forecasts nothing; a passed reset is a new window not yet started.
 - **Verdict**: the binding window is the one that runs out soonest, else the fullest. Only an
-  exhausted window flags the Quota tab and becomes an event. A projected run-out is shown on the account row, never alerted.
-- **Events**: the Worker turns a window hitting its limit, a seat problem, or an announced extra
-  reset into events (`quotaAlertsFor` in `public/shared/quota-model.mjs`), stored as data
-  (`{at, kind, ...}`; last 50, in Durable Object storage) and worded by the page on its own clock
-  (`eventText` in `view.mjs`); shown only here — nothing is posted to Telegram. Shown in the
-  Events tab, newest first, with an unread count since this device last opened it. The tab
-  lists only what was unread when it was opened: events read on one visit are cleared from
-  the next (per device).
+  exhausted window flags the Quota tab and is alerted. A projected run-out is shown on the account row, never alerted.
 - **Fresh on every open**: every page file is served `Cache-Control: no-cache` (`public/_headers`), so
   the web view revalidates (a 304 when unchanged) and a new deploy shows on the next open.
 - **One host model**: `hostsView()` in `public/view.mjs` is the only host list — gateway host
@@ -159,9 +162,17 @@ app-server); the Worker never recomputes it.
   the hardware on a line of its own: CPU model, cores, memory size and type (DDR4, DDR5, LPDDR5…),
   GPU models. Load is sampled by `scripts/bridge/resources.mjs` on every push; the memory type is
   read once per daemon (Windows `Win32_PhysicalMemory`, macOS `system_profiler`, Linux `dmidecode`,
-  which needs root — unknown otherwise). Numbers and model names only.
-- **Notification**: the Events tab is the one notification; the Sessions tab's "Needs you" chip
-  lists the sessions waiting. The card above the tabs only shows loading, sign-in and access errors.
+  which needs root — unknown otherwise). Numbers and model names only. In Compact a tap on a
+  host's load opens it to the detailed view (that host, until tapped again or the page reloads).
+- **Search** (the box above the tabs): everything the page holds — hosts (name, CPU and GPU
+  model), sessions (name, project, branch, host, agent, seat, account, id), their tasks
+  (commands, agent descriptions), accounts (label, email, org, plan), repositories, branches,
+  pull requests and shared settings — searched in the browser (`searchAll` in `view.mjs`; every
+  word must appear, case-insensitive; at most 100 results). A result opens its Topic or the
+  forge, else its tab. The Usage tab's report is not searched (it is fetched per range).
+- **Notification**: alerts go to the dashboard bot's chat (see Alerts); the page keeps no list
+  of them. The Sessions tab's "Needs you" chip lists the sessions waiting. The card above the
+  tabs only shows loading, sign-in and access errors.
 - **Packed**: hosts flow down columns (CSS columns, ~340 px each) in Sessions and Quota; not a setting.
 - **Host facts**: each host's read-only facts (Telegram bridge, allowed users, approvals, Codex
   sources, a dashboard error) sit under its accounts on the Quota tab.
@@ -204,6 +215,29 @@ the key (the git credential store; `keyUsername` defaults to the provider's sess
 the provider cache) reads it every 15 min in the background (`BalanceReader`). A provider is one
 reader in `READERS`: DeepSeek has one (`/user/balance`, per currency). Anthropic and OpenAI expose
 no balance to an API key — only spend, through an Admin key — so they read as `no balance API`.
+
+## Alerts
+
+Everything that needs the human is sent by the dashboard bot to each allowed user's private
+chat (`notify.mjs`: `alertText` words it in `alertLang`, plain text, no parse mode). The registry
+judges what is worth telling, as data, and keeps no list of alerts:
+
+| Alert | Raised by | Once per |
+| --- | --- | --- |
+| a window exhausted, a seat problem, an announced extra reset | `quotaAlertsFor` on each push, on the merged account | condition (recovering clears it) |
+| host offline (coming back is not alerted) | `Registry.sweep`, on the Durable Object's alarm | silence past `offlineAlertSeconds` |
+| a failed turn (Claude `StopFailure`, Codex `failed`) | the bridge daemon, an outbox on the push (`DashboardPush.raise`) | alert id (a push re-sent after a lost reply alerts once) |
+| a config change refused by a host | `#settle` | report |
+
+- **Budget**: the alarm is set for when the next host would turn silent, never on a fixed timer:
+  while hosts push it fires at most once per `offlineAlertSeconds` (288 Durable Object requests
+  a day at 300 s), and not at all once every host is alerted offline (the next push re-arms it).
+  Alert state is written to storage only when it changes, never per push.
+- **Failed turns**: the Topic keeps a plain `[failed] …` line and the alert links to it. A host
+  without the dashboard has no other channel, so there the Topic mentions the human as before.
+- A host never heard from since the Durable Object started is counted silent from that start.
+- Telegram refusing a message (the user never opened the bot, or blocked it) is logged by the
+  Worker, never retried.
 
 ## Code
 
@@ -295,8 +329,9 @@ sessions go.
   replaces an older), hands it to the next host that pushes, and to another if that host does
   not report within 2 min. The host validates it again (`applyConfigChange` in `context.mjs`),
   writes it into the shared `claude_env_settings.json` in place (the file may be a link into
-  the sync dir), and reports the outcome on its next push. Requested, applied and refused are
-  Events. No new channel into a host: the change rides the reply to the host's own push.
+  the sync dir), and reports the outcome on its next push; the last outcome per key is shown on
+  its row (`configLast`, gateway memory), and a refusal is alerted. No new channel into a host:
+  the change rides the reply to the host's own push.
 - **Live**: a daemon checks its config and code each minute and hands over to a fresh daemon
   when either changed, so an edit applied here or synced in from another host takes effect
   within a minute on every host. A key set in a host's local
@@ -306,7 +341,7 @@ sessions go.
   segmented choice with its explanation behind `?`); *Shared settings* (all hosts: `CONFIG_KEYS`
   grouped as Topic lifecycle, Dashboard, Projects; a row is marked when a host is still syncing or
   overrides it locally, and reads the change as queued → handed to a host → applied/refused, from
-  `configPending` and the config events); *Developer* (collapsed: demo mode).
+  `configPending` and `configLast`); *Developer* (collapsed: demo mode).
 - **Language**: every word is in `public/shared/i18n.mjs` (`{key: {en, zh}}`, `t(key, lang)`;
   `CONFIG_KEYS` labels are `config.<key>` there). The default follows the Telegram user's
   `language_code` (`zh*` -> Chinese, else English); Config → Display → Language overrides it on this device.
@@ -339,12 +374,17 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    the variable `DASHBOARD_DOMAIN` (the url's host). It never
    touches `DASHBOARD_CONFIG`, which persists across deploys.
    **Membership deploy**: `host-token` runs it; by hand (`npm run dashboard -- deploy`) only
-   after changing `botId` or `allowedUserIds`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`,
-   `allowedUserIds`, `hosts`) from the merged config — never a host token — and deploys to
-   the url's domain (Cloudflare creates the DNS record and certificate).
-5. **Menu button**: put the dashboard bot token into this machine's local
+   after changing `botId`, `allowedUserIds`, `offlineAlertSeconds` or `alertLang`. It derives the
+   Worker's `DASHBOARD_CONFIG` secret (`botId`, `allowedUserIds`, `hosts`, and the optional shared
+   `bridge.dashboard.offlineAlertSeconds` / `alertLang` — `en` or `zh`) from the merged config —
+   never a host token — and the `DASHBOARD_BOT_TOKEN` secret from this machine's
+   `bridge.dashboard.botToken` when this machine has it (step 5). Any machine can deploy: one
+   without the token leaves the uploaded secret in place, so one deploy from a machine that has
+   it is enough (and again after rotating it),
+   and deploys to the url's domain (Cloudflare creates the DNS record and certificate).
+5. **Bot token and menu button**: put the dashboard bot token into this machine's local
    `~/.claude/claude_env_settings.local.json` as `bridge.dashboard.botToken` (machine-local,
-   like `bridge.botToken`; never synced, never sent to the Worker), then
+   like `bridge.botToken`; never synced; sent only to the Worker, as a secret, to send alerts), then
    `npm run dashboard -- set-menu`. It checks the token belongs to `botId`, sets the button and
    reads it back. Open the dashboard bot -> **Dashboard**.
 6. **Daemons** pick the config up within a minute: each checks its config and code revision
@@ -356,7 +396,7 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 | Route | Auth | Returns |
 | --- | --- | --- |
 | `GET /api/health` | none | `{ok, schemaVersion, version: {commit, id, at}}` (the live deploy) |
-| `GET /api/dashboard` | `Authorization: tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], events[], configKeys[], configPending[]}` |
+| `GET /api/dashboard` | `Authorization: tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], repos[], configKeys[], configLast{}, configPending[]}` |
 | `POST /api/config` | `Authorization: tma <raw initData>` | `202 {id}`: a `CONFIG_KEYS` change queued; `400` for any other key or value |
 | `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted, configChanges[]}` (accepted false = not newer than held; the changes this host should apply) |
 
@@ -385,7 +425,7 @@ is whitelisted field by field; at most 200 per host.
   nothing is sent or changed on the gateway or any host. Rules, numbered by first appearance:
   machines -> `Workstation N`, seats -> `team-a/b/…`, their orgs -> `Team A/B/…`, emails ->
   `userN@example.com`, projects -> `project-a/…`, branches other than `main`/`master` ->
-  `branch-N`, session ids, Topic chat ids. Free text (alerts, seat problems, config events) is
+  `branch-N`, session ids, Topic chat ids. Free text (seat problems, config outcomes) is
   rebuilt from the templates that produce it; anything else is masked by shape plus known names.
   Config edits are off in demo. Real data still reaches the browser: allowlisted viewers only.
 - Live acceptance needs the real chain: daemons pushing, the Worker deployed, the app opened

@@ -18,6 +18,29 @@ import { WsStreamClient } from './ws-stream.mjs';
 import { JsonRpcPeer } from './jsonrpc.mjs';
 import { BRIDGE_DEFAULTS } from './context.mjs';
 import { isProvider } from '../shared/dashboard-schema.mjs';
+import { TaskBoard } from './tasks.mjs';
+
+const COMMAND_END = { completed: 'completed', failed: 'failed', declined: 'stopped' };
+const AGENT_RUNNING = ['pendingInit', 'running'];
+const AGENT_END = { completed: 'completed', errored: 'failed', interrupted: 'stopped', shutdown: 'stopped' };
+
+/**
+ * A thread item as tasks (tasks.mjs): a command runs from its `inProgress` item to its last;
+ * each subagent a collab call names (spawn, wait, close, ...) by its thread, as `agentsStates`
+ * says. A subagent's label is the prompt it was spawned with.
+ */
+export function trackItem(board, item, at) {
+  if (item?.type === 'commandExecution' && typeof item.id === 'string') {
+    board.start(item.id, { kind: 'shell', label: item.command, at: item.status === 'inProgress' ? at : at - (item.durationMs ?? 0) });
+    if (COMMAND_END[item.status]) board.end(item.id, { status: COMMAND_END[item.status], at });
+  }
+  if (item?.type === 'collabAgentToolCall') {
+    for (const [thread, state] of Object.entries(item.agentsStates ?? {})) {
+      board.start(thread, { kind: 'agent', label: item.tool === 'spawnAgent' ? item.prompt ?? '' : '', at });
+      if (!AGENT_RUNNING.includes(state?.status) && AGENT_END[state?.status]) board.end(thread, { status: AGENT_END[state.status], at });
+    }
+  }
+}
 
 const QUOTA_REFRESH_MS = 5 * 60000;
 // Codex keeps a thread in memory ("loaded") long after its last client left (an idle one is
@@ -303,6 +326,7 @@ export class CodexAdapter extends EventEmitter {
       activeTurnId: running?.id ?? null,
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
       deliveredMessages: new Set(),
+      tasks: this.threads.get(threadId)?.tasks ?? new TaskBoard(),
       idleSince: th.status?.type === 'idle' ? this.now() : null,
       updatedAt: th.updatedAt ?? 0,
     };
@@ -359,6 +383,7 @@ export class CodexAdapter extends EventEmitter {
         }
         break;
       case 'item/started':
+        if (th) trackItem(th.tasks, p.item, this.now());
         if (th && p.item?.type === 'agentMessage' && (!th.activeTurnId || !p.turnId || th.activeTurnId === p.turnId))
           th.agentMessages.set(p.item.id, { ...th.agentMessages.get(p.item.id), ...p.item });
         break;
@@ -370,6 +395,7 @@ export class CodexAdapter extends EventEmitter {
         break;
       case 'item/completed': {
         const item = p.item ?? {};
+        if (th) trackItem(th.tasks, item, this.now());
         if (item.type === 'userMessage') {
           const text = promptText(item);
           if (text) this.emit('prompt', { id: p.threadId, turnId: p.turnId ?? null, text });
@@ -531,6 +557,11 @@ export class CodexAdapter extends EventEmitter {
     const th = this.threads.get(threadId);
     if (!th && this.localObserver?.has(threadId)) return this.localObserver.statusSnapshot(threadId);
     if (!this.rpc || !th) return { state: 'disconnected' };
+    const tasks = th.tasks.list(this.now());
+    return { ...this.#state(threadId, th), ...(tasks.length ? { tasks } : {}) };
+  }
+
+  #state(threadId, th) {
     const st = th.status;
     if (st?.type === 'active') {
       const flags = st.activeFlags ?? [];

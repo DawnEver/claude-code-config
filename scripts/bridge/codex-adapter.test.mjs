@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { CodexAdapter, progressLine, probeDaemon, backlogSince, isMainSession } from './codex-adapter.mjs';
+import { CodexAdapter, progressLine, probeDaemon, backlogSince, isMainSession, trackItem } from './codex-adapter.mjs';
 
 /** Fake app-server behind the adapter's transport interface. */
 function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
@@ -670,4 +670,20 @@ test('waitingOnUserInput reads as waiting-input; a pending question does before 
   assert.equal(a.statusSnapshot('t1').state, 'idle');
   srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
   assert.equal(a.statusSnapshot('t1').state, 'waiting-input');
+});
+
+test('trackItem: a command runs from its inProgress item to its end; each subagent by its thread, as agentsStates says', async () => {
+  const { TaskBoard } = await import('./tasks.mjs');
+  const b = new TaskBoard();
+  trackItem(b, { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'inProgress' }, 1000);
+  trackItem(b, { type: 'commandExecution', id: 'c2', command: 'ls', status: 'completed', durationMs: 50 }, 1200);
+  trackItem(b, { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'failed', exitCode: 1 }, 3000);
+  trackItem(b, { type: 'collabAgentToolCall', id: 'k1', tool: 'spawnAgent', prompt: 'review the diff', status: 'completed',
+    senderThreadId: 'main', receiverThreadIds: ['a1'], agentsStates: { a1: { status: 'running' } } }, 2000);
+  trackItem(b, { type: 'collabAgentToolCall', id: 'k2', tool: 'wait', status: 'completed', agentsStates: { a1: { status: 'completed' } } }, 9000);
+  trackItem(b, { type: 'agentMessage', id: 'm', text: 'hi' }, 9000);
+  assert.deepEqual(b.list(9000).map((t) => [t.id, t.kind, t.label, t.status, t.startedAt, t.endedAt]), [
+    ['a1', 'agent', 'review the diff', 'completed', 2000, 9000],
+    ['c1', 'shell', 'npm test', 'failed', 1000, 3000],
+    ['c2', 'shell', 'ls', 'completed', 1150, 1200]]);
 });

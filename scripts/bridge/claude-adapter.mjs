@@ -32,7 +32,16 @@ import { EventEmitter } from 'events';
 import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 import { isValidAlias } from '../shared/seats.mjs';
 import { isProvider } from '../shared/dashboard-schema.mjs';
-import { AGENTS } from '../dashboard/public/shared/vocab.mjs';
+import { AGENTS, TASK_KINDS, TASK_STATUSES } from '../dashboard/public/shared/vocab.mjs';
+import { TaskBoard } from './tasks.mjs';
+
+/** A hook's task (bridge-hook.js taskFor), checked at the IPC boundary; null when malformed. */
+function parseTask(t) {
+  if (!t || typeof t.id !== 'string' || !t.id || t.id.length > 128) return null;
+  if (t.op === 'start' && TASK_KINDS.includes(t.kind)) return { op: 'start', id: t.id, kind: t.kind, label: String(t.label ?? ''), background: t.background === true };
+  if (t.op === 'end' && TASK_STATUSES.includes(t.status) && t.status !== 'running') return { op: 'end', id: t.id, status: t.status };
+  return null;
+}
 
 const AUTH_TIMEOUT_MS = 5000;
 const heldKey = (m) => JSON.stringify([m.kind, m.text, m.texts ?? null]);
@@ -177,7 +186,7 @@ export class ClaudeAdapter extends EventEmitter {
           this.sessions.set(sessionId, { peer, socket, ids: new Set([...(previous?.ids ?? []), sessionId]), sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
             queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
-            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null,
+            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null, tasks: previous?.tasks ?? new TaskBoard(),
             named: previous?.named ?? NO_NAME });
           const s = this.sessions.get(sessionId);
           if (s.transcript) s.named = transcriptName(s.transcript, s.named);
@@ -195,7 +204,8 @@ export class ClaudeAdapter extends EventEmitter {
           const r = this.#mirror({ ...ids(p), retry: p.retry === true, ...(Number.isFinite(p.at) ? { at: p.at } : {}), ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
             ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? ''),
             ...(Array.isArray(p.texts) ? { texts: p.texts.map(String) } : {}),
-            ...(Number.isSafeInteger(p.background) && p.background > 0 ? { background: Math.min(p.background, 999) } : {}) });
+            ...(Array.isArray(p.background) ? { background: p.background.filter((x) => typeof x === 'string').slice(0, 200) } : {}),
+            ...(parseTask(p.task) ? { task: parseTask(p.task) } : {}) });
           return { ok: true, routed: r !== false, ...(Array.isArray(r) ? { deliver: r } : {}) };
         }
         if (method === 'question') {
@@ -389,11 +399,15 @@ export class ClaudeAdapter extends EventEmitter {
     if (m.retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
     this.#learnTranscript(id, m.transcriptPath);
     const s = this.sessions.get(id);
+    // Tasks: each start and end is its own fact, applied in any order (TaskBoard keeps the first end).
+    const at = Number.isFinite(m.at) ? m.at : this.now();
+    if (m.task?.op === 'start') s.tasks.start(m.task.id, { ...m.task, at });
+    if (m.task?.op === 'end') s.tasks.end(m.task.id, { status: m.task.status, at });
+    // The background tasks the transcript still sees running at a turn end: every other has ended.
+    if (m.background) s.tasks.settleBackground(m.background, at);
     // Async hooks may land out of order: a state stamped earlier never overwrites a later one.
     if (!(m.at < s.stateAt)) {
       s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
-      // Background tasks still running when the turn ended: counted again at every turn end.
-      if (m.kind === 'final') s.background = m.background ?? 0;
       if (Number.isFinite(m.at)) s.stateAt = m.at;
       this.#emitStatus(id);
     }
@@ -479,7 +493,8 @@ export class ClaudeAdapter extends EventEmitter {
   statusSnapshot(id) {
     const s = this.sessions.get(id);
     if (!s) return { state: 'disconnected' };
-    return { state: s.activity ?? 'unknown', ...(s.activity === 'idle' && s.background ? { background: s.background } : {}) };
+    const tasks = s.tasks.list(this.now());
+    return { state: s.activity ?? 'unknown', ...(tasks.length ? { tasks } : {}) };
   }
 
   #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }

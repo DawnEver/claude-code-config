@@ -62,6 +62,24 @@ test('push: the gateway reply carries no alerts and the host posts nothing', asy
   assert.equal('onAlerts' in push, false);
 });
 
+test('push: a raised alert rides every push until one is accepted, then is gone', async () => {
+  const bodies = [];
+  let ok = false;
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', sessions: () => [],
+    fetch: async (url, init) => { bodies.push(JSON.parse(init.body)); return ok ? { ok: true, status: 200, json: async () => ({ accepted: true }) } : { ok: false, status: 503 }; } });
+  push.raise({ kind: 'turn-failed', agent: 'claude', error: 'boom' });
+  assert.equal(await push.tick(), false);
+  ok = true;
+  push.raise({ kind: 'turn-failed', agent: 'codex', error: 'bang' });
+  assert.equal(await push.tick(), true);
+  assert.equal(await push.tick(), true);
+  assert.deepEqual(bodies.map((b) => b.alerts.map((a) => a.agent)), [['claude'], ['claude', 'codex'], []]);
+  assert.equal(bodies[0].alerts[0].id, bodies[1].alerts[0].id, 'the same id when sent again: the gateway sends it once');
+  for (let i = 0; i < 30; i++) push.raise({ kind: 'turn-failed', agent: 'claude', error: String(i) });
+  assert.equal(push.body().alerts.length, 20, 'bounded: the newest kept');
+  assert.equal(push.body().alerts.at(-1).error, '29');
+});
+
 test('config summary: editable values and facts only — no token, no user id, no chat id', async () => {
   const { configSummary } = await import('./context.mjs');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-sum-'));
