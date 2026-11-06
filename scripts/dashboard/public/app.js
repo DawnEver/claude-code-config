@@ -54,7 +54,7 @@ const PREFS = {
   clock: ['24', '12'], date: ['day', 'iso', 'off'], replyStyle: ['ago', 'clock'], unit: ['used', 'left'],
   groupBy: ['project', 'host'], groupOrder: ['host', 'urgency'], openAt: ['latest', 'first'], pinTabs: ['on', 'off'],
   load: ['compact', 'detailed', 'off'], codeAttention: ['off', 'on'], codeRepoLayout: ['columns', 'list'], codeItemLayout: ['list', 'columns'],
-  textSize: ['m', 's', 'l', 'xl'],
+  textSize: ['m', 's', 'l', 'xl'], taskTags: ['icons', 'text'],
 };
 // Text size: the one --scale every size in index.html is computed from.
 const TEXT_SCALE = { s: 0.9, m: 1, l: 1.12, xl: 1.25 };
@@ -126,18 +126,27 @@ const TASK_LINES = 5;
 // Sessions whose full task list is open (this page's life): opened by the tasks icon, never the row.
 const tasksOpen = new Set();
 
+// One line icon per task kind (Config › Layout › Task tags: Icons), drawn in the kind's colour.
+const TASK_ICONS = {
+  shell: '<path d="M4 7l5 5-5 5M12 17h8"/>',
+  powershell: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9l4 3-4 3M12 15h5"/>',
+  monitor: '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  agent: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 13v1.5M15 13v1.5"/>',
+};
+
 /**
- * One running task, three columns: what kind (a tag, coloured per kind: shell, PowerShell,
- * monitor, subagent; outlined when it runs in the background), what it does (a background one
- * marked), how long it has run. Full: the label wraps instead of being cut.
+ * One running task, three columns: what kind (a tag in the kind's colour — a word or an icon, as
+ * this device chose; filled in the foreground, outlined in the background), what it does, how
+ * long it has run. Full: the label wraps instead of being cut.
  */
 function taskLine(x, full) {
   const row = el('div', `task k-${x.kind}${x.background ? ' bg' : ''}`);
-  row.append(el('span', 'tk', tr(`task.tag.${x.kind}`)));
-  const what = el('span', `tl${full ? ' full' : ''}`, x.label);
-  if (x.background) what.prepend(el('span', 'tb', tr('task.bg')));
-  row.append(what, el('span', 'td', x.for));
+  const tag = el('span', `tk${pref.taskTags === 'icons' ? ' icon' : ''}`);
+  if (pref.taskTags === 'icons') tag.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${TASK_ICONS[x.kind] ?? ''}</svg>`;
+  else tag.textContent = tr(`task.tag.${x.kind}`);
+  row.append(tag, el('span', `tl${full ? ' full' : ''}`, x.label), el('span', 'td', x.for));
   row.title = [tr(`task.${x.kind}`), x.background && tr('task.bgTitle'), x.label].filter(Boolean).join(' · ');
+  tag.setAttribute('aria-label', row.title);
   return row;
 }
 
@@ -680,7 +689,8 @@ function displaySection() {
     ...cfgGroup('cfg.layout', [
       prefRow('textSize', 'cfg.textSize', null, [tr('cfg.textSize.m'), tr('cfg.textSize.s'), tr('cfg.textSize.l'), tr('cfg.textSize.xl')]),
       prefRow('pinTabs', 'cfg.pinTabs', 'cfg.pinTabs.hint', [tr('cfg.pinTabs.on'), tr('cfg.pinTabs.off')]),
-      prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.compact'), tr('cfg.load.detailed'), tr('cfg.load.off')])]),
+      prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.compact'), tr('cfg.load.detailed'), tr('cfg.load.off')]),
+      prefRow('taskTags', 'cfg.taskTags', 'cfg.taskTags.hint', [tr('cfg.taskTags.icons'), tr('cfg.taskTags.text')])]),
     ]),
   ];
 }

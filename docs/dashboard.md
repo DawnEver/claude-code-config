@@ -77,9 +77,10 @@ no API, no authentication.
   its start — an ended task is never reported (the board remembers it 10 min only so a late
   start cannot revive it); at most 50, each label one line of at most 200 characters: a Claude shell's `description`
   (what it does), else its command without a leading `cd … &&` and with `~` for home; an
-  agent's type and description. Each task is one line of three columns — a kind tag (`>_`
-  shell, `PS`, `mon`, `agent`, each its own colour; outlined, with a `bg` mark, when it runs in
-  the background — a Codex unified-exec session too), what it does,
+  agent's type and description. Each task is one line of three columns — a kind tag in the
+  kind's colour — an icon (default) or a word, `sh` `ps` `mon` `agent` (Config › Layout › Task
+  tags); filled in the foreground, outlined in the background (a Codex unified-exec session
+  too), the one mark of it — what it does,
   how long it has run. Folded, the row lists the first five, each cut to a line; its tasks icon
   (counting what runs) lists all of them with labels in full — a tap there never opens the
   Topic, the row still does.
