@@ -541,30 +541,38 @@ export function searchAll(snapshot, query, { now = Date.now(), lang = 'en', max 
 }
 
 /*
- * Unread sessions, per device. A session is unread when, since this device last saw it, its Topic
- * got a new post from the agent (`posted` grows: a turn's answer) or it newly asks for approval or
- * input. Tool activity alone is not. `seen` maps a session id to the mark taken when it was seen.
+ * Unread sessions, per device: one record per session id, `{ p, w, m }` — `p` the session's
+ * `posted` when this device last read it (unreadHere's `seen`), `w` the wait (approval or question)
+ * it last saw, `m` marked unread by hand. A session is unread here when unreadHere counts posts,
+ * when it was marked unread, or when it newly waits for you. Tool activity alone is not.
  */
-const attentionKey = (s) => (s.status === 'needs_approval' || s.status === 'needs_input' ? `${s.status}:${s.waiting ?? ''}` : null);
-/** The mark of a session as it is now: what "seen" records. */
-export const seenMark = (s) => ({ p: s.posted ?? 0, w: attentionKey(s) });
-/** Whether `s` has something new since `mark`; a session with no mark (never seen here) is not unread. */
-export function isUnread(s, mark) {
-  if (!mark) return false;
-  const w = attentionKey(s);
-  return (s.posted ?? 0) > (mark.p ?? 0) || (w !== null && w !== mark.w);
+const waitKey = (s) => (s.status === 'needs_approval' || s.status === 'needs_input' ? `${s.status}:${s.waiting ?? ''}` : null);
+/** The record of a session read as it is now: opening its Topic, expanding it, Mark read. */
+export const readMark = (s) => ({ p: s.posted ?? 0, w: waitKey(s) });
+/** Marked unread by hand (Telegram's Mark as unread): stays until read again, whatever arrives. */
+export const unreadMark = (s, rec) => ({ ...(rec ?? readMark(s)), m: true });
+/**
+ * A session's unread state against its record: `count` the posts unread here (the badge's number),
+ * `unread` whether the row is unread at all (a badge with no number is a dot). No record (never seen
+ * on this device): nothing is unread.
+ */
+export function unreadState(s, rec) {
+  if (!rec || typeof rec !== 'object') return { count: 0, unread: false };
+  const count = unreadHere(s, rec.p), w = waitKey(s);
+  return { count, unread: count > 0 || rec.m === true || (w !== null && w !== rec.w) };
 }
 /** How many of `sessions` are unread against `seen`. */
-export const unreadCount = (sessions, seen) => sessions.filter((s) => isUnread(s, seen[s.id])).length;
+export const unreadCount = (sessions, seen) => sessions.filter((s) => unreadState(s, seen[s.id]).unread).length;
 /**
- * `seen` brought up to `sessions`: a session new to this device is marked seen as it is, one gone is
- * dropped, and a wait that ended is forgotten (so the next wait is new even if it reads the same).
+ * `seen` brought up to `sessions`: a session new to this device is read as it is (no flood on a
+ * first load), one gone is dropped, a malformed record is replaced, and a wait that ended is
+ * forgotten (so the next wait is new even if it reads the same).
  */
 export function syncSeen(sessions, seen) {
   const out = {};
   for (const s of sessions) {
-    const m = seen[s.id];
-    out[s.id] = !m ? seenMark(s) : attentionKey(s) === null && m.w !== null ? { ...m, w: null } : m;
+    const r = seen?.[s.id];
+    out[s.id] = !r || typeof r !== 'object' || !Number.isSafeInteger(r.p) ? readMark(s) : waitKey(s) === null && r.w != null ? { ...r, w: null } : r;
   }
   return out;
 }

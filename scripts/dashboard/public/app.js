@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, isUnread, seenMark, unreadCount, syncSeen } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -61,14 +61,19 @@ const TEXT_SCALE = { s: 0.9, m: 1, l: 1.12, xl: 1.25 };
 const pref = Object.fromEntries(Object.entries(PREFS).map(([k, vals]) => [k, vals.includes(store.get(`dashboard.${k}`)) ? store.get(`dashboard.${k}`) : vals[0]]));
 const timeFormat = () => ({ clock: pref.clock, date: pref.date, lang });
 let deployed = null;   // the live version from /api/health: {commit, id, at}
-// Per session, its `posted` count when this device last opened its Topic: what came before is read here.
-const topicSeen = (() => { try { return JSON.parse(store.get('dashboard.topicSeen')) ?? {}; } catch { return {}; } })();
-// Per session, its mark when this device last saw it (view.mjs seenMark): what is new since is unread.
-let sessionSeen = (() => { try { return JSON.parse(store.get('dashboard.sessionSeen')) ?? {}; } catch { return {}; } })();
-const saveSeen = () => store.set('dashboard.sessionSeen', JSON.stringify(sessionSeen));
-/** Mark sessions seen as they are now (one opened or expanded, or all). */
-function markSeen(list) {
-  for (const s of list) sessionSeen[s.id] = seenMark(s);
+// Per session, what this device has read (view.mjs: `{ p, w, m }`); the one unread store. Kept in
+// memory when localStorage is unavailable or holds junk (syncSeen repairs it).
+let seen = (() => { try { const v = JSON.parse(store.get('dashboard.seen')); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; } })();
+for (const old of ['dashboard.topicSeen', 'dashboard.sessionSeen']) try { localStorage.removeItem(old); } catch { /* private mode */ }
+const saveSeen = () => store.set('dashboard.seen', JSON.stringify(seen));
+/** Mark sessions read as they are now (one opened or expanded, Mark read, or all). */
+function markRead(list) {
+  for (const s of list) seen[s.id] = readMark(s);
+  saveSeen();
+}
+/** Mark a session unread by hand: a dot until it is read again. */
+function markUnread(s) {
+  seen[s.id] = unreadMark(s, seen[s.id]);
   saveSeen();
 }
 // Usage (the store's report, docs/usage.md): fetched when its tab opens and every few minutes while open.
@@ -109,25 +114,39 @@ function applyLang() {
 }
 
 function openTopic(s) {
-  const url = topicTarget(s, topicSeen[s.id], pref.openAt);
+  const url = topicTarget(s, seen[s.id]?.p, pref.openAt);
   tg?.HapticFeedback?.impactOccurred?.('light');
-  // What the Topic holds now is read on this device; only sessions still listed are kept.
-  const live = new Set(sessionsOf(snapshot).map((x) => x.id));
-  for (const id of Object.keys(topicSeen)) if (!live.has(id)) delete topicSeen[id];
-  topicSeen[s.id] = s.posted ?? 0;
-  markSeen([s]);
-  store.set('dashboard.topicSeen', JSON.stringify(topicSeen));
+  markRead([s]);   // what the Topic holds now is read on this device
   if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
   render();
 }
 
-/** The @ and unread-count badges of a session, as Telegram draws them on a chat. */
-function badges(s) {
+/** The @ and unread badges of a session, as Telegram draws them on a chat: the count, or a dot when unread without one. */
+function badges(s, u) {
   const out = [];
   if (s.mention) { const at = el('span', 'badge at', '@'); at.title = tr('session.mention'); out.push(at); }
-  const n = unreadBadge(unreadHere(s, topicSeen[s.id]));
+  const n = unreadBadge(u.count);
   if (n) { const b = el('span', 'badge', n); b.title = tr('session.unread'); out.push(b); }
+  else if (u.unread) { const b = el('span', 'badge dot-only'); b.title = tr('session.new'); b.setAttribute('aria-label', b.title); out.push(b); }
   return out;
+}
+
+/** The row's read toggle (a tap, no long-press or right-click: it must work in the Mini App on a phone). */
+function readButton(s, unread, redraw) {
+  const btn = el('span', 'read-btn', tr(unread ? 'session.markRead' : 'session.markUnread'));
+  btn.setAttribute('role', 'button');
+  btn.setAttribute('tabindex', '0');
+  btn.title = btn.textContent;
+  const toggle = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (unread) markRead([s]); else markUnread(s);
+    tg?.HapticFeedback?.selectionChanged?.();
+    redraw();
+  };
+  btn.addEventListener('click', toggle);
+  btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') toggle(e); });
+  return btn;
 }
 
 // Sessions whose full task list is open (this page's life): opened by the tasks icon, never the row.
@@ -170,7 +189,7 @@ function tasksButton(s, running, open, redraw) {
   const toggle = (e) => {
     e.stopPropagation();
     e.preventDefault();
-    if (!tasksOpen.delete(s.id)) { tasksOpen.add(s.id); markSeen([s]); }
+    if (!tasksOpen.delete(s.id)) { tasksOpen.add(s.id); markRead([s]); }
     tg?.HapticFeedback?.selectionChanged?.();
     redraw();
   };
@@ -196,9 +215,8 @@ function sessionRow(s, opts = {}) {
   avatar.append(el('span', 'dot'));
   const body = el('div', 'main');
   const top = el('div', 'chat-top');
-  const time = el('span', `chat-time${unreadHere(s, topicSeen[s.id]) ? ' fresh' : ''}`, chatTime(s.lastActivityAt, Date.now(), timeFormat()));
-  const fresh = isUnread(s, sessionSeen[s.id]);
-  if (fresh) { const d = el('span', 'unread-dot'); d.title = tr('session.new'); d.setAttribute('aria-label', d.title); top.append(d); }
+  const u = unreadState(s, seen[s.id]);
+  const time = el('span', `chat-time${u.unread ? ' fresh' : ''}`, chatTime(s.lastActivityAt, Date.now(), timeFormat()));
   top.append(el('span', 'title', sessionLabel(s, lang)), time);
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
@@ -212,7 +230,8 @@ function sessionRow(s, opts = {}) {
   // No reading of it anywhere: name what it spends — the platform for an API-key session, else the seat.
   else if (s.provider || s.seat) sub.append(document.createTextNode(` · ${s.provider ? providerName(s.provider) : s.seat}`));
   const open = tasksOpen.has(s.id) && tasks.length > 0;
-  bottom.append(sub, ...(tasks.length ? [tasksButton(s, tasks.length, open, () => row.replaceWith(sessionRow(s, opts)))] : []), ...badges(s));
+  bottom.append(sub, ...(tasks.length ? [tasksButton(s, tasks.length, open, () => row.replaceWith(sessionRow(s, opts)))] : []),
+    readButton(s, u.unread, render), ...badges(s, u));
   body.append(top, bottom);
   // What it waits for (the permission it asks, its question): the line to read before opening the Topic.
   if (s.waiting) { const w = el('div', 'waiting', s.waiting); w.title = s.waiting; body.append(w); }
@@ -554,10 +573,10 @@ function renderChips() {
     chip.addEventListener('click', () => { filters.group = key; tg?.HapticFeedback?.selectionChanged?.(); render(); });
     nav.append(chip);
   }
-  const fresh = sessionsOf(snapshot).filter((s) => isUnread(s, sessionSeen[s.id]));
+  const fresh = sessionsOf(snapshot).filter((s) => unreadState(s, seen[s.id]).unread);
   if (fresh.length) {
     const all = el('button', 'chip mark-read', tr('session.markAllRead'));
-    all.addEventListener('click', () => { markSeen(fresh); tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    all.addEventListener('click', () => { markRead(fresh); tg?.HapticFeedback?.selectionChanged?.(); render(); });
     nav.append(all);
   }
 }
@@ -1094,7 +1113,7 @@ function renderTabs() {
   const n = tabs(snapshot, Date.now(), [], accounts);
   $('tabs').hidden = false;   // always: Config holds this device's settings, whatever data there is
   $('n-sessions').textContent = String(n.sessions);
-  const fresh = unreadCount(sessionsOf(snapshot), sessionSeen);
+  const fresh = unreadCount(sessionsOf(snapshot), seen);
   $('n-unread').hidden = !fresh;
   $('n-unread').textContent = fresh ? String(fresh) : '';
   $('n-unread').title = tr('session.unreadSessions', { n: fresh });
@@ -1188,9 +1207,9 @@ function renderSearch() {
 function render() {
   if (!snapshot) return;
   accounts = accountIndex(snapshot);
-  // Sessions new to this device count as seen; gone ones are forgotten.
-  const synced = syncSeen(sessionsOf(snapshot), sessionSeen);
-  if (JSON.stringify(synced) !== JSON.stringify(sessionSeen)) { sessionSeen = synced; saveSeen(); }
+  // Sessions new to this device count as read; gone ones are forgotten.
+  const synced = syncSeen(sessionsOf(snapshot), seen);
+  if (JSON.stringify(synced) !== JSON.stringify(seen)) { seen = synced; saveSeen(); }
   hostList = hostsView(snapshot, Date.now(), accounts);   // one account index per render, shared by every view
   $('summary').hidden = true;   // only a sign-in or access problem stands there
   $('updated').textContent = snapshot.mock ? tr('app.exampleData') : lastOk && snapshot.demo ? tr('app.demoData', { ago: agoText(lastOk) })

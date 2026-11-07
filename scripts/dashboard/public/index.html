@@ -134,7 +134,8 @@
   .badge { flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); color: var(--accent-fg);
     font: 600 var(--t3)/22px system-ui, sans-serif; text-align: center; }
   .badge.at { padding: 0; width: 22px; }
-  .unread-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); align-self: center; }
+  .badge.dot-only { min-width: 0; width: 12px; height: 12px; padding: 0; border-radius: 50%; align-self: center; }
+  .read-btn { flex: none; padding: 2px 7px; border-radius: 10px; background: var(--press); color: var(--hint); font-size: var(--t3); cursor: pointer; white-space: nowrap; }
 
   /* Machine load under each host header, Sessions and Quota (Config: this device). */
   .res { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin: 0 4px 8px; font-size: var(--t3); }

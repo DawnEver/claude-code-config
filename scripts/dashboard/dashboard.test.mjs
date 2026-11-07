@@ -972,23 +972,44 @@ test('account: a session names the account it spends, as the Quota tab names it,
   assert.ok(searchAll(m, 'bob', { now: NOW }).some((r) => r.kind === 'session' && r.session.id === codex.id), 'a session by its account');
 });
 
-test('unread sessions: a new answer or a new wait since seen; first sight and tool activity are not', async () => {
-  const { isUnread, seenMark, unreadCount, syncSeen } = await import('./public/view.mjs');
-  const s = { id: 'a', status: 'working', posted: 2 };
-  assert.equal(isUnread(s, undefined), false, 'never seen here: not unread');
-  const mark = seenMark(s);
-  assert.equal(isUnread({ ...s, lastActivityAt: 'x', tasks: [{}] }, mark), false, 'tool activity is not unread');
-  assert.equal(isUnread({ ...s, status: 'idle', posted: 3 }, mark), true, 'a new answer');
-  assert.equal(isUnread({ ...s, status: 'needs_approval', waiting: 'Bash' }, mark), true, 'a new wait');
+test('unread sessions: one record per session built on unreadHere; first sight and tool activity are not unread', async () => {
+  const { unreadState, readMark, unreadCount, syncSeen } = await import('./public/view.mjs');
+  const s = { id: 'a', status: 'working', posted: 2, unread: 2 };
+  assert.deepEqual(unreadState(s, undefined), { count: 0, unread: false }, 'never seen here: not unread');
+  assert.deepEqual(syncSeen([s], {}), { a: { p: 2, w: null } }, 'first sight is read as it is: no flood');
+  const rec = readMark(s);
+  assert.equal(unreadState({ ...s, lastActivityAt: 'x', tasks: [{}] }, rec).unread, false, 'tool activity is not unread');
+  assert.deepEqual(unreadState({ ...s, posted: 3, unread: 3 }, rec), { count: 1, unread: true }, 'a new answer counts');
+  assert.deepEqual(unreadState({ ...s, posted: 3, unread: 0 }, rec), { count: 0, unread: false }, 'the human replied elsewhere: read');
+  assert.deepEqual(unreadState({ ...s, posted: 1, unread: 1 }, rec), { count: 1, unread: true }, 'posted reset below seen: the host count stands');
+  assert.equal(unreadState({ ...s, status: 'needs_approval', waiting: 'Bash' }, rec).unread, true, 'a new wait');
+  assert.equal(unreadState({ ...s, status: 'needs_approval', waiting: 'Bash' }, rec).count, 0, 'a wait is a dot, not a number');
   const waiting = { ...s, status: 'needs_input', waiting: 'Q?' };
-  assert.equal(isUnread(waiting, seenMark(waiting)), false, 'a wait already seen');
-  assert.equal(isUnread({ ...waiting, waiting: 'Q2?' }, seenMark(waiting)), true, 'another question');
-  // sync: new sessions marked as they are, gone ones pruned, an ended wait forgotten
-  const seen = syncSeen([waiting, { id: 'b', posted: 5 }], { a: seenMark(waiting), gone: { p: 1, w: null } });
-  assert.deepEqual(Object.keys(seen).sort(), ['a', 'b']);
+  assert.equal(unreadState(waiting, readMark(waiting)).unread, false, 'a wait already seen');
+  assert.equal(unreadState({ ...waiting, waiting: 'Q2?' }, readMark(waiting)).unread, true, 'another question');
+  const seen = syncSeen([waiting, { id: 'b', posted: 5 }], { a: readMark(waiting), gone: { p: 1, w: null }, b: 'junk' });
+  assert.deepEqual(Object.keys(seen).sort(), ['a', 'b'], 'gone pruned');
+  assert.deepEqual(seen.b, { p: 5, w: null }, 'a malformed record is replaced');
   assert.equal(unreadCount([waiting, { id: 'b', posted: 5 }], seen), 0);
   const after = syncSeen([{ ...s }], seen);
   assert.equal(after.a.w, null, 'the wait ended');
-  assert.equal(isUnread(waiting, after.a), true, 'the same question asked again is new');
-  assert.equal(unreadCount([{ ...s, posted: 9 }, { id: 'b', posted: 6 }], { ...after, b: seen.b }), 2);
+  assert.equal(unreadState(waiting, after.a).unread, true, 'the same question asked again is new');
+  assert.equal(unreadCount([{ ...s, posted: 9, unread: 7 }, { id: 'b', posted: 6, unread: 1 }], { ...after, b: seen.b }), 2);
+});
+
+test('mark unread and mark read: a manual mark survives everything but reading', async () => {
+  const { unreadState, readMark, unreadMark, syncSeen, unreadCount } = await import('./public/view.mjs');
+  const s = { id: 'a', status: 'idle', posted: 4, unread: 0 };
+  const m = unreadMark(s, readMark(s));
+  assert.deepEqual(unreadState(s, m), { count: 0, unread: true }, 'marked unread with nothing new: a dot');
+  assert.deepEqual(unreadState({ ...s, posted: 6, unread: 2 }, m), { count: 2, unread: true }, 'a new post: the number grows');
+  assert.equal(unreadState({ ...s, posted: 6, unread: 0 }, m).unread, true, 'a reply elsewhere leaves the manual mark');
+  assert.equal(syncSeen([s], { a: m }).a.m, true, 'sync keeps the mark');
+  assert.equal(syncSeen([{ ...s, posted: 0 }], { a: m }).a.m, true, 'a resumed session with its counter reset keeps it');
+  assert.deepEqual(unreadMark(s, undefined), { p: 4, w: null, m: true }, 'marking a never-seen session');
+  assert.equal(unreadState(s, readMark(s)).unread, false, 'mark read clears it');
+  const rows = [s, { id: 'b', status: 'needs_input', waiting: 'Q', posted: 1, unread: 1 }];
+  const all = Object.fromEntries(rows.map((x) => [x.id, readMark(x)]));
+  assert.equal(unreadCount(rows, { a: m, b: { p: 0, w: null } }), 2);
+  assert.equal(unreadCount(rows, all), 0, 'mark all read clears counts, waits and manual marks');
 });

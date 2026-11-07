@@ -144,15 +144,23 @@ no API, no authentication.
   Also `posted` (a running count of posts), `lastPostAt` (shown as `reply 5m ago`, or as `reply 14:05` in 24h time — Config → Display → Time), and two message
   ids that become links opening the Topic at its first unread post (`firstUnreadUrl`) or its latest
   (`latestUrl`).
-- **Unread on this device**: Telegram's own unread count is not visible to a bot. Opening a Topic from
-  the dashboard stores that session's `posted` in localStorage; the badge is `unread` less what was
-  already there then, so a Topic read without replying clears here. Tapping opens the latest post; Config → Display → Sessions can switch to the first unread one (the
-  latest stands in once this device has opened the Topic, since the first post still unread is then unknown).
-- **Unread sessions** (a dot on the row, a count on the Sessions tab, a *Mark all read* chip): since
-  this device last saw the session, its Topic got a new agent post (`posted` grew: a turn's answer) or it
-  newly waits for approval or input (`status` + `waiting`); tool activity alone is not. Opening its Topic
-  or expanding its tasks marks it seen. Per device only (localStorage `dashboard.sessionSeen`, pure logic
-  `isUnread` / `syncSeen` in `view.mjs`): a session first seen here starts read, gone ones are pruned.
+- **Unread on this device** — one per-device record per session (localStorage `dashboard.seen`,
+  `{ p, w, m }`; pure logic `unreadState` / `readMark` / `unreadMark` / `syncSeen` in `view.mjs`).
+  Telegram's own unread count is not visible to a bot, so the badge is the host's `unread` less what
+  was already posted (`p`) when this device last read the session (`unreadHere`): a Topic read without
+  replying clears here, a reply anywhere (Telegram, terminal) clears it everywhere, and a `posted` below
+  `p` (daemon restart, resumed session) falls back to the host's count. A session is also unread when
+  it newly waits for approval or input (`w`, forgotten when the wait ends, so the same question asked
+  again is new) or was **marked unread** by hand (`m`). Badge: the number, or a dot when unread with
+  no number. Reading = opening the Topic, expanding its tasks, or the row's *Mark read*: records `p`
+  and the wait and clears `m`. The row's small *Mark unread* / *Mark read* toggle is a tap (no
+  long-press: it works in the Mini App on a phone); *Mark all read* (a chip) reads every unread
+  session. The Sessions tab counts unread sessions across all hosts, regardless of filters; search
+  results are the same rows. A session first seen here starts read (no flood), gone ones are pruned,
+  a malformed record or unusable localStorage falls back to memory. Observation-only sessions (no
+  Topic) can only be unread through a wait or a manual mark. Tapping opens the latest post; Config →
+  Display → Sessions can switch to the first unread one (the latest stands in once this device has
+  read the session, since the first post still unread is then unknown).
 - **Chat list** (the one session renderer, also under an account's "In use by"): sessions drawn as Telegram lists chats: agent avatar with
   the status dot, name and time, status and where it runs, then the unread count and `@`. No message
   preview: it would put conversation content on Cloudflare. `lastActivityAt` is the bridge's last
