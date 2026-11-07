@@ -28,8 +28,8 @@ const SQL = {
   cost: insert('session_costs', ['agent', 'session', 'model', 'machine', 'cost_usd', 'updated_at', 'last_at'], 'agent, session, model',
     'cost_usd = excluded.cost_usd, machine = excluded.machine, updated_at = excluded.updated_at, last_at = COALESCE(excluded.last_at, session_costs.last_at) '
     + 'WHERE (session_costs.cost_usd, session_costs.last_at) IS NOT (excluded.cost_usd, COALESCE(excluded.last_at, session_costs.last_at))'),
-  // Use only grows within a window: a reading is written only when it is higher (every push re-sends
-  // each window; rewriting an unchanged one cost a row each time), with when it was seen.
+  // Use only grows within a window: a reading is written only when it is higher (a host sends a window again after a restart or from another host;
+  // rewriting an unchanged one cost a row each time), with when it was seen.
   quota: insert('quota_windows', ['account', 'agent', 'span', 'window_start', 'window_ms', 'used', 'observed_at'], 'account, span, window_start',
     'used = excluded.used, observed_at = excluded.observed_at WHERE excluded.used > quota_windows.used'),
   // An hour two daemons sampled (a hand-over) is the sum of both.

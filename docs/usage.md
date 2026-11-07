@@ -54,7 +54,7 @@ Tokens mean the same on both hosts: `input` uncached, `cache_read`, `cache_write
   report reads only that and `session_costs` by `last_at` (the session's last turn end, sent
   with its price; before migration 0005 a report scanned all of `turns`, ~40k rows). Writes are
   billed per row and per index entry, so nothing is written that did not change: a re-sent turn,
-  price, pull request or commit, or a quota reading no higher than the stored one, is no write;
+  price, pull request or commit, or a quota reading no higher than the stored one, is no write. A host sends a quota window only once its use grew, and a round with nothing new is no request;
   `turns` carries no index beyond its key, and `forge_commits` is its own index. Forge
   backfill is capped per host per day (docs/dashboard.md "Code"). Measure with
   `npx wrangler d1 insights agents-usage --timePeriod 1d --sort-by writes --sort-type sum`

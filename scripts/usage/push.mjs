@@ -47,6 +47,7 @@ export class UsagePush {
     Object.assign(this, { url: `${url}/api/hosts/${machine}/usage`, hostToken, scanner, accounts, history, everyMs, log, fetch, timeoutMs, now });
     this.hourly = new HourlyResources();
     this.resources = [];
+    this.sentQuota = new Map();   // window key -> the use the store last accepted for it
     this.running = false;
     this.lastError = null;
   }
@@ -75,11 +76,18 @@ export class UsagePush {
     try {
       this.resources.push(...this.hourly.take());
       // Quota and finished hours first, on their own: once accepted they are never sent again
-      // (an hour's sums would double).
-      const quota = quotaRows(this.accounts(), this.now());
+      // (an hour's sums would double). A window goes only once its use grew: the store keeps
+      // the highest reading, so an unchanged one would be a request and a statement for nothing.
+      const keyOf = (q) => `${q.account}|${q.span}|${q.window_start}`;
+      const rows = quotaRows(this.accounts(), this.now());
+      const quota = rows.filter((q) => !(this.sentQuota.get(keyOf(q)) >= q.used));
       if (quota.length || this.resources.length) {
         await this.post({ turns: [], costs: [], quota, resources: this.resources });
         this.resources = [];
+        for (const q of quota) this.sentQuota.set(keyOf(q), q.used);
+        // A past window is never sent again: forgotten.
+        const live = new Set(rows.map(keyOf));
+        for (const k of this.sentQuota.keys()) if (!live.has(k)) this.sentQuota.delete(k);
       }
       for (;;) {
         const batch = await this.scanner.collect();

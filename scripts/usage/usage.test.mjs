@@ -401,6 +401,26 @@ test('push: quota and hours once, turns in chunks, the cursor moves only after a
   assert.deepEqual(commits, [300], 'refused: the cursor stays');
 });
 
+
+test('push: a quota window is re-sent only once its use grew; a quiet round posts nothing', async () => {
+  const posted = [];
+  let fail = false;
+  const fetch = async (url, init) => { if (fail) return new Response('', { status: 500 }); posted.push(JSON.parse(init.body)); return new Response('{}'); };
+  const scanner = { collect: async () => ({ turns: [], costs: [], more: false, commit: () => {} }) };
+  let used = 5, at = T0;
+  const push = new UsagePush({ url: 'https://d.example', hostToken: 'x', machine: 'host-a', scanner, fetch, now: () => T0 + 7200000,
+    accounts: () => [{ key: 'k', agent: 'codex', at, windows: [{ k: '7d', used, resetsAt: T0 + 86400000, windowMs: 7 * 86400000 }] }] });
+  assert.equal(await push.tick(), true);
+  at += 60000;   // read again, same use
+  assert.equal(await push.tick(), true);
+  assert.equal(posted.length, 1, 'unchanged use: no request');
+  used = 6; fail = true;
+  assert.equal(await push.tick(), false);
+  fail = false;
+  assert.equal(await push.tick(), true);
+  assert.deepEqual(posted.map((b) => b.quota.map((q) => q.used)), [[5], [6]], 'a refused reading is sent again');
+});
+
 test('query CLI table and the wrangler binding', () => {
   assert.equal(table({ columns: ['a', 'bb'], rows: [[1, null], ['xyz', 2]] }), 'a    bb\n---  --\n1\nxyz  2');
   const base = '{\n  "durable_objects": { "bindings": [] },\n  "x": 1\n}';
