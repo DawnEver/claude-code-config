@@ -130,8 +130,11 @@ function windowModels(q, now) {
   const fresh = q && now - q.at <= QUOTA_STALE_MS;
   return Object.entries(q?.windows ?? {}).map(([k, v]) => {
     if (v.resetsAt <= now) return { k, used: 0, resetsAt: null, windowMs: v.windowMs, cells: [], forecast: null };
-    const b = burn(q.series ?? [], k, { now, cells: cellsFor(v.windowMs), seenUntil: fresh ? now : q.at });
-    const p = project(v, { recent: b?.now ?? null, now, fresh });
+    // A fresh reading is the model's clock: trend and forecast move with a new reading, not with the time, so an
+    // unchanged reading pushes an unchanged snapshot (dashboard-push.mjs skips it). A stale one is observed up to
+    // its last sample and only its not-yet-reached cells advance with the time.
+    const b = burn(q.series ?? [], k, { now: fresh ? q.at : now, cells: cellsFor(v.windowMs), seenUntil: q.at });
+    const p = project(v, { recent: b?.now ?? null, now: q.at, fresh });
     return { k, used: v.used, resetsAt: v.resetsAt, windowMs: v.windowMs,
       cells: (b?.cells ?? []).map((c) => (c === undefined ? -1 : c)),
       forecast: p ? { atReset: p.atReset, eta: p.eta, short: p.short } : null };

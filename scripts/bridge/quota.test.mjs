@@ -104,6 +104,11 @@ test('accountModels: numbers as data — use, reset, trend cells and the forecas
   assert.deepEqual(models(), [], 'no quota and no seat problem: nothing to show');
 });
 
+test('accountModels: the forecast belongs to the reading, so the same reading gives the same model a minute later', () => {
+  const at = (now) => JSON.stringify(models({ quota: short5h(), now })[0].windows[0].forecast);
+  assert.equal(at(NOW + 60000), at(NOW), 'no clock drift in an unchanged snapshot');
+});
+
 test('accountModels: Codex account, plan and reset credits still to spend', () => {
   const [cx] = accountModels({ machine: 'm1', seats: SEATS, now: NOW, codexAccount: { email: 'C@example.com', plan: 'pro' },
     codex: codexQuota({ primary: { windowDurationMins: 300, usedPercent: 10, resetsAt: (NOW + H) / 1000 } }, NOW),
