@@ -6,297 +6,304 @@
 <title>Agents Dashboard</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
+  /* Style: every value is a token in :root; components compose the primitives below (:where(), so they
+     carry no specificity) and keep only their layout. No colour, text size, radius or spacing literal
+     is written outside :root — dashboard.test.mjs guards it. docs/dashboard.md § Style. */
   :root {
+    /* Colour: the Telegram theme, with fallbacks, and what is derived from it. */
     --bg: var(--tg-theme-bg-color, #fff); --fg: var(--tg-theme-text-color, #111);
     --hint: var(--tg-theme-hint-color, #8a8a8e); --card: var(--tg-theme-secondary-bg-color, #f2f2f7);
     --accent: var(--tg-theme-button-color, #2481cc); --accent-fg: var(--tg-theme-button-text-color, #fff);
     --sep: color-mix(in srgb, var(--hint) 22%, transparent);
+    --hover: color-mix(in srgb, var(--fg) 5%, transparent); --press: color-mix(in srgb, var(--fg) 10%, transparent);
+    --shadow: color-mix(in srgb, var(--fg) 15%, transparent);
     --ok: #34c759; --warn: #ff9500; --bad: #ff3b30; --run: #0a84ff; --idle: #8e8e93;
-    /* The platforms' own brand colours, defined once: Claude's terracotta, OpenAI's green, DeepSeek's blue. */
-    --claude: #d97757; --codex: #10a37f; --deepseek: #4d6bfe;
-    /* Every text size, by importance, from one scale (Config › Text size sets --scale): title, body,
-       headline (what is left, who needs you), key fact (use, reset, warning), secondary, and the
-       smallest marks (chart axes, tab badges). No other size is written anywhere. */
+    --on-colour: #fff;   /* text on a filled brand colour (an avatar's letter) */
+    /* The platforms' own brand colours: Claude's terracotta, OpenAI's black on white, DeepSeek's blue. */
+    --claude: #d97757; --codex: #10a37f; --deepseek: #4d6bfe; --openai: #000; --logo-bg: #fff;
+    /* A running task's kind. */
+    --k-shell: var(--run); --k-powershell: #30b0c7; --k-monitor: #ff9f0a; --k-agent: #af52de;
+    /* Text: one scale by importance (Config › Text size sets --scale): page title, body, headline,
+       key fact, secondary, smallest marks (chart axes, tab badges). No other size is written anywhere. */
     --scale: 1;
     --t0: calc(20px * var(--scale)); --tb: calc(15px * var(--scale));
     --t1: calc(16px * var(--scale)); --t2: calc(14px * var(--scale)); --t3: calc(12px * var(--scale)); --t4: calc(10px * var(--scale));
-    /* One column width for every responsive layout. */
-    --col: 340px;
+    --t0-fluid: clamp(var(--t0), calc(1.2vw + 14px * var(--scale)), calc(28px * var(--scale)));   /* the page title grows with the viewport */
+    --w-strong: 600; --w-bold: 700;
+    --mono: ui-monospace, monospace;
+    /* Space: one step scale. */
+    --s1: 2px; --s2: 4px; --s3: 6px; --s4: 8px; --s5: 10px; --s6: 12px; --s7: 14px; --s8: 16px; --s9: 28px; --s10: 32px; --s11: 40px;
+    --row-pad: var(--s5) var(--s6);   /* every row of every card */
+    --gap-block: var(--s7);           /* between independent blocks: cards, hosts, columns */
+    /* Radius: tag, control, card, round. */
+    --r-tag: 6px; --r-ctl: 10px; --r-card: 14px; --r-pill: 999px;
+    /* Controls and marks. */
+    --pill-pad: var(--s1) var(--s4);  /* every small pill: tasks, read, range, segment, go */
+    --chip-pad: var(--s3) var(--s6);  /* the larger pill: status chip, tab, apply */
+    --badge: 20px; --badge-sm: 16px; --dot: 10px; --dot-sm: 7px; --dot-badge: 12px; --dot-avatar: 14px;
+    --avatar: 44px; --logo: 26px; --who: 60px; --icon-btn: 26px; --icon: 13px; --search-icon: 16px; --search-inset: 34px;
+    --bar: 8px; --chart: 120px; --chart-sm: 64px; --input: 96px; --select-max: 320px;
+    --col: 340px;   /* one column width for every responsive layout */
   }
+
+  /* ── Base ── */
   * { box-sizing: border-box; min-width: 0; }
   html, body { overflow-x: clip; }   /* clip, not hidden: hidden makes body a scroll box and breaks the sticky tab bar */
-  body { margin: 0; padding: 12px 12px calc(16px + env(safe-area-inset-bottom)); font: var(--tb)/1.35 -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  /* Spacing scales with the viewport; no cap. */
+  body { margin: 0; padding: clamp(var(--s6), 2vw, var(--s10)) clamp(var(--s6), 2.5vw, var(--s11)) calc(clamp(var(--s8), 2vw, var(--s10)) + env(safe-area-inset-bottom));
+    font: var(--tb)/1.35 -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg); color: var(--fg); -webkit-tap-highlight-color: transparent; }
-  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
-  h1 { font-size: var(--t0); margin: 0; }
-  /* Code: a check state as one glyph, a list of PRs and branches inside a repo card. */
-  .ci { display: inline-block; min-width: 1.2em; text-align: center; font-weight: 700; }
-  .ci-success { color: var(--ok); } .ci-failure { color: var(--bad); } .ci-pending { color: var(--warn); } .ci-none { color: var(--hint); }
-  .code-h { margin-top: 10px; color: var(--hint); font-size: var(--t3); font-weight: 600; }
-  .code-item { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); gap: 0 6px; padding: 6px 0; border-top: 1px solid var(--sep); }
-  .code-item .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .code-item .sub { grid-column: 2; }
-  .code-item .waiting { grid-column: 1 / -1; }
-  .code-item.link { cursor: pointer; }
-  /* Independent things (each repo, each item needing attention) are separate cards, spaced apart. */
-  .cards { margin-bottom: 14px; }
-  .cards > * { margin-bottom: 8px; background: var(--card); border-radius: 14px; overflow: hidden; }
-  .cards > .code-item { padding: 10px 12px; } .cards > * { border-top: 0 !important; }
-  /* Force update: an icon beside the data's age (its hint names it). */
-  .icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; margin-left: 4px; vertical-align: middle; border: 0; border-radius: 50%;
-    font: inherit; font-size: var(--t1); font-weight: 700; line-height: 1; color: var(--accent-fg); background: var(--accent); cursor: pointer; }
-  /* The build, at the foot of every tab: what is deployed, and a button to load it fresh. */
-  #version { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px; margin: 28px 0 12px;
-    color: var(--hint); font-size: var(--t3); }
-  #version .commit { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
-  .muted { color: var(--hint); font-size: var(--t3); }
+  h1 { margin: 0; font-size: var(--t0-fluid); }
+  :where(button, input, select) { font: inherit; color: inherit; }
 
-  /* Loading, sign-in and access problems: the page's one message before any data. */
-  .summary { border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; background: var(--card); }
-  .summary-head { font-weight: 700; font-size: var(--t1); }
+  /* ── Primitive: text roles ── */
+  /* Title: a row's name. */
+  :where(.title) { font-weight: var(--w-strong); }
+  :where(.title, .sub, .task .tl, .usage-list .u .n, .who .acct-name, .waiting) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Secondary: everything that describes rather than states. */
+  :where(.muted, .sub, .chat-time, .found .k, .usage-totals span, .usage-axis, .usage-list .u .m, .qbest, .qref .see,
+         .win .k, .win-sub, .res-m .k, .qmini .k, .facts dt, #version, .task .td, .task.more, .empty)
+    { color: var(--hint); font-size: var(--t3); }
+  /* Key fact: what to read first in a row — use, reset, forecast, warning, the account under a logo. */
+  :where(.qmini .used, .qmini .reset, .win .reset, .win .used, .win-sub > .forecast, .warn, .who .acct-name)
+    { color: var(--fg); font-size: var(--t2); font-weight: var(--w-strong); }
+  /* Label: a short key in secondary colour. */
+  :where(.res-m .k, .qmini .k, .win .k) { font-weight: var(--w-strong); white-space: nowrap; }
+  /* Section header: names a group of rows. */
+  :where(.section-h, .code-h, .cfg-h) { margin: var(--s5) var(--s2) var(--s2); color: var(--hint); font-size: var(--t3); font-weight: var(--w-strong);
+    text-transform: uppercase; letter-spacing: .04em; }
+  /* Text action: a link-like button. */
+  :where(.note, #version .commit) { padding: 0; border: 0; background: none; color: var(--accent); text-align: left; cursor: pointer; }
 
-  /* 2. Filters */
-  .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; margin-bottom: 8px; scrollbar-width: none; }
-  .chips::-webkit-scrollbar { display: none; }
-  .chip { flex: none; border: 0; border-radius: 999px; padding: 6px 12px; font: inherit; font-size: var(--t2); font-weight: 600;
-    background: var(--card); color: var(--fg); cursor: pointer; }
-  .chip b { font-weight: 600; color: var(--hint); margin-left: 4px; }
+  /* ── Primitive: card and row ── */
+  :where(.list, .found-list, .qrows, .cfg, .usage-list, .facts, .summary, .cards > *, .usage-totals > div, .usage-days, .banner)
+    { background: var(--card); border-radius: var(--r-card); overflow: hidden; }
+  :where(.list, .found-list, .qrows, .cfg, .usage-list, .facts, .usage-totals, .cards) { margin-bottom: var(--gap-block); }
+  :where(.chat, .found, .usage-list .u, .qrow, .cfg-row, .summary, .banner, .facts) { padding: var(--row-pad); }
+  :where(.chat, .found, .usage-list .u, .code-item) { width: 100%; border: 0; background: none; text-align: left; }
+  :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) + :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) { border-top: 1px solid var(--sep); }
+
+  /* ── Primitive: pill — every small control. Variants: chip (larger), filled action, on a track. ── */
+  :where(.chip, .tasks-btn, .read-btn, .range button, .seg button, .tabs button, .qrow-top .go, .cfg-edit button)
+    { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); flex: none; padding: var(--pill-pad); border: 0; border-radius: var(--r-pill);
+      font-size: var(--t3); font-weight: var(--w-strong); white-space: nowrap; background: var(--press); color: var(--hint); cursor: pointer; }
+  :where(.chip, .tabs button, .cfg-edit button) { padding: var(--chip-pad); font-size: var(--t2); }
+  /* A track: pills side by side on one card, the selected one raised. */
+  :where(.seg, .tabs, .range) { display: inline-flex; flex-wrap: wrap; gap: var(--s1); padding: var(--s1); border-radius: var(--r-card); background: var(--card); }
+  :where(.seg, .tabs, .range) button { border-radius: var(--r-ctl); background: none; }
+  .seg { background: var(--sep); }
+  .range button[aria-pressed="true"], .seg button[aria-checked="true"], .tabs button[aria-selected="true"]
+    { background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px var(--shadow); }
+  .chip { background: var(--card); color: var(--fg); }
   .chip.on { background: var(--accent); color: var(--accent-fg); }
-  .chip.on b { color: inherit; opacity: .8; }
-  .selects { display: flex; gap: 6px; margin-bottom: 10px; }
-  .selects:empty { display: none; }
-  select { flex: 1; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--sep); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--t2); }
-  .banner { padding: 8px 12px; border-radius: 10px; margin-bottom: 10px; background: var(--card); color: var(--warn); font-size: var(--t2); }
-  .banner:empty { display: none; }
+  .tasks-btn.on { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .cfg-edit button { background: var(--accent); color: var(--accent-fg); }
+  .cfg-edit button:disabled { opacity: .4; cursor: default; }
+  .qrow-top .go { margin: calc(-1 * var(--s2)) 0; background: var(--hover); color: var(--accent); font-size: var(--t2); }
+  /* A pill's count. */
+  :where(.chip, .tabs button) b { margin-left: var(--s2); font-weight: var(--w-strong); color: var(--hint); }
+  .chip.on b, .tabs button b { color: inherit; opacity: .75; }
+  .tasks-btn svg { width: var(--icon); height: var(--icon); fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+  /* A row of pills. */
+  :where(.chips, .usage-filter, .selects, .cfg-edit) { display: flex; gap: var(--s3); }
+  .icon-btn { display: inline-grid; place-items: center; width: var(--icon-btn); height: var(--icon-btn); margin-left: var(--s2); vertical-align: middle; border: 0; border-radius: 50%;
+    font-size: var(--t1); font-weight: var(--w-bold); line-height: 1; color: var(--accent-fg); background: var(--accent); cursor: pointer; }
 
-  /* 3. Where: one section per host */
-  .host { margin-bottom: 14px; }
-  .host.off { opacity: .6; }
-  .host-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; }
-  .host-head .name { font-weight: 700; }
-  .host-head .meta { margin-left: auto; }
-  .host-head.toggle { cursor: pointer; }
-  .list { background: var(--card); border-radius: 14px; overflow: hidden; }
-  .empty { color: var(--hint); text-align: center; padding: 16px; font-size: var(--t2); }
+  /* ── Primitive: input ── */
+  :where(select, .search input, .cfg-edit input) { padding: var(--s3) var(--s4); border: 1px solid var(--sep); border-radius: var(--r-ctl); background: var(--bg); font-size: var(--t2); }
 
-  .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--idle); }
-  .main { flex: 1; }
-  .title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sub { color: var(--hint); font-size: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
-  .agent { font-weight: 600; } .agent.claude { color: var(--claude); } .agent.codex { color: var(--codex); } .agent.deepseek { color: var(--deepseek); }
-  .chev { flex: none; color: var(--hint); }
-
+  /* ── Primitive: tag, badge, dot ── */
+  :where(.acct, .mark, .task .tk) { display: inline-block; padding: 0 var(--s3); border-radius: var(--r-tag); font-weight: var(--w-strong); }
+  .acct { background: var(--sep); color: var(--fg); }
+  .acct.v-short, .mark { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .acct.v-exhausted { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+  .mark { font-size: var(--t3); cursor: help; }
+  :where(.badge, .tab-unread) { flex: none; min-width: var(--badge); height: var(--badge); padding: 0 var(--s3); border-radius: var(--r-pill);
+    background: var(--accent); color: var(--accent-fg); font-size: var(--t3); font-weight: var(--w-strong); font-style: normal; line-height: var(--badge); text-align: center; }
+  .badge.at { padding: 0; width: var(--badge); }
+  .tab-unread { position: absolute; top: var(--s1); right: var(--s1); min-width: var(--badge-sm); height: var(--badge-sm); padding: 0 var(--s2); font-size: var(--t4); line-height: var(--badge-sm); }
+  :where(.dot, .tab-dot, .badge.dot-only) { flex: none; width: var(--dot); height: var(--dot); min-width: 0; padding: 0; border-radius: 50%; background: var(--idle); }
+  .badge.dot-only { width: var(--dot-badge); height: var(--dot-badge); align-self: center; background: var(--accent); }
+  .tab-dot { position: absolute; top: var(--s3); right: var(--s3); width: var(--dot-sm); height: var(--dot-sm); background: var(--warn); }
+  .hint { display: inline-grid; place-items: center; width: var(--badge-sm); height: var(--badge-sm); border-radius: 50%; border: 1px solid var(--sep); color: var(--hint); font-size: var(--t4); cursor: help; }
   .s-working .dot { background: var(--run); }
   .s-needs_approval .dot, .s-needs_input .dot { background: var(--warn); }
   .s-idle .dot { background: var(--idle); }
-  .s-stale .dot, .s-unknown .dot, .s-ended .dot { background: transparent; border: 2px solid var(--idle); }
-  .on-dot { background: var(--ok); } .off-dot { background: transparent; border: 2px solid var(--idle); }
+  .s-stale .dot, .s-unknown .dot, .s-ended .dot, .off-dot { background: transparent; border: 2px solid var(--idle); }
+  .on-dot { background: var(--ok); }
 
-  /* Sessions as a Telegram chat list. */
-  .chat { display: flex; align-items: center; gap: 10px; padding: 8px 12px; width: 100%; border: 0; background: none;
-    color: inherit; font: inherit; text-align: left; }
-  .list .chat + .chat { border-top: 1px solid var(--sep); }
-  .chat.link { cursor: pointer; }
-  .avatar { position: relative; flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
-    color: #fff; font-weight: 700; background: var(--idle); }
+  /* ── Page frame ── */
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s4); margin-bottom: var(--s5); }
+  /* The build, at the foot of every tab: what is deployed, and a button to load it fresh. */
+  #version { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--s3) var(--s5); margin: var(--s9) 0 var(--s6); }
+  /* Loading, sign-in and access problems: the page's one message before any data. */
+  .summary { margin-bottom: var(--s6); }
+  .summary-head { font-weight: var(--w-bold); font-size: var(--t1); }
+  .banner { margin-bottom: var(--s5); color: var(--warn); font-size: var(--t2); }
+  .banner:empty, .selects:empty { display: none; }
+  .selects { margin-bottom: var(--s5); }
+  .selects select { flex: 1; max-width: var(--select-max); }
+  .chips { overflow-x: auto; padding-bottom: var(--s1); margin-bottom: var(--s4); scrollbar-width: none; }
+  .chips::-webkit-scrollbar, .tabs::-webkit-scrollbar { display: none; }
+  /* Tabs: one question per view. Too narrow for one row, they wrap: every tab stays in sight. */
+  .tabs { margin-bottom: var(--s6); width: fit-content; max-width: 100%; }
+  .tabs button { position: relative; }
+  /* Pinned (this device, default): the tab bar stays at the top while the page scrolls. */
+  .pin-tabs .tabs { position: sticky; top: 0; z-index: 5; box-shadow: 0 2px 6px var(--shadow); }
+  .search { position: relative; margin: 0 0 var(--s5); }
+  .search input { width: 100%; padding-left: var(--search-inset); border: 0; background: var(--card); }
+  .search-icon { position: absolute; left: var(--s5); top: 50%; width: var(--search-icon); height: var(--search-icon); transform: translateY(-50%);
+    fill: none; stroke: var(--hint); stroke-width: 2.2; stroke-linecap: round; pointer-events: none; }
+  .found { display: block; cursor: pointer; }
+  .found .k { margin-right: var(--s3); }
+  .found .sub { white-space: normal; }
+  .empty { padding: var(--s8); text-align: center; }
+
+  /* ── Sessions: one section per host, sessions as a Telegram chat list ── */
+  .host { margin-bottom: var(--gap-block); }
+  .host.off { opacity: .6; }
+  .host-head { display: flex; align-items: center; gap: var(--s4); padding: 0 var(--s2) var(--s3); }
+  .host-head .name { font-weight: var(--w-bold); }
+  .host-head .meta { margin-left: auto; }
+  .list { margin-bottom: 0; }
+  .main { flex: 1; }
+  .agent { font-weight: var(--w-strong); } .agent.claude { color: var(--claude); } .agent.codex { color: var(--codex); } .agent.deepseek { color: var(--deepseek); }
+  .chev { flex: none; color: var(--hint); }
+  .chat { display: flex; align-items: center; gap: var(--s5); }
+  .who { flex: none; width: var(--who); display: grid; justify-items: center; gap: var(--s1); }
+  .who .acct-name { max-width: var(--who); line-height: 1.15; }
+  .avatar { position: relative; flex: none; width: var(--avatar); height: var(--avatar); border-radius: 50%; display: grid; place-items: center;
+    color: var(--on-colour); font-weight: var(--w-bold); background: var(--idle); }
   .avatar.claude { background: var(--claude); } .avatar.codex { background: var(--codex); }
   /* The platform's own mark in its own colour on white, as the platforms show it. */
-  .avatar[class*=" b-"] { background: #fff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
-  .avatar.b-claude { color: var(--claude); } .avatar.b-openai { color: #000; } .avatar.b-deepseek { color: var(--deepseek); }
-  .avatar svg { width: 26px; height: 26px; fill: currentColor; }
-  .avatar .dot { position: absolute; right: -1px; bottom: -1px; width: 13px; height: 13px; border: 2px solid var(--card); }
-  .chat-top, .chat-bottom { display: flex; align-items: center; gap: 6px; }
+  .avatar[class*=" b-"] { background: var(--logo-bg); box-shadow: inset 0 0 0 1px var(--sep); }
+  .avatar.b-claude { color: var(--claude); } .avatar.b-openai { color: var(--openai); } .avatar.b-deepseek { color: var(--deepseek); }
+  .avatar svg { width: var(--logo); height: var(--logo); fill: currentColor; }
+  .avatar .dot { position: absolute; right: -1px; bottom: -1px; width: var(--dot-avatar); height: var(--dot-avatar); border: 2px solid var(--card); }
+  .chat-top, .chat-bottom { display: flex; align-items: center; gap: var(--s3); }
   .chat-top .title { flex: 1; }
-  .chat-bottom .sub { flex: 1; margin-top: 2px; font-size: var(--t2); }
+  .sub { margin-top: var(--s1); }
+  .chat-bottom .sub { flex: 1; font-size: var(--t2); }
+  .chat-time { flex: none; } .chat-time.fresh { color: var(--accent); }
+  /* What a session or repo waits for, one per column. */
+  .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--col), 100%), 1fr)); gap: 0 var(--gap-block); margin-top: var(--s2); font-size: var(--t3); }
   /* A session's running tasks: kind tag | what it does | how long. Kind is the tag's colour. */
-  .tasks { display: grid; gap: 3px; margin-top: 5px; }
-  .who { flex: none; width: 60px; display: grid; justify-items: center; gap: 3px; }
-  .who .acct-name { max-width: 60px; font-size: var(--t2); font-weight: 600; line-height: 1.15; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .waiting { margin-top: 4px; font-size: var(--t3); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .task { --kind: var(--run); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 7px; font-size: var(--t3); color: var(--fg); }
-  .task.k-powershell { --kind: #30b0c7; }
-  .task.k-monitor { --kind: #ff9f0a; }
-  .task.k-agent { --kind: #af52de; }
-  .task .tk.icon { min-width: 0; width: 1.6em; padding: 1px 0; line-height: 0; }
+  .tasks { display: grid; gap: var(--s1); margin-top: var(--s2); }
+  .task { --kind: var(--k-shell); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: var(--s3); font-size: var(--t3); }
+  .task.k-powershell { --kind: var(--k-powershell); } .task.k-monitor { --kind: var(--k-monitor); } .task.k-agent { --kind: var(--k-agent); }
+  .task .tk { min-width: 3.2em; text-align: center; font-family: var(--mono); color: var(--kind); background: color-mix(in srgb, var(--kind) 14%, transparent); }
+  .task .tk.icon { min-width: 0; width: 1.6em; padding: var(--s1) 0; line-height: 0; }
   .task .tk.icon svg { width: 1.15em; height: 1.15em; fill: none; stroke: var(--kind); stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
   /* In the background: the tag outlined, not filled — the one mark of it. */
   .task.bg .tk { background: none; box-shadow: inset 0 0 0 1.5px var(--kind); }
-  .task .tk { min-width: 3.2em; padding: 0 5px; border-radius: 5px; text-align: center; font-family: ui-monospace, monospace; font-weight: 600;
-    color: var(--kind); background: color-mix(in srgb, var(--kind) 14%, transparent); }
-  .task .tl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .task .tl.full { white-space: normal; overflow-wrap: anywhere; }
-  .task .td { color: var(--hint); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .task.more { display: block; color: var(--hint); }
-  .tasks-btn { display: inline-flex; align-items: center; gap: 3px; flex: none; padding: 2px 7px; border-radius: 10px; background: var(--press); color: var(--hint); font-size: var(--t3); cursor: pointer; }
-  .tasks-btn.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
-  .tasks-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
-  .chat-time { flex: none; color: var(--hint); font-size: var(--t3); } .chat-time.fresh { color: var(--accent); }
-  .badge { flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); color: var(--accent-fg);
-    font: 600 var(--t3)/22px system-ui, sans-serif; text-align: center; }
-  .badge.at { padding: 0; width: 22px; }
-  .badge.dot-only { min-width: 0; width: 12px; height: 12px; padding: 0; border-radius: 50%; align-self: center; }
-  .read-btn { flex: none; padding: 2px 7px; border-radius: 10px; background: var(--press); color: var(--hint); font-size: var(--t3); cursor: pointer; white-space: nowrap; }
-
-  /* Machine load under each host header, Sessions and Quota (Config: this device). */
-  .res { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin: 0 4px 8px; font-size: var(--t3); }
-  .res-m { display: grid; grid-template-columns: 64px minmax(36px, 1fr) auto; gap: 6px; align-items: center; }
-  .res-m .k { color: var(--hint); font-weight: 600; white-space: nowrap; }
+  .task .td { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .task.more { display: block; }
+  /* Machine load under each host header, Sessions and Quota (Config: this device). Grid tracks: label | meter (>= 36px) | value. */
+  .res { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2) var(--s6); margin: 0 var(--s2) var(--s4); font-size: var(--t3); }
+  .res-m { display: grid; grid-template-columns: 64px minmax(36px, 1fr) auto; gap: var(--s3); align-items: center; }
   .res-t { white-space: nowrap; text-align: right; }
   .res-about { grid-column: 1 / -1; overflow-wrap: anywhere; }
-  .res.tap { width: calc(100% - 8px); border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .res.tap { width: calc(100% - 2 * var(--s2)); border: 0; padding: 0; background: none; text-align: left; cursor: pointer; }
 
-  /* Tabs: one question per view. */
-  /* Too narrow for one row, the tabs wrap onto more rows: every tab stays in sight, none scrolls away. */
-  .search { position: relative; margin: 0 0 10px; }
-  .search-icon { position: absolute; left: 11px; top: 50%; width: 16px; height: 16px; transform: translateY(-50%); fill: none; stroke: var(--hint); stroke-width: 2.2; stroke-linecap: round; pointer-events: none; }
-  .found-list { background: var(--card); border-radius: 14px; overflow: hidden; }
-  .search input { width: 100%; box-sizing: border-box; padding: 8px 12px 8px 34px; border: 0; border-radius: 10px; background: var(--card); color: inherit; font: inherit; font-size: var(--t2); }
-  .found { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: inherit; padding: 8px 12px; cursor: pointer; }
-  .found + .found { border-top: 1px solid var(--sep); }
-  .found .k { color: var(--hint); font-size: var(--t3); margin-right: 6px; }
-  .found .sub { white-space: normal; }
-  .tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--card); width: fit-content;
-    max-width: 100%; box-sizing: border-box; }
-  .tabs::-webkit-scrollbar { display: none; }
-  /* Pinned (this device, default): the tab bar stays at the top while the page scrolls. */
-  .pin-tabs .tabs { position: sticky; top: 0; z-index: 5; box-shadow: 0 2px 6px color-mix(in srgb, var(--fg) 12%, transparent); }
-  .tabs button { flex: none; white-space: nowrap; position: relative; border: 0; border-radius: 9px; padding: 7px 16px; font: inherit; font-size: var(--t2); font-weight: 600;
-    background: none; color: var(--hint); cursor: pointer; }
-  .tabs button b { font-weight: 600; margin-left: 4px; opacity: .7; }
-  .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px color-mix(in srgb, var(--fg) 15%, transparent); }
-  .tab-badge { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
-    background: var(--warn); color: #fff; font: 600 var(--t4)/16px system-ui, sans-serif; font-style: normal; text-align: center; }
-  /* Usage: totals, a bar per day split by agent, then ranked lists. */
-  .range { display: flex; gap: 4px; margin-bottom: 10px; }
-  .range button { border: 0; border-radius: 8px; padding: 4px 10px; font: inherit; font-size: var(--t3); background: var(--card); color: var(--hint); cursor: pointer; }
-  .range button[aria-pressed="true"] { color: var(--fg); font-weight: 700; }
-  .usage-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-bottom: 12px; }
-  .usage-totals > div { background: var(--card); border-radius: 12px; padding: 8px 10px; }
-  .usage-totals b { display: block; font-size: var(--t1); }
-  .usage-totals span { font-size: var(--t3); color: var(--hint); }
-  .usage-days { display: flex; align-items: flex-end; gap: 2px; height: 120px; background: var(--card); border-radius: 12px; padding: 8px; margin-bottom: 4px; }
-  .usage-days .d { flex: 1; display: flex; flex-direction: column-reverse; height: 100%; min-width: 2px; }
-  .usage-days .claude { background: var(--claude); } .usage-days .codex { background: var(--codex); }
-  .usage-days .commits { background: var(--accent); } .usage-days .merged { background: var(--ok); } .usage-days .opened { background: var(--hint); }
-  .code-history { margin: 6px 0 4px; } .code-history .usage-days { height: 64px; margin-top: 6px; }
-  .usage-axis { display: flex; justify-content: space-between; font-size: var(--t3); color: var(--hint); margin-bottom: 12px; }
-  .usage-list { background: var(--card); border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
-  .usage-list .u { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; padding: 8px 12px; font-size: var(--t2); position: relative; }
-  .usage-list .u { width: 100%; border: 0; background: none; color: inherit; font-family: inherit; text-align: left; cursor: pointer; }
-  .usage-list .u.on { background: color-mix(in srgb, var(--accent) 14%, transparent); } .usage-list .u.on .n { font-weight: 600; }
-  .usage-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-  .usage-list .u + .u { border-top: 1px solid var(--sep); }
-  .usage-list .u .share { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--link, #2481cc); }
-  .usage-list .u .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .usage-list .u .m { color: var(--hint); font-size: var(--t3); }
-  .acct { display: inline-block; padding: 0 6px; border-radius: 6px; font-weight: 600; background: var(--sep); color: var(--fg); }
-  .acct.v-short { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
-  .acct.v-exhausted { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
-  .acct-tags { display: flex; flex-wrap: wrap; gap: 4px; font-size: var(--t3); }
-  .shared { margin-top: 4px; }
-  /* Quota by host: one compact row per account, the glance "what is left where". */
-  .qrows { background: var(--card); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
-  .qrow { padding: 10px 12px; cursor: pointer; }
+  /* ── Quota: one compact row per account, the glance "what is left where" ── */
+  .qrow { cursor: pointer; }
   .qrow.stale { opacity: .75; }
-  .qrow-top .chev { color: var(--hint); width: 12px; text-align: center; }
-  /* A row whose tap goes elsewhere opens its detail from the chevron: a button of its own, a larger target. */
-  /* A row's jump elsewhere (a repo to its sessions): an icon of its own beside the chevron; the row's tap opens it. */
-  .qrow-top button.go { flex: none; padding: 2px 10px; margin: -4px 0; border: 0; border-radius: 999px; background: var(--hover); color: var(--accent); font: inherit; font-size: var(--t2); font-weight: 600; cursor: pointer; }
-  .qdetail { margin-top: 2px; } .qrow + .qrow { border-top: 1px solid var(--sep); }
-  .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: auto; gap: 8px; align-items: baseline; }
-  .qrow-top { font-size: var(--t1); } .qrow-top .left { font-weight: 700; }
-  .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left { color: var(--bad); }
-  /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
-  .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 4px 12px; margin-top: 6px; }
-  .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) 34px auto; gap: 6px; align-items: center; font-size: var(--t3); }
-  .bar { min-width: 36px; }
-  .k.bind { color: var(--fg); font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
-  .stale-v, .clock { opacity: .6; } .clock { font-size: var(--t3); }
-  .qbest { font-size: var(--t3); color: var(--hint); margin: 0 4px 6px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .qrow-top { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: auto; gap: var(--s4); align-items: baseline; font-size: var(--t1); }
+  .qrow-top .left { font-weight: var(--w-bold); }
+  .qrow-top .chev { width: var(--s6); text-align: center; }
+  .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left, .v-exhausted .warn { color: var(--bad); }
   .qref .qrow-top { font-size: var(--t2); }
-  .qref .see { color: var(--hint); font-size: var(--t3); }
-  .qmini .used, .qmini .reset { font-size: var(--t2); font-weight: 600; }
-  .reset { text-align: right; white-space: nowrap; }
+  .qdetail { margin-top: var(--s1); }
+  /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
+  .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s2) var(--s6); margin-top: var(--s3); }
+  .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) 34px auto; gap: var(--s3); align-items: center; font-size: var(--t3); }
+  .qmini .used, .win .used, .reset { text-align: right; white-space: nowrap; }
   .reset:empty { display: none; }
-  .qmini .k { color: var(--hint); font-weight: 600; } .qmini .used { text-align: right; font-weight: 600; }
-  /* Config: Display (this device), then Shared settings (all hosts), then Developer, collapsed. */
-  .cfg { background: var(--card); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
-  .cfg-row { padding: 10px 12px; } .cfg-row + .cfg-row { border-top: 1px solid var(--sep); }
-  .cfg-top { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  .cfg-name { font-size: var(--t2); flex: 1 1 160px; }
-  .cfg-h { font-size: var(--t3); font-weight: 600; color: var(--hint); margin: 10px 4px 4px; }
-  .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 9px; background: var(--sep); }
-  .seg button { border: 0; border-radius: 7px; padding: 5px 10px; font: inherit; font-size: var(--t3); font-weight: 600; background: none; color: var(--hint); cursor: pointer; white-space: nowrap; }
-  .seg button[aria-checked="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px color-mix(in srgb, var(--fg) 15%, transparent); }
-  .hint { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--sep); color: var(--hint); font-size: var(--t4); cursor: help; }
-  .mark { font-size: var(--t3); font-weight: 600; padding: 1px 6px; border-radius: 6px; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); cursor: help; }
-  .change { margin-top: 4px; } .change.ok { color: var(--ok); } .change.bad { color: var(--bad); white-space: normal; } .change.pending { color: var(--warn); }
-  .dev { margin-top: 18px; } .dev summary { cursor: pointer; }
-  .cfg-edit { display: flex; gap: 6px; align-items: center; }
-  .cfg-edit input, .cfg-edit select { width: 96px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--sep); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--t2); }
-  .cfg-edit button { border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; font-size: var(--t2); font-weight: 600; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
-  .cfg-edit button:disabled { opacity: .4; cursor: default; }
-  /* A host's own facts under its quota (read-only: who may control it lives in its files). */
-  .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 10px 12px; margin: 0 0 14px; font-size: var(--t3); background: var(--card); border-radius: 14px; }
-  .facts dt { color: var(--hint); } .facts dd { margin: 0; }
-  .section-h { font-size: var(--t2); text-transform: uppercase; letter-spacing: .04em; color: var(--hint); margin: 4px 4px 8px; }
-  .tab-unread { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--accent-fg);
-    font: 600 11px/16px system-ui, sans-serif; font-style: normal; text-align: center; }
-  .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
-  .warn { color: var(--warn); font-size: var(--t2); font-weight: 600; margin-top: 6px; }
-  .v-exhausted .warn { color: var(--bad); }
-  .win { display: grid; grid-template-columns: 26px 1fr 44px auto; align-items: center; gap: 8px; margin-top: 10px; }
-  .win .reset { font-size: var(--t2); font-weight: 600; min-width: 52px; }
-  .win .k { color: var(--hint); font-size: var(--t3); font-weight: 600; }
-  .win .used { text-align: right; font-size: var(--t2); font-weight: 600; }
-  .bar { position: relative; height: 8px; border-radius: 4px; background: var(--sep); }
-  .bar.unknown { background: repeating-linear-gradient(135deg, var(--sep) 0 4px, transparent 4px 8px); } .bar.unknown .fill, .bar.unknown .pace { display: none; }
-  .bar .fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 4px; background: var(--run); }
-  .bar.hot .fill { background: var(--warn); }
-  .bar .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--fg); opacity: .55; border-radius: 1px; }
-  .win-sub { display: grid; grid-template-columns: 26px 1fr 44px auto; gap: 2px 8px; color: var(--hint); font-size: var(--t3); margin-top: 4px; }
+  .k.bind { color: var(--fg); font-weight: var(--w-bold); text-decoration: underline; text-underline-offset: 2px; }
+  .stale-v, .clock { opacity: .6; } .clock { font-size: var(--t3); }
+  .qbest { display: flex; flex-wrap: wrap; gap: var(--s2); align-items: center; margin: 0 var(--s2) var(--s3); }
+  .shared { margin-top: var(--s2); }
+  .warn { margin-top: var(--s3); color: var(--warn); }
+  /* An account's windows: label | bar | use | reset (26 / 44 / 52px fit "5h", "100%", "6d 23h"), its trend and forecast beneath. */
+  .win, .win-sub { display: grid; grid-template-columns: 26px 1fr 44px auto; gap: var(--s4); align-items: center; margin-top: var(--s5); }
+  .win .reset { min-width: 52px; }
+  .win-sub { gap: var(--s1) var(--s4); margin-top: var(--s2); }
   .win-sub > span { grid-column: 2 / 5; }
   .win-sub > span:empty { display: none; }
-  .win-sub > .forecast { font-size: var(--t2); font-weight: 600; color: var(--fg); } .win-sub > .forecast.hot { color: var(--warn); }
+  .win-sub > .forecast.hot { color: var(--warn); }
+  .bar { position: relative; min-width: 36px; height: var(--bar); border-radius: var(--r-pill); background: var(--sep); }
+  .bar.unknown { background: repeating-linear-gradient(135deg, var(--sep) 0 4px, transparent 4px 8px); } .bar.unknown .fill, .bar.unknown .pace { display: none; }
+  .bar .fill { position: absolute; top: 0; bottom: 0; left: 0; border-radius: var(--r-pill); background: var(--run); }
+  .bar.hot .fill { background: var(--warn); }
+  .bar .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; transform: translateX(-50%); background: var(--fg); opacity: .55; }
   .trend-wrap { grid-column: 2; }
-  .trend .now { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1.5px solid var(--fg); opacity: .6; }
-  .axis { position: relative; height: 13px; margin-top: 2px; font-size: var(--t4); color: var(--hint); }
-  .axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
-  .axis span::before { content: ''; position: absolute; left: 50%; top: -4px; height: 3px; border-left: 1px solid var(--sep); }
-  .trend { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 18px; border-bottom: 1px dashed var(--sep); }
-  .trend span { flex: 1; border-radius: 2px 2px 0 0; }
+  .trend { position: relative; display: flex; align-items: flex-end; gap: var(--s1); height: 18px; border-bottom: 1px dashed var(--sep); }
+  .trend span { flex: 1; border-radius: var(--s1) var(--s1) 0 0; }
   .trend .seen { background: color-mix(in srgb, var(--run) 55%, transparent); }
   .trend .unseen { height: 100%; background: repeating-linear-gradient(45deg, var(--sep) 0 2px, transparent 2px 4px); }
   .trend .ahead { height: 2px; background: var(--sep); }
-  .note { display: block; margin-top: 8px; font-size: var(--t3); font-weight: 600; color: var(--accent); background: none; border: 0; padding: 0; font-family: inherit; text-align: left; }
-  .note.link, .note.toggle { cursor: pointer; }
-  .foot { margin-top: 8px; }
+  .trend .now { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1.5px solid var(--fg); opacity: .6; }
+  .axis { position: relative; height: 13px; margin-top: var(--s1); font-size: var(--t4); color: var(--hint); }
+  .axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .axis span::before { content: ''; position: absolute; left: 50%; top: -4px; height: 3px; border-left: 1px solid var(--sep); }
+  /* A host's own facts under its quota (read-only: who may control it lives in its files). */
+  .facts { display: grid; grid-template-columns: auto 1fr; gap: var(--s2) var(--s6); font-size: var(--t3); }
+  .facts dd { margin: 0; }
 
-  /* Responsive, continuously: columns appear as the width allows (one per ~340 px). Spacing and the title
-     scale with the viewport. No cap. */
-  body { padding: clamp(12px, 2vw, 32px) clamp(12px, 2.5vw, 40px) calc(clamp(16px, 2vw, 32px) + env(safe-area-inset-bottom)); }
-  h1 { font-size: clamp(var(--t0), calc(1.2vw + 14px * var(--scale)), calc(28px * var(--scale))); }
-  /* The one responsive layout (Sessions, Accounts, Code): blocks flow down as many --col-wide
-     columns as fit, each kept whole, filling the gaps. */
-  .columns { column-width: var(--col); column-gap: 14px; }
+  /* ── Usage: totals, a bar per day split by agent, then ranked lists ── */
+  .range { margin-bottom: var(--s5); }
+  .usage-filter { flex-wrap: wrap; margin-bottom: var(--s5); }
+  .usage-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: var(--s4); }
+  .usage-totals > div { padding: var(--s4) var(--s5); }
+  .usage-totals b { display: block; font-size: var(--t1); }
+  .usage-days { display: flex; align-items: flex-end; gap: var(--s1); height: var(--chart); padding: var(--s4); margin-bottom: var(--s2); }
+  .usage-days .d { flex: 1; display: flex; flex-direction: column-reverse; height: 100%; min-width: var(--s1); }
+  .usage-days .claude { background: var(--claude); } .usage-days .codex { background: var(--codex); }
+  .usage-days .commits { background: var(--accent); } .usage-days .merged { background: var(--ok); } .usage-days .opened { background: var(--hint); }
+  .usage-axis { display: flex; justify-content: space-between; margin-bottom: var(--s6); }
+  .usage-list .u { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--s5); font-size: var(--t2); cursor: pointer; }
+  .usage-list .u.on { background: color-mix(in srgb, var(--accent) 14%, transparent); } .usage-list .u.on .n { font-weight: var(--w-strong); }
+  .usage-list .u .share { position: absolute; left: 0; bottom: 0; height: var(--s1); background: var(--accent); }
+
+  /* ── Code: a check state as one glyph, PRs and branches inside a repo card ── */
+  .ci { display: inline-block; min-width: 1.2em; text-align: center; font-weight: var(--w-bold); }
+  .ci-success { color: var(--ok); } .ci-failure { color: var(--bad); } .ci-pending { color: var(--warn); } .ci-none { color: var(--hint); }
+  .code-h { margin-inline: 0; }
+  .code-item { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); gap: 0 var(--s3); padding: var(--s3) 0; }
+  .code-item .sub { grid-column: 2; }
+  .code-item .waiting { grid-column: 1 / -1; }
+  /* Independent things (each repo, each item needing attention) are separate cards, spaced apart. */
+  .cards > * { margin-bottom: var(--s4); border-top: 0 !important; }
+  .cards > .code-item { padding: var(--row-pad); }
+  .code-history { margin: var(--s3) 0 var(--s2); } .code-history .usage-days { height: var(--chart-sm); margin-top: var(--s3); }
+
+  /* ── Config: Display (this device), Shared settings (all hosts), Developer, collapsed ── */
+  .cfg-top { display: flex; gap: var(--s4); align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .cfg-name { font-size: var(--t2); flex: 1 1 160px; }
+  .cfg-edit { align-items: center; }
+  .cfg-edit :is(input, select) { flex: none; width: var(--input); }
+  .change { margin-top: var(--s2); } .change.ok { color: var(--ok); } .change.bad { color: var(--bad); white-space: normal; } .change.pending { color: var(--warn); }
+  .dev { margin-top: var(--s8); } .dev summary { cursor: pointer; }
+  .note { display: block; margin-top: var(--s4); font-size: var(--t3); font-weight: var(--w-strong); }
+
+  /* ── Layout: blocks flow down as many --col-wide columns as fit, each kept whole ── */
+  .columns { column-width: var(--col); column-gap: var(--gap-block); }
   .columns > * { break-inside: avoid; }
-  /* Rows inside a block (sessions on an account, a repo): the same width, a lone one keeps it. */
-  .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--col), 100%), 1fr)); gap: 0 14px; }
-  .selects select { max-width: 320px; }
-  /* One interaction language for everything that opens, toggles or navigates: a pointer, a tint
-     on hover (only where hover exists), a deeper tint while pressed, and a keyboard focus ring. */
-  :root { --hover: color-mix(in srgb, var(--fg) 5%, transparent); --press: color-mix(in srgb, var(--fg) 10%, transparent); }
+
+  /* ── Interaction: one language for everything that opens, toggles or navigates — a pointer, a tint on
+     hover (only where hover exists), a deeper tint while pressed, and a keyboard focus ring. ── */
+  :is(.chat.link, .code-item.link, .host-head.toggle, .note.link, .note.toggle) { cursor: pointer; }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle, .note.link, .note.toggle) { transition: background-color .12s; }
-  :is(.chip, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go) { transition: filter .12s, background-color .12s; }
+  :is(.chip, .tasks-btn, .read-btn, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go) { transition: filter .12s, background-color .12s; }
   @media (hover: hover) {
     :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):hover { background: var(--hover); }
     :is(.note.link, .note.toggle, .commit):hover { text-decoration: underline; }
-    :is(.chip, .range button, .seg button, .tabs [data-tab]):hover { filter: brightness(.95); }
-    .qrow-top .go:hover { filter: brightness(.92); }
+    :is(.chip, .tasks-btn, .read-btn, .range button, .seg button, .tabs [data-tab], .qrow-top .go):hover { filter: brightness(.95); }
     :is(.icon-btn, .cfg-edit button):hover { filter: brightness(1.1); }
   }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):active { background: var(--press); }
-  :is(.chip, .range button, .seg button, .tabs [data-tab], .icon-btn, .cfg-edit button):active { filter: brightness(.88); }
+  :is(.chip, .tasks-btn, .read-btn, .range button, .seg button, .tabs [data-tab], .icon-btn, .cfg-edit button):active { filter: brightness(.88); }
   :is(button, [role="button"], [role="link"], summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>

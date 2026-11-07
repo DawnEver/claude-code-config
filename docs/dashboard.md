@@ -464,6 +464,28 @@ or missing credentials, 403 valid Telegram user not allowlisted, 400 malformed p
 body over 256 KiB, 429 rate limit, 404. Internals are logged, never returned. A session entry
 is whitelisted field by field; at most 200 per host.
 
+## Style
+
+All CSS is the one `<style>` in `public/index.html`. Rule: **components compose primitives; no
+literal outside `:root`.** `dashboard.test.mjs` ("style") fails on a colour, or a px/em size in
+`font`, `border-radius`, `gap`, `margin*`, `padding*`, outside `:root`; on a styled class no code
+uses; and on an inline style in `app.js` other than geometry (`width`, `height`, `left`, `--scale`).
+
+- **Tokens** (`:root`): colours from `--tg-theme-*` with fallbacks (`--bg --fg --hint --card
+  --accent --accent-fg`) and derived (`--sep --hover --press --shadow`), status (`--ok --warn --bad
+  --run --idle`), brands, task kinds; text `--t0..--t4`, `--tb` scaled by `--scale` (Config ›
+  Text size), weights `--w-strong --w-bold`; space `--s1..--s11`, `--row-pad`, `--gap-block`;
+  radii `--r-tag --r-ctl --r-card --r-pill`; control and mark sizes (`--pill-pad --chip-pad
+  --badge --dot --avatar --who …`). Grid track widths stay in their rule, each commented.
+- **Text roles**: title (row name, `--w-strong`); secondary (`--hint`, `--t3`: every meta, time,
+  axis, key); key fact (`--fg`, `--t2`, strong: use, reset, forecast, warning, the account under
+  a logo); label (secondary + strong); section header (secondary, strong, uppercase).
+- **Primitives**, written as `:where(...)` so they add no specificity and a component rule refines
+  them: card (`--card`, `--r-card`) and row (`--row-pad`, a `--sep` line between rows); pill
+  (every small control: `--pill-pad`, `--r-pill`, `--t3`), with the chip variant (`--chip-pad`,
+  `--t2`: status chips, tabs, apply), the track (tabs, segmented, range: pills on one card, the
+  selected one raised) and the filled action; input; tag (`--r-tag`); badge (count) and dot.
+
 ## Develop and test
 
 - `node --test scripts/dashboard/*.test.mjs scripts/bridge/dashboard-push.test.mjs` (also in

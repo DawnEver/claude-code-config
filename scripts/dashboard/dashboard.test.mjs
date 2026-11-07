@@ -154,6 +154,27 @@ test('static app: CSP for Telegram framing, no secret in any asset', () => {
   for (const f of ['index.html', 'app.js', 'view.mjs']) assert.doesNotMatch(fs.readFileSync(new URL(f, dir), 'utf8'), /\d{6,}:[A-Za-z0-9_-]{30,}/, `${f}: no bot token`);
 });
 
+test('style: tokens only in :root, every class in use, inline styles only for geometry', () => {
+  const dir = new URL('./public/', import.meta.url);
+  const html = fs.readFileSync(new URL('index.html', dir), 'utf8');
+  const app = fs.readFileSync(new URL('app.js', dir), 'utf8');
+  const code = app + fs.readFileSync(new URL('view.mjs', dir), 'utf8') + html.slice(html.indexOf('</style>'));
+  const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.equal(css.match(/:root\s*\{/g)?.length, 1, 'one :root holds every token');
+  const body = css.replace(/:root\s*\{[^}]*\}/, '');
+  for (const [, prop, value] of body.matchAll(/([a-z-]+)\s*:\s*([^;{}]+)/g)) {
+    const at = `${prop}: ${value.trim()}`;
+    assert.doesNotMatch(value, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\b(white|black)\b/i, `colour literal outside :root — ${at}`);
+    if (/^(font|font-size|border-radius|gap|row-gap|column-gap)$|^(margin|padding)/.test(prop)) assert.doesNotMatch(value, /\d(px|rem|em)\b/, `size literal outside :root — ${at}`);
+  }
+  const used = new Set(code.match(/[\w-]+/g));
+  const dynamic = ['s-', 'k-', 'b-', 'v-', 'ci-'].filter((p) => code.includes(`${p}\${`));
+  for (const [, c] of css.matchAll(/\.([a-zA-Z][\w-]*)/g)) {
+    assert.ok(used.has(c) || dynamic.some((p) => c.startsWith(p)), `.${c} is styled but no code uses it`);
+  }
+  for (const [, prop] of app.matchAll(/\.style\.([a-zA-Z]+)/g)) assert.match(prop, /^(width|height|left|setProperty)$/, `inline style ${prop}: geometry only`);
+});
+
 test('config: DASHBOARD_CONFIG fails loudly, and is derived from the shared bridge config', async () => {
   assert.throws(() => parseDashboardConfig({ hosts: {} }), /botId/);
   assert.throws(() => parseDashboardConfig({ botId: BOT_ID, hosts: { 'host-a': 'not-a-hash' } }), /sha256/);
