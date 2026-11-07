@@ -29,7 +29,8 @@ export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
     allowedUserIds: (c.allowedUserIds ?? []).map(Number).filter(Number.isSafeInteger),
     hosts,
     publicKey,
-    ttlSeconds: c.ttlSeconds > 0 ? c.ttlSeconds : 60,
+    // A quiet host pushes only its heartbeat (60 s): three of them may pass before it reads Offline.
+    ttlSeconds: c.ttlSeconds > 0 ? c.ttlSeconds : 180,
     // A host silent this long is alerted offline: well past ttlSeconds, so a restart or a network blip says nothing.
     offlineAlertSeconds: c.offlineAlertSeconds > 0 ? c.offlineAlertSeconds : 300,
     // Hosts never alerted offline (a laptop that sleeps): still listed, still shown offline.

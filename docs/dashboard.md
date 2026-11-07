@@ -41,8 +41,10 @@ partitioned by observed account and home.
 Why Cloudflare: the dashboard is the hosts' one public endpoint and belongs to no workstation.
 A Worker on the free plan gives https on your own domain, no server to run, and a single
 Durable Object is exactly the registry's shape (one in-memory state all requests share).
-Budget: the free plan allows 100,000 Durable Object requests a day; a host pushing every
-15 s costs 5,760, an open Mini App polling every 8 s 450 an hour. Over budget the dashboard is
+Budget: the free plan allows 100,000 Durable Object requests a day. A host samples every
+`everySeconds` (15) but posts only a changed snapshot, plus a heartbeat every
+`heartbeatSeconds` (60) when nothing changed: an idle host costs 1,440 a day, a busy one at
+most 5,760; an open Mini App polling every 8 s 450 an hour. Over budget the dashboard is
 down until 00:00 UTC; the bridge is unaffected. GitHub Pages cannot host it: static only,
 no API, no authentication.
 
@@ -115,9 +117,9 @@ no API, no authentication.
   `systemError` or `notLoaded` ends it. Live state
   only: no task is written to the usage store.
 - **Freshness is separate.** `lastSeen` is the gateway's own clock at the last accepted push
-  (host clocks are not trusted). A host silent for `ttlSeconds` (60) is Offline and every
+  (host clocks are not trusted). A host silent for `ttlSeconds` (180) is Offline and every
   session it last reported carries `stale: true`, shown as `Stale`, not as its last state.
-  Keep `ttlSeconds` at least three times every host's `everySeconds`. A host silent for
+  Keep `ttlSeconds` at least three times every host's `heartbeatSeconds` (an idle host posts only then). A host silent for
   `offlineAlertSeconds` (shared `bridge.dashboard.offlineAlertSeconds`, default 300) is alerted
   offline once; its next push watches it again, without an alert (see Alerts). Hosts in
   `bridge.dashboard.offlineAlertExclude` (e.g. a laptop that sleeps) are never alerted offline.
