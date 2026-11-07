@@ -6,7 +6,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 
 /** The provider launchers, per host binary they need: [wrapper name, provider argument]. */
-export const LAUNCHERS = { claude: [['ccc', 'claude'], ['ccds', 'deepseek']], codex: [['codc', 'codex'], ['cods', 'deepseek']] };
+const LAUNCHERS = { claude: [['ccc', 'claude'], ['ccds', 'deepseek']], codex: [['codc', 'codex'], ['cods', 'deepseek']] };
 /** Every wrapper this repo writes. `migrate` removes any other marked wrapper as an orphan. */
 export const WRAPPER_NAMES = [...Object.values(LAUNCHERS).flat().map(([name]) => name), 'todo'];
 

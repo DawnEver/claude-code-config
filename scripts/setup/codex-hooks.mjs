@@ -32,7 +32,7 @@ export function managedCodexHooks({ scriptsDir, node = process.execPath }) {
   }));
 }
 
-export const hooksFingerprint = hooks => createHash('sha256').update(JSON.stringify(hooks)).digest('hex');
+const hooksFingerprint = hooks => createHash('sha256').update(JSON.stringify(hooks)).digest('hex');
 
 export function installCodexHooks({ codexDir = path.join(os.homedir(), '.codex'), scriptsDir, node } = {}) {
   const file = path.join(codexDir, 'hooks.json');

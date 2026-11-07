@@ -61,7 +61,7 @@ export const REPO = process.env.CLAUDE_SYNC_REPO || repoRootFrom(fileURLToPath(i
 
 /** The ai-lab checkout to keep current, or null: `$CLAUDE_SYNC_AI_LAB` ('' disables), else the
  * work tree around the provider cache's recorded interpreter (`<ai-lab>/.venv/...`). */
-export async function aiLabRepo(env = process.env) {
+async function aiLabRepo(env = process.env) {
   if (env.CLAUDE_SYNC_AI_LAB !== undefined) return env.CLAUDE_SYNC_AI_LAB || null;
   try {
     const { recordedPython } = await import('../shared/provider-cache.mjs');
@@ -129,7 +129,7 @@ export function formatPull(result, label = 'cc-config') {
 }
 
 /** Why uncommitted edits keep a behind tree where it is, or null when there are none. */
-export function localChangesNote(dirty, behind, repo) {
+function localChangesNote(dirty, behind, repo) {
   return dirty > 0
     ? `${dirty} local change(s), ${behind} commit(s) behind — commit or stash, then: git -C "${repo}" pull --ff-only`
     : null;
@@ -276,7 +276,7 @@ const runUv = (args, { cwd, env }) =>
  * worktree supplies `rev`'s pyproject/lock, `UV_PROJECT_ENVIRONMENT` points uv at the live venv,
  * `--inexact` keeps what the current tree still imports. An error string, or null.
  */
-export function syncDepsAt(repo, rev, { uv = runUv } = {}) {
+function syncDepsAt(repo, rev, { uv = runUv } = {}) {
   const wt = path.join(os.tmpdir(), `ai-lab-deps-${process.pid}-${Date.now()}`);
   try {
     git(['worktree', 'add', '--detach', '--quiet', wt, rev], { cwd: repo, timeout: MERGE_TIMEOUT_MS });
@@ -323,7 +323,7 @@ const detachedUpdate = (repo) => spawn(process.execPath, [fileURLToPath(import.m
  * Fast-forward ai-lab. A code-only update moves the tree and refreshes the provider cache here; one
  * that changes the dependencies, or retries a failed one, goes to the detached run instead.
  */
-export async function runAiLabPull(repo, { background = detachedUpdate, fetched = null } = {}) {
+async function runAiLabPull(repo, { background = detachedUpdate, fetched = null } = {}) {
   const state = readState();
   if (state?.pid && Date.now() - state.at < STALE_RUN_MS) return { pulled: 0, note: 'dependency update still running in the background' };
   const handOff = (why) => { background(repo); return { pulled: 0, note: `${why}; updating in the background (merge, uv sync, provider cache)` }; };

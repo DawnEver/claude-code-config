@@ -15,7 +15,7 @@ export const SESSION_MODULE = 'ai_lab.session';
 const AGENTS = new Set(['claude', 'codex']);
 
 /** Import the session module for real: `{ok: true}`, or `{ok: false, why}` with Python's last stderr line. */
-export function importProbe(python, run = spawnSync) {
+function importProbe(python, run = spawnSync) {
   const res = run(python, ['-c', `import ${SESSION_MODULE}`],
     { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
   if (!res.error && res.status === 0) return { ok: true };
@@ -24,7 +24,7 @@ export function importProbe(python, run = spawnSync) {
 }
 
 /** The uv project whose `.venv` holds `python` (`<project>/.venv/{Scripts,bin}/python`), or null. */
-export function venvProject(python) {
+function venvProject(python) {
   const project = dirname(dirname(dirname(python)));
   return existsSync(join(project, 'pyproject.toml')) && existsSync(join(project, 'uv.lock')) ? project : null;
 }
@@ -56,7 +56,7 @@ export function venvFingerprint(python, dir) {
   return parts.join('\n');
 }
 
-export const VERIFIED_FILE = join(homedir(), '.claude', 'ai-lab-venv-verified');
+const VERIFIED_FILE = join(homedir(), '.claude', 'ai-lab-venv-verified');
 const readVerified = (file) => { try { return readFileSync(file, 'utf8'); } catch { return null; } };
 const writeVerified = (file, fp) => { try { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, fp); } catch { /* a cache */ } };
 

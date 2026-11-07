@@ -53,7 +53,7 @@ export function looksLikeBrokenGuard(line) {
 }
 
 /** Absolute machine paths that must not appear in a file shared across hosts. */
-export const ABSOLUTE_PATH_PATTERNS = [
+const ABSOLUTE_PATH_PATTERNS = [
   // A drive letter must be preceded by a boundary. Without that, `[A-Za-z]:[\/]`
   // matches the `v:/` in `env:/` and the `s:/` in `https://`, which is most of
   // what this check would otherwise report.
@@ -63,13 +63,13 @@ export const ABSOLUTE_PATH_PATTERNS = [
 ];
 
 /** Which kinds of machine path this string holds, if any. */
-export function absolutePathKinds(value) {
+function absolutePathKinds(value) {
   if (typeof value !== 'string') return [];
   return ABSOLUTE_PATH_PATTERNS.filter(({ re }) => re.test(value)).map((p) => p.what);
 }
 
 /** Every string in a parsed JSON tree, with the key path that reaches it. */
-export function walkStrings(node, keyPath = []) {
+function walkStrings(node, keyPath = []) {
   if (typeof node === 'string') return [{ keyPath, value: node }];
   if (!node || typeof node !== 'object') return [];
   return Object.entries(node).flatMap(([k, v]) => walkStrings(v, [...keyPath, k]));
@@ -367,7 +367,7 @@ export function checkHygiene(root = sourceDir) {
 // never tracked — because the concrete names are themselves the secret.
 // A justified exception carries the inline marker `public-hygiene: allow (<reason>)`.
 
-export const PRIVATE_MARKERS_PATH = path.join(HOME, '.claude', 'private-markers');
+const PRIVATE_MARKERS_PATH = path.join(HOME, '.claude', 'private-markers');
 
 // Path segments that are obviously placeholders, not someone's account.
 // A segment starting with `<` (`<user>`) never matches the patterns at all.
@@ -377,7 +377,7 @@ const NEUTRAL_MAIL_DOMAINS = /(?:^|\.)(?:example\.(?:com|org|net)|users\.noreply
 const PLACEHOLDER_CHAT = /^-100(?:1234567890|(\d)\1{9,})$/;
 const homeUser = (m) => !NEUTRAL_USER.test(m[1]);
 
-export const PUBLIC_PATTERNS = [
+const PUBLIC_PATTERNS = [
   { what: 'Windows home path', re: /[A-Za-z]:[\\/]+Users[\\/]+([^\\/\s"'`<>*),;]+)/gi, bad: homeUser },
   { what: 'macOS home path', re: /(?<![\w.:])\/Users\/([^\\/\s"'`<>*),;]+)/g, bad: homeUser },
   { what: 'Linux home path', re: /(?<![\w.:])\/home\/([^\\/\s"'`<>*),;]+)/g, bad: homeUser },
@@ -574,7 +574,7 @@ export function checkChannelServer({ bridged = Boolean(readBridgeConfig().botTok
 // working tree — rarely changes between sessions. The SessionStart hook keys their findings
 // on the tree's fingerprint and rescans only when it moved; `npm run doctor` always scans.
 const DOCTOR_FILE = fileURLToPath(import.meta.url);
-export const CONTENT_CACHE_FILE = path.join(HOME, '.claude', 'doctor-cache.json');
+const CONTENT_CACHE_FILE = path.join(HOME, '.claude', 'doctor-cache.json');
 
 /**
  * What the content scans read, as one string: HEAD, every changed or untracked path with
@@ -657,7 +657,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
   ];
 }
 
-export function checkNativeCodexHooks({ codexHome = codexDir, scriptsDir = path.join(claudeDir, 'scripts') } = {}) {
+function checkNativeCodexHooks({ codexHome = codexDir, scriptsDir = path.join(claudeDir, 'scripts') } = {}) {
   const state = inspectCodexHooks({ codexDir: codexHome, scriptsDir });
   if (!state.installed) return [finding('FAIL', 'codex-native-hooks', 'Codex native machine hooks are missing or drifted',
     'run setup, preserve user hooks, then review the new definitions with /hooks; trust is never bypassed')];

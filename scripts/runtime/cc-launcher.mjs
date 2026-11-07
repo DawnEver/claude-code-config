@@ -22,7 +22,7 @@ import { resolveProvider } from '../shared/provider-projection.mjs';
 import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
 import { repoAutoModeArgs } from './repo-automode.mjs';
 
-export const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
+const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
 
 /**
  * Build the env + args for spawning the `claude` CLI with a given provider.

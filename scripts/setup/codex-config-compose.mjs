@@ -76,7 +76,7 @@ function matchesPrefix(header, prefixes) {
  * whitespace. Returns null for anything else — notably `[[array.of.tables]]`, which is
  * left as ordinary content of the preceding section rather than mis-split.
  */
-export function parseHeader(line) {
+function parseHeader(line) {
   const m = /^\s*\[([^[\]]+)\]\s*(?:#.*)?$/.exec(line);
   return m ? m[1].trim() : null;
 }

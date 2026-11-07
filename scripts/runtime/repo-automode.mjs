@@ -17,8 +17,8 @@ import { existsSync, readFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
 
-export const FRAGMENT = path.join('.claude', 'automode.json');
-export const TRUST_FILE = 'trusted-origins';
+const FRAGMENT = path.join('.claude', 'automode.json');
+const TRUST_FILE = 'trusted-origins';
 
 /** `git@host:org/repo.git`, `https://user@host:443/org/repo`, `ssh://git@host/org/repo` -> `host/org/repo`. */
 export function originKey(url) {

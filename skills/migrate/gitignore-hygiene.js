@@ -58,7 +58,7 @@ function isGitRepo(dir) {
 }
 
 // cwd repo (if any) plus every nested git repo beneath it.
-export function findGitRepos(root, { maxDepth = 4 } = {}) {
+function findGitRepos(root, { maxDepth = 4 } = {}) {
   const repos = [];
   if (isGitRepo(root)) repos.push(root);
   (function walk(dir, depth) {
@@ -95,7 +95,7 @@ export function ensureGitignoreTemplate(repoDir, { dryRun } = {}) {
 }
 
 // Files tracked by `repoDir` that its own .gitignore now excludes.
-export function untrackIgnored(repoDir, { dryRun } = {}) {
+function untrackIgnored(repoDir, { dryRun } = {}) {
   let out;
   try { out = git(repoDir, 'ls-files', '--cached', '--ignored', '--exclude-standard'); }
   catch { return []; }
@@ -111,7 +111,7 @@ export function untrackIgnored(repoDir, { dryRun } = {}) {
 
 // .gitignore files nested inside a .claude/ tree (shadow the repo-root template).
 // Does not descend into nested git repos — those are scanned as their own repo.
-export function findNestedClaudeIgnores(repoDir) {
+function findNestedClaudeIgnores(repoDir) {
   const found = [];
   (function walk(dir, insideClaude) {
     let entries;

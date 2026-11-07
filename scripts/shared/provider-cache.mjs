@@ -20,8 +20,8 @@ import { dirname, join } from 'path';
 import os from 'os';
 
 export const PROVIDER_CACHE_PATH = join(os.homedir(), '.claude', 'provider-cache.json');
-export const PROVIDER_CACHE_SCHEMA = 1;
-export const MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+const PROVIDER_CACHE_SCHEMA = 1;
+const MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 export const SETUP_REMEDY = 'node scripts/setup/setup.js';
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
@@ -55,7 +55,7 @@ export function aiLabVersionOnDisk(python) {
 }
 
 /** Shape check of an `ai_lab.providers --json` document; returns an error string or null. */
-export function validateCatalogue(doc) {
+function validateCatalogue(doc) {
   if (!doc || typeof doc !== 'object') return 'not a JSON object';
   if (doc.schema_version !== PROVIDER_CACHE_SCHEMA) return `schema_version ${doc.schema_version} is not ${PROVIDER_CACHE_SCHEMA}`;
   for (const k of ['generated_at', 'ai_lab_version', 'python', 'source_sha256']) {

@@ -19,7 +19,7 @@ export const ENV_SETTINGS_PATH = join(os.homedir(), '.claude', 'claude_env_setti
 // Machine-local secrets file, next to it.
 export const LOCAL_ENV_SETTINGS_PATH = join(os.homedir(), '.claude', 'claude_env_settings.local.json');
 
-export function isPlainObject(v) {
+function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
