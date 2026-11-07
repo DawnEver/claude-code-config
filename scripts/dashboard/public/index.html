@@ -86,7 +86,7 @@
   :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) + :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) { border-top: 1px solid var(--sep); }
 
   /* ── Primitive: pill — every small control. Variants: chip (larger), filled action, on a track. ── */
-  :where(.chip, .tasks-btn, .read-btn, .range button, .seg button, .tabs button, .qrow-top .go, .cfg-edit button)
+  :where(.chip, .tasks-btn, .range button, .seg button, .tabs button, .qrow-top .go, .cfg-edit button)
     { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); flex: none; padding: var(--pill-pad); border: 0; border-radius: var(--r-pill);
       font-size: var(--t3); font-weight: var(--w-strong); white-space: nowrap; background: var(--press); color: var(--hint); cursor: pointer; }
   :where(.chip, .tabs button, .cfg-edit button) { padding: var(--chip-pad); font-size: var(--t2); }
@@ -124,8 +124,8 @@
     background: var(--accent); color: var(--accent-fg); font-size: var(--t3); font-weight: var(--w-strong); font-style: normal; line-height: var(--badge); text-align: center; }
   .badge.at { padding: 0; width: var(--badge); }
   .tab-unread { position: absolute; top: var(--s1); right: var(--s1); min-width: var(--badge-sm); height: var(--badge-sm); padding: 0 var(--s2); font-size: var(--t4); line-height: var(--badge-sm); }
-  :where(.dot, .tab-dot, .badge.dot-only) { flex: none; width: var(--dot); height: var(--dot); min-width: 0; padding: 0; border-radius: 50%; background: var(--idle); }
-  .badge.dot-only { width: var(--dot-badge); height: var(--dot-badge); align-self: center; background: var(--accent); }
+  .badge.read { cursor: pointer; } .badge.read.off { min-width: 0; width: var(--badge-sm); height: var(--badge-sm); padding: 0; align-self: center; background: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hint) 55%, transparent); }
+  :where(.dot, .tab-dot) { flex: none; width: var(--dot); height: var(--dot); min-width: 0; padding: 0; border-radius: 50%; background: var(--idle); }
   .tab-dot { position: absolute; top: var(--s3); right: var(--s3); width: var(--dot-sm); height: var(--dot-sm); background: var(--warn); }
   .hint { display: inline-grid; place-items: center; width: var(--badge-sm); height: var(--badge-sm); border-radius: 50%; border: 1px solid var(--sep); color: var(--hint); font-size: var(--t4); cursor: help; }
   .s-working .dot { background: var(--run); }
@@ -297,15 +297,15 @@
      hover (only where hover exists), a deeper tint while pressed, and a keyboard focus ring. ── */
   :is(.chat.link, .code-item.link, .host-head.toggle, .note.link, .note.toggle) { cursor: pointer; }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle, .note.link, .note.toggle) { transition: background-color .12s; }
-  :is(.chip, .tasks-btn, .read-btn, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go) { transition: filter .12s, background-color .12s; }
+  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go) { transition: filter .12s, background-color .12s; }
   @media (hover: hover) {
     :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):hover { background: var(--hover); }
     :is(.note.link, .note.toggle, .commit):hover { text-decoration: underline; }
-    :is(.chip, .tasks-btn, .read-btn, .range button, .seg button, .tabs [data-tab], .qrow-top .go):hover { filter: brightness(.95); }
+    :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .qrow-top .go):hover { filter: brightness(.95); }
     :is(.icon-btn, .cfg-edit button):hover { filter: brightness(1.1); }
   }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):active { background: var(--press); }
-  :is(.chip, .tasks-btn, .read-btn, .range button, .seg button, .tabs [data-tab], .icon-btn, .cfg-edit button):active { filter: brightness(.88); }
+  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .cfg-edit button):active { filter: brightness(.88); }
   :is(button, [role="button"], [role="link"], summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>

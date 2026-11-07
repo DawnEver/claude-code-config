@@ -121,26 +121,31 @@ function openTopic(s) {
   render();
 }
 
-/** The @ and unread badges of a session, as Telegram draws them on a chat: the count, or a dot when unread without one. */
-function badges(s, u) {
-  const out = [];
-  if (s.mention) { const at = el('span', 'badge at', '@'); at.title = tr('session.mention'); out.push(at); }
-  const n = unreadBadge(u.count);
-  if (n) { const b = el('span', 'badge', n); b.title = tr('session.unread'); out.push(b); }
-  else if (u.unread) { const b = el('span', 'badge dot-only'); b.title = tr('session.new'); b.setAttribute('aria-label', b.title); out.push(b); }
-  return out;
-}
+/** The @ badge: a mention waits for you. */
+const mentionBadge = (s) => {
+  if (!s.mention) return [];
+  const at = el('span', 'badge at', '@');
+  at.title = tr('session.mention');
+  return [at];
+};
 
-/** The row's read toggle (a tap, no long-press or right-click: it must work in the Mini App on a phone). */
-function readButton(s, unread, redraw) {
-  const btn = el('span', 'read-btn', tr(unread ? 'session.markRead' : 'session.markUnread'));
+/*
+ * The row's read state and its toggle in one circle, as Telegram draws a chat's badge: read, a quiet
+ * grey ring; unread, filled — with the count when the host counts posts, empty otherwise (marked
+ * unread by hand, or a new wait). A tap toggles (no long-press or right-click: it must work in the
+ * Mini App on a phone); the tooltip names the action.
+ */
+function readBadge(s, u, redraw) {
+  const n = unreadBadge(u.count);
+  const btn = el('span', `badge read ${u.unread ? 'on' : 'off'}`, n);
   btn.setAttribute('role', 'button');
   btn.setAttribute('tabindex', '0');
-  btn.title = btn.textContent;
+  btn.title = tr(u.unread ? 'session.markRead' : 'session.markUnread');
+  btn.setAttribute('aria-label', n ? `${tr('session.unread')}: ${n}. ${btn.title}` : btn.title);
   const toggle = (e) => {
     e.stopPropagation();
     e.preventDefault();
-    if (unread) markRead([s]); else markUnread(s);
+    if (u.unread) markRead([s]); else markUnread(s);
     tg?.HapticFeedback?.selectionChanged?.();
     redraw();
   };
@@ -232,7 +237,7 @@ function sessionRow(s, opts = {}) {
   else if (s.provider || s.seat) sub.append(document.createTextNode(` · ${s.provider ? providerName(s.provider) : s.seat}`));
   const open = tasksOpen.has(s.id) && tasks.length > 0;
   bottom.append(sub, ...(tasks.length ? [tasksButton(s, tasks.length, open, () => row.replaceWith(sessionRow(s, opts)))] : []),
-    readButton(s, u.unread, render), ...badges(s, u));
+    ...mentionBadge(s), readBadge(s, u, render));
   body.append(top, bottom);
   // What it waits for (the permission it asks, its question): the line to read before opening the Topic.
   if (s.waiting) { const w = el('div', 'waiting', s.waiting); w.title = s.waiting; body.append(w); }
