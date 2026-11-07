@@ -51,8 +51,6 @@ import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, b
 
 /** How long a request for the human may be handled at the machine before anyone is mentioned. */
 const ALERT_GRACE_MS = 30000;
-const PROGRESS_MIN_INTERVAL_MS = 3000;
-const PROGRESS_LINES = 12;
 const ECHO_TTL_MS = 10 * 60000;   // a Telegram inject that never echoes back is forgotten
 const TOPIC_GONE = /thread not found|TOPIC_DELETED|TOPIC_ID_INVALID/i;
 const TOPIC_CLOSED = /TOPIC_CLOSED/i;
@@ -180,7 +178,7 @@ export class Bridge {
     if (kind === 'superseded') return Promise.resolve(this.supersede(key, e.from));
     if (kind === 'name') return this.rename(key, e.name);
     if (kind === 'prompt') return this.prompt(key, e.text);
-    if (kind === 'progress') return this.progress(key, e.text);
+    if (kind === 'progress') return this.progress(key);
     if (kind === 'message') return this.notice(key, e.text);
     if (kind === 'final') return this.final(key, e.text, e.status);
     if (kind === 'notice') return this.notice(key, e.text, e.alert);
@@ -210,7 +208,7 @@ export class Bridge {
       const cached = cacheKey === null || this.deletingTopics.has(cacheKey) ? null : this.topics.get(cacheKey);
       // A Claude seat (scripts/shared/seats.mjs) names the login the session runs as; a provider, the API platform it spends instead.
       const s = { ...newSession({ key, cached, now: this.now() }), agent, id, chatId, name: sessionName(name),
-        project: ctx.project, branch: ctx.branch, repo: ctx.repo ?? null, cwd, seat, provider, chain: Promise.resolve(), progress: null, injected: [] };
+        project: ctx.project, branch: ctx.branch, repo: ctx.repo ?? null, cwd, seat, provider, chain: Promise.resolve(), injected: [] };
       s.titleOf = (suffix = '') => topicTitle({ name: s.name, machine: this.machine, project: ctx.project, branch: ctx.branch,
         agent: seat || provider ? `${agent}:${seat ?? provider}` : agent, suffix, projectInTitle: this.config.projects[ctx.project]?.projectInTitle });
       const base = s.base = s.title = s.titleOf();
@@ -629,35 +627,17 @@ export class Bridge {
     await this.#send(s, `> ${text}`, { fromHuman: true });
   }
 
-  /** One progress message per turn, edited in place and throttled. */
-  async progress(key, line) {
+  /** A progress line is activity and a status-card check, never a post (docs/bridge.md "Status card"). */
+  async progress(key) {
     const s = this.sessions.get(key);
     if (!s) return;
-    if (s.chatId === null) { this.#activity(s); return; }
-    if (this.hosts.get(s.agent)?.statusSnapshot) { this.#activity(s); return this.updateStatus(key); }
     this.#activity(s);
-    const p = s.progress ??= { lines: [], msgId: null, last: 0, timer: null };
-    p.lines = [...p.lines, line].slice(-PROGRESS_LINES);
-    const flush = () => this.#serial(s, async () => {
-      p.timer = null;
-      p.last = this.now();
-      const text = `working…\n${p.lines.join('\n')}`;
-      if (p.msgId) {
-        try { await this.telegram.editMessageText(s.chatId, p.msgId, text); } catch (e) { this.log(`edit: ${e.message}`); }
-      } else {
-        const [m] = await this.#postNow(s, text);
-        p.msgId = m?.message_id ?? null;
-      }
-    });
-    if (this.now() - p.last >= PROGRESS_MIN_INTERVAL_MS) return flush();
-    if (!p.timer) { p.timer = setTimeout(flush, PROGRESS_MIN_INTERVAL_MS); p.timer.unref?.(); }
+    if (s.chatId !== null) return this.updateStatus(key);
   }
 
   async final(key, text, status) {
     const s = this.sessions.get(key);
     if (!s) return;
-    if (s.progress?.timer) clearTimeout(s.progress.timer);
-    s.progress = null;
     const body = text?.trim() ? text : `(turn ${status ?? 'completed'}, no message)`;
     const line = status && status !== 'completed' ? `[${status}] ${body}` : body;
     if (status !== 'failed') return void await this.#send(s, line, { rich: true });

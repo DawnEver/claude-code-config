@@ -635,18 +635,17 @@ test('notices post as plain messages; only those asking for the human alert', as
   assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [null, null, [ALICE]]);
 });
 
-test('progress lines collapse into one edited message; final is a new message', async () => {
+test('progress lines post nothing; final is a new message', async () => {
   const r = make();
   await live(r, 'codex', 't1');
+  const before = r.telegram.sent.length;
   r.at(10000); r.hosts.codex.emit('progress', { id: 't1', text: '$ ls' });
-  await until(() => r.telegram.sent.length === 2);
   r.at(20000); r.hosts.codex.emit('progress', { id: 't1', text: '$ npm test' });
-  await until(() => r.telegram.edits.length === 1);
-  assert.match(r.telegram.edits[0].text, /\$ ls\n\$ npm test/);
   r.hosts.codex.emit('final', { id: 't1', text: 'All green', status: 'completed' });
   r.hosts.codex.emit('final', { id: 't1', text: '', status: 'interrupted' });
-  await until(() => r.telegram.sent.length === 4);
-  assert.deepEqual(texts(r.telegram).slice(2), ['All green', '[interrupted] (turn interrupted, no message)']);
+  await until(() => r.telegram.sent.length === before + 2);
+  assert.equal(r.telegram.edits.length, 0);
+  assert.deepEqual(texts(r.telegram).slice(before), ['All green', '[interrupted] (turn interrupted, no message)']);
 });
 
 test('Telegram drift: a Topic closed by hand is reopened, a deleted one recreated, then the post is resent', async () => {
