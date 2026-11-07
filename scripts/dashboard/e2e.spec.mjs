@@ -107,6 +107,7 @@ async function open(device, { unread = [], scroll = null, theme = null } = {}) {
     /** Wait for a smooth scroll to come to rest. */
     still: async () => {
       let last = -1;
+      await page.waitForTimeout(150);
       for (let i = 0; i < 40; i++) { const y = await h.y(); if (y === last) return y; last = y; await page.waitForTimeout(100); }
       return last;
     },
@@ -144,7 +145,7 @@ for (const [name, device] of [['phone', PHONE], ['desktop', DESKTOP]]) {
     for (const [how, go] of ways) {
       const was = await h.y();
       await go();
-      const now = await h.y();
+      const now = await h.still();
       assert.notEqual(now, was, `${how} moved the page`);
       await h.poll();
       near(await h.y(), now, `${how}, after a poll`);
@@ -177,7 +178,7 @@ test('a poll while scrolling keeps the position (phone, touch)', async () => {
   const h = await open(PHONE);
   for (let i = 0; i < 4; i++) {
     await h.swipe(-250);
-    const y = await h.y();
+    const y = await h.still();
     await h.poll();
     near(await h.y(), y, `swipe ${i}`);
   }
@@ -216,7 +217,7 @@ test('unread badge repeated taps cycle through every unread session in page orde
   assert.deepEqual(got, [...want, want[0]]);
   // A scroll after the jump stays.
   await h.wheel(-300);
-  const y = await h.y();
+  const y = await h.still();
   await h.poll();
   near(await h.y(), y, 'wheel after a jump, then a poll');
   await h.close();
