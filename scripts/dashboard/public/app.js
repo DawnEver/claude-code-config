@@ -1135,10 +1135,17 @@ function renderTabs() {
 
 // Each tab's scroll position, kept across tab switches and reopening the app. Content arrives
 // after load (the snapshot, the usage report), so a restore is retried on each render until it
-// lands or the reader scrolls by hand.
+// lands or the reader scrolls by any means: wheel, touch, keys, the scrollbar, a jump.
 const scrollAt = (() => { try { return JSON.parse(store.get('dashboard.scroll')) ?? {}; } catch { return {}; } })();
 let restoring = tab;
 let restoreTries = 0;
+let restoreFrom = window.scrollY;   // where the page stood when the restore was armed: any other position is the reader's
+/** Arm the restore of the current tab's saved position (a tab switch, the first load). */
+function armRestore() {
+  restoring = tab;
+  restoreTries = 0;
+  restoreFrom = window.scrollY;
+}
 /**
  * Back to the tab's saved position once the page is tall enough to hold it, then never again
  * (a redraw keeps the reader's own position). Content that never grows that tall stops the
@@ -1155,11 +1162,14 @@ function restoreScroll() {
 }
 let scrollSave = null;
 window.addEventListener('scroll', () => {
+  // A scroll the restore did not make (it moves the page only as it disarms) is the reader's: it wins.
+  if (restoring && Math.abs(window.scrollY - restoreFrom) > 1) restoring = null;
   if (restoring) return;
   clearTimeout(scrollSave);
   scrollSave = setTimeout(() => { scrollAt[tab] = Math.round(window.scrollY); store.set('dashboard.scroll', JSON.stringify(scrollAt)); }, 200);
 }, { passive: true });
-for (const ev of ['wheel', 'touchstart', 'keydown']) window.addEventListener(ev, () => { restoring = null; }, { passive: true });
+// Intent before any scroll lands (a wheel at the page's end moves nothing, yet the reader chose where to be).
+for (const ev of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(ev, () => { restoring = null; }, { passive: true });
 
 /*
  * The Sessions tab's unread badge: a tap jumps to the first session unread here, the next tap to the
@@ -1201,8 +1211,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     scrollAt[tab] = Math.round(window.scrollY);
     store.set('dashboard.scroll', JSON.stringify(scrollAt));
     tab = b.dataset.tab;
-    restoring = tab;
-    restoreTries = 0;
+    armRestore();
     if (tab === 'usage') { renderUsage(); fetchUsage(); }
     configShown = null;
     configDirty = false;
