@@ -564,6 +564,17 @@ export function unreadState(s, rec) {
 /** How many of `sessions` are unread against `seen`. */
 export const unreadCount = (sessions, seen) => sessions.filter((s) => unreadState(s, seen[s.id]).unread).length;
 /**
+ * Where the Sessions tab's unread badge jumps: `order` is the session ids as the page shows them,
+ * `unread` the ids unread here. The first unread one; tapped again (`last` = the one it jumped to),
+ * the next unread after it, wrapping round. Null when nothing is unread.
+ */
+export function nextUnread(order, unread, last = null) {
+  const list = order.filter((id) => unread.has(id));
+  if (!list.length) return null;
+  const at = last === null ? -1 : order.indexOf(last);
+  return (at < 0 ? null : list.find((id) => order.indexOf(id) > at)) ?? list[0];
+}
+/**
  * `seen` brought up to `sessions`: a session new to this device is read as it is (no flood on a
  * first load), one gone is dropped, a malformed record is replaced, and a wait that ended is
  * forgotten (so the next wait is new even if it reads the same).

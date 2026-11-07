@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -208,6 +208,7 @@ function sessionRow(s, opts = {}) {
   const { withHost = false, inProject = false } = opts;
   const status = displayStatus(s);
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
+  row.dataset.session = s.id;   // the unread badge finds its target by this
   // The platform the session spends: a provider's own mark (ccds, cods), else the agent's maker.
   const brand = LOGOS[s.provider] ? s.provider : s.agent === 'claude' ? 'claude' : 'openai';
   const avatar = el('span', `avatar ${s.agent} b-${brand}`);
@@ -1154,6 +1155,37 @@ window.addEventListener('scroll', () => {
   scrollSave = setTimeout(() => { scrollAt[tab] = Math.round(window.scrollY); store.set('dashboard.scroll', JSON.stringify(scrollAt)); }, 200);
 }, { passive: true });
 for (const ev of ['wheel', 'touchstart', 'keydown']) window.addEventListener(ev, () => { restoring = null; }, { passive: true });
+
+/*
+ * The Sessions tab's unread badge: a tap jumps to the first session unread here, the next tap to the
+ * next one (view.mjs nextUnread). It opens the Sessions tab, clears a search, and when filters hide
+ * every unread session it clears them too: the badge counts all sessions.
+ */
+let unreadJump = null;
+$('n-unread').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!snapshot) return;
+  const unread = new Set(sessionsOf(snapshot).filter((s) => unreadState(s, seen[s.id]).unread).map((s) => s.id));
+  if (!unread.size) return;
+  if (query.trim()) { query = ''; $('search').value = ''; }
+  if (tab !== 'sessions') showTab('sessions'); else render();
+  const rows = () => [...$('hosts').querySelectorAll('[data-session]')];
+  let shown = rows();
+  if (!shown.some((r) => unread.has(r.dataset.session))) {
+    Object.assign(filters, { group: 'all', host: '', agent: '', project: '' });
+    render();
+    shown = rows();
+  }
+  const id = nextUnread(shown.map((r) => r.dataset.session), unread, unreadJump);
+  const row = shown.find((r) => r.dataset.session === id);
+  if (!row) return;
+  unreadJump = id;
+  restoring = null;   // a saved scroll position must not pull the page back
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.classList.add('jumped');
+  setTimeout(() => row.classList.remove('jumped'), 1500);
+  tg?.HapticFeedback?.selectionChanged?.();
+});
 
 /** Switch to a tab as its button does (a link inside a view, e.g. Code › Config). */
 const showTab = (name) => document.querySelector(`#tabs [data-tab="${name}"]`)?.click();

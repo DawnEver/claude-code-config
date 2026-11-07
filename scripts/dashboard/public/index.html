@@ -81,6 +81,8 @@
   :where(.list, .found-list, .qrows, .cfg, .usage-list, .facts, .usage-totals, .cards) { margin-bottom: var(--gap-block); }
   :where(.chat, .found, .usage-list .u, .qrow, .cfg-row, .summary, .banner, .facts) { padding: var(--row-pad); }
   :where(.chat, .found, .usage-list .u, .code-item) { width: 100%; border: 0; background: none; text-align: left; }
+  .chat { transition: background-color .4s; } .chat.jumped { background: var(--press); }
+  .tab-unread { cursor: pointer; }
   :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) + :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) { border-top: 1px solid var(--sep); }
 
   /* ── Primitive: pill — every small control. Variants: chip (larger), filled action, on a track. ── */

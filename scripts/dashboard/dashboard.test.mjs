@@ -1034,3 +1034,15 @@ test('mark unread and mark read: a manual mark survives everything but reading',
   assert.equal(unreadCount(rows, { a: m, b: { p: 0, w: null } }), 2);
   assert.equal(unreadCount(rows, all), 0, 'mark all read clears counts, waits and manual marks');
 });
+
+test('the unread badge jumps to the first unread session, then the next, wrapping round', async () => {
+  const { nextUnread } = await import('./public/view.mjs');
+  const order = ['a', 'b', 'c', 'd'];
+  const unread = new Set(['b', 'd']);
+  assert.equal(nextUnread(order, unread), 'b', 'first unread in page order');
+  assert.equal(nextUnread(order, unread, 'b'), 'd', 'tapped again: the next');
+  assert.equal(nextUnread(order, unread, 'd'), 'b', 'wraps round');
+  assert.equal(nextUnread(order, unread, 'gone'), 'b', 'the last target vanished: start over');
+  assert.equal(nextUnread(order, new Set(['b']), 'b'), 'b', 'only one: stays on it');
+  assert.equal(nextUnread(order, new Set()), null, 'nothing unread');
+});
