@@ -971,3 +971,24 @@ test('account: a session names the account it spends, as the Quota tab names it,
   assert.equal(sessionAccountLabel({ agent: 'claude' }, undefined), null);
   assert.ok(searchAll(m, 'bob', { now: NOW }).some((r) => r.kind === 'session' && r.session.id === codex.id), 'a session by its account');
 });
+
+test('unread sessions: a new answer or a new wait since seen; first sight and tool activity are not', async () => {
+  const { isUnread, seenMark, unreadCount, syncSeen } = await import('./public/view.mjs');
+  const s = { id: 'a', status: 'working', posted: 2 };
+  assert.equal(isUnread(s, undefined), false, 'never seen here: not unread');
+  const mark = seenMark(s);
+  assert.equal(isUnread({ ...s, lastActivityAt: 'x', tasks: [{}] }, mark), false, 'tool activity is not unread');
+  assert.equal(isUnread({ ...s, status: 'idle', posted: 3 }, mark), true, 'a new answer');
+  assert.equal(isUnread({ ...s, status: 'needs_approval', waiting: 'Bash' }, mark), true, 'a new wait');
+  const waiting = { ...s, status: 'needs_input', waiting: 'Q?' };
+  assert.equal(isUnread(waiting, seenMark(waiting)), false, 'a wait already seen');
+  assert.equal(isUnread({ ...waiting, waiting: 'Q2?' }, seenMark(waiting)), true, 'another question');
+  // sync: new sessions marked as they are, gone ones pruned, an ended wait forgotten
+  const seen = syncSeen([waiting, { id: 'b', posted: 5 }], { a: seenMark(waiting), gone: { p: 1, w: null } });
+  assert.deepEqual(Object.keys(seen).sort(), ['a', 'b']);
+  assert.equal(unreadCount([waiting, { id: 'b', posted: 5 }], seen), 0);
+  const after = syncSeen([{ ...s }], seen);
+  assert.equal(after.a.w, null, 'the wait ended');
+  assert.equal(isUnread(waiting, after.a), true, 'the same question asked again is new');
+  assert.equal(unreadCount([{ ...s, posted: 9 }, { id: 'b', posted: 6 }], { ...after, b: seen.b }), 2);
+});

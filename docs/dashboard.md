@@ -148,6 +148,11 @@ no API, no authentication.
   the dashboard stores that session's `posted` in localStorage; the badge is `unread` less what was
   already there then, so a Topic read without replying clears here. Tapping opens the latest post; Config → Display → Sessions can switch to the first unread one (the
   latest stands in once this device has opened the Topic, since the first post still unread is then unknown).
+- **Unread sessions** (a dot on the row, a count on the Sessions tab, a *Mark all read* chip): since
+  this device last saw the session, its Topic got a new agent post (`posted` grew: a turn's answer) or it
+  newly waits for approval or input (`status` + `waiting`); tool activity alone is not. Opening its Topic
+  or expanding its tasks marks it seen. Per device only (localStorage `dashboard.sessionSeen`, pure logic
+  `isUnread` / `syncSeen` in `view.mjs`): a session first seen here starts read, gone ones are pruned.
 - **Chat list** (the one session renderer, also under an account's "In use by"): sessions drawn as Telegram lists chats: agent avatar with
   the status dot, name and time, status and where it runs, then the unread count and `@`. No message
   preview: it would put conversation content on Cloudflare. `lastActivityAt` is the bridge's last

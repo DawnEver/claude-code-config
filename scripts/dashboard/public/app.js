@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, isUnread, seenMark, unreadCount, syncSeen } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -63,6 +63,14 @@ const timeFormat = () => ({ clock: pref.clock, date: pref.date, lang });
 let deployed = null;   // the live version from /api/health: {commit, id, at}
 // Per session, its `posted` count when this device last opened its Topic: what came before is read here.
 const topicSeen = (() => { try { return JSON.parse(store.get('dashboard.topicSeen')) ?? {}; } catch { return {}; } })();
+// Per session, its mark when this device last saw it (view.mjs seenMark): what is new since is unread.
+let sessionSeen = (() => { try { return JSON.parse(store.get('dashboard.sessionSeen')) ?? {}; } catch { return {}; } })();
+const saveSeen = () => store.set('dashboard.sessionSeen', JSON.stringify(sessionSeen));
+/** Mark sessions seen as they are now (one opened or expanded, or all). */
+function markSeen(list) {
+  for (const s of list) sessionSeen[s.id] = seenMark(s);
+  saveSeen();
+}
 // Usage (the store's report, docs/usage.md): fetched when its tab opens and every few minutes while open.
 const USAGE_RANGES = [1, 7, 30, 90, 365];   // 1: the last 24 h, by hour
 const USAGE_EVERY_MS = 5 * 60000;
@@ -107,6 +115,7 @@ function openTopic(s) {
   const live = new Set(sessionsOf(snapshot).map((x) => x.id));
   for (const id of Object.keys(topicSeen)) if (!live.has(id)) delete topicSeen[id];
   topicSeen[s.id] = s.posted ?? 0;
+  markSeen([s]);
   store.set('dashboard.topicSeen', JSON.stringify(topicSeen));
   if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
   render();
@@ -161,7 +170,7 @@ function tasksButton(s, running, open, redraw) {
   const toggle = (e) => {
     e.stopPropagation();
     e.preventDefault();
-    if (!tasksOpen.delete(s.id)) tasksOpen.add(s.id);
+    if (!tasksOpen.delete(s.id)) { tasksOpen.add(s.id); markSeen([s]); }
     tg?.HapticFeedback?.selectionChanged?.();
     redraw();
   };
@@ -188,6 +197,8 @@ function sessionRow(s, opts = {}) {
   const body = el('div', 'main');
   const top = el('div', 'chat-top');
   const time = el('span', `chat-time${unreadHere(s, topicSeen[s.id]) ? ' fresh' : ''}`, chatTime(s.lastActivityAt, Date.now(), timeFormat()));
+  const fresh = isUnread(s, sessionSeen[s.id]);
+  if (fresh) { const d = el('span', 'unread-dot'); d.title = tr('session.new'); d.setAttribute('aria-label', d.title); top.append(d); }
   top.append(el('span', 'title', sessionLabel(s, lang)), time);
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
@@ -542,6 +553,12 @@ function renderChips() {
     chip.append(el('b', null, String(counts[key])));
     chip.addEventListener('click', () => { filters.group = key; tg?.HapticFeedback?.selectionChanged?.(); render(); });
     nav.append(chip);
+  }
+  const fresh = sessionsOf(snapshot).filter((s) => isUnread(s, sessionSeen[s.id]));
+  if (fresh.length) {
+    const all = el('button', 'chip mark-read', tr('session.markAllRead'));
+    all.addEventListener('click', () => { markSeen(fresh); tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    nav.append(all);
   }
 }
 
@@ -1077,6 +1094,10 @@ function renderTabs() {
   const n = tabs(snapshot, Date.now(), [], accounts);
   $('tabs').hidden = false;   // always: Config holds this device's settings, whatever data there is
   $('n-sessions').textContent = String(n.sessions);
+  const fresh = unreadCount(sessionsOf(snapshot), sessionSeen);
+  $('n-unread').hidden = !fresh;
+  $('n-unread').textContent = fresh ? String(fresh) : '';
+  $('n-unread').title = tr('session.unreadSessions', { n: fresh });
   $('n-quota').textContent = String(n.quota);
   $('quota-dot').hidden = !n.alert;
   const code = codeView(snapshot, codeDays, Date.now(), codeRepos);
@@ -1167,6 +1188,9 @@ function renderSearch() {
 function render() {
   if (!snapshot) return;
   accounts = accountIndex(snapshot);
+  // Sessions new to this device count as seen; gone ones are forgotten.
+  const synced = syncSeen(sessionsOf(snapshot), sessionSeen);
+  if (JSON.stringify(synced) !== JSON.stringify(sessionSeen)) { sessionSeen = synced; saveSeen(); }
   hostList = hostsView(snapshot, Date.now(), accounts);   // one account index per render, shared by every view
   $('summary').hidden = true;   // only a sign-in or access problem stands there
   $('updated').textContent = snapshot.mock ? tr('app.exampleData') : lastOk && snapshot.demo ? tr('app.demoData', { ago: agoText(lastOk) })

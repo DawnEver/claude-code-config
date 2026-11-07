@@ -134,6 +134,7 @@
   .badge { flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); color: var(--accent-fg);
     font: 600 var(--t3)/22px system-ui, sans-serif; text-align: center; }
   .badge.at { padding: 0; width: 22px; }
+  .unread-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); align-self: center; }
 
   /* Machine load under each host header, Sessions and Quota (Config: this device). */
   .res { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; margin: 0 4px 8px; font-size: var(--t3); }
@@ -238,6 +239,8 @@
   .facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; padding: 10px 12px; margin: 0 0 14px; font-size: var(--t3); background: var(--card); border-radius: 14px; }
   .facts dt { color: var(--hint); } .facts dd { margin: 0; }
   .section-h { font-size: var(--t2); text-transform: uppercase; letter-spacing: .04em; color: var(--hint); margin: 4px 4px 8px; }
+  .tab-unread { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--accent-fg);
+    font: 600 11px/16px system-ui, sans-serif; font-style: normal; text-align: center; }
   .tab-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
   .warn { color: var(--warn); font-size: var(--t2); font-weight: 600; margin-top: 6px; }
   .v-exhausted .warn { color: var(--bad); }
@@ -300,7 +303,7 @@
   <header class="top"><h1><span id="title">Agents Dashboard</span></h1><span class="muted"><span id="updated"></span> <button id="force-update" class="icon-btn" type="button">↻</button></span></header>
   <section id="summary" class="summary"><div class="summary-head"></div></section>
   <nav id="tabs" class="tabs" role="tablist" hidden>
-    <button role="tab" data-tab="sessions"><span class="label"></span> <b id="n-sessions"></b></button>
+    <button role="tab" data-tab="sessions"><span class="label"></span> <b id="n-sessions"></b><i class="tab-unread" id="n-unread" hidden></i></button>
     <button role="tab" data-tab="quota"><span class="label"></span> <b id="n-quota"></b><i class="tab-dot" id="quota-dot" hidden></i></button>
     <button role="tab" data-tab="usage"><span class="label"></span></button>
     <button role="tab" data-tab="code"><span class="label"></span> <b id="n-code"></b><i class="tab-dot" id="code-dot" hidden></i></button>

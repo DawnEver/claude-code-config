@@ -539,3 +539,32 @@ export function searchAll(snapshot, query, { now = Date.now(), lang = 'en', max 
   }
   return out.slice(0, max);
 }
+
+/*
+ * Unread sessions, per device. A session is unread when, since this device last saw it, its Topic
+ * got a new post from the agent (`posted` grows: a turn's answer) or it newly asks for approval or
+ * input. Tool activity alone is not. `seen` maps a session id to the mark taken when it was seen.
+ */
+const attentionKey = (s) => (s.status === 'needs_approval' || s.status === 'needs_input' ? `${s.status}:${s.waiting ?? ''}` : null);
+/** The mark of a session as it is now: what "seen" records. */
+export const seenMark = (s) => ({ p: s.posted ?? 0, w: attentionKey(s) });
+/** Whether `s` has something new since `mark`; a session with no mark (never seen here) is not unread. */
+export function isUnread(s, mark) {
+  if (!mark) return false;
+  const w = attentionKey(s);
+  return (s.posted ?? 0) > (mark.p ?? 0) || (w !== null && w !== mark.w);
+}
+/** How many of `sessions` are unread against `seen`. */
+export const unreadCount = (sessions, seen) => sessions.filter((s) => isUnread(s, seen[s.id])).length;
+/**
+ * `seen` brought up to `sessions`: a session new to this device is marked seen as it is, one gone is
+ * dropped, and a wait that ended is forgotten (so the next wait is new even if it reads the same).
+ */
+export function syncSeen(sessions, seen) {
+  const out = {};
+  for (const s of sessions) {
+    const m = seen[s.id];
+    out[s.id] = !m ? seenMark(s) : attentionKey(s) === null && m.w !== null ? { ...m, w: null } : m;
+  }
+  return out;
+}
