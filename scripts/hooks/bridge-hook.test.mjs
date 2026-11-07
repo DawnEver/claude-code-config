@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { turnTexts, backgroundTasks, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
+import { turnTexts, backgroundTasks, parseJsonl, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 
 const j = (o) => JSON.stringify(o);
@@ -208,4 +208,16 @@ test('turnTexts: a message from Telegram starts a turn — by the channel or thr
   }
   assert.deepEqual(turnTexts([JSON.stringify({ type: 'user', message: { content: 'A?' } }), say('AAAA'), otherMeta, say('C')].join('\n')), ['C'],
     'any Stop-hook continuation: the Stop before it already mirrored AAAA');
+});
+
+test('turnTexts and backgroundTasks take entries parsed once, as Stop reads a large transcript once', () => {
+  const jsonl = [
+    JSON.stringify({ type: 'user', message: { content: 'q' } }),
+    'partial {',
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'a' }] } }),
+  ].join('\n');
+  const entries = parseJsonl(jsonl);
+  assert.equal(entries.length, 2, 'a partial line is skipped');
+  assert.deepEqual(turnTexts(entries), turnTexts(jsonl));
+  assert.deepEqual(backgroundTasks(entries), backgroundTasks(jsonl));
 });

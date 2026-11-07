@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   looksLikeBrokenGuard, findAbsolutePaths, compareKeySets, parseHookCommands,
   checkPayloadPaths, checkPayloadShape, checkHooks, checkHygiene, runChecks, linkedTo,
@@ -12,6 +13,7 @@ import {
   checkCodexShellEnv,
   checkRetiredCodexRootKey,
   scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost, checkDashboardHost, checkChannelServer,
+  cachedContentChecks, treeFingerprint,
 } from './doctor.js';
 
 test('doctor reports a retired root Codex flag read-only and ignores nested user keys', t => {
@@ -551,4 +553,37 @@ test('checkLinks: unavailable cross-volume repo mirrors are not failures, detach
   const repo = checkLinks({ repoRoot, syncDir, sameVolume: () => false }).filter(f => f.title.startsWith('repo:'));
   assert.deepEqual(repo.map(f => f.id), ['link-detached']);
   assert.match(repo[0].title, /trusted-origins/);
+});
+
+// ── the SessionStart hook's content cache ──
+
+test('cachedContentChecks reuses findings while the tree fingerprint holds', () => {
+  const cacheFile = path.join(tmp(), 'doctor-cache.json');
+  let runs = 0;
+  const run = () => { runs++; return [{ level: 'FAIL', id: 'x', title: 't' }]; };
+  const a = cachedContentChecks({ cacheFile, fingerprint: 'k1', run });
+  const b = cachedContentChecks({ cacheFile, fingerprint: 'k1', run });
+  assert.equal(runs, 1);
+  assert.deepEqual(b, a);
+  cachedContentChecks({ cacheFile, fingerprint: 'k2', run });
+  assert.equal(runs, 2, 'a changed tree reruns the scans');
+  cachedContentChecks({ cacheFile, fingerprint: null, run });
+  cachedContentChecks({ cacheFile, fingerprint: null, run });
+  assert.equal(runs, 4, 'no fingerprint (not a git tree) never caches');
+});
+
+test('treeFingerprint changes when a dirty file is edited again', () => {
+  const root = tmp();
+  const git = (...a) => execFileSync('git', a, { cwd: root, stdio: 'ignore' });
+  git('init', '-q'); git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'i');
+  const clean = treeFingerprint(root);
+  assert.equal(typeof clean, 'string');
+  assert.equal(treeFingerprint(root), clean, 'stable while nothing changes');
+  const f = path.join(root, 'a.js');
+  fs.writeFileSync(f, 'one');
+  const dirty = treeFingerprint(root);
+  assert.notEqual(dirty, clean);
+  fs.writeFileSync(f, 'two-longer');
+  assert.notEqual(treeFingerprint(root), dirty, 'same status line, new content');
+  assert.equal(treeFingerprint(path.join(root, 'nope')), null);
 });

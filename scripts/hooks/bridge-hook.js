@@ -65,13 +65,21 @@ const isRealUser = (e) => {
   return Array.isArray(c) && c.some((b) => b?.type === 'text');
 };
 
-/** Assistant text blocks after the last real user message of a JSONL transcript. */
-export function turnTexts(jsonl) {
+/** The entries of a JSONL transcript; a partial line is skipped. */
+export function parseJsonl(jsonl) {
   const entries = [];
   for (const l of String(jsonl).split('\n')) {
     if (!l.trim()) continue;
     try { entries.push(JSON.parse(l)); } catch { /* partial line */ }
   }
+  return entries;
+}
+
+const entriesOf = (t) => (Array.isArray(t) ? t : parseJsonl(t));
+
+/** Assistant text blocks after the last real user message of a transcript (JSONL, or its entries). */
+export function turnTexts(transcript) {
+  const entries = entriesOf(transcript);
   let start = 0;
   for (let i = entries.length - 1; i >= 0; i--) if (isRealUser(entries[i])) { start = i + 1; break; }
   const texts = [];
@@ -111,13 +119,10 @@ function taskTexts(e) {
  * do not outlive their claude process, so a start older than `maxAgeMs` (a resumed session's
  * old shells) no longer counts.
  */
-export function backgroundTasks(jsonl, { now = Date.now(), maxAgeMs = 24 * 3600000 } = {}) {
+export function backgroundTasks(transcript, { now = Date.now(), maxAgeMs = 24 * 3600000 } = {}) {
   const calls = new Map();   // tool call id -> {kind, label, at} of a task tool's call
   const open = new Map();    // task id -> its task, keyed so its end finds it
-  for (const l of String(jsonl).split('\n')) {
-    if (!l.trim()) continue;
-    let e;
-    try { e = JSON.parse(l); } catch { continue; }
+  for (const e of entriesOf(transcript)) {
     const at = Date.parse(e.timestamp);
     if (e.type === 'assistant' && Array.isArray(e.message?.content)) {
       for (const b of e.message.content) {
@@ -199,12 +204,13 @@ export function mirrorFor(payload) {
   }
   if (payload?.hook_event_name === 'Stop') {
     // The transcript may lag the last message; last_assistant_message never does.
-    let texts = [];
-    if (payload.transcript_path) try { texts = turnTexts(fs.readFileSync(payload.transcript_path, 'utf8')); } catch { /* none */ }
+    // Read and parsed once: a long session's transcript runs to tens of MB, and Stop is sync.
+    let entries = [];
+    if (payload.transcript_path) try { entries = parseJsonl(fs.readFileSync(payload.transcript_path, 'utf8')); } catch { /* none */ }
+    const texts = turnTexts(entries);
     const last = typeof payload.last_assistant_message === 'string' ? payload.last_assistant_message.trim() : '';
     if (last && texts.at(-1) !== last) texts.push(last);
-    let background = [];
-    if (payload.transcript_path) try { background = backgroundTasks(fs.readFileSync(payload.transcript_path, 'utf8')); } catch { /* none */ }
+    const background = backgroundTasks(entries);
     // A turn with no text still ends: idle, and its background tasks (none ends every other).
     return { ...base, kind: 'final', texts, background };
   }

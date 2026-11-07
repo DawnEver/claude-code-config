@@ -570,10 +570,67 @@ export function checkChannelServer({ bridged = Boolean(readBridgeConfig().botTok
   return out;
 }
 
-export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME } = {}) {
+// The three scans that read every source file cost most of the run, and their input — the
+// working tree — rarely changes between sessions. The SessionStart hook keys their findings
+// on the tree's fingerprint and rescans only when it moved; `npm run doctor` always scans.
+const DOCTOR_FILE = fileURLToPath(import.meta.url);
+export const CONTENT_CACHE_FILE = path.join(HOME, '.claude', 'doctor-cache.json');
+
+/**
+ * What the content scans read, as one string: HEAD, every changed or untracked path with
+ * its size and mtime (a dirty file edited again keeps its status line), this checker's
+ * own source and the private denylist. Null when `root` is not a git work tree.
+ */
+export function treeFingerprint(root, { extra = [] } = {}) {
+  let out;
+  try {
+    out = execFileSync('git', ['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all'],
+      { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch { return null; }
+  const stat = (p) => { try { const s = fs.statSync(p); return `${s.size}:${s.mtimeMs}`; } catch { return '-'; } };
+  const tokens = out.split('\0');
+  const paths = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    const skip = { 1: 8, 2: 9, u: 10, '?': 1 }[t[0]];
+    if (skip === undefined || t[1] !== ' ') continue;
+    paths.push(t.split(' ').slice(skip).join(' '));
+    if (t[0] === '2') i++;                                   // a rename's origin path follows
+  }
+  const h = createHash('sha256').update(out);
+  for (const p of [...paths.map((r) => path.join(root, r)), ...extra]) h.update(`|${p}|${stat(p)}`);
+  return h.digest('hex');
+}
+
+/** `run()`'s findings, reused from `cacheFile` while `fingerprint` matches; null never caches. */
+export function cachedContentChecks({ cacheFile = CONTENT_CACHE_FILE, fingerprint, run }) {
+  if (fingerprint) {
+    try {
+      const c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      if (c?.key === fingerprint && Array.isArray(c.findings)) return c.findings;
+    } catch { /* none yet */ }
+  }
+  const findings = run();
+  if (fingerprint) try { fs.writeFileSync(cacheFile, JSON.stringify({ key: fingerprint, findings })); } catch { /* best effort */ }
+  return findings;
+}
+
+export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME, contentCache = null } = {}) {
   const settingsPath = path.join(syncDir, 'claude_settings.json');
   let settings = null;
   try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { /* reported by checkPayloadShape */ }
+  const markersFile = path.join(home, '.claude', 'private-markers');
+  const contentChecks = () => {
+    const files = trackedFiles(repoRoot);
+    return [
+        ...checkRuleSymbols(repoRoot, files),
+      ...checkPublicHygiene({ root: repoRoot, files, markersFile, requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
+    ];
+  };
+  const content = contentCache
+    ? cachedContentChecks({ cacheFile: contentCache, run: contentChecks,
+      fingerprint: treeFingerprint(repoRoot, { extra: [DOCTOR_FILE, markersFile] }) })
+    : contentChecks();
 
   return [
     ...checkHooks(settings, home),
@@ -586,9 +643,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkNativeCodexHooks({ codexHome: home === HOME ? codexDir : path.join(home, '.codex'), scriptsDir: path.join(home, '.claude', 'scripts') }),
     ...checkProtectedCodexCaches({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
     ...checkPluginCacheLock({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
-    ...checkRuleSymbols(repoRoot),
-    ...checkPublicHygiene({ root: repoRoot, markersFile: path.join(home, '.claude', 'private-markers'),
-      requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
+    ...content,
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
     ...checkBridgeRevision({ runtimeFile: path.join(home, '.claude', 'bridge', 'runtime.json'), repoRoot }),
     ...checkBridgeHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
@@ -644,7 +699,8 @@ const MARK = { FAIL: 'FAIL ', WARN: 'WARN ', OK: 'OK   ' };
 function main() {
   const args = process.argv.slice(2);
   // --public-hygiene: the pre-commit gate (.githooks/pre-commit) — that check alone.
-  const findings = args.includes('--public-hygiene') ? checkPublicHygiene() : runChecks();
+  const findings = args.includes('--public-hygiene') ? checkPublicHygiene()
+    : runChecks({ contentCache: args.includes('--hook') ? CONTENT_CACHE_FILE : null });
   const failed = findings.filter((f) => f.level === 'FAIL');
   const warned = findings.filter((f) => f.level === 'WARN');
 

@@ -14,7 +14,8 @@
   actually happened here (a hook wired but silently dead, payload/template shape drift,
   absolute machine paths in shared files, orphaned plugin installs, NUL bytes making a
   file binary to git). Exits 1 on failure; also runs at SessionStart via `--hook`,
-  which reports failures only and is silent when healthy. Add a check here whenever a
+  which reports failures only and is silent when healthy, and reuses the whole-tree
+  content scans (`~/.claude/doctor-cache.json`) while the work tree's fingerprint is unchanged. Add a check here whenever a
   new silent-divergence incident is found — that is the point of the file.
 - Public repo: doctor's `public-hygiene` check FAILs on personal data in any tracked file
   (home paths, real emails, Telegram chat ids, org cloud folders, plus the machine-local
