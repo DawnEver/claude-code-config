@@ -386,3 +386,12 @@ test('integration: a failed dependency install leaves the tree where it was', as
   } finally { Object.assign(process.env, saved); }
   assert.equal(git(lab.b, 'rev-parse', 'HEAD'), before);
 });
+
+test('integration: a launch fetches both repos at once, then merges what each fetched', async () => {
+  const { fetchRepo, pullRepo } = await import('./sync-hook.js');
+  const { a, b, root } = fixture();
+  git(a, 'commit', '--allow-empty', '--quiet', '-m', 'next'); git(a, 'push', '--quiet');
+  assert.deepEqual(await Promise.all([fetchRepo(b), fetchRepo(path.join(root, 'nowhere'))]), [true, false]);
+  assert.equal(await pullRepo(b, { fetched: false }), null, 'a failed fetch is offline: nothing to do');
+  assert.equal((await pullRepo(b, { fetched: true })).pulled, 1, 'the earlier fetch is what is merged');
+});

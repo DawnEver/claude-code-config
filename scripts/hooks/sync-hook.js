@@ -33,7 +33,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFileSync, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
 
@@ -178,7 +178,7 @@ export function formatMergeFailure(err) {
  * to report instead of merging. `afterPull(range)` runs only when the
  * tree moved; its error string (or throw) is reported as `repairError`.
  */
-export async function pullRepo(repo, { beforeMerge = null, afterPull = null } = {}) {
+export async function pullRepo(repo, { beforeMerge = null, afterPull = null, fetched = null } = {}) {
   if (!repo || !isRepo(repo)) return null;
   const g = (args, opts = {}) => git(args, { cwd: repo, ...opts });
 
@@ -190,10 +190,14 @@ export async function pullRepo(repo, { beforeMerge = null, afterPull = null } = 
 
   // Network step, isolated and bounded. Offline, no remote, or an auth prompt
   // all land here and are all normal.
-  try {
-    g(['fetch', '--quiet', '--no-tags'], { timeout: FETCH_TIMEOUT_MS });
-  } catch {
-    return null;
+  // `fetched`: the caller already fetched (true) or failed to (false), concurrently with other repos.
+  if (fetched === false) return null;
+  if (fetched !== true) {
+    try {
+      g(['fetch', '--quiet', '--no-tags'], { timeout: FETCH_TIMEOUT_MS });
+    } catch {
+      return null;
+    }
   }
 
   const up = upstreamCommit(repo);
@@ -231,8 +235,18 @@ export async function pullRepo(repo, { beforeMerge = null, afterPull = null } = 
 // A pull replaces inodes, which breaks the hard link claude-hud requires
 // (docs/sync-architecture.md §10). SessionStart also runs setup-check-hook,
 // but hook order within an event is not guaranteed, so repair here too.
-export const runPull = () => pullRepo(REPO, {
+export const runPull = (fetched = null) => pullRepo(REPO, {
+  fetched,
   afterPull: async () => { (await import('../setup/check-links.js')).checkLinks(); return null; },
+});
+
+/** `git fetch` without blocking the event loop: true once fetched, false offline/no remote/timeout. */
+export const fetchRepo = (repo) => new Promise((resolve) => {
+  if (!repo || !isRepo(repo) || fs.existsSync(path.join(repo, '.git', 'index.lock'))) return resolve(false);
+  execFile('git', ['-c', 'core.quotepath=false', 'fetch', '--quiet', '--no-tags'], {
+    cwd: repo, timeout: FETCH_TIMEOUT_MS, windowsHide: true,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+  }, (err) => resolve(!err));
 });
 
 /** Regenerate the provider cache against the ai-lab now on disk: an error string, or null. */
@@ -307,12 +321,13 @@ const detachedUpdate = (repo) => spawn(process.execPath, [fileURLToPath(import.m
  * Fast-forward ai-lab. A code-only update moves the tree and refreshes the provider cache here; one
  * that changes the dependencies, or retries a failed one, goes to the detached run instead.
  */
-export async function runAiLabPull(repo, { background = detachedUpdate } = {}) {
+export async function runAiLabPull(repo, { background = detachedUpdate, fetched = null } = {}) {
   const state = readState();
   if (state?.pid && Date.now() - state.at < STALE_RUN_MS) return { pulled: 0, note: 'dependency update still running in the background' };
   const handOff = (why) => { background(repo); return { pulled: 0, note: `${why}; updating in the background (merge, uv sync, provider cache)` }; };
   if (state?.error) return handOff(`last dependency update failed: ${state.error}`);
   return pullRepo(repo, {
+    fetched,
     beforeMerge: (range) => (depsChanged(repo, range) ? handOff('the update changes its dependencies') : null),
     afterPull: () => refreshCache(),
   });
@@ -373,9 +388,11 @@ async function main() {
     // fetch when Claude subsequently emits SessionStart. Direct `claude`
     // launches have no marker and still update here.
     if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') {
-      syncResult = await runPull();
+      // The two fetches are the network cost of a launch: run them at once, then merge each in turn.
       const aiLab = await aiLabRepo();
-      aiLabResult = aiLab ? await runAiLabPull(aiLab) : null;
+      const [cfgFetched, labFetched] = await Promise.all([fetchRepo(REPO), aiLab ? fetchRepo(aiLab) : false]);
+      syncResult = await runPull(cfgFetched);
+      aiLabResult = aiLab ? await runAiLabPull(aiLab, { fetched: labFetched }) : null;
       notice = [formatPull(syncResult), formatPull(aiLabResult, 'ai-lab')].filter(Boolean).join('\n') || null;
       // SessionStart hooks run in parallel, so ensure.mjs may already have (re)started the
       // bridge from the pre-pull tree; ensure again so the pulled code serves this session.

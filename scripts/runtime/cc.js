@@ -8,6 +8,7 @@
 // those wrappers exec this script with the provider name.
 
 import { spawn } from 'child_process';
+import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { syncBeforeLaunch } from './startup-sync.mjs';
@@ -15,7 +16,8 @@ import { syncBeforeLaunch } from './startup-sync.mjs';
 // Synchronize before importing repo-owned implementation modules: git may
 // replace them during a fast-forward. The host must launch with the new config,
 // not a module graph cached before the update.
-const sync = syncBeforeLaunch();
+// Same 60 s lease as codex.js: a quick relaunch does not fetch again.
+const sync = syncBeforeLaunch({ stampFile: join(homedir(), '.claude', '.harness-startup-sync') });
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
 const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { accountFile, configDir },
