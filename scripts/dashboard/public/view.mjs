@@ -11,7 +11,7 @@ export { QUOTA_STALE_MS, agentName, quotaView, alertKey };
 /** The statuses a session shows: the host's, or `stale` when its host went silent; in words via i18n `status.<st>`. */
 export const DISPLAY_STATUSES = [...Object.keys(STATUS), 'stale'];
 export const statusLabel = (st, lang = 'en') => t(`status.${st}`, lang);
-export const ATTENTION = ['needs_approval', 'needs_input'];
+const ATTENTION = ['needs_approval', 'needs_input'];
 /** Most urgent first: what needs the human, then what runs, then the rest. */
 const RANK = { ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [k, v.rank])), stale: Object.keys(STATUS).length };
 
@@ -34,7 +34,7 @@ export function sessionsOf(snapshot) {
 export const accountSessions = (snapshot, key) =>
   sortSessions(snapshot.hosts.flatMap((h) => h.sessions.filter((s) => s.account === key).map((s) => ({ ...s, hostId: s.hostId ?? h.id }))));
 
-export const sortSessions = (sessions) => [...sessions].sort((a, b) =>
+const sortSessions = (sessions) => [...sessions].sort((a, b) =>
   (RANK[displayStatus(a)] ?? 9) - (RANK[displayStatus(b)] ?? 9) || String(a.project).localeCompare(String(b.project)));
 
 /** Distinct host and project values, and how many sessions each status chip holds. */
@@ -46,7 +46,7 @@ export function filterOptions(snapshot) {
 }
 
 /** The one host order of every tab: online first, then by name. */
-export const sortHosts = (hosts) => [...hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
+const sortHosts = (hosts) => [...hosts].sort((a, b) => Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
 
 /**
  * `hosts` (hostsView) with their sessions narrowed by `filters` ({host, agent, project: '' = all;

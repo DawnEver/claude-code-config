@@ -63,7 +63,7 @@ export const sessionKey = (agent, id) => `${agent}:${id}`;
 export const STATUS_CODES = { running: 'working', idle: 'idle', 'waiting-approval': 'needs_approval', 'waiting-input': 'needs_input', unknown: 'unknown', disconnected: 'ended' };
 const statusCode = (state) => STATUS_CODES[state] ?? 'unknown';
 /** A session name as its host reports it, or null: one line, bounded. */
-export const sessionName = (v) => { const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; return t ? t.slice(0, 200) : null; };
+const sessionName = (v) => { const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''; return t ? t.slice(0, 200) : null; };
 const clock = t => new Date(t).toTimeString().slice(0, 5);
 const GB = 1024 ** 3;
 

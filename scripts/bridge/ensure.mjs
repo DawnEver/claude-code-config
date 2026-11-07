@@ -21,11 +21,11 @@ import { isMain } from '../shared/is-main.mjs';
 import { resolveCodexHome } from '../shared/codex-home.mjs';
 import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE, bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
 
-export const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
+const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
 const DAEMON = fileURLToPath(new URL('./daemon.mjs', import.meta.url));
 
 /** True when `file` was written before this boot: its pid may since belong to anything. */
-export const predatesBoot = (file, now = Date.now(), uptime = os.uptime()) => fs.statSync(file).mtimeMs < now - uptime * 1000;
+const predatesBoot = (file, now = Date.now(), uptime = os.uptime()) => fs.statSync(file).mtimeMs < now - uptime * 1000;
 
 export function isAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }

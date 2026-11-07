@@ -50,7 +50,7 @@ export class DashboardHub extends DurableObject {
 }
 
 /** Cloudflare's version metadata as /api/health reports it: tag = the git commit deploy tagged it with. */
-export const versionOf = (v) => (v ? { commit: v.tag || null, id: v.id, at: v.timestamp } : null);
+const versionOf = (v) => (v ? { commit: v.tag || null, id: v.id, at: v.timestamp } : null);
 
 export default {
   async fetch(request, env) {

@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 
-export const MAX_MESSAGE = 4096;
+const MAX_MESSAGE = 4096;
 export const ATTACHMENT_LIMITS = Object.freeze({
   photo: 10 * 1024 * 1024, document: 50 * 1024 * 1024,
   download: 20 * 1024 * 1024, caption: 1024,
@@ -71,7 +71,7 @@ export function normalizeMath(value) {
 }
 
 
-export class TelegramError extends Error {
+class TelegramError extends Error {
   constructor(method, body) {
     super(`telegram ${method}: ${body?.description ?? 'request failed'}`);
     this.code = body?.error_code;

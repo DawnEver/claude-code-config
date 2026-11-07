@@ -68,7 +68,7 @@ function parseTask(t) {
   return { id, kind: t.kind, label: text(t.label, TASK_LABEL_MAX) ?? '', background: t.background === true, startedAt: t.startedAt };
 }
 
-export const MAX_ACCOUNTS = 40;
+const MAX_ACCOUNTS = 40;
 const num = (v, lo = -Infinity, hi = Infinity) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null);
 const epoch = (v) => num(v, 1e12, 1e14);   // ms, 2001..5138
 
@@ -113,7 +113,7 @@ function parseBalance(b) {
       .filter((x) => /^[A-Z]{3}$/.test(x?.currency) && num(x.amount, -1e9, 1e9) !== null).map((x) => ({ currency: x.currency, amount: x.amount })) };
 }
 
-export const MAX_REPOS = 200;
+const MAX_REPOS = 200;
 const CI_STATES = ['success', 'failure', 'pending'];
 const ci = (v) => (CI_STATES.includes(v) ? v : null);
 const https = (v) => (typeof v === 'string' && /^https:\/\/[^\s"<>]{1,300}$/.test(v) ? v : null);

@@ -12,16 +12,16 @@ import { SCHEMA_VERSION, configKeysMeta } from '../shared/dashboard-schema.mjs';
 import { quotaAlertsFor, quotaView } from './public/shared/quota-model.mjs';
 
 /** How many alert ids hosts sent are remembered, so a push re-sent after a lost reply alerts once. */
-export const MAX_SEEN_ALERTS = 200;
+const MAX_SEEN_ALERTS = 200;
 /** A change handed to a host that does not report it within this goes to the next host. */
-export const CHANGE_RETRY_MS = 120000;
+const CHANGE_RETRY_MS = 120000;
 
 /** A forge source is read again once its last good reading is this old. */
 export const FORGE_EVERY_MS = 5 * 60000;
 /** A host given a source to read holds it this long; past it, another host may take it (a host that died). */
 export const FORGE_LEASE_MS = 2 * 60000;
 /** A host that could not read a source (no token, no route) is not asked for it again within this. */
-export const FORGE_SKIP_MS = 30 * 60000;
+const FORGE_SKIP_MS = 30 * 60000;
 /** A source no host has declared for this long left every config: it is forgotten. */
 export const FORGE_FORGET_MS = 24 * 3600000;
 

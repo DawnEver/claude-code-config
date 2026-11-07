@@ -88,7 +88,7 @@ export function continuedIn(file) {
 // generated title; within one kind the latest record wins.
 const NAME_RANK = { 'custom-title': 2, 'agent-name': 1, 'ai-title': 0 };
 const NAME_CHUNK = 4 * 1024 * 1024;
-export const NO_NAME = Object.freeze({ name: null, rank: -1, at: 0 });
+const NO_NAME = Object.freeze({ name: null, rank: -1, at: 0 });
 
 /**
  * The session's name from its transcript, read on from where the last call stopped (`prev.at`,

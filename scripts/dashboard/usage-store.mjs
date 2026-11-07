@@ -151,7 +151,7 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now(),
     filter: Object.fromEntries(FILTER_DIMS.map((d) => [d, filter[d] ?? []])) };
 }
 
-export const MAX_QUERY_ROWS = 5000;
+const MAX_QUERY_ROWS = 5000;
 
 /** One read-only statement (readOnlySql) -> {columns, rows, truncated} | {error}. */
 export async function query(db, sql) {

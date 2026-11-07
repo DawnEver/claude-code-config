@@ -68,7 +68,7 @@ const dropNulls = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => 
 const IS_WIN = process.platform === 'win32';
 
 /** Approval requests whose response is `{ decision: 'accept' | 'decline' }`. */
-export const ANSWERABLE_APPROVALS = new Set([
+const ANSWERABLE_APPROVALS = new Set([
   'item/commandExecution/requestApproval',
   'item/fileChange/requestApproval',
 ]);
@@ -96,7 +96,7 @@ export function probeDaemon() {
 }
 
 /** Default connector: proxy child + WebSocket framing. Returns a message transport. */
-export function connectProxy() {
+function connectProxy() {
   const child = spawnCodex(['app-server', 'proxy'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const ws = new WsStreamClient(child.stdout, child.stdin);
   child.on('exit', () => ws.emit('close'));
@@ -162,7 +162,7 @@ export function backlogSince(turns = [], sinceMs) {
 }
 
 /** A SessionSource's kind: the string itself, an object source's key, `unknown` when absent. */
-export function sourceKind(src) {
+function sourceKind(src) {
   if (typeof src === 'string') return src;
   if (src && typeof src === 'object') return Object.keys(src)[0] ?? 'unknown';
   return 'unknown';

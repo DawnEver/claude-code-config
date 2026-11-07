@@ -40,7 +40,7 @@ export function parseVmStat(out) {
 }
 
 /** A memory type named in free text (`Type: LPDDR5`, `DDR4`), or null. */
-export const memoryTypeIn = (text) => MEMORY_TYPE.exec(String(text ?? ''))?.[0] ?? null;
+const memoryTypeIn = (text) => MEMORY_TYPE.exec(String(text ?? ''))?.[0] ?? null;
 
 /** A CPU model as people say it: no (R)/(TM) marks, "CPU", "@ 2.40GHz" or "16-Core Processor" (cores are shown apart). */
 export const cpuModelName = (model) => String(model ?? '').replace(/\((?:R|TM)\)/gi, '').replace(/\s+@.*$/, '')

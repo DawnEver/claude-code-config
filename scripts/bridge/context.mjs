@@ -17,7 +17,7 @@ import { readMergedEnvSettings, ENV_SETTINGS_PATH, LOCAL_ENV_SETTINGS_PATH } fro
 import { CONFIG_KEYS, parseConfigChange } from '../shared/dashboard-schema.mjs';
 import { resolveSyncDir } from '../shared/sync-dir.mjs';
 
-export const CLAUDE_DIR = path.join(os.homedir(), '.claude');
+const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 /** Machine-local runtime dir: daemon port + IPC token + Telegram caches. Never synced. */
 export const BRIDGE_RUNTIME_DIR = path.join(CLAUDE_DIR, 'bridge');
 export const RUNTIME_FILE = path.join(BRIDGE_RUNTIME_DIR, 'runtime.json');

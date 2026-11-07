@@ -30,7 +30,7 @@ import { tokens, base, isClaudeProcess, processTable, ancestorsOf } from '../../
 export { isClaudeProcess, processTable, ancestorsOf };
 const RECONNECT_MS = 5000;
 
-export const INSTRUCTIONS = [
+const INSTRUCTIONS = [
   'This session is mirrored to a Telegram Topic by the machine\'s session bridge.',
   'Messages typed there arrive as <channel source="session-bridge" user="...">. Answer them as you would any prompt: your final answer of each turn is mirrored automatically to the Topic, as are prompts typed in this terminal.',
   'The reply tool is optional: use it only for an explicit message that is not your final answer (e.g. a heads-up mid-task). Do not repeat your final answer through it.',

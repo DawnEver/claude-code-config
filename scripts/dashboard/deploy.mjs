@@ -65,7 +65,7 @@ async function hostToken() {
   console.log('the daemon picks the new token up within a minute');
 }
 
-export const USAGE_DB = 'agents-usage';
+const USAGE_DB = 'agents-usage';
 const WRANGLER = path.join(HERE, 'wrangler.jsonc');
 
 function wrangler(args, opts = {}) {

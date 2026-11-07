@@ -49,7 +49,7 @@ const unreachable = (e) => e?.name === 'TimeoutError' || e?.name === 'AbortError
 
 /** A request that throws on a network failure (this host cannot reach the forge) and on an HTTP error. */
 /** Waits before each retry of a transient failure: two retries, so three attempts in all. */
-export const RETRY_DELAYS_MS = [1000, 3000];
+const RETRY_DELAYS_MS = [1000, 3000];
 const transient = (status) => status === 429 || status >= 500;
 
 async function getJson(fetch, url, token, init = {}, delays = init.delays ?? RETRY_DELAYS_MS) {

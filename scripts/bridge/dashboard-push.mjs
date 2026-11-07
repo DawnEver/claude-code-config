@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto';
 import { SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 
 /** Alerts held for the gateway at most; the gateway reads as many per push. */
-export const MAX_ALERTS = 20;
+const MAX_ALERTS = 20;
 
 export class DashboardPush {
   constructor({ url, hostToken, machine, sessions, accounts = () => [], forges = null, resources = () => null, config = () => null, onConfigChanges = () => [], everySeconds = 15, heartbeatSeconds = 60, log = () => {}, fetch = globalThis.fetch, timeoutMs = 5000, now = Date.now }) {

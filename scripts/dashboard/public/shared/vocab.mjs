@@ -4,7 +4,7 @@
 // the Worker serves; everything here is plain data and pure functions, no imports.
 
 /** The agents a session or an account belongs to, and how they are named. */
-export const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
 export const AGENTS = Object.keys(AGENT_NAMES);
 export const agentName = (agent) => AGENT_NAMES[agent] ?? agent;
 
