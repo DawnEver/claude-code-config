@@ -144,7 +144,7 @@ async function main() {
     const n = JSON.parse(process.argv[process.argv.indexOf('--send-notification') + 1]);
     const { readMergedEnvSettings, ENV_SETTINGS_PATH } = await import('../shared/config.mjs');
     const options = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.harness?.notifications ?? {};
-    if (options.enabled === false) return;
+    if (options.enabled !== true) return;
     const { sendNativeNotification } = await import('./notify-hook.js');
     sendNativeNotification(n.title, n.message, options.open ? n.cwd : '', options.sound !== false);
     return;

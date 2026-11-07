@@ -65,7 +65,8 @@ Loop guard configuration can be set in shared/local `harness.loopGuard` (`warnAt
 configuration, then defaults. This explicit file read works when daemon env is unrelated to
 the launcher. Hosted tools outside native tool hooks remain outside the guard's coverage.
 
-Optional `harness.notifications` supports `enabled`, `sound`, and `open`. Cache audits write
+Optional `harness.notifications` supports `enabled`, `sound`, and `open`; native notifications
+for both hosts require explicit `enabled: true` (default: off). Cache audits write
 daily candidate reports without deleting old versions a daemon may still lazily load.
 
 Native plugin updates need separate protection: the vendor CLI can remove old cache

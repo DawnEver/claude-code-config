@@ -1,4 +1,9 @@
 {
+  "harness": {
+    "notifications": {
+      "enabled": false
+    }
+  },
   "providers": {
     "deepseek": {
       "claudeApiKeyEnv": "ANTHROPIC_API_KEY",

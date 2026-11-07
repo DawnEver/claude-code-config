@@ -236,7 +236,12 @@ It writes `terminal.integrated.env.*` and `claudeCode.environmentVariables` to l
 
 ## Notifications
 
-`notify-hook.js` sends native notifications:
+Native notifications for Claude Code and Codex are disabled by default. To enable
+them, set `harness.notifications.enabled` to `true` in
+`~/.claude/claude_env_settings.json` (or its machine-local overlay).
+The hooks and OS notification implementation remain installed.
+
+`notify-hook.js` sends native notifications when enabled:
 
 | Platform | Method | Sound | Click to open |
 |---|---|---|---|

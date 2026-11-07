@@ -8,6 +8,7 @@ import os from 'os';
 import crypto from 'crypto';
 import { execFileSync, spawn } from 'child_process';
 import { isMain } from '../shared/is-main.mjs';
+import { readMergedEnvSettings, ENV_SETTINGS_PATH } from '../shared/config.mjs';
 
 // ── Native OS notification ──
 // Windows/Linux support clicking the notification to open VS Code at the
@@ -176,6 +177,8 @@ fi`;
 // ── Main ──
 
 export function main(args = process.argv.slice(2)) {
+const options = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.harness?.notifications ?? {};
+if (options.enabled !== true) return;
 let isUserPrompt = false;
 let enableOpen = false;
 let enableSound = true;
