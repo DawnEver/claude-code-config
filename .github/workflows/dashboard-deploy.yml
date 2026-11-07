@@ -22,6 +22,8 @@ jobs:
           node-version: 22
       - name: Test the dashboard
         run: node --test scripts/dashboard/*.test.mjs scripts/usage/*.test.mjs scripts/bridge/dashboard-push.test.mjs
+      - name: Test the page in a browser
+        run: npm install --no-save --no-audit --no-fund playwright && npx playwright install --with-deps chromium-headless-shell && npm run test:e2e
       - name: Migrate the usage store
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

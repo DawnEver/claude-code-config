@@ -493,6 +493,13 @@ uses; and on an inline style in `app.js` other than geometry (`width`, `height`,
   host tokens, schema, registry ordering/TTL, the API, rate limit, config derivation, view
   logic, and an end-to-end Bridge -> push -> API -> viewer run. `api.mjs` is runtime-agnostic,
   so the tests drive it with plain `Request` objects.
+- The page in a real browser: `npm run test:e2e` (`scripts/dashboard/e2e.spec.mjs`; Playwright
+  Chromium, `npm i` then `npx playwright install chromium` once; also run in the deploy workflow).
+  Phone (touch) and desktop: each tab's scroll kept across tab switches, a reader's scroll
+  (wheel, touch, keys, scrollbar) never pulled back by a poll or a pending restore, the unread
+  badge (from any tab, cycling, clearing a search or filters), the read circle, task lists,
+  search, no horizontal overflow at 320 px, the dark theme. Fixed clock and data, Telegram
+  stubbed, no network. Not in `npm test`: it needs a browser download.
 - Real Workers runtime: `npx wrangler dev` in `scripts/dashboard/` with a `.dev.vars`
   (gitignored) holding `DASHBOARD_CONFIG=<json>` (unquoted) and, for locally signed test data,
   `TELEGRAM_PUBLIC_KEY=<hex>`. A host daemon may push to it over `http://127.0.0.1`.
