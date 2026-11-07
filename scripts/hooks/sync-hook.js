@@ -102,18 +102,20 @@ function countIn(cwd, ...args) {
   const n = Number(git(['rev-list', '--count', ...args], { cwd, allowFail: true }));
   return Number.isFinite(n) ? n : 0;
 }
-const count = (...args) => countIn(REPO, ...args);
 
-// Commits on HEAD that no remote has: the upstream range when one is set,
-// otherwise "not reachable from any remote ref" — which is what a host with no
-// upstream configured needs to hear.
-export function unpushedCount() {
-  return upstreamCommit() ? count('@{u}..HEAD') : count('HEAD', '--not', '--remotes');
-}
-
-function dirtyCount() {
-  const out = git(['status', '--porcelain'], { allowFail: true });
-  return out ? out.split('\n').filter(Boolean).length : 0;
+/**
+ * Dirty entries, upstream presence and commits ahead, from one
+ * `git status --porcelain=v2 --branch` — the whole reminder in a single git call.
+ */
+export function parseBranchStatus(out) {
+  let dirty = 0, upstream = false, ahead = 0;
+  for (const line of out.split('\n')) {
+    if (!line) continue;
+    if (!line.startsWith('# ')) dirty++;
+    else if (line.startsWith('# branch.upstream ')) upstream = true;
+    else if (line.startsWith('# branch.ab ')) ahead = Number(line.split(' ')[2]) || 0;
+  }
+  return { dirty, upstream, ahead };
 }
 
 /** Pull-mode notice for one repo, or null when there is nothing worth saying. */
@@ -335,11 +337,16 @@ export async function runAiLabPull(repo, { background = detachedUpdate, fetched 
 
 function runRemind() {
   if (!isRepo()) return null;
+  const out = git(['status', '--porcelain=v2', '--branch'], { allowFail: true });
+  if (out === null) return null;
+  const { dirty, upstream, ahead } = parseBranchStatus(out);
+  if (upstream) return formatReminder({ dirty, ahead });
+  // No upstream: count commits no remote has; a repo with no remote at all is local by design.
   const hasRemote = Boolean(git(['remote'], { allowFail: true }));
   return formatReminder({
-    dirty: dirtyCount(),
-    ahead: unpushedCount(),
-    noUpstream: hasRemote && !upstreamCommit(),
+    dirty,
+    ahead: hasRemote ? countIn(REPO, 'HEAD', '--not', '--remotes') : 0,
+    noUpstream: hasRemote,
   });
 }
 
@@ -377,7 +384,7 @@ export function isStartup(payload) {
 
 async function main() {
   const mode = process.argv[2];
-  const payload = await readPayload();
+  const payload = mode === '--pull' ? await readPayload() : {};
   let notice = null;
   let syncResult = null;
   let aiLabResult = null;

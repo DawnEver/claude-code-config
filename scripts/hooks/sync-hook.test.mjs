@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { depsChanged, updateAiLabDeps, venvStateFile, repoRootFrom, REPO, formatPull, formatReminder, formatMergeFailure, isStartup } from './sync-hook.js';
+import { depsChanged, updateAiLabDeps, venvStateFile, repoRootFrom, REPO, formatPull, formatReminder, parseBranchStatus, formatMergeFailure, isStartup } from './sync-hook.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -394,4 +394,10 @@ test('integration: a launch fetches both repos at once, then merges what each fe
   assert.deepEqual(await Promise.all([fetchRepo(b), fetchRepo(path.join(root, 'nowhere'))]), [true, false]);
   assert.equal(await pullRepo(b, { fetched: false }), null, 'a failed fetch is offline: nothing to do');
   assert.equal((await pullRepo(b, { fetched: true })).pulled, 1, 'the earlier fetch is what is merged');
+});
+
+test('parseBranchStatus reads dirty count, upstream and ahead from one porcelain v2 status', () => {
+  const out = '# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +5 -2\n1 .M N... 100644 100644 100644 a b f.js\n? output/\n';
+  assert.deepEqual(parseBranchStatus(out), { dirty: 2, upstream: true, ahead: 5 });
+  assert.deepEqual(parseBranchStatus('# branch.oid abc\n# branch.head main\n'), { dirty: 0, upstream: false, ahead: 0 });
 });
