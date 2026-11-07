@@ -61,14 +61,16 @@ test('ensure is a no-op when current, starts when absent, replaces stale source'
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a live collector for another Codex home is not silently replaced or attributed to this home', async () => {
+test('a launch from another Codex home records that home for the running daemon to follow, never a second daemon', async () => {
   const dir = tmp();
   try {
     const runtimeFile = path.join(dir, 'runtime.json');
-    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 7, codexHome: path.join(dir, 'one'), sourceRevision: 'old' }));
-    const result = await ensureDaemon({ runtimeFile, configured: () => true, codexHome: path.join(dir, 'two'),
-      alive: () => true, stale: () => false, kill: () => assert.fail('replaced another home'), start: () => assert.fail('started duplicate collector') });
-    assert.equal(result, 'different-home');
+    fs.writeFileSync(runtimeFile, JSON.stringify({ pid: 7, sourceRevision: 'r', configRevision: 'c' }));
+    const recorded = [];
+    const result = await ensureDaemon({ runtimeFile, configured: () => true, codexHome: path.join(dir, 'two'), record: (h) => recorded.push(h),
+      revision: () => 'r', configRevision: () => 'c', alive: () => true, stale: () => false, kill: () => assert.fail('replaced'), start: () => assert.fail('started duplicate collector') });
+    assert.equal(result, 'running');
+    assert.deepEqual(recorded, [path.join(dir, 'two')]);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

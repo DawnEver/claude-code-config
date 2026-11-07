@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { CodexAdapter, progressLine, probeDaemon, backlogSince, isMainSession, trackItem } from './codex-adapter.mjs';
+import { CodexAdapter, CodexHomes, progressLine, probeDaemon, backlogSince, isMainSession, trackItem } from './codex-adapter.mjs';
 
 /** Fake app-server behind the adapter's transport interface. */
 function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
@@ -729,4 +729,38 @@ test('waiting: a pending approval or question is what the thread waits for', asy
   srv.request(78, 'item/tool/requestUserInput', { threadId: 't1', questions: [{ id: 'q', question: 'Which branch?' }] });
   srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
   assert.equal(a.statusSnapshot('t1').waiting, 'Which branch?');
+});
+
+test('CodexHomes: one adapter per Codex home, sessions labelled with their home, calls routed to the owning adapter', async () => {
+  const made = [];
+  const create = (home, refPrefix) => {
+    const a = Object.assign(new EventEmitter(), { home, refPrefix, threads: new Map(), quota: { at: 1 }, account: { email: `${home}@x` }, stopped: false,
+      start: async () => { if (home === '/bad') throw new Error('no app-server'); return true; }, refresh: async () => {}, stop() { this.stopped = true; },
+      inject: async (id) => `${home}:${id}`, interrupt: async () => true, status: () => home, statusSnapshot: () => ({ state: home }),
+      answerQuestion: (ref) => `${home}:${ref}`, answerApproval: (ref) => `${home}:${ref}` });
+    made.push(a);
+    return a;
+  };
+  let homes = ['/base', '/work'];
+  const codex = new CodexHomes({ homes: () => homes, label: (h) => (h === '/base' ? null : h.slice(1)), create });
+  const ups = [], warns = [];
+  codex.on('up', (e) => ups.push(e));
+  codex.on('warn', (w) => warns.push(w));
+  await codex.start();
+  assert.equal(made.length, 2);
+  assert.deepEqual(made.map((a) => a.refPrefix), ['h0.', 'h1.'], 'refs never collide across homes');
+  made[0].emit('up', { id: 't0' });
+  made[1].emit('up', { id: 't1' });
+  assert.deepEqual(ups, [{ id: 't0' }, { id: 't1', seat: 'work' }]);
+  made[1].threads.set('t1', {});
+  assert.equal(await codex.inject('t1', 'hi'), '/work:t1');
+  assert.deepEqual(codex.statusSnapshot('t1'), { state: '/work' });
+  assert.equal(codex.answerApproval('h1.c1:5', true), '/work:h1.c1:5');
+  assert.equal(codex.answerQuestion('h0.c1:2', {}), '/base:h0.c1:2');
+  assert.deepEqual(codex.accounts().map((a) => [a.label, a.account.email]), [[null, '/base@x'], ['work', '/work@x']]);
+  homes = ['/base', '/bad'];
+  await codex.start();
+  assert.equal(made[1].stopped, true, 'a home no longer listed is dropped');
+  assert.match(warns.join('\n'), /bad home: no app-server/, 'one home failing does not stop the others');
+  assert.equal(made.length, 3);
 });

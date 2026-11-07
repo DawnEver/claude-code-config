@@ -14,7 +14,7 @@ import { claudeTranscript, codexTranscript } from './transcripts.mjs';
 import { gitContext, repoNameFromUrl } from '../bridge/context.mjs';
 import { aliasOf, baseDir, readAccount } from '../shared/seats.mjs';
 import { claudeAccountKey, codexAccountKey } from '../bridge/quota.mjs';
-import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
+import { codexHomes as recordedCodexHomes, codexHomeKey, codexHomeLabel, codexHomesFile } from '../shared/codex-home.mjs';
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 
@@ -30,10 +30,10 @@ async function* walk(dir, depth) {
 
 /**
  * Every transcript source of this machine: each Claude config dir (the base dir and every
- * `~/.claude-<alias>` seat dir) and Codex's sessions. A projects dir reached twice (a seat dir
+ * `~/.claude-<alias>` seat dir) and each Codex home's sessions (codex-home.mjs codexHomes; its label is the row's seat). A projects dir reached twice (a seat dir
  * that links it back to the base) is read once.
  */
-export function sources(home = os.homedir(), { machine = 'host', codexHome = resolveCodexHome({ home }) } = {}) {
+export function sources(home = os.homedir(), { machine = 'host', codexHomes = recordedCodexHomes({ home, file: codexHomesFile(home) }) } = {}) {
   const out = [];
   const seen = new Set();
   const dirs = [baseDir(home)];
@@ -48,8 +48,8 @@ export function sources(home = os.homedir(), { machine = 'host', codexHome = res
     out.push({ agent: 'claude', root: projects, depth: 3, seat,
       account: () => claudeAccountKey(readAccount(dir, home), `${machine}/${seat ?? 'base'}`) });
   }
-  for (const d of ['sessions', 'archived_sessions']) {
-    out.push({ agent: 'codex', root: path.join(codexHome, d), depth: 4, seat: null,
+  for (const codexHome of codexHomes) for (const d of ['sessions', 'archived_sessions']) {
+    out.push({ agent: 'codex', root: path.join(codexHome, d), depth: 4, seat: codexHomeLabel(codexHome, home),
       // A current app-server login does not prove who owned a historical rollout.
       // The verified rollout schema has no authoritative account field: keep it unknown.
       account: () => codexAccountKey(null, `${machine}/home-${codexHomeKey(codexHome)}`) });

@@ -18,7 +18,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'node:url';
 import { isMain } from '../shared/is-main.mjs';
-import { resolveCodexHome } from '../shared/codex-home.mjs';
+import { resolveCodexHome, recordCodexHome } from '../shared/codex-home.mjs';
 import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE, bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
 
 const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
@@ -77,19 +77,18 @@ export function daemonRunning({ runtimeFile = RUNTIME_FILE, alive = isAlive, sta
  * itself over (its own check, within a minute): replacing it here, on every session start, made
  * a burst of starts (subagents, reviewers) during an edit restart it every few seconds. Only
  * `replace` — the daemon's own handover, or a pull that must serve the pulled code now — kills it.
- * @returns {'unconfigured'|'running'|'stale'|'started'|'restarted'|'different-home'}
+ * `codexHome`, the home this launch runs in, is recorded for the daemon to follow (codex-home.mjs).
+ * @returns {'unconfigured'|'running'|'stale'|'started'|'restarted'}
  */
-export async function ensureDaemon({ replace = false, log = logLine, runtimeFile = RUNTIME_FILE, configured = () => { const c = readBridgeConfig(); return !!(c.botToken || c.dashboard); }, codexHome = resolveCodexHome(),
+export async function ensureDaemon({ replace = false, log = logLine, runtimeFile = RUNTIME_FILE, configured = () => { const c = readBridgeConfig(); return !!(c.botToken || c.dashboard); }, codexHome = resolveCodexHome(), record = recordCodexHome,
   revision = bridgeSourceRevision, configRevision = bridgeConfigRevision, alive = isAlive, stale = predatesBoot, kill = (pid) => process.kill(pid), start = spawnDaemon,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   if (!configured()) return 'unconfigured';
+  record(codexHome);
   let rt = null;
   try { rt = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { /* not running */ }
   const pid = rt?.pid;
   if (pid && alive(pid) && !stale(runtimeFile)) {
-    const runningHome = rt.codexHome ?? resolveCodexHome({ env: {} });
-    const key = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
-    if (key(runningHome) !== key(codexHome)) return 'different-home';
     // The daemon reads its config once: a config change replaces it like a source change.
     if (rt.sourceRevision === revision() && rt.configRevision === configRevision()) return 'running';
     if (!replace) return 'stale';

@@ -21,8 +21,8 @@ const models = ({ account = ME, quota = null, dirs, seats = SEATS, machine = 'm1
 const problems = (o) => models(o).flatMap((a) => a.problems);
 
 test('unknown Codex accounts remain home-scoped instead of merging unrelated homes', () => {
-  const one = models({ codexAccount: { email: null, plan: 'plus' }, codexFallback: 'host/home-one' }).find(a => a.agent === 'codex');
-  const two = models({ codexAccount: { email: null, plan: 'plus' }, codexFallback: 'host/home-two' }).find(a => a.agent === 'codex');
+  const one = models({ codex: [{ label: null, account: { email: null, plan: 'plus' }, fallback: 'host/home-one' }] }).find(a => a.agent === 'codex');
+  const two = models({ codex: [{ label: null, account: { email: null, plan: 'plus' }, fallback: 'host/home-two' }] }).find(a => a.agent === 'codex');
   assert.notEqual(one.key, two.key);
 });
 
@@ -110,9 +110,9 @@ test('accountModels: the forecast belongs to the reading, so the same reading gi
 });
 
 test('accountModels: Codex account, plan and reset credits still to spend', () => {
-  const [cx] = accountModels({ machine: 'm1', seats: SEATS, now: NOW, codexAccount: { email: 'C@example.com', plan: 'pro' },
-    codex: codexQuota({ primary: { windowDurationMins: 300, usedPercent: 10, resetsAt: (NOW + H) / 1000 } }, NOW),
-    codexResetCredits: { availableCount: 2, credits: [{ expiresAt: (NOW + 5 * H) / 1000 }, { expiresAt: (NOW - H) / 1000 }] } });
+  const [cx] = accountModels({ machine: 'm1', seats: SEATS, now: NOW, codex: [{ label: null, account: { email: 'C@example.com', plan: 'pro' },
+    quota: codexQuota({ primary: { windowDurationMins: 300, usedPercent: 10, resetsAt: (NOW + H) / 1000 } }, NOW),
+    resetCredits: { availableCount: 2, credits: [{ expiresAt: (NOW + 5 * H) / 1000 }, { expiresAt: (NOW - H) / 1000 }] } }] });
   assert.deepEqual([cx.key, cx.detail, cx.resetCredits], ['codex:c@example.com', 'Pro', { count: 2, expiries: [NOW + 5 * H] }]);
 });
 
@@ -180,15 +180,27 @@ test('accountFor: a Claude session by its config dir, a Codex session by the Cod
   const seats = [{ alias: 'team-a', email: 'a@example.com', org: 'Team A', machines: ['m1'] }, { alias: 'team-b', email: 'b@example.com', machines: ['m1'] }];
   const accounts = [...models({ seats, dirs: [{ alias: null, account: { ...ME, org: 'Team A' }, quota: short5h() },
     { alias: 'team-b', account: { email: 'b@example.com' }, quota: short5h() }] }),
-    { key: 'codex:c@example.com', agent: 'codex' }];
+    { key: 'codex:c@example.com', agent: 'codex', aliases: [null] }, { key: 'codex:w@example.com', agent: 'codex', aliases: ['work'] }];
   assert.equal(accountFor({ agent: 'claude', seat: null }, accounts), 'claude:a@example.com|u1', 'the base dir holds team-a');
   assert.equal(accountFor({ agent: 'claude', seat: 'team-b' }, accounts), 'claude:b@example.com|');
   assert.equal(accountFor({ agent: 'claude', seat: 'gone' }, accounts), null);
   assert.equal(accountFor({ agent: 'codex' }, accounts), 'codex:c@example.com');
+  assert.equal(accountFor({ agent: 'codex', seat: 'work' }, accounts), 'codex:w@example.com', "a session in another Codex home spends that home's account");
   // An API-key session (ccds, cods) spends its platform's balance, never the subscription beside it.
   // The configured entry is the account, read here or not; the unlabelled one is the launcher's key.
   const entries = [{ provider: 'deepseek', label: 'lab' }, { provider: 'deepseek', label: null }];
   assert.equal(accountFor({ agent: 'claude', seat: null, provider: 'deepseek' }, accounts, entries), 'api:deepseek:default');
   assert.equal(accountFor({ agent: 'codex', provider: 'deepseek' }, accounts, entries), 'api:deepseek:default');
   assert.equal(accountFor({ agent: 'codex', provider: 'kimi' }, accounts, entries), null, 'no entry: no account, not the subscription');
+});
+
+test('accountModels: one account per Codex home, each aliased by its home label; two homes on one login merge', () => {
+  const q = (at) => codexQuota({ primary: { windowDurationMins: 300, usedPercent: 10, resetsAt: (NOW + H) / 1000 } }, at);
+  const cx = accountModels({ machine: 'm1', seats: [], now: NOW, codex: [
+    { label: null, account: { email: 'a@example.com', plan: 'plus' }, quota: q(NOW - 1000) },
+    { label: 'work', account: { email: 'w@example.com', plan: 'pro' }, quota: q(NOW) },
+    { label: 'again', account: { email: 'A@example.com' }, quota: q(NOW) },
+    { label: 'idle', account: null, quota: null }] }).filter((a) => a.agent === 'codex');
+  assert.deepEqual(cx.map((a) => [a.key, a.label, a.aliases, a.at]),
+    [['codex:a@example.com', null, [null, 'again'], NOW], ['codex:w@example.com', 'work', ['work'], NOW]]);
 });

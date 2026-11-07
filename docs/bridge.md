@@ -154,7 +154,7 @@ discovery does not dump old conversation text into Telegram.
   live-control endpoint. An attempted reply/interrupt explains that it requires the local
   TUI. To enable full control, **stop that TUI first**, then `codc resume <thread-id>`.
   The bridge never resumes an independent session behind the user's back.
-- No-rollout/ephemeral sessions, custom Codex homes and unsupported transcript schema
+- No-rollout/ephemeral sessions, Codex homes no launch has recorded (see Codex homes) and unsupported transcript schema
   changes remain outside this fallback. It is a tested compatibility reader, not a
   promise that transcripts are a stable upstream API.
 - Switching an already-observed thread to RPC preserves its Topic and refreshes its
@@ -587,6 +587,22 @@ same account in two Teams. Each seat is declared once, in the top-level `seats` 
 - The channel reports the seat (from `CLAUDE_CONFIG_DIR`): the Topic title shows
   `claude:<alias>`, and the dashboard lists the session under its seat. The base dir counts
   as the seat its login matches.
+
+## Codex homes (`scripts/shared/codex-home.mjs`)
+
+A Codex home (`CODEX_HOME`) is one Codex login: a second ChatGPT account on the same host runs
+in its own home. No config declares homes and the bridge never guesses directory names: every
+`codc`/`cods` launch and every Codex SessionStart hook runs `ensure.mjs`, which records its
+`CODEX_HOME` in `~/.claude/bridge/codex-homes.json` (the base `~/.codex` needs no record).
+
+- The daemon runs one `CodexAdapter` per home — the base home plus each recorded home still on
+  disk (`CodexHomes` in `codex-adapter.mjs`) — each attached to its own home's shared
+  app-server (`codex app-server proxy` with that `CODEX_HOME`) and reading its own rollouts. A
+  home recorded while the daemon runs joins within 15 s; no restart.
+- A session reports its home's label as its seat: `null` for the base home, else the dir name
+  (`~/.codex-work` -> `work`). The Topic title shows `codex:<label>`; the dashboard lists each
+  home's account (its quota series kept per home) and a session under its home's account. Two
+  homes on one login are one account. Usage rows carry the label as their `seat`.
 
 ## Session status
 

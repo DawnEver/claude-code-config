@@ -109,9 +109,9 @@ export async function runCodexHook(input, deps = {}) {
     }));
     if (checked?.systemMessage) messages.push(checked.systemMessage);
     await attempt(deps.cacheReport ?? (deps.heal ? async () => {} : () => reportPluginCache(env)));
+    // Also records this session's CODEX_HOME, so the daemon bridges it under its own account.
     await attempt(deps.ensure ?? (deps.sync ? async () => {} : async () => {
-      const result = await (await import('../bridge/ensure.mjs')).ensureDaemon();
-      if (result === 'different-home') messages.push('[cc-config] collector belongs to another CODEX_HOME; accounts were not mixed');
+      await (await import('../bridge/ensure.mjs')).ensureDaemon();
     }));
   } else if (event === 'PreToolUse') {
     await repair(true);

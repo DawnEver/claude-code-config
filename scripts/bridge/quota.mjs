@@ -195,7 +195,12 @@ function claudeGroups(dirs, seats, machine) {
  * quota data or a seat problem. `key` (agent + email + org) lets the dashboard merge one
  * account reported by several hosts. Times are epoch ms.
  */
-export function accountModels({ machine, seats, codexAccount, claude = [], codex, codexFallback = machine, codexResetCredits = null, extra = null, now }) {
+/**
+ * `codex`: one entry per Codex home ({label, account, quota, resetCredits, fallback}): its
+ * label (null for the base home) becomes an alias of its account, so a session finds it by its
+ * home as a Claude session finds its seat; two homes on one login merge into one account.
+ */
+export function accountModels({ machine, seats, claude = [], codex = [], extra = null, now }) {
   const scheduled = (s) => (s ? { at: s.at ?? null, url: s.url ?? null } : null);
   const out = [];
   for (const g of claudeGroups(claude, seats, machine)) {
@@ -207,42 +212,50 @@ export function accountModels({ machine, seats, codexAccount, claude = [], codex
       problems: g.problems, at: g.quota?.at ?? null, windows: windowModels(g.quota, now), resetCredits: null,
       extraReset: scheduled(extra?.Claude?.scheduled) });
   }
-  if (codex || codexAccount) {
-    const expiries = (Array.isArray(codexResetCredits?.credits) ? codexResetCredits.credits : [])
+  const codexByKey = new Map();
+  for (const h of codex) {
+    if (!h.quota && !h.account) continue;
+    const key = codexAccountKey(h.account?.email, h.fallback ?? machine);
+    const held = codexByKey.get(key);
+    if (held) { held.aliases.push(h.label ?? null); if (h.quota && !(held.at >= h.quota.at)) Object.assign(held, { at: h.quota.at, windows: windowModels(h.quota, now) }); continue; }
+    const expiries = (Array.isArray(h.resetCredits?.credits) ? h.resetCredits.credits : [])
       .map((c) => (c?.expiresAt > 0 ? c.expiresAt * 1000 : null)).filter((x) => x === null || x > now);
-    out.push({ key: codexAccountKey(codexAccount?.email, codexFallback), agent: 'codex', label: null,
-      email: codexAccount?.email ?? null, detail: codexAccount?.plan ? planName(codexAccount.plan) : null, problems: [],
-      at: codex?.at ?? null, windows: windowModels(codex, now),
-      resetCredits: codexResetCredits?.availableCount > 0 ? { count: codexResetCredits.availableCount, expiries } : null,
-      extraReset: scheduled(extra?.Codex?.scheduled) });
+    const a = { key, agent: 'codex', label: h.label ?? null, email: h.account?.email ?? null, aliases: [h.label ?? null],
+      detail: h.account?.plan ? planName(h.account.plan) : null, problems: [],
+      at: h.quota?.at ?? null, windows: windowModels(h.quota, now),
+      resetCredits: h.resetCredits?.availableCount > 0 ? { count: h.resetCredits.availableCount, expiries } : null,
+      extraReset: scheduled(extra?.Codex?.scheduled) };
+    codexByKey.set(key, a);
+    out.push(a);
   }
   return out;
 }
 
 /**
  * The account a session of this machine spends: a Claude session by the config dir it runs in
- * (`seat`: its alias, null for the base dir), a Codex session by the shared app-server's one
- * account, an API-key session (ccds, cods: `provider`) by its platform's configured balance
+ * (`seat`: its alias, null for the base dir), a Codex session by the Codex home it runs in
+ * (`seat`: the home's label, null for the base home: codex-home.mjs), an API-key session (ccds, cods: `provider`) by its platform's configured balance
  * entry (`bridge.balances`) — never the subscription beside it, and whether or not this host can
  * read that balance. `aliases` is local knowledge only: the dashboard schema never forwards it.
  */
 export function accountFor(session, accounts, balanceEntries = []) {
   if (session.provider) return balanceKeyFor(session.provider, balanceEntries);
-  const a = session.agent === 'claude' ? accounts.find((x) => x.agent === 'claude' && x.aliases?.includes(session.seat ?? null))
-    : accounts.find((x) => x.agent === session.agent);
+  const a = accounts.find((x) => x.agent === session.agent && x.aliases?.includes(session.seat ?? null));
   return a?.key ?? null;
 }
 
 /**
- * Reads this machine's accounts for the dashboard push: Claude config dirs, the Codex series
- * (recorded here, on every read), and the community extra-reset APIs at most every
+ * Reads this machine's accounts for the dashboard push: Claude config dirs, each Codex home's
+ * series (recorded here, on every read), and the community extra-reset APIs at most every
  * `extraEveryMs` (the push runs every few seconds), refreshed in the background.
+ * `codex()`: each Codex home's {home, label, quota, account} (codex-adapter.mjs CodexHomes);
+ * `codexSeriesFile(home, account)` and `codexFallback(home)` scope its series and unknown account.
  */
 export class AccountReader {
-  constructor({ machine, codexQuota = () => null, codexAccount = () => null, codexSeriesFile = null, codexFallback = machine, log = () => {}, now = Date.now,
+  constructor({ machine, codex = () => [], codexSeriesFile = null, codexFallback = () => machine, log = () => {}, now = Date.now,
     extraResets = () => fetchExtraResets({ log }), extraEveryMs = 30 * 60000,
     sources = { seats: () => readSeats(), claude: readClaudeDirs } }) {
-    Object.assign(this, { machine, codexQuota, codexAccount, codexSeriesFile, codexFallback, now, extraResets, extraEveryMs, sources });
+    Object.assign(this, { machine, codex, codexSeriesFile, codexFallback, now, extraResets, extraEveryMs, sources });
     this.extra = { at: -Infinity, value: null, pending: null };
   }
 
@@ -253,13 +266,13 @@ export class AccountReader {
       this.extra.pending = this.extraResets().then((v) => { this.extra.value = v; }, () => {})
         .finally(() => { this.extra.at = this.now(); this.extra.pending = null; });
     }
-    const cx = this.codexQuota();
-    const account = this.codexAccount();
-    const seriesFile = typeof this.codexSeriesFile === 'function' ? this.codexSeriesFile(account) : this.codexSeriesFile;
-    if (cx && seriesFile) recordSample(seriesFile, codexWindows(cx.limits), cx.at);
+    const codex = this.codex().map(({ home, label, quota: cx, account }) => {
+      const seriesFile = this.codexSeriesFile?.(home, account) ?? null;
+      if (cx && seriesFile) recordSample(seriesFile, codexWindows(cx.limits), cx.at);
+      const quota = cx ? quotaOf(seriesFile ? readSeries(seriesFile) : [{ from: cx.at, at: cx.at, windows: codexWindows(cx.limits) }]) : null;
+      return { label, account, quota, resetCredits: cx?.resetCredits ?? null, fallback: this.codexFallback(home) };
+    });
     const seats = this.sources.seats();
-    const codex = cx ? quotaOf(seriesFile ? readSeries(seriesFile) : [{ from: cx.at, at: cx.at, windows: codexWindows(cx.limits) }]) : null;
-    return accountModels({ machine: this.machine, seats, codexAccount: account, codexFallback: this.codexFallback, codexResetCredits: cx?.resetCredits ?? null,
-      claude: this.sources.claude(seats, this.machine), codex, extra: this.extra.value, now });
+    return accountModels({ machine: this.machine, seats, codex, claude: this.sources.claude(seats, this.machine), extra: this.extra.value, now });
   }
 }

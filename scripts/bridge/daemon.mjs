@@ -32,7 +32,7 @@ import { acquireDaemonLock } from './ensure.mjs';
 import { isMain } from '../shared/is-main.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { TelegramClient, ATTACHMENT_LIMITS } from './telegram.mjs';
-import { CodexAdapter } from './codex-adapter.mjs';
+import { CodexAdapter, CodexHomes } from './codex-adapter.mjs';
 import { CodexLocalObserver } from './codex-local.mjs';
 import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
@@ -901,7 +901,7 @@ export class Bridge {
   }
 }
 
-/** Keep the Codex adapter attached and its subscriptions current. */
+/** Keep every Codex home's adapter attached and its subscriptions current; a newly recorded home joins on the next pass. */
 async function codexLoop(codex, log, signal, everyMs = 15000) {
   while (!signal.aborted) {
     try {
@@ -931,13 +931,14 @@ export async function main() {
   if (!config.botToken && !config.dashboard) { log('no Telegram or dashboard transport configured; see docs/bridge.md'); process.exit(1); }
   if (config.botToken && !config.allowedUserIds.length) log('bridge.allowedUserIds is empty: inbound Telegram messages will all be dropped');
 
-  const codexHome = resolveCodexHome();
-  const homeKey = codexHomeKey(codexHome);
+  // The base Codex home scopes this daemon's own cursors; each Codex home has its adapter (CodexHomes).
+  const homeKey = codexHomeKey(resolveCodexHome({ env: {} }));
   const telegram = config.botToken ? new TelegramClient({ token: config.botToken, offsetFile: path.join(BRIDGE_RUNTIME_DIR, 'offset.json') }) : null;
   const claude = new ClaudeAdapter();
   const port = await claude.listen(0);
-  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, codexHome, sourceRevision, configRevision: bridgeConfigRevision(config) }, null, 2));
-  const codex = new CodexAdapter({ sources: config.codexSources, localObserver: new CodexLocalObserver({ sources: config.codexSources }) });
+  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, sourceRevision, configRevision: bridgeConfigRevision(config) }, null, 2));
+  const codex = new CodexHomes({ create: (home, refPrefix) => new CodexAdapter({ home, refPrefix, sources: config.codexSources,
+    localObserver: new CodexLocalObserver({ root: path.join(home, 'sessions'), sources: config.codexSources }) }) });
   // The pinned card's account and load: the dashboard push's last reading, else a sample of its own.
   const resources = new ResourceReader();
   let lastAccounts = [], lastResources = null;
@@ -976,9 +977,9 @@ export async function main() {
   }, 60000).unref();
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
   if (config.dashboard) {
-    const accounts = new AccountReader({ machine, log, codexQuota: () => codex.quota, codexAccount: () => codex.account,
-      codexFallback: `${machine}/home-${homeKey}`,
-      codexSeriesFile: account => path.join(BRIDGE_RUNTIME_DIR, `codex-usage-${homeKey}-${createHash('sha256').update(account?.email ?? 'unknown').digest('hex').slice(0, 16)}.jsonl`) });
+    const accounts = new AccountReader({ machine, log, codex: () => codex.accounts(),
+      codexFallback: (home) => `${machine}/home-${codexHomeKey(home)}`,
+      codexSeriesFile: (home, account) => path.join(BRIDGE_RUNTIME_DIR, `codex-usage-${codexHomeKey(home)}-${createHash('sha256').update(account?.email ?? 'unknown').digest('hex').slice(0, 16)}.jsonl`) });
     const balances = new BalanceReader({ entries: config.balances, log });
     // The code forges this host can reach (Code tab): its own tokens, read every few minutes.
     const forges = new ForgeReader({ sources: config.forges, log, cursorFile: path.join(BRIDGE_RUNTIME_DIR, `forge-history-${homeKey}.json`) });
@@ -991,7 +992,7 @@ export async function main() {
     // The usage store (docs/usage.md): the transcripts' turns, each quota window, hourly load.
     const usage = new UsagePush({ url: config.dashboard.url, hostToken: config.dashboard.hostToken, machine, log, accounts: () => lastAccounts, history: () => forges.takeHistory(),
       scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
-        sources: () => usageSources(os.homedir(), { machine, codexHome }) }) });
+        sources: () => usageSources(os.homedir(), { machine }) }) });
     const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, config.balances) })),
       // Subscriptions and API balances alike: one list of the accounts this host can read.

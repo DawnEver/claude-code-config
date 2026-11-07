@@ -19,8 +19,8 @@ const T0 = Date.parse('2026-10-20T10:00:00Z');
 test('explicit homes scope Codex transcript roots and unknown-account attribution', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-homes-'));
   try {
-    const one = sources(home, { codexHome: path.join(home, 'one'), machine: 'host' }).filter(s => s.agent === 'codex');
-    const two = sources(home, { codexHome: path.join(home, 'two'), machine: 'host' }).filter(s => s.agent === 'codex');
+    const one = sources(home, { codexHomes: [path.join(home, 'one')], machine: 'host' }).filter(s => s.agent === 'codex');
+    const two = sources(home, { codexHomes: [path.join(home, 'two')], machine: 'host' }).filter(s => s.agent === 'codex');
     assert.equal(one.length, 2);
     assert.equal(one[0].root, path.join(home, 'one', 'sessions'));
     assert.equal(one[1].root, path.join(home, 'one', 'archived_sessions'));
@@ -115,7 +115,7 @@ test('a collector login change never relabels historical Codex turns as the curr
       { timestamp: iso(20), type: 'token_usage_record', payload: { turn_id: 'T1', usage: usage(100, 0, 5, 0) } },
     ]));
     const collect = email => new UsageScanner({ cursorFile: path.join(home, `${email}.cursor`), project: () => 'repo',
-      sources: () => sources(home, { codexHome, machine: 'host', codexEmail: () => email }) }).collect();
+      sources: () => sources(home, { codexHomes: [codexHome], machine: 'host', codexEmail: () => email }) }).collect();
     const before = await collect('one@example.com');
     const after = await collect('two@example.com');
     assert.equal(before.turns.length, 1);
