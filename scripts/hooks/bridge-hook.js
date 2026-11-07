@@ -145,6 +145,35 @@ export function backgroundTasks(transcript, { now = Date.now(), maxAgeMs = 24 * 
   return [...open.values()];
 }
 
+// The line a task-starting tool result begins with, naming the task id TaskStop takes: a
+// monitor's, a background shell's, an agent's.
+const TASK_ID_STARTED = /^(?:Monitor started \(task ([A-Za-z0-9]+)|Command running in background with ID: ([A-Za-z0-9]+)|Async agent launched[\s\S]{0,400}?agentId: ([A-Za-z0-9]+))/;
+
+/**
+ * The tool call (its `tool_use_id`, the adapter's task id) whose result started task `taskId`,
+ * or null. A TaskStop names the task, not the call: this joins the two, so a monitor stopped
+ * early ends now rather than at its deadline.
+ */
+export function taskCallOf(transcript, taskId) {
+  for (const e of entriesOf(transcript)) {
+    for (const [t, toolUseId] of taskTexts(e)) {
+      if (!toolUseId) continue;
+      const m = TASK_ID_STARTED.exec(t);
+      if (m && (m[1] ?? m[2] ?? m[3]) === taskId) return toolUseId;
+    }
+  }
+  return null;
+}
+
+/** The end a returned TaskStop reports for the task it stopped, or null. */
+function stoppedTask(payload) {
+  const taskId = payload.tool_input?.task_id ?? payload.tool_input?.shell_id;
+  if (typeof taskId !== 'string' || !taskId || typeof payload.transcript_path !== 'string') return null;
+  let id = null;
+  try { id = taskCallOf(fs.readFileSync(payload.transcript_path, 'utf8'), taskId); } catch { /* none */ }
+  return id ? { op: 'end', id, status: 'stopped' } : null;
+}
+
 // The tools whose calls are tasks (tasks.mjs), by kind: a Bash or PowerShell shell, a monitor,
 // and an agent (`Task` is its older name).
 const TASK_TOOLS = { Bash: 'shell', PowerShell: 'powershell', Monitor: 'monitor', Agent: 'agent', Task: 'agent' };
@@ -222,7 +251,7 @@ export function mirrorFor(payload) {
   const event = payload?.hook_event_name;
   if (event === 'PostToolUse' && payload.tool_name === 'AskUserQuestion') return { ...base, kind: 'answer', text: answerText(payload) };
   if ((event === 'PreToolUse' && payload.tool_name !== 'AskUserQuestion') || event === 'PostToolUse' || event === 'PostToolUseFailure') {
-    const task = taskFor(payload);
+    const task = event === 'PostToolUse' && payload.tool_name === 'TaskStop' ? stoppedTask(payload) : taskFor(payload);
     return { ...base, kind: 'activity', state: 'running', ...(task ? { task } : {}) };
   }
   if (event === 'Notification') {

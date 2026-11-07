@@ -221,3 +221,22 @@ test('turnTexts and backgroundTasks take entries parsed once, as Stop reads a la
   assert.deepEqual(turnTexts(entries), turnTexts(jsonl));
   assert.deepEqual(backgroundTasks(entries), backgroundTasks(jsonl));
 });
+
+test('mirrorFor: a TaskStop ends the task its call started, found by its task id in the transcript — a monitor stopped early', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-stop-'));
+  const file = path.join(dir, 't.jsonl');
+  const result = (text, id) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+  fs.writeFileSync(file, [
+    result('Monitor started (task bmon1, expires in 30m unless the source ends first; ...)', 'toolu_mon'),
+    result('Command running in background with ID: bsh1. Output is being written to: x', 'toolu_sh'),
+    result('grep says: Monitor started (task bquoted, expires', 'toolu_q'),
+  ].join('\n') + '\n');
+  const stop = (taskId, event = 'PostToolUse') => mirrorFor({ hook_event_name: event, session_id: 's', tool_name: 'TaskStop', tool_use_id: 'u9',
+    tool_input: { task_id: taskId }, tool_response: { message: `Successfully stopped task: ${taskId} (x)` }, transcript_path: file });
+  assert.deepEqual(stop('bmon1').task, { op: 'end', id: 'toolu_mon', status: 'stopped' });
+  assert.deepEqual(stop('bsh1').task, { op: 'end', id: 'toolu_sh', status: 'stopped' });
+  assert.equal(stop('bquoted').task, undefined, 'only a tool result that starts with the start line counts');
+  assert.equal(stop('bnone').task, undefined);
+  assert.equal(stop('bmon1', 'PreToolUse').task, undefined, 'not yet stopped');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
