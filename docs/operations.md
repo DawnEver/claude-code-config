@@ -61,7 +61,7 @@ contain no raw hook payload, and are not another source of session truth.
 
 Loop guard configuration can be set in shared/local `harness.loopGuard` (`warnAt`, `denyAt`,
 `similarWarnAt`, `similarDenyAt`, `similarThreshold`, `windowMinutes`, `maxEntries`, `disable`,
-`exempt`). Precedence is `HARNESS_LOOP_GUARD_*`, existing `CLAUDE_LOOP_GUARD_*`, merged
+`exempt`). Precedence is `HARNESS_LOOP_GUARD_*` env, merged
 configuration, then defaults. This explicit file read works when daemon env is unrelated to
 the launcher. Hosted tools outside native tool hooks remain outside the guard's coverage.
 

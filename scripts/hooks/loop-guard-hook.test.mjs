@@ -65,13 +65,13 @@ test('entries outside the window stop counting', () => {
 
 test('env overrides every threshold', () => {
   const cfg = loadConfig({
-    CLAUDE_LOOP_GUARD_WARN_AT: '2',
-    CLAUDE_LOOP_GUARD_DENY_AT: '3',
-    CLAUDE_LOOP_GUARD_SIMILAR_WARN_AT: '2',
-    CLAUDE_LOOP_GUARD_SIMILAR_DENY_AT: '3',
-    CLAUDE_LOOP_GUARD_WINDOW_MINUTES: '30',
-    CLAUDE_LOOP_GUARD_SIMILAR_THRESHOLD: '0.5',
-    CLAUDE_LOOP_GUARD_MAX_ENTRIES: '10',
+    HARNESS_LOOP_GUARD_WARN_AT: '2',
+    HARNESS_LOOP_GUARD_DENY_AT: '3',
+    HARNESS_LOOP_GUARD_SIMILAR_WARN_AT: '2',
+    HARNESS_LOOP_GUARD_SIMILAR_DENY_AT: '3',
+    HARNESS_LOOP_GUARD_WINDOW_MINUTES: '30',
+    HARNESS_LOOP_GUARD_SIMILAR_THRESHOLD: '0.5',
+    HARNESS_LOOP_GUARD_MAX_ENTRIES: '10',
   });
   assert.equal(cfg.windowMs, 30 * 60 * 1000);
   assert.equal(cfg.maxEntries, 10);
@@ -83,22 +83,22 @@ test('env overrides every threshold', () => {
 });
 
 test('malformed or absent env falls back to the documented defaults', () => {
-  const cfg = loadConfig({ CLAUDE_LOOP_GUARD_DENY_AT: 'banana', CLAUDE_LOOP_GUARD_WARN_AT: '-1' });
+  const cfg = loadConfig({ HARNESS_LOOP_GUARD_DENY_AT: 'banana', HARNESS_LOOP_GUARD_WARN_AT: '-1' });
   assert.equal(cfg.denyAt, DEFAULTS.denyAt);
   assert.equal(cfg.warnAt, DEFAULTS.warnAt);
   assert.equal(cfg.disable, false);
 });
 
 test('a warn threshold above its deny threshold is clamped so it still fires', () => {
-  const cfg = loadConfig({ CLAUDE_LOOP_GUARD_WARN_AT: '9', CLAUDE_LOOP_GUARD_DENY_AT: '2' });
+  const cfg = loadConfig({ HARNESS_LOOP_GUARD_WARN_AT: '9', HARNESS_LOOP_GUARD_DENY_AT: '2' });
   assert.equal(cfg.warnAt, 2);
 });
 
 test('exempt list is extensible and disable is honoured', () => {
-  const cfg = loadConfig({ CLAUDE_LOOP_GUARD_EXEMPT: 'Grep, Glob' });
+  const cfg = loadConfig({ HARNESS_LOOP_GUARD_EXEMPT: 'Grep, Glob' });
   assert.ok(cfg.exempt.has('Grep') && cfg.exempt.has('Glob') && cfg.exempt.has('Monitor'));
-  assert.equal(loadConfig({ CLAUDE_LOOP_GUARD_DISABLE: '1' }).disable, true);
-  assert.equal(loadConfig({ CLAUDE_LOOP_GUARD_DISABLE: 'true' }).disable, true);
+  assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DISABLE: '1' }).disable, true);
+  assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DISABLE: 'true' }).disable, true);
 });
 
 test('a deny carries an actionable reason', () => {
@@ -123,8 +123,9 @@ test('shared config works without launcher env; explicit env has defined precede
   assert.equal(loadConfig({}, shared).denyAt, 3);
   assert.equal(loadConfig({}, shared).disable, true);
   assert.ok(loadConfig({}, shared).exempt.has('local_wait'));
-  assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DENY_AT: '8', CLAUDE_LOOP_GUARD_DENY_AT: '6', HARNESS_LOOP_GUARD_DISABLE: 'false' }, shared).denyAt, 8);
+  assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DENY_AT: '8', HARNESS_LOOP_GUARD_DISABLE: 'false' }, shared).denyAt, 8);
   assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DISABLE: 'false' }, shared).disable, false);
+  assert.equal(loadConfig({ CLAUDE_LOOP_GUARD_DENY_AT: '6' }, shared).denyAt, 3, 'the retired CLAUDE_ prefix is not read');
 });
 
 test('Codex sibling threads do not count against each other and unknown identity fails open', (t) => {

@@ -735,8 +735,6 @@ export function setup(options = {}) {
   }
 
   console.log('\n--- Codex ---');
-  // Convert any legacy `~/.codex/skills` junction into a real directory before
-  // creating per-skill links (otherwise they self-reference into the repo).
   // A real directory: Codex keeps its own .system skills there, ours are linked one by one.
   fs.mkdirSync(path.join(codexDir, 'skills'), { recursive: true });
   processLinks(getCodexLinks(), codexDir, counters, syncDir);

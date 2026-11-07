@@ -125,8 +125,8 @@ Telegram + remote control on the same live session, per-machine bridge in
   the 3rd via `additionalContext` and are denied from the 4th; near-duplicates warn
   on the 4th and are denied from the 5th. Polling-by-design tools (`Monitor`,
   `TaskOutput`, `ReadNotifications`, ...) are exempt and the hook fails open.
-  Every knob is an env var settable from the `env` block of `claude_settings.json`:
-  `CLAUDE_LOOP_GUARD_{WARN_AT,DENY_AT,SIMILAR_WARN_AT,SIMILAR_DENY_AT,
+  Every knob is a `harness.loopGuard` key in `claude_env_settings[.local].json` or an env var
+  `HARNESS_LOOP_GUARD_{WARN_AT,DENY_AT,SIMILAR_WARN_AT,SIMILAR_DENY_AT,
   SIMILAR_THRESHOLD,WINDOW_MINUTES,MAX_ENTRIES,EXEMPT,DISABLE}` — see `DEFAULTS`
   in the hook. The `Stop` hook runs the `sharp-review`
   plugin (post-task code review, 3 parallel reviewers).
