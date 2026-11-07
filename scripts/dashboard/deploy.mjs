@@ -26,6 +26,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
+import { prepareSpawn } from '../runtime/win-spawn.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { writePrivateFile } from '../bridge/context.mjs';
@@ -68,9 +69,10 @@ async function hostToken() {
 const USAGE_DB = 'agents-usage';
 const WRANGLER = path.join(HERE, 'wrangler.jsonc');
 
+// No `shell: true`: it concatenates args unescaped (Node DEP0190). prepareSpawn quotes for npx.cmd.
 function wrangler(args, opts = {}) {
-  return execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['-y', 'wrangler@4', ...args],
-    { encoding: 'utf8', shell: process.platform === 'win32', ...opts });
+  const run = prepareSpawn('npx', ['-y', 'wrangler@4', ...args]);
+  return execFileSync(run.command, run.args, { encoding: 'utf8', ...run.options, ...opts });
 }
 
 /** wrangler.jsonc with the usage store bound to `id`: the binding's one definition. */
