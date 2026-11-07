@@ -94,7 +94,9 @@ no API, no authentication.
   kind's colour — an icon (default) or a word, `sh` `ps` `mon` `agent` (Config › Layout › Task
   tags); filled in the foreground, outlined in the background (a Codex unified-exec session
   too), the one mark of it — what it does,
-  how long it has run. Folded, the row lists the first five, each cut to a line; its tasks icon
+  how long it has run. Tasks are listed by kind — subagents, monitors, shells, PowerShell
+  (`TASK_KINDS` order), each kind oldest first. Folded, the row lists the first two (Config ›
+  Layout › Task lines: 0, 1, 2, 3 or 5), each cut to a line, then `+N more`; its tasks icon
   (counting what runs) lists all of them with labels in full — a tap there never opens the
   Topic, the row still does.
   A turn end ends every foreground task still running (its end hook was lost; a foreground

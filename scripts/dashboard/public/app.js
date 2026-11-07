@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, searchAll, SEARCH_MAX, sessionAccountLabel } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -54,7 +54,7 @@ const PREFS = {
   clock: ['24', '12'], date: ['day', 'iso', 'off'], replyStyle: ['ago', 'clock'], unit: ['used', 'left'],
   groupBy: ['project', 'host'], groupOrder: ['host', 'urgency'], openAt: ['latest', 'first'], pinTabs: ['on', 'off'],
   load: ['compact', 'detailed', 'off'], codeAttention: ['off', 'on'], codeRepoLayout: ['columns', 'list'], codeItemLayout: ['list', 'columns'],
-  textSize: ['m', 's', 'l', 'xl'], taskTags: ['icons', 'text'],
+  textSize: ['m', 's', 'l', 'xl'], taskTags: ['icons', 'text'], taskLines: ['2', '1', '3', '5', '0'],
 };
 // Text size: the one --scale every size in index.html is computed from.
 const TEXT_SCALE = { s: 0.9, m: 1, l: 1.12, xl: 1.25 };
@@ -121,8 +121,6 @@ function badges(s) {
   return out;
 }
 
-/** Running tasks listed under a session at most; the rest are counted (the tasks icon lists all). */
-const TASK_LINES = 5;
 // Sessions whose full task list is open (this page's life): opened by the tasks icon, never the row.
 const tasksOpen = new Set();
 
@@ -207,11 +205,12 @@ function sessionRow(s, opts = {}) {
   body.append(top, bottom);
   // What it waits for (the permission it asks, its question): the line to read before opening the Topic.
   if (s.waiting) { const w = el('div', 'waiting', s.waiting); w.title = s.waiting; body.append(w); }
-  // Folded: the first TASK_LINES, cut to a line each. Open: all of them, labels in full.
+  // Folded: the first few (Config › Layout › Task lines), cut to a line each. Open: all of them, labels in full.
   if (tasks.length) {
     const list = el('div', `tasks${open ? ' all' : ''}`);
-    for (const x of open ? tasks : tasks.slice(0, TASK_LINES)) list.append(taskLine(x, open));
-    if (!open && tasks.length > TASK_LINES) list.append(el('div', 'task more', tr('session.tasksMore', { n: tasks.length - TASK_LINES })));
+    const { shown, more } = taskLines(tasks, open, Number(pref.taskLines));
+    for (const x of shown) list.append(taskLine(x, open));
+    if (more) list.append(el('div', 'task more', tr('session.tasksMore', { n: more })));
     body.append(list);
   }
   // Under the logo, the account it spends: two seats of one agent told apart at a glance.
@@ -696,7 +695,8 @@ function displaySection() {
       prefRow('textSize', 'cfg.textSize', null, [tr('cfg.textSize.m'), tr('cfg.textSize.s'), tr('cfg.textSize.l'), tr('cfg.textSize.xl')]),
       prefRow('pinTabs', 'cfg.pinTabs', 'cfg.pinTabs.hint', [tr('cfg.pinTabs.on'), tr('cfg.pinTabs.off')]),
       prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.compact'), tr('cfg.load.detailed'), tr('cfg.load.off')]),
-      prefRow('taskTags', 'cfg.taskTags', 'cfg.taskTags.hint', [tr('cfg.taskTags.icons'), tr('cfg.taskTags.text')])]),
+      prefRow('taskTags', 'cfg.taskTags', 'cfg.taskTags.hint', [tr('cfg.taskTags.icons'), tr('cfg.taskTags.text')]),
+      prefRow('taskLines', 'cfg.taskLines', 'cfg.taskLines.hint', ['2', '1', '3', '5', tr('cfg.taskLines.0')])]),
     ]),
   ];
 }

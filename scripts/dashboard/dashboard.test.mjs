@@ -11,7 +11,7 @@ import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
 import { alertText, telegramNotifier, ALERT_KINDS } from './notify.mjs';
-import { accountSessions, codeView, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, quotaView, stats, tabs, taskView, searchAll, sessionAccountLabel, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
+import { accountSessions, codeView, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, quotaView, stats, tabs, taskView, taskLines, searchAll, sessionAccountLabel, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -894,6 +894,19 @@ test('a forgotten source stays forgotten across a restart', () => {
   t += FORGE_FORGET_MS + 1;
   r.accept('a', parseHostPush({ ...push(), seq: 2, forges: { sources: [], readings: [] } }));
   assert.deepEqual(new Registry({ hosts: ['a'], ttlMs: 600000, now: () => t, store }).snapshot().repos, []);
+});
+
+test('view: tasks ordered by kind — subagents, monitors, shells, PowerShell — each kind as listed', () => {
+  const t = (id, kind) => ({ id, kind, label: id, background: false, startedAt: NOW - 1000 });
+  const tasks = [t('s1', 'shell'), t('p1', 'powershell'), t('a1', 'agent'), t('m1', 'monitor'), t('s2', 'shell'), t('a2', 'agent')];
+  assert.deepEqual(taskView(tasks, NOW).map((x) => x.id), ['a1', 'a2', 'm1', 's1', 's2', 'p1']);
+});
+
+test('view: folded shows the first n task lines and counts the rest; open shows all', () => {
+  const xs = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(taskLines(xs, false, 2), { shown: ['a', 'b'], more: 2 });
+  assert.deepEqual(taskLines(xs, true, 2), { shown: xs, more: 0 });
+  assert.deepEqual(taskLines(xs, false, 5), { shown: xs, more: 0 });
 });
 
 test('view: a session tasks — only what runs, as listed, each with how long it has run', () => {

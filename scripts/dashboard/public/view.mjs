@@ -3,7 +3,7 @@
 // the view adds is freshness: a session of an offline host reads `Stale`, never its last state.
 // The page answers, in order: does anything need me, what is running, where.
 
-import { STATUS, QUOTA_STALE_MS, agentName } from './shared/vocab.mjs';
+import { STATUS, QUOTA_STALE_MS, TASK_KINDS, agentName } from './shared/vocab.mjs';
 import { quotaView, alertKey } from './shared/quota-model.mjs';
 import { t } from './shared/i18n.mjs';
 
@@ -141,9 +141,14 @@ export const sessionLabel = (s, lang = 'en') => s.name ?? s.project ?? t('sessio
 
 /**
  * A session's running tasks (scripts/bridge/tasks.mjs: only what runs is reported), as listed
- * (oldest first), each with how long it has run so far.
+ * by kind in TASK_KINDS order, within a kind as listed (oldest first), each with how long it has run so far.
  */
-export const taskView = (tasks = [], now = Date.now()) => tasks.map((x) => ({ ...x, for: countdown(now, x.startedAt) }));
+export const taskView = (tasks = [], now = Date.now()) => tasks
+  .map((x) => ({ ...x, for: countdown(now, x.startedAt) }))
+  .sort((a, b) => TASK_KINDS.indexOf(a.kind) - TASK_KINDS.indexOf(b.kind));
+
+/** A session's task lines: folded, the first `max` and how many more; open, all of them. */
+export const taskLines = (tasks, open, max) => (open ? { shown: tasks, more: 0 } : { shown: tasks.slice(0, max), more: Math.max(0, tasks.length - max) });
 
 /** A chat list's time column: the clock today, the weekday within a week, else the date. */
 export function chatTime(iso, now = Date.now(), { clock = '24', lang = 'en' } = {}) {

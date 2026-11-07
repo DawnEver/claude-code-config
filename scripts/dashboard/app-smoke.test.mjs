@@ -136,17 +136,19 @@ test('the page renders every tab from the example data, and no view throws', asy
     const full = () => doc.getElementById('hosts').querySelectorAll('.tl').filter((x) => x.classList.contains('full')).length;
     assert.equal(tasksBtn()?.textContent, '5', 'a session running tasks has the icon, counting them');
     assert.equal(full(), 0, 'folded: each label cut to a line');
-    const kinds = doc.getElementById('hosts').querySelectorAll('.task').map((x) => {
+    const kinds = () => doc.getElementById('hosts').querySelectorAll('.task').map((x) => {
       const tag = x.querySelectorAll('.tk')[0];
       return [x.className, tag?.className, tag?.getAttribute('aria-label').split(' · ')[0]];
     });
-    assert.deepEqual(kinds, [['task k-agent bg', 'tk icon', 'subagent'], ['task k-shell', 'tk icon', 'shell'], ['task k-shell bg', 'tk icon', 'shell'],
-      ['task k-monitor bg', 'tk icon', 'monitor (watches until it expires)'], ['task k-powershell', 'tk icon', 'PowerShell']],
-      'by default every kind its own icon, named for a screen reader; in the background the row is marked, nothing else is added');
+    assert.deepEqual(kinds().map((k) => k[0]), ['task k-agent bg', 'task k-monitor bg', 'task more'], 'folded: the first two by kind, the rest counted');
+    assert.equal(doc.getElementById('hosts').querySelectorAll('.task')[2].textContent, '+3 more');
     assert.equal(doc.getElementById('hosts').querySelectorAll('.tb').length, 0, 'no extra bg mark');
     tasksBtn().dispatch('click');
     assert.equal(opened, 0, 'the icon does not open the Topic');
     assert.equal(full(), 5, 'open: every running task, labels in full');
+    assert.deepEqual(kinds(), [['task k-agent bg', 'tk icon', 'subagent'], ['task k-monitor bg', 'tk icon', 'monitor (watches until it expires)'],
+      ['task k-shell', 'tk icon', 'shell'], ['task k-shell bg', 'tk icon', 'shell'], ['task k-powershell', 'tk icon', 'PowerShell']],
+      'by kind — subagents, monitors, shells, PowerShell — each its own icon, named for a screen reader; in the background the row is marked');
     tasksBtn().dispatch('click');
     assert.equal(full(), 0, 'a second tap folds it');
     doc.getElementById('hosts').querySelectorAll('.chat').find((x) => x.classList.contains('link')).dispatch('click');

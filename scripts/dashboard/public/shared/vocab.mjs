@@ -30,8 +30,9 @@ export const QUOTA_STALE_MS = 15 * 60000;
 export const USAGE_FILTER_MAX = 20;
 
 // A session's tasks (scripts/bridge/tasks.mjs), by kind: a shell (Bash, a Codex command), a
-// PowerShell, a monitor (watches until it expires), a subagent.
-export const TASK_KINDS = ['shell', 'powershell', 'monitor', 'agent'];
+// PowerShell, a monitor (watches until it expires), a subagent. This order is the order a session
+// lists them in: subagents, monitors, shells, PowerShell.
+export const TASK_KINDS = ['agent', 'monitor', 'shell', 'powershell'];
 export const TASK_STATUSES = ['running', 'completed', 'failed', 'stopped'];
 /** A task's label (a command, an agent's description) is cut to this many characters. */
 export const TASK_LABEL_MAX = 200;
