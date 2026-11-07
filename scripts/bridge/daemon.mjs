@@ -976,13 +976,14 @@ export async function main() {
   process.on('SIGTERM', stop);
   log(`up: machine=${machine} ipc=127.0.0.1:${port} idleCloseMinutes=${config.idleCloseMinutes} deleteClosedAfterHours=${config.deleteClosedAfterHours}`);
   codexLoop(codex, log, ac.signal);
-  setInterval(() => bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`)), 60000).unref();
   // One rule for every change: this daemon read its config and code once, so a change to either
   // (a cloud sync, a pull, a dashboard edit) hands over to a fresh daemon — the same check
   // ensure.mjs makes at session start, so a host never waits for a session to apply it.
   const startConfig = bridgeConfigRevision(config);
   let handedOver = false;
+  // One minute timer for both minute-grained duties: idle-closing Topics, then the change check.
   setInterval(() => {
+    bridge.closeIdle().catch((e) => log(`idle close: ${e.message}`));
     if (handedOver) return;
     try {
       // A cloud client may have detached the shared settings: re-link first, so this reads what the other hosts read.
