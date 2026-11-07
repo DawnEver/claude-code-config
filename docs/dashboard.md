@@ -68,6 +68,17 @@ no API, no authentication.
   `unknown`, and `ended` for the instant a session is going down — an ended session is
   dropped from the next push rather than listed. The UI never infers a status.
   A session whose host reports `unknown` is not listed at all.
+- **Waiting**: a `needs_approval` / `needs_input` session carries `waiting` (at most
+  `WAITING_MAX` = 300 characters, dropped at the boundary for any other status): what it waits
+  for — Claude's channel permission request (`Bash: <description>`), else the Notification's
+  text ("Claude needs your permission to use Bash"), or the question; Codex's pending approval
+  (`$ <command>`, or its reason) or question. Shown as a line under the row and searched. The
+  same text is already in the Topic (with the @ alert), so no dashboard-bot alert repeats it.
+- **Account**: under the agent logo, the account the session spends, named as the Quota tab
+  names it (`sessionAccountLabel` in `view.mjs`: its `accountTag` — seat label, else the
+  email's name — else the API platform, else the Claude seat), so two seats of one agent are
+  told apart; searched with its email. The session's `account` key is `accountFor` in
+  `scripts/bridge/quota.mjs`.
 - **Tasks**: a session carries `tasks`, what it runs besides its own turn, by kind (`TASK_KINDS`
   in `public/shared/vocab.mjs`): `shell` (Claude Bash, a Codex command), `powershell` (Claude's
   PowerShell tool; a Codex command run by powershell/pwsh, labelled by its script), `monitor`
@@ -86,15 +97,22 @@ no API, no authentication.
   Topic, the row still does.
   A turn end ends every foreground task still running (its end hook was lost; a foreground
   call cannot outlive its turn), and a foreground start stamped before that turn end arrived
-  late and counts as ended. Claude: `bridge-hook.js` reports a Bash or Agent call's start
+  late and counts as ended. Claude's turn end is its Stop, and also the next prompt or an idle
+  Notification (an interrupted turn fires no Stop); Codex's is `turn/completed` whatever its
+  status (its items repaired from the turn's snapshot first). A session going down drops its board. Claude: `bridge-hook.js` reports a Bash or Agent call's start
   (PreToolUse) and end (PostToolUse, PostToolUseFailure); a call that returns having gone to the
   background — asked to, or by itself (Claude Code moves a long shell or an agent there unasked)
   — runs on. Every turn end takes the transcript as the truth for background shells and agents
   (`backgroundTasks`: started minus notified or stopped, each with its call's kind, label and
   time; Monitors are not counted; Claude wakes when one ends): one not open there has ended, and
-  one open there that the board lost — a daemon restart, a dropped hook — is added back. Codex:
+  one open there that the board lost — a daemon restart, a dropped hook — is added back, unless
+  it started before this claude process (the channel registers `startedAt`, its own start, less
+  a minute): a resumed session's old shells died with their process. Codex:
   `trackItem` in `codex-adapter.mjs` reads each `commandExecution` item from `inProgress` to
-  its end, and each subagent by its thread from `collabAgentToolCall.agentsStates`. Live state
+  its end, and each subagent by its thread from `collabAgentToolCall.agentsStates`; a subagent
+  runs past its parent's turn, and since a later collab call may never report its end, each poll
+  asks Codex (`thread/read`) for every subagent running over a minute: its thread `idle`,
+  `systemError` or `notLoaded` ends it. Live state
   only: no task is written to the usage store.
 - **Freshness is separate.** `lastSeen` is the gateway's own clock at the last accepted push
   (host clocks are not trusted). A host silent for `ttlSeconds` (60) is Offline and every
@@ -114,7 +132,7 @@ no API, no authentication.
   opened with `Telegram.WebApp.openTelegramLink`. A closed Topic still links (marked closed);
   re-binding (resume, supersede, recreate) shows on the next push. The group id appears only
   inside that link (Telegram needs it); the chat id itself is not served.
-- **Not exported**: cwd, Topic titles, and no message text. Token counts go to the usage store, not the snapshot (`docs/usage.md`). Account emails are (Quota, below).
+- **Not exported**: cwd, Topic titles, and no message text (`waiting`, what a waiting session asks, is the one exception). Token counts go to the usage store, not the snapshot (`docs/usage.md`). Account emails are (Quota, below).
   The session's own name is (`name`, see bridge.md; Claude's generated title is a summary of the conversation, so a
   name may echo its topic), and two counts per Topic: `unread`, the messages
   posted since the human last wrote there (a prompt typed at the machine counts as writing; reading

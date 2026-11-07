@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, searchAll, SEARCH_MAX } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, searchAll, SEARCH_MAX, sessionAccountLabel } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -205,6 +205,8 @@ function sessionRow(s, opts = {}) {
   const open = tasksOpen.has(s.id) && tasks.length > 0;
   bottom.append(sub, ...(tasks.length ? [tasksButton(s, tasks.length, open, () => row.replaceWith(sessionRow(s, opts)))] : []), ...badges(s));
   body.append(top, bottom);
+  // What it waits for (the permission it asks, its question): the line to read before opening the Topic.
+  if (s.waiting) { const w = el('div', 'waiting', s.waiting); w.title = s.waiting; body.append(w); }
   // Folded: the first TASK_LINES, cut to a line each. Open: all of them, labels in full.
   if (tasks.length) {
     const list = el('div', `tasks${open ? ' all' : ''}`);
@@ -212,7 +214,11 @@ function sessionRow(s, opts = {}) {
     if (!open && tasks.length > TASK_LINES) list.append(el('div', 'task more', tr('session.tasksMore', { n: tasks.length - TASK_LINES })));
     body.append(list);
   }
-  row.append(avatar, body);
+  // Under the logo, the account it spends: two seats of one agent told apart at a glance.
+  const who = el('div', 'who');
+  const acctName = sessionAccountLabel(s, q || undefined);
+  who.append(avatar, ...(acctName ? [el('span', 'acct-name', acctName)] : []));
+  row.append(who, body);
   if (s.topic) { row.title = tr('session.openTopic'); row.addEventListener('click', () => openTopic(s)); }
   return row;
 }

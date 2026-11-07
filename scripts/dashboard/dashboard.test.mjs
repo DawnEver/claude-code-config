@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
 import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schema.mjs';
+import { WAITING_MAX } from './public/shared/vocab.mjs';
 import { Registry, FORGE_EVERY_MS, FORGE_FORGET_MS, FORGE_LEASE_MS } from './registry.mjs';
 import { createApi, parseDashboardConfig, REPORT_TTL_MS } from './api.mjs';
 import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
@@ -10,7 +11,7 @@ import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
 import { alertText, telegramNotifier, ALERT_KINDS } from './notify.mjs';
-import { accountSessions, codeView, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, quotaView, stats, tabs, taskView, searchAll, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
+import { accountSessions, codeView, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, quotaView, stats, tabs, taskView, searchAll, sessionAccountLabel, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
 const ALICE = 42, MALLORY = 666;
@@ -933,4 +934,27 @@ test('offline: a host in offlineAlertExclude is never alerted; an unknown id the
   assert.equal(r.sweep(), null);
   assert.deepEqual(sent.map((a) => a.host), ['host-a']);
   assert.deepEqual(parseDashboardConfig({ botId: 1, hosts: { 'host-a': 'a'.repeat(64) }, offlineAlertExclude: ['host-a', 'nope'] }).offlineAlertExclude, ['host-a']);
+});
+
+test('waiting: what a session waits for passes the boundary only while it waits, bounded; it is searchable', () => {
+  const long = 'x'.repeat(WAITING_MAX + 50);
+  const [a, b] = parseHostPush(push({ sessions: [session({ status: 'needs_approval', waiting: long }), session({ id: 's2', status: 'idle', waiting: 'stale' })] })).sessions;
+  assert.equal(a.waiting.length, WAITING_MAX);
+  assert.equal(b.waiting, undefined, 'an idle session waits for nothing');
+  const m = mockDashboard(NOW);
+  m.hosts[0].sessions[1].waiting = '$ rm -rf build';
+  const kinds = searchAll(m, 'rm -rf', { now: NOW }).map((r) => `${r.kind}:${r.title}`);
+  assert.deepEqual(kinds, ['session:Landing page redesign']);
+});
+
+test('account: a session names the account it spends, as the Quota tab names it, else its seat or platform; searchable', () => {
+  const m = mockDashboard(NOW);
+  const byKey = (k) => m.accounts.find((q) => q.key === k);
+  const [claude, codex] = m.hosts[0].sessions;
+  assert.equal(sessionAccountLabel(claude, byKey(claude.account)), 'team-a', 'a Claude seat by its label');
+  assert.equal(sessionAccountLabel(codex, byKey(codex.account)), 'bob', 'an unlabelled account by its email name');
+  assert.equal(sessionAccountLabel({ agent: 'claude', seat: 'team-b' }, undefined), 'team-b', 'no reading: the seat');
+  assert.equal(sessionAccountLabel({ agent: 'codex', provider: 'deepseek' }, undefined), 'DeepSeek', 'an API platform');
+  assert.equal(sessionAccountLabel({ agent: 'claude' }, undefined), null);
+  assert.ok(searchAll(m, 'bob', { now: NOW }).some((r) => r.kind === 'session' && r.session.id === codex.id), 'a session by its account');
 });

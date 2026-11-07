@@ -588,3 +588,43 @@ test('transcriptName: /rename beats the generated title, read on incrementally',
   assert.equal(s.at, fs.statSync(file).size - '{"type":"custom-title","custom'.length, 'a cut line is read next time');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('tasks: an interrupted turn (no Stop) ends its foreground calls at the next prompt or idle; a resumed session never revives its old process\'s tasks', async () => {
+  const r = await rig();
+  try {
+    const T = Date.now();
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's', startedAt: T });
+    const start = (id, at, background = false) => r.hook({ sessionId: 's', kind: 'activity', state: 'running', at, task: { op: 'start', id, kind: 'shell', label: id, background } });
+    await start('f1', T + 100);
+    await r.hook({ sessionId: 's', kind: 'prompt', text: 'next', at: T + 200 });
+    assert.equal(r.a.statusSnapshot('s').tasks, undefined, 'a new prompt: the interrupted turn\'s foreground call has returned');
+    await start('f2', T + 300);
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'idle', at: T + 400 });
+    assert.equal(r.a.statusSnapshot('s').tasks, undefined, 'idle: no foreground call runs');
+    await start('b1', T + 500, true);
+    await r.hook({ sessionId: 's', kind: 'prompt', text: 'more', at: T + 600 });
+    assert.deepEqual(r.a.statusSnapshot('s').tasks.map((t) => t.id), ['b1'], 'a background task runs past the turn');
+    // The transcript still sees a shell of the previous claude process open (resumed): it died with that process.
+    await r.hook({ sessionId: 's', kind: 'final', texts: [], at: T + 700,
+      background: [{ id: 'old', kind: 'shell', label: 'npm run dev', startedAt: T - 3600000 }, { id: 'b1', kind: 'shell', label: 'b1', startedAt: T + 500 }] });
+    assert.deepEqual(r.a.statusSnapshot('s').tasks.map((t) => t.id), ['b1']);
+    ch.destroy();
+  } finally { await r.a.close(); }
+});
+
+test('waiting: what a waiting session waits for is in its snapshot, and gone once it moves on', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's' });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'waiting-approval', text: 'Claude needs your permission to use Bash' });
+    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'waiting-approval', waiting: 'Claude needs your permission to use Bash' });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running' });
+    assert.equal(r.a.statusSnapshot('s').waiting, undefined);
+    await r.rpc(ch, 'permission_request', { request_id: 'p', tool_name: 'Bash', description: 'Run the tests' });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'waiting-approval', text: 'Claude needs your permission to use Bash' });
+    assert.equal(r.a.statusSnapshot('s').waiting, 'Bash: Run the tests', 'the channel request says more than the notification');
+    ch.destroy();
+  } finally { await r.a.close(); }
+});

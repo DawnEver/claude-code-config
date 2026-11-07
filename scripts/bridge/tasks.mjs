@@ -35,7 +35,7 @@ export class TaskBoard {
     const held = this.tasks.get(id);
     if (held?.kind) return;
     // A foreground start stamped before the last turn end arrived late (async hooks): that turn ended it.
-    const settled = !background && !held && this.settledAt >= at;
+    const settled = !background && !held && this.settledAt > at;
     this.tasks.set(id, { id, kind, label: taskLabel(kind, label), background: !!background, status: held?.status ?? (settled ? 'completed' : 'running'),
       startedAt: at, endedAt: held?.endedAt ?? (settled ? this.settledAt : null), until });
   }

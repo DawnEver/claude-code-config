@@ -35,5 +35,7 @@ export const TASK_KINDS = ['shell', 'powershell', 'monitor', 'agent'];
 export const TASK_STATUSES = ['running', 'completed', 'failed', 'stopped'];
 /** A task's label (a command, an agent's description) is cut to this many characters. */
 export const TASK_LABEL_MAX = 200;
+/** What a session waiting for the human waits for (a permission request, a question) is cut to this many characters. */
+export const WAITING_MAX = 300;
 /** Tasks listed per session at most: running ones first. */
 export const MAX_TASKS = 50;

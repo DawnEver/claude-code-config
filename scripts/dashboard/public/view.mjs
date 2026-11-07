@@ -479,6 +479,13 @@ export function codeView(snapshot, days, now = Date.now(), chosen = null) {
   return { repos, attention, inactive: all.length - repos.length, hidden: (snapshot.repos ?? []).length - all.length };
 }
 
+/**
+ * The account a session spends, named as the Quota tab names it (accountTag: its seat label, else
+ * its email's name), from `q` its account reading; with no reading, its API platform or its
+ * Claude seat; null when nothing tells (one base account: nothing to tell apart).
+ */
+export const sessionAccountLabel = (s, q) => (q ? accountTag(q) : s.provider ? providerName(s.provider) : s.seat ?? null);
+
 /** Search results at most: a search is to find a thing, not to list everything. */
 export const SEARCH_MAX = 100;
 
@@ -500,7 +507,8 @@ export function searchAll(snapshot, query, { now = Date.now(), lang = 'en', max 
   }
   for (const s of sessionsOf(snapshot)) {
     const where = [s.hostId, s.project, s.branch].filter(Boolean).join(' · ');
-    if (hit(s.name, s.project, s.branch, s.hostId, s.agent, s.seat, s.account, s.provider, s.repo, s.id))
+    const q = s.account ? (snapshot.accounts ?? []).find((a) => a.key === s.account) : undefined;
+    if (hit(s.name, s.project, s.branch, s.hostId, s.agent, s.seat, s.account, s.provider, s.repo, s.id, s.waiting, sessionAccountLabel(s, q), q?.email))
       add({ kind: 'session', title: sessionLabel(s, lang), sub: [statusLabel(s.status, lang), where].join(' · '), session: s, tab: 'sessions' });
     for (const x of s.tasks ?? []) {
       if (hit(x.label, x.kind)) add({ kind: 'task', title: x.label, sub: [t(`task.${x.kind}`, lang), countdown(now, x.startedAt), sessionLabel(s, lang), s.hostId].join(' · '), session: s, tab: 'sessions' });

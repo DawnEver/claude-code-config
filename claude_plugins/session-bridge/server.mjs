@@ -283,6 +283,8 @@ function main() {
   // The hook routes by this after /clear, when the session id it reports is new.
   const claude = ancestors.find((a) => isClaudeProcess(a.cmd));
   session.claudePid = claude?.pid ?? process.ppid;
+  // This channel starts with its claude process: no background task begun before it still runs (a resumed session's).
+  session.startedAt = Math.round(Date.now() - process.uptime() * 1000);
   // Claude Code drops channel messages unless launched with this flag (ccc adds it), and
   // always on a third-party provider (ccds: its ANTHROPIC_BASE_URL reaches this process).
   // Such a session mirrors out; its Telegram messages wait for the Stop hook instead.

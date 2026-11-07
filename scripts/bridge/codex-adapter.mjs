@@ -45,11 +45,16 @@ export function trackItem(board, item, at) {
   }
   if (item?.type === 'collabAgentToolCall') {
     for (const [thread, state] of Object.entries(item.agentsStates ?? {})) {
-      board.start(thread, { kind: 'agent', label: item.tool === 'spawnAgent' ? item.prompt ?? '' : '', at });
+      // A subagent is not the turn's: it runs on past it, until Codex says it stopped (here, or its thread's status: reconcileAgents).
+      board.start(thread, { kind: 'agent', label: item.tool === 'spawnAgent' ? item.prompt ?? '' : '', at, background: true });
       if (!AGENT_RUNNING.includes(state?.status) && AGENT_END[state?.status]) board.end(thread, { status: AGENT_END[state.status], at });
     }
   }
 }
+
+/** A subagent thread this young may not have started its first turn: idle then is not stopped. */
+const AGENT_GRACE_MS = 60000;
+const AGENT_STOPPED = new Set(['idle', 'systemError', 'notLoaded']);
 
 const QUOTA_REFRESH_MS = 5 * 60000;
 // Codex keeps a thread in memory ("loaded") long after its last client left (an idle one is
@@ -264,6 +269,8 @@ export class CodexAdapter extends EventEmitter {
     } while (cursor);
     this.loadedIds = ids;
     for (const id of [...this.threads.keys()]) if (!ids.has(id)) this.#drop(id);
+    await this.#reconcileAgents(rpc);
+    if (this.rpc !== rpc) return;
     for (const id of [...this.released.keys()]) if (!ids.has(id)) this.released.delete(id);
     const now = this.now();
     for (const [id, th] of [...this.threads]) if (th.idleSince !== null && now - th.idleSince >= IDLE_RELEASE_MS) this.#release(id, th.updatedAt);
@@ -275,6 +282,23 @@ export class CodexAdapter extends EventEmitter {
         if (!read || !(read.status?.type === 'active' || (read.updatedAt ?? 0) > this.released.get(id))) continue;
       }
       await this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+    }
+  }
+
+  /**
+   * Each running subagent asked of Codex itself: a spawned agent's end reaches its parent only
+   * when a later collab call reports it, which may never come. Its thread idle (past its first
+   * turn), broken or unloaded: it stopped.
+   */
+  async #reconcileAgents(rpc) {
+    const now = this.now();
+    for (const th of [...this.threads.values()]) {
+      for (const t of th.tasks.list(now)) {
+        if (t.kind !== 'agent' || now - t.startedAt < AGENT_GRACE_MS) continue;
+        const read = (await rpc.request('thread/read', { threadId: t.id }).catch(() => null))?.thread;
+        if (this.rpc !== rpc) return;
+        if (read && AGENT_STOPPED.has(read.status?.type)) th.tasks.end(t.id, { status: 'completed', at: now });
+      }
     }
   }
 
@@ -431,6 +455,9 @@ export class CodexAdapter extends EventEmitter {
         const items = [...snapshot, ...[...(th?.agentMessages.values() ?? [])].filter((item) => !ids.has(item.id))];
         const text = finalText(items.filter((item) => !th?.deliveredMessages.has(item.id)));
         if (th) { th.activeTurnId = null; th.agentMessages.clear(); th.deliveredMessages.clear(); }
+        // The turn ended, however (completed, interrupted, failed): its items as it reports them, then
+        // every foreground command it ran has stopped, its own end seen or not.
+        if (th) { for (const item of p.turn?.items ?? []) trackItem(th.tasks, item, this.now()); th.tasks.settleForeground(this.now()); }
         this.emit('final', { id: p.threadId, turnId: p.turn?.id ?? null, status, text });
         if (th) this.emit('status', { id: p.threadId });
         break;
@@ -479,9 +506,9 @@ export class CodexAdapter extends EventEmitter {
     if (!this.threads.has(threadId)) return undefined;
     const key = `c${this.connection}:${rpcId}`;
     if (this.approvals.has(key)) return undefined;
-    this.approvals.set(key, { rpcId, method, threadId: p.threadId ?? p.conversationId });
     const summary = p.command ? `$ ${oneLine(Array.isArray(p.command) ? p.command.join(' ') : p.command, 300)}`
       : p.reason ? oneLine(p.reason, 300) : method;
+    this.approvals.set(key, { rpcId, method, threadId: p.threadId ?? p.conversationId, summary });
     this.emit('approval', {
       id: p.threadId ?? p.conversationId, ref: key, summary,
       answerable: ANSWERABLE_APPROVALS.has(method),
@@ -500,7 +527,7 @@ export class CodexAdapter extends EventEmitter {
     }));
     // A secret never travels through Telegram: the whole request is answered locally.
     const answerable = questions.length > 0 && !questions.some((q) => q.isSecret);
-    this.questions.set(key, { rpcId, threadId: p.threadId, answerable });
+    this.questions.set(key, { rpcId, threadId: p.threadId, answerable, text: questions.map((q) => q.question).filter(Boolean).join(' / ') });
     this.emit('question', { id: p.threadId, ref: key, answerable, questions });
     this.emit('status', { id: p.threadId });
     return undefined;   // answered later via answerQuestion, or in the TUI (first answer wins)
@@ -567,7 +594,12 @@ export class CodexAdapter extends EventEmitter {
     if (!th && this.localObserver?.has(threadId)) return this.localObserver.statusSnapshot(threadId);
     if (!this.rpc || !th) return { state: 'disconnected' };
     const tasks = th.tasks.list(this.now());
-    return { ...this.#state(threadId, th), ...(tasks.length ? { tasks } : {}) };
+    const st = this.#state(threadId, th);
+    // What it waits for: the pending approval's command, or the question.
+    const pending = st.state === 'waiting-approval' ? this.approvals : st.state === 'waiting-input' ? this.questions : null;
+    const waiting = pending && [...pending.values()].find((x) => x.threadId === threadId);
+    const text = waiting?.summary ?? waiting?.text;
+    return { ...st, ...(text ? { waiting: text } : {}), ...(tasks.length ? { tasks } : {}) };
   }
 
   #state(threadId, th) {

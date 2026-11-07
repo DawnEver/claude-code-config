@@ -6,7 +6,7 @@
 import { isValidMachineName } from './machine.mjs';
 
 export const SCHEMA_VERSION = 1;
-import { AGENTS, STATUSES, TASK_KINDS, TASK_LABEL_MAX, MAX_TASKS } from '../dashboard/public/shared/vocab.mjs';
+import { AGENTS, STATUSES, TASK_KINDS, TASK_LABEL_MAX, MAX_TASKS, WAITING_MAX } from '../dashboard/public/shared/vocab.mjs';
 
 export { AGENTS, STATUSES };
 /** Native session status (scripts/bridge/daemon.mjs STATUS_CODES). Freshness (`stale`) is separate, set by the gateway. */
@@ -48,6 +48,8 @@ function parseSession(s) {
     // The forge repository of its working tree (shared/repo-key.mjs): the Code tab's link to it.
     repo: isRepoKey(s.repo) ? s.repo : null,
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
+    // What it waits for (the permission it asks, its question), only while it waits for the human.
+    ...(['needs_approval', 'needs_input'].includes(s.status) && text(s.waiting, WAITING_MAX) ? { waiting: text(s.waiting, WAITING_MAX) } : {}),
     // The shells and subagents it runs now (scripts/bridge/tasks.mjs).
     ...(Array.isArray(s.tasks) && s.tasks.length ? { tasks: s.tasks.slice(0, MAX_TASKS).map(parseTask).filter(Boolean) } : {}),
     unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,

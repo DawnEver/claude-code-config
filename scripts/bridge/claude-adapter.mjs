@@ -54,6 +54,9 @@ function parseTask(t) {
 
 const AUTH_TIMEOUT_MS = 5000;
 const heldKey = (m) => JSON.stringify([m.kind, m.text, m.texts ?? null]);
+// A task the transcript dates this long before the channel started may still be this process's (a turn begun before the MCP server came up).
+const BORN_SLACK_MS = 60000;
+const WAITING = new Set(['waiting-approval', 'waiting-input']);
 const STATES = new Set(['running', 'idle', 'waiting-approval', 'waiting-input']);
 const HOLD_MS = 30000;
 
@@ -196,6 +199,8 @@ export class ClaudeAdapter extends EventEmitter {
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
             queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
             remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null, tasks: previous?.tasks ?? new TaskBoard(),
+            // When this claude process started (its channel starts with it): no task of an earlier one runs.
+            bornAt: Number.isFinite(p.startedAt) ? p.startedAt : previous?.bornAt ?? null,
             named: previous?.named ?? NO_NAME });
           const s = this.sessions.get(sessionId);
           if (s.transcript) s.named = transcriptName(s.transcript, s.named);
@@ -249,6 +254,7 @@ export class ClaudeAdapter extends EventEmitter {
             throw Object.assign(new Error('invalid or duplicate permission request'), { code: -32602 });
           }
           pending.add(p.request_id);
+          this.sessions.get(sessionId).approvalText = `${p.tool_name}: ${p.description ?? ''}`.replace(/:s*$/, '');
           this.emit('approval', {
             id: sessionId, ref: p.request_id, answerable: true,
             summary: `${p.tool_name}: ${p.description ?? ''}${p.input_preview ? `\n${String(p.input_preview).slice(0, 1500)}` : ''}`,
@@ -379,7 +385,7 @@ export class ClaudeAdapter extends EventEmitter {
     }));
     if (!questions.length) return { answers: null };
     const ref = crypto.randomBytes(12).toString('hex');
-    s.activity = 'waiting-input'; s.stateAt = this.now();
+    s.activity = 'waiting-input'; s.stateAt = this.now(); s.waitText = questions.map((q) => q.question).filter(Boolean).join(' / ');
     this.#emitStatus(id);
     if (!(p.wait === true && s.remoteTurn)) {
       s.localQuestion = true;   // its answer, given in the terminal, is mirrored by PostToolUse
@@ -415,11 +421,15 @@ export class ClaudeAdapter extends EventEmitter {
     if (m.task?.op === 'background') s.tasks.toBackground(m.task.id);
     // A turn end: every foreground call has returned; of the background ones, those the transcript
     // still sees running run on, every other has ended.
-    if (m.kind === 'final') s.tasks.settleForeground(at);
-    if (m.background) s.tasks.settleBackground(m.background, at);
+    // So does a new prompt or idle: a turn interrupted (Esc) fires no Stop, yet its calls have returned.
+    if (m.kind === 'final' || m.kind === 'prompt' || (m.kind === 'activity' && m.state === 'idle')) s.tasks.settleForeground(at);
+    // Background tasks die with their claude process: one the transcript dates before this process (a resumed session) is not open.
+    if (m.background) s.tasks.settleBackground(m.background.filter((t) => !(s.bornAt && t.startedAt < s.bornAt - BORN_SLACK_MS)), at);
     // Async hooks may land out of order: a state stamped earlier never overwrites a later one.
     if (!(m.at < s.stateAt)) {
       s.activity = m.kind === 'activity' ? m.state : m.kind === 'final' ? 'idle' : 'running';
+      // What it waits for, while it waits (a Notification's text: "Claude needs your permission to use Bash").
+      s.waitText = WAITING.has(s.activity) ? m.text.trim() || s.waitText : null;
       if (Number.isFinite(m.at)) s.stateAt = m.at;
       this.#emitStatus(id);
     }
@@ -506,7 +516,10 @@ export class ClaudeAdapter extends EventEmitter {
     const s = this.sessions.get(id);
     if (!s) return { state: 'disconnected' };
     const tasks = s.tasks.list(this.now());
-    return { state: s.activity ?? 'unknown', ...(tasks.length ? { tasks } : {}) };
+    const state = s.activity ?? 'unknown';
+    // A channel permission request names the tool and what it does: more than the notification.
+    const waiting = state === 'waiting-approval' && s.approvals.size && s.approvalText ? s.approvalText : WAITING.has(state) ? s.waitText : null;
+    return { state, ...(waiting ? { waiting } : {}), ...(tasks.length ? { tasks } : {}) };
   }
 
   #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }

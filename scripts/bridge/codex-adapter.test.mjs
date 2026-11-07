@@ -529,7 +529,7 @@ test('status snapshots reflect native running, pending approval, idle and discon
   assert.equal(a.statusSnapshot('t1').state, 'waiting-approval');
   assert.equal(a.answerApproval('c1:900', true), true);
   assert.equal(a.statusSnapshot('t1').state, 'waiting-approval', 'submission is not native resolution');
-  assert.equal(JSON.stringify(a.statusSnapshot('t1')).includes('PRIVATE'), false);
+  assert.equal(a.statusSnapshot('t1').waiting, '$ PRIVATE TOOL TEXT', 'what it waits for is said (bounded), as the Topic already says it');
   srv.push('serverRequest/resolved', { threadId: 't1', requestId: 900 });
   assert.equal(a.statusSnapshot('t1').state, 'running');
   srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed' } });
@@ -699,4 +699,34 @@ test('trackItem: a command run by PowerShell is a PowerShell, labelled by its sc
   assert.deepEqual(b.list(5).map((t) => [t.id, t.kind, t.label, t.background]), [
     ['p1', 'powershell', 'Get-ChildItem -Recurse', false], ['p2', 'powershell', 'npm test', false],
     ['s1', 'shell', 'npm run dev', true], ['s2', 'shell', 'echo powershell', false]]);
+});
+
+test('tasks: a turn end, however it ended, ends its foreground commands; subagents run on until Codex says they stopped', async () => {
+  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'active', activeFlags: [] }, updatedAt: 1000 }, a1: { status: { type: 'active' } } };
+  const { a, srv, clock } = await clocked({ threads });
+  srv.push('turn/started', { threadId: 't1', turn: { id: 'T' } });
+  srv.push('item/started', { threadId: 't1', turnId: 'T', item: { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'inProgress' } });
+  srv.push('item/started', { threadId: 't1', turnId: 'T', item: { type: 'commandExecution', id: 'c2', command: 'npm run dev', status: 'inProgress', source: 'unifiedExecStartup' } });
+  srv.push('item/completed', { threadId: 't1', turnId: 'T', item: { type: 'collabAgentToolCall', id: 'k', tool: 'spawnAgent', prompt: 'review', status: 'completed', agentsStates: { a1: { status: 'running' } } } });
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 'T', status: 'interrupted', items: [] } });
+  assert.deepEqual(a.statusSnapshot('t1').tasks.map((t) => t.id), ['c2', 'a1'], 'the interrupted command is gone; the exec session and the subagent run on');
+  clock.t += 120000;
+  await a.refresh();
+  assert.deepEqual(a.statusSnapshot('t1').tasks.map((t) => t.id), ['c2', 'a1'], 'the subagent thread is still active');
+  threads.a1.status = { type: 'idle' };
+  await a.refresh();
+  assert.deepEqual(a.statusSnapshot('t1').tasks.map((t) => t.id), ['c2'], 'its thread went idle: it stopped');
+});
+
+test('waiting: a pending approval or question is what the thread waits for', async () => {
+  const { a, srv } = await started({ threads: { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' }, updatedAt: Date.now() / 1000 } } });
+  srv.request(77, 'item/commandExecution/requestApproval', { threadId: 't1', turnId: 'x', itemId: 'i', command: 'rm -rf build' });
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnApproval'] } });
+  assert.deepEqual(a.statusSnapshot('t1'), { state: 'waiting-approval', waiting: '$ rm -rf build' });
+  srv.push('serverRequest/resolved', { threadId: 't1', requestId: 77 });
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: [] } });
+  assert.equal(a.statusSnapshot('t1').waiting, undefined);
+  srv.request(78, 'item/tool/requestUserInput', { threadId: 't1', questions: [{ id: 'q', question: 'Which branch?' }] });
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
+  assert.equal(a.statusSnapshot('t1').waiting, 'Which branch?');
 });

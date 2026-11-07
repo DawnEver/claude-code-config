@@ -110,6 +110,9 @@
   .chat-bottom .sub { flex: 1; margin-top: 2px; font-size: var(--t2); }
   /* A session's running tasks: kind tag | what it does | how long. Kind is the tag's colour. */
   .tasks { display: grid; gap: 3px; margin-top: 5px; }
+  .who { flex: none; width: 52px; display: grid; justify-items: center; gap: 3px; }
+  .who .acct-name { max-width: 52px; font-size: 10px; line-height: 1.1; color: var(--hint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .waiting { margin-top: 4px; font-size: var(--t3); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .task { --kind: var(--run); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 7px; font-size: var(--t3); color: var(--fg); }
   .task.k-powershell { --kind: #30b0c7; }
   .task.k-monitor { --kind: #ff9f0a; }

@@ -1033,3 +1033,12 @@ test('cardDetail: the pinned card names the account and its use, and the machine
   assert.deepEqual(cardDetail({ agent: 'claude', seat: 'w', provider: 'deepseek' }, { accounts: [...accounts, balance], balanceEntries: [{ provider: 'deepseek', label: null }] }),
     ['Account: deepseek · 457.20 CNY']);
 });
+
+test('the dashboard hears what a waiting session waits for', async () => {
+  const r = make();
+  r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-approval', waiting: '$ rm -rf build' });
+  await live(r, 'codex', 'x');
+  const [s] = r.bridge.dashboardSessions();
+  assert.equal(s.status, 'needs_approval');
+  assert.equal(s.waiting, '$ rm -rf build');
+});
