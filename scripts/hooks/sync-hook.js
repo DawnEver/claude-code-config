@@ -252,22 +252,50 @@ const readState = () => { try { return JSON.parse(fs.readFileSync(venvStateFile(
 const writeState = (s) => { try { fs.mkdirSync(path.dirname(venvStateFile()), { recursive: true }); fs.writeFileSync(venvStateFile(), JSON.stringify(s)); } catch { /* best effort */ } };
 const STALE_RUN_MS = 15 * 60000;
 
+const runUv = (args, { cwd, env }) =>
+  execFileSync('uv', args, { cwd, env, timeout: 600000, stdio: 'ignore', windowsHide: true });
+
 /**
- * A dependency-changing update in one detached run: merge, `uv sync`, cache refresh. It can take
- * minutes, longer than a launch waits for this hook (startup-sync.mjs kills it at 75 s), so the
- * launch keeps the old tree, venv and cache, which agree with each other, until this finishes.
+ * Install `rev`'s locked dependencies into the venv of `repo` without moving its tree: a temporary
+ * worktree supplies `rev`'s pyproject/lock, `UV_PROJECT_ENVIRONMENT` points uv at the live venv,
+ * `--inexact` keeps what the current tree still imports. An error string, or null.
  */
-export async function updateAiLabDeps(repo) {
+export function syncDepsAt(repo, rev, { uv = runUv } = {}) {
+  const wt = path.join(os.tmpdir(), `ai-lab-deps-${process.pid}-${Date.now()}`);
+  try {
+    git(['worktree', 'add', '--detach', '--quiet', wt, rev], { cwd: repo, timeout: MERGE_TIMEOUT_MS });
+    uv(['sync', '--frozen', '--quiet', '--inexact', '--no-install-project'],
+      { cwd: wt, env: { ...process.env, UV_PROJECT_ENVIRONMENT: path.join(repo, '.venv') } });
+    return null;
+  } catch (err) {
+    return `uv sync of ${rev.slice(0, 9)} failed (${err.code || err.message}) — run: uv sync --project "${repo}"`;
+  } finally {
+    git(['worktree', 'remove', '--force', wt], { cwd: repo, allowFail: true });
+  }
+}
+
+/**
+ * A dependency-changing update in one detached run. It can take minutes, longer than a launch waits
+ * for this hook (startup-sync.mjs kills it at 75 s), so a launch may start Python from the tree at any
+ * moment of it. Hence the order: the new dependencies go into the venv first (old code runs on a
+ * superset), only then does the tree move, then a plain sync settles the project, then the cache.
+ */
+export async function updateAiLabDeps(repo, { uv = runUv, refresh = refreshCache } = {}) {
   writeState({ pid: process.pid, at: Date.now() });
+  const pulled = await pullRepo(repo, {
+    beforeMerge: (range) => {
+      const error = syncDepsAt(repo, range.split('..')[1], { uv });
+      return error ? { pulled: 0, note: error } : null;
+    },
+  });
   // A retry may find the tree already moved (the venv sync failed after the merge): sync regardless.
-  const pulled = await pullRepo(repo);
   let error = pulled?.note || null;
   if (!error) {
-    try { execFileSync('uv', ['sync', '--frozen', '--quiet'], { cwd: repo, timeout: 600000, stdio: 'ignore', windowsHide: true }); }
+    try { uv(['sync', '--frozen', '--quiet'], { cwd: repo, env: process.env }); }
     catch (err) { error = `uv sync failed (${err.code || err.message}) — run: uv sync --project "${repo}"`; }
   }
   // The cache is refreshed only against a synced venv.
-  error ||= await refreshCache();
+  error ||= await refresh();
   if (error) writeState({ error, at: Date.now() }); else fs.rmSync(venvStateFile(), { force: true });
   return error;
 }

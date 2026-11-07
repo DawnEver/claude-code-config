@@ -98,7 +98,7 @@ if (error) {
 console.log(provider ? `[codex] Using provider: ${provider}` : '[codex] Using default Codex');
 
 // Codex runs through ai-lab's session launcher, which mints or inherits LAB_SESSION (session-launcher.mjs).
-const session = sessionSpawn('codex', args);
+const session = sessionSpawn('codex', args, { log: (m) => console.error(`[codex] ${m}`) });
 if (session.error) {
   console.error(`[codex] ${session.error}`);
   process.exit(1);

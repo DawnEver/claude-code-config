@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { depsChanged, repoRootFrom, REPO, formatPull, formatReminder, formatMergeFailure, isStartup } from './sync-hook.js';
+import { depsChanged, updateAiLabDeps, venvStateFile, repoRootFrom, REPO, formatPull, formatReminder, formatMergeFailure, isStartup } from './sync-hook.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -340,4 +340,49 @@ test('integration: a failed background update is reported and retried, a running
   assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, home), /still running in the background/);
   fs.writeFileSync(state, JSON.stringify({ error: 'uv sync failed (ENOENT)', at: Date.now() }));
   assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, home), /last dependency update failed: uv sync failed \(ENOENT\); updating in the background/);
+});
+
+// The race this order exists for: a launch starts Python from the tree while the detached update
+// runs. The venv must already hold the new dependencies by the time the tree carries new code.
+test('integration: a dependency update fills the venv before it moves the tree', async () => {
+  const lab = fixture();
+  fs.writeFileSync(path.join(lab.a, 'uv.lock'), 'lock v2\n');
+  git(lab.a, 'add', '.'); git(lab.a, 'commit', '--quiet', '-m', 'relock'); git(lab.a, 'push', '--quiet');
+  const before = git(lab.b, 'rev-parse', 'HEAD');
+  const target = git(lab.a, 'rev-parse', 'HEAD');
+  const calls = [];
+  const uv = (args, { cwd, env }) => calls.push({
+    args, cwd, venv: env.UV_PROJECT_ENVIRONMENT, liveHead: git(lab.b, 'rev-parse', 'HEAD'),
+    lock: fs.readFileSync(path.join(cwd, 'uv.lock'), 'utf8'),
+  });
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  Object.assign(process.env, tempHome());
+  try {
+    assert.equal(await updateAiLabDeps(lab.b, { uv, refresh: async () => null }), null);
+    assert.equal(fs.existsSync(venvStateFile()), false, 'a success clears the state record');
+  } finally { Object.assign(process.env, saved); }
+  assert.equal(calls.length, 2);
+  const [deps, settle] = calls;
+  assert.equal(deps.liveHead, before, 'deps installed while the live tree is still the old one');
+  assert.equal(deps.lock.trim(), 'lock v2', 'from the target revision\'s lock');
+  assert.equal(deps.venv, path.join(lab.b, '.venv'), 'into the live venv');
+  assert.ok(deps.args.includes('--inexact') && deps.args.includes('--no-install-project'));
+  assert.equal(settle.liveHead, target);
+  assert.equal(settle.cwd, lab.b);
+  assert.equal(git(lab.b, 'worktree', 'list').split('\n').length, 1, 'temporary worktree removed');
+});
+
+test('integration: a failed dependency install leaves the tree where it was', async () => {
+  const lab = fixture();
+  fs.writeFileSync(path.join(lab.a, 'uv.lock'), 'lock v2\n');
+  git(lab.a, 'add', '.'); git(lab.a, 'commit', '--quiet', '-m', 'relock'); git(lab.a, 'push', '--quiet');
+  const before = git(lab.b, 'rev-parse', 'HEAD');
+  const uv = () => { throw Object.assign(new Error('boom'), { code: 'ENOENT' }); };
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  Object.assign(process.env, tempHome());
+  try {
+    assert.match(await updateAiLabDeps(lab.b, { uv, refresh: async () => null }), /uv sync of \w+ failed \(ENOENT\)/);
+    assert.match(JSON.parse(fs.readFileSync(venvStateFile(), 'utf8')).error, /ENOENT/, 'recorded for the retry');
+  } finally { Object.assign(process.env, saved); }
+  assert.equal(git(lab.b, 'rev-parse', 'HEAD'), before);
 });

@@ -79,7 +79,7 @@ try {
 } catch { /* ignore */ }
 
 // Claude runs through ai-lab's session launcher, which mints or inherits LAB_SESSION (session-launcher.mjs).
-const session = sessionSpawn('claude', args);
+const session = sessionSpawn('claude', args, { log: (m) => console.error(`[cc] ${m}`) });
 if (session.error) {
   console.error(`[cc] ${session.error}`);
   process.exit(1);
