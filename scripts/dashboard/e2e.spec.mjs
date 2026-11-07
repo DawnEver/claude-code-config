@@ -328,3 +328,16 @@ test('dark theme: the Telegram theme colours apply and every tab renders', async
   assert.deepEqual(h.errors, []);
   await h.close();
 });
+
+for (const [label, device] of [['phone', PHONE], ['desktop', DESKTOP]]) {
+  test(`${label}: the tab bar stays pinned at the top while the page scrolls (default on)`, async () => {
+    const h = await open(device);
+    try {
+      const pinned = await h.page.evaluate(() => document.body.classList.contains('pin-tabs'));
+      assert.equal(pinned, true, 'pinned is the default');
+      await h.scrollbar(1500);
+      const top = await h.page.evaluate(() => Math.round(document.getElementById('tabs').getBoundingClientRect().top));
+      assert.ok(top >= 0 && top <= 2, `tab bar top ${top}px after scrolling 1500px`);
+    } finally { await h.page.context().close(); }
+  });
+}
