@@ -26,8 +26,6 @@ import {
   linkSourceRoot,
   composeCodexConfigFile,
   healSyncLink,
-  repoMirrorLinks,
-  mirrorPayload,
 } from './setup.js';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 
@@ -36,12 +34,11 @@ export const SETUP_FIX_CMD = 'node ~/.claude/scripts/setup/setup.js --replace';
 
 /**
  * Re-link the sync payload files a cloud client detached (2026-10-18), by healSyncLink's rule,
- * in every table that names one: ~/.claude, each seat dir, and the repo-root mirror.
+ * in every table that names one: ~/.claude and each seat dir.
  * -> {repaired: [dest], conflicts: [dest]}
  */
 export function healSyncLinks({ syncDir = getSyncDir(), tables = [{ links: CLAUDE_LINKS, dir: claudeDir },
-  ...localSeats().filter((x) => fs.existsSync(x.dir)).map((x) => ({ links: SEAT_LINKS, dir: x.dir })),
-  { links: repoMirrorLinks({ syncDir, repoRoot: sourceDir }), dir: sourceDir }] } = {}) {
+  ...localSeats().filter((x) => fs.existsSync(x.dir)).map((x) => ({ links: SEAT_LINKS, dir: x.dir }))] } = {}) {
   const repaired = [], conflicts = [];
   for (const { links, dir } of tables) {
     for (const link of links.filter((l) => l.base === 'sync' && l.type === 'file')) {
@@ -117,13 +114,6 @@ export function checkLinks() {
     for (const d of healed.conflicts) warnings.push(`${d}: detached from the sync dir and edited here since — reconcile it with the sync copy`);
   } catch (err) {
     warnings.push(`sync link heal: ${err.message}`);
-  }
-
-  // A missing repo-root mirror name (healSyncLinks above healed the detached ones).
-  try {
-    for (const n of mirrorPayload({ syncDir: getSyncDir(), repoRoot: sourceDir }).linked) repaired.push(`repo ${n} (hard link to the sync dir)`);
-  } catch (err) {
-    warnings.push(`repo mirror: ${err.message}`);
   }
 
   const check = (links, baseDir, label = '') => {

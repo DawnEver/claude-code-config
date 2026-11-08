@@ -83,11 +83,10 @@ shared marketplace settings. Back up installed registries and old cache files fi
 validate the native result and byte-check protected versions afterward. This does not
 reload existing sessions or grant hook trust. Prefer a closed-client maintenance window.
 
-With a sync dir (`--sync-dir`), every payload file is also **hard-linked into the repo root**
-under its own name (gitignored), so the checkout shows the live personal payload; the sync-dir
-file stays the single source and `~/.claude` links point at it. Setup logs this under
-`--- Repo mirror of the sync payload ---`; doctor flags a missing or copied repo name and
-SessionStart re-links it ([sync-architecture §3](sync-architecture.md)).
+With a sync dir (`--sync-dir`), each payload file has exactly **one name on disk, in the sync
+dir**; `~/.claude` and `~/.codex` reach it through their links, and nothing is hard-linked into
+the checkout (2026-11-08, [sync-architecture §3](sync-architecture.md)). doctor FAILs a managed
+link whose target is gone (`link-broken`), naming the target.
 
 Provisioning a Windows host without admin rights? `scripts/setup/bootstrap-windows.bat`
 installs Rust and Node.js LTS at user level and appends them to the user `PATH`. Run it from an

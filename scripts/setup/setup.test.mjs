@@ -14,8 +14,6 @@ import {
   CLAUDE_LINKS,
   CODEX_LINKS,
   SEAT_LINKS,
-  repoMirrorLinks,
-  mirrorPayload,
 } from './setup.js';
 import { execFileSync } from 'child_process';
 import { SYNC_PAYLOAD_FILES, readSyncDirPointer } from '../shared/sync-dir.mjs';
@@ -322,46 +320,17 @@ test('a seat dir links what Claude Code reads from its config dir, and the base 
   assert.equal(linkSourceRoot(plugins, { repoRoot: '/repo', syncDir: '/payload', claudeRoot: '/home/u/.claude' }), '/home/u/.claude');
 });
 
-// ── the repo-root mirror of the payload ──────────────────────────────────────
+// ── no repo-root mirror of the payload (2026-11-08) ─────────────────────────
 
-test('repoMirrorLinks: every payload file, and only with a sync dir outside the repo', () => {
-  const names = repoMirrorLinks({ syncDir: '/payload', repoRoot: '/repo' }).map((l) => l.dest).sort();
-  const expected = [...new Set([...SYNC_PAYLOAD_FILES, ...CLAUDE_LINKS.filter((l) => l.base === 'sync').map((l) => l.src)])].sort();
-  assert.deepEqual(names, expected);
-  assert.ok(names.includes('trusted-origins') && names.includes('codex_config.toml'));
-  assert.deepEqual(repoMirrorLinks({ syncDir: '/repo', repoRoot: '/repo' }), [], 'no sync dir: the repo IS the payload');
-});
-
-test('mirrorPayload: hard-links each payload file into the repo root (same inode, never a copy)', () => {
-  const syncDir = tmp('sync'), repoRoot = tmp('repo');
-  fs.writeFileSync(path.join(syncDir, 'claude_settings.json'), '{"a":1}');
-  fs.writeFileSync(path.join(syncDir, 'trusted-origins'), 'x');
-  const r = mirrorPayload({ syncDir, repoRoot });
-  for (const f of ['claude_settings.json', 'trusted-origins']) {
-    assert.equal(fs.statSync(path.join(syncDir, f)).ino, fs.statSync(path.join(repoRoot, f)).ino, f);
-  }
-  assert.ok(!fs.existsSync(path.join(repoRoot, 'private-markers')), 'absent optional source: nothing created');
-  assert.deepEqual(r.linked.sort(), ['claude_settings.json', 'trusted-origins']);
-  assert.deepEqual(mirrorPayload({ syncDir, repoRoot }).linked, [], 'idempotent');
-});
-
-test('mirrorPayload: a detached repo copy is re-linked; one edited since is a conflict, left alone', () => {
-  const syncDir = tmp('sync'), repoRoot = tmp('repo');
-  const src = path.join(syncDir, 'claude_settings.json'), dest = path.join(repoRoot, 'claude_settings.json');
-  fs.writeFileSync(src, 'new'); fs.writeFileSync(dest, 'old');
-  const t = new Date(Date.now() - 60000); fs.utimesSync(dest, t, t);
-  assert.deepEqual(mirrorPayload({ syncDir, repoRoot }).linked, ['claude_settings.json']);
-  assert.equal(fs.statSync(src).ino, fs.statSync(dest).ino);
-  // Planted control: the repo copy is the NEWER one.
-  const src2 = path.join(syncDir, 'trusted-origins'), dest2 = path.join(repoRoot, 'trusted-origins');
-  fs.writeFileSync(src2, 'a'); fs.utimesSync(src2, t, t); fs.writeFileSync(dest2, 'local');
-  assert.deepEqual(mirrorPayload({ syncDir, repoRoot }).conflicts, ['trusted-origins']);
-  assert.equal(fs.readFileSync(dest2, 'utf8'), 'local');
+test('setup exports no repo-root mirror: the payload is never hard-linked into the checkout', async () => {
+  const mod = await import('./setup.js');
+  for (const name of ['repoMirrorLinks', 'mirrorPayload']) assert.equal(name in mod, false, name);
 });
 
 test('every payload name at the repo root is gitignored and none is tracked', () => {
   const repo = path.resolve(import.meta.dirname, '../..');
-  const names = repoMirrorLinks({ syncDir: '/payload', repoRoot: repo }).map((l) => l.dest);
+  // A stray copy left by the retired repo-root mirror must still never be committed.
+  const names = [...new Set([...SYNC_PAYLOAD_FILES, ...CLAUDE_LINKS.filter((l) => l.base === 'sync').map((l) => l.src)])];
   for (const n of [...names, `${names[0]}.setup-bak`]) {
     assert.doesNotThrow(() => execFileSync('git', ['check-ignore', '-q', '--no-index', n], { cwd: repo }), `${n} not ignored`);
   }

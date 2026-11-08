@@ -33,7 +33,7 @@ import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machin
 import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
-  CLAUDE_LINKS, getCodexLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
+  CLAUDE_LINKS, getCodexLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
 } from './setup.js';
 import { accountFile } from '../shared/seats.mjs';
 import { channelServerPath, channelServerState } from '../shared/channel-server.mjs';
@@ -222,26 +222,39 @@ export function linkedTo(src, dest) {
 // a cloud client that replaces the synced file breaks that link, and from then on this host
 // reads and writes a private copy — every edit made here or synced in from another host is
 // silently lost to the other side.
-export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir(), sameVolume: volume = sameVolume } = {}) {
+/**
+ * A managed link whose own target is gone (2026-11-08: the OneDrive names of the payload
+ * vanished; ~/.claude/settings.json still pointed at one, so every session ran with no
+ * settings and no HUD). Named by its target, which is what has to come back.
+ * -> finding | null (no entry, not a symlink, or the target resolves)
+ */
+export function brokenLink(label, dest) {
+  try {
+    if (!fs.lstatSync(dest, { throwIfNoEntry: false })?.isSymbolicLink() || fs.existsSync(dest)) return null;
+    const target = path.resolve(path.dirname(dest), fs.readlinkSync(dest));
+    return finding('FAIL', 'link-broken', `${label}: ${path.basename(dest)} -> ${target} (target gone)`,
+      `${dest} points at ${target}, which does not exist — restore it (cloud recycle bin / version history), then run node ~/.claude/scripts/setup/setup.js --replace`);
+  } catch { return null; }
+}
+
+export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}) {
   const out = [];
   const tables = [
     { label: 'claude', base: claudeDir, links: CLAUDE_LINKS },
     { label: 'codex', base: codexDir, links: getCodexLinks(repoRoot) },
-    // The repo-root mirror: the checkout's own hard link to each payload file.
-    { label: 'repo', base: repoRoot, links: repoMirrorLinks({ syncDir, repoRoot }) },
   ];
   for (const { label, base, links } of tables) {
     for (const link of links) {
       const src = path.join(linkSourceRoot(link, { repoRoot, syncDir }), link.src);
       const dest = path.join(base, link.dest);
-      if (!fs.existsSync(src)) {
+      const broken = brokenLink(label, dest);
+      if (broken) {
+        out.push(broken);
+      } else if (!fs.existsSync(src)) {
         if (link.optional) continue;
         out.push(finding('FAIL', 'link-src-missing', `${label}: ${link.dest} -> missing source`,
           `expected at ${src}`));
       } else if (!fs.existsSync(dest)) {
-        // setup deliberately omits optional repo mirrors across volumes: copying
-        // would create a second source of truth. Existing detached copies still fail.
-        if (label === 'repo' && !volume(src, base)) continue;
         out.push(finding('FAIL', 'link-dest-missing', `${label}: ${link.dest} is not linked`,
           `${dest} does not exist — run ${'node ~/.claude/scripts/setup/setup.js --replace'}`));
       } else if (link.base === 'sync' && link.type === 'file' && !linkedTo(src, dest)) {

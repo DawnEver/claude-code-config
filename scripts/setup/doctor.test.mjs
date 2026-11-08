@@ -536,23 +536,25 @@ test('rules-symbols: a rule naming a function or constant the code no longer has
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('checkLinks: a repo-root payload copy (different inode) or a missing one is flagged; the hard link is not', () => {
+test('checkLinks: the repo root is not a link table — the payload has one name, in the sync dir (2026-11-08)', () => {
   const syncDir = tmp(), repoRoot = tmp();
   for (const f of ['claude_settings.json', 'trusted-origins', 'private-markers']) fs.writeFileSync(path.join(syncDir, f), f);
-  fs.linkSync(path.join(syncDir, 'claude_settings.json'), path.join(repoRoot, 'claude_settings.json'));
-  fs.copyFileSync(path.join(syncDir, 'trusted-origins'), path.join(repoRoot, 'trusted-origins'));
-  const repo = checkLinks({ repoRoot, syncDir }).filter((f) => f.title.startsWith('repo:')).map((f) => `${f.id} ${f.title.split(' ')[1]}`);
-  assert.deepEqual(repo.sort(), ['link-dest-missing private-markers', 'link-detached trusted-origins']);
+  const repo = checkLinks({ repoRoot, syncDir }).filter((f) => f.title.startsWith('repo:'));
+  assert.deepEqual(repo, [], 'no repo-root mirror is expected, so none is missing');
 });
 
-test('checkLinks: unavailable cross-volume repo mirrors are not failures, detached copies still are', () => {
-  const syncDir = tmp(), repoRoot = tmp();
-  fs.writeFileSync(path.join(syncDir, 'private-markers'), 'marker');
-  fs.writeFileSync(path.join(syncDir, 'trusted-origins'), 'origin');
-  fs.writeFileSync(path.join(repoRoot, 'trusted-origins'), 'detached');
-  const repo = checkLinks({ repoRoot, syncDir, sameVolume: () => false }).filter(f => f.title.startsWith('repo:'));
-  assert.deepEqual(repo.map(f => f.id), ['link-detached']);
-  assert.match(repo[0].title, /trusted-origins/);
+test('brokenLink: a symlink whose target is gone FAILs and names the target; a live one does not', async (t) => {
+  const { brokenLink } = await import('./doctor.js');
+  const dir = tmp(), target = path.join(dir, 'gone.json'), dest = path.join(dir, 'settings.json');
+  fs.writeFileSync(target, '{}');
+  try { fs.symlinkSync(target, dest, 'file'); } catch (err) { if (err.code === 'EPERM') return t.skip('no symlink right'); throw err; }
+  assert.equal(brokenLink('claude', dest), null, 'planted control: a live link is fine');
+  fs.rmSync(target);
+  const f = brokenLink('claude', dest);
+  assert.equal(f.level, 'FAIL');
+  assert.equal(f.id, 'link-broken');
+  assert.ok(`${f.title} ${f.detail}`.includes(target), 'names the missing target');
+  assert.equal(brokenLink('claude', path.join(dir, 'absent')), null, 'no entry: not a broken link');
 });
 
 // ── the SessionStart hook's content cache ──

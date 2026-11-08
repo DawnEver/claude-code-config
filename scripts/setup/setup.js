@@ -363,38 +363,6 @@ export function healSyncLink(src, dest, link) {
   try { return linkEntry(src, dest, link, true).status === 'link' ? 'repaired' : 'conflict'; } catch { return 'conflict'; }
 }
 
-/**
- * The repo-root mirror of the sync payload: with a sync dir outside the checkout, every payload
- * file (SYNC_PAYLOAD_FILES plus every `base: 'sync'` link source) is hard-linked under the same
- * name at the repo root, so the checkout shows the live personal payload. The sync dir stays
- * the single source; the repo name is the same file record, never a copy. All gitignored.
- */
-export function repoMirrorLinks({ syncDir, repoRoot = sourceDir }) {
-  if (path.resolve(syncDir) === path.resolve(repoRoot)) return [];
-  const names = new Set([...SYNC_PAYLOAD_FILES, ...CLAUDE_LINKS.filter((l) => l.base === 'sync').map((l) => l.src)]);
-  return [...names].map((n) => ({ src: n, dest: n, type: 'file', base: 'sync', hardlink: true, optional: true }));
-}
-
-/**
- * Create or heal the repo-root mirror (repoMirrorLinks). A missing name is hard-linked; a
- * detached copy is healed by healSyncLink's rule. Across volumes a hard link is impossible and
- * a copy would be the detached state itself, so that case is only reported.
- * -> {linked: [name], conflicts: [name], crossVolume: [name]}
- */
-export function mirrorPayload({ syncDir, repoRoot = sourceDir }) {
-  const linked = [], conflicts = [], crossVolume = [];
-  for (const link of repoMirrorLinks({ syncDir, repoRoot })) {
-    const src = path.join(syncDir, link.src), dest = path.join(repoRoot, link.dest);
-    if (!fs.existsSync(src)) continue;
-    if (!sameVolume(src, repoRoot)) { crossVolume.push(link.dest); continue; }
-    if (!fs.lstatSync(dest, { throwIfNoEntry: false })) { fs.linkSync(src, dest); linked.push(link.dest); continue; }
-    const r = healSyncLink(src, dest, link);
-    if (r === 'repaired') linked.push(link.dest);
-    else if (r === 'conflict') conflicts.push(link.dest);
-  }
-  return { linked, conflicts, crossVolume };
-}
-
 function processLinks(links, baseDir, counters, syncDir) {
   for (const link of links) {
     const srcPath = path.join(linkSourceRoot(link, { repoRoot: sourceDir, syncDir }), link.src);
@@ -450,7 +418,6 @@ export function adoptSyncDir(dir, { repoRoot = sourceDir, home = os.homedir() } 
       const from = path.join(repoRoot, name);
       const to = path.join(target, name);
       if (!fs.existsSync(from)) continue;
-      if (isHardLinked(from, to)) continue;   // the repo-root mirror (mirrorPayload), not a copy
       if (fs.existsSync(to)) {
         // The sync copy is authoritative. Never clobber it; report the stale repo copy.
         skipped.push(name);
@@ -711,15 +678,6 @@ export function setup(options = {}) {
     console.log('COPY  claude-hud/config.template.json - claude-hud/config.json');
   }
 
-  // The repo-root mirror: every payload file hard-linked into the checkout (gitignored), so
-  // the checkout shows the live payload. After seeding, so a freshly seeded file is mirrored.
-  console.log('--- Repo mirror of the sync payload ---');
-  const mirror = mirrorPayload({ syncDir, repoRoot: sourceDir });
-  for (const n of mirror.linked) console.log(`LINK  ${n} - ${path.join(syncDir, n)} (hard link)`);
-  for (const n of mirror.conflicts) {
-    console.log(`WARN  ${n} - the repo copy is detached and newer than the sync one; reconcile, delete it, re-run`);
-  }
-  for (const n of mirror.crossVolume) console.log(`NOTE  ${n} - sync dir on another volume; no repo-root hard link possible`);
   if (!usingSyncDir) console.log('OK    no sync dir configured - the repo root holds the payload itself');
 
   console.log('\n--- Claude ---');
