@@ -411,11 +411,16 @@ function bankedPart(q) {
     if (b.note) box.append(el('div', 'muted', b.note));
   }
   if (readOnly) return box;
-  if (bankedForm.key !== q.key) {
+  box.append(...bankedAdd(q.key, (add) => editBanked({ account: q.key, add })));
+  return box;
+}
+
+/** "+ Add reset", or its form while open for `key` (an account, or '*' for every Claude account). */
+function bankedAdd(key, save) {
+  if (bankedForm.key !== key) {
     const add = el('button', 'chip', tr('banked.add'));
-    add.addEventListener('click', () => { Object.assign(bankedForm, { key: q.key, name: BANKED_NAMES[0], when: '', note: '' }); render(); });
-    box.append(add);
-    return box;
+    add.addEventListener('click', () => { Object.assign(bankedForm, { key, name: BANKED_NAMES[0], when: '', note: '' }); render(); });
+    return [add];
   }
   const form = el('div', 'banked-form');
   const input = (type, field, placeholder) => {
@@ -426,22 +431,19 @@ function bankedPart(q) {
   };
   const name = input('text', 'name', tr('banked.name'));
   const list = el('datalist');
-  list.id = 'banked-names';
+  list.id = `banked-names-${key}`;
   for (const n of BANKED_NAMES) { const o = document.createElement('option'); o.value = n; list.append(o); }
   name.setAttribute('list', list.id);
-  const when = input('datetime-local', 'when');
-  const note = input('text', 'note', tr('banked.note'));
-  const save = el('button', 'chip', tr('banked.save'));
-  save.addEventListener('click', () => {
+  const ok = el('button', 'chip', tr('banked.save'));
+  ok.addEventListener('click', () => {
     const expiresAt = Date.parse(bankedForm.when);   // datetime-local: this device's time zone
     if (!bankedForm.name.trim() || !(expiresAt > Date.now())) { const t = tr('banked.bad'); return tg?.showAlert ? tg.showAlert(t) : alert(t); }
-    editBanked({ account: q.key, add: { name: bankedForm.name.trim(), expiresAt, note: bankedForm.note.trim() } });
+    save({ name: bankedForm.name.trim(), expiresAt, note: bankedForm.note.trim() });
   });
   const cancel = el('button', 'chip', tr('banked.cancel'));
   cancel.addEventListener('click', () => { bankedForm.key = null; render(); });
-  form.append(name, list, el('label', 'muted', tr('banked.expiresAt')), when, note, save, cancel);
-  box.append(form);
-  return box;
+  form.append(name, list, el('label', 'muted', tr('banked.expiresAt')), input('datetime-local', 'when'), input('text', 'note', tr('banked.note')), ok, cancel);
+  return [form];
 }
 
 /**
@@ -632,6 +634,44 @@ function renderQuota() {
     grid.append(section);
   }
   box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
+  const bulk = bankedBulk();
+  if (bulk) box.append(bulk);
+}
+
+/**
+ * Banked resets across every Claude account at once: each distinct reset (name and expiry) with
+ * how many accounts hold it, added to or removed from all of them in one edit.
+ */
+function bankedBulk() {
+  const claude = (snapshot.accounts ?? []).filter((a) => a.agent === 'claude' && a.banked);
+  if (!claude.length) return null;
+  const keys = claude.map((a) => a.key);
+  const box = el('div', 'banked banked-bulk');
+  box.append(el('div', 'section-h', tr('banked.bulk', { n: keys.length })));
+  const seen = new Map();
+  for (const a of claude) for (const b of a.banked) {
+    const id = `${b.name}|${b.expiresAt}`;
+    seen.set(id, { ...b, n: (seen.get(id)?.n ?? 0) + 1 });
+  }
+  const readOnly = mock || demoOn || !tg?.initData;
+  for (const b of [...seen.values()].sort((x, y) => x.expiresAt - y.expiresAt)) {
+    const row = el('div', 'banked-row');
+    row.append(el('span', null, `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })} · ${tr('banked.on', { n: b.n, of: keys.length })}`));
+    if (!readOnly) {
+      const drop = el('button', 'chip', tr('banked.removeAll'));
+      drop.addEventListener('click', () => confirmThen(tr('banked.removeAllConfirm', { name: b.name, n: b.n }),
+        () => editBanked({ accounts: keys, drop: { name: b.name, expiresAt: b.expiresAt } })));
+      row.append(drop);
+      if (b.n < keys.length) {
+        const fill = el('button', 'chip', tr('banked.addAll'));
+        fill.addEventListener('click', () => editBanked({ accounts: keys, add: { name: b.name, expiresAt: b.expiresAt, note: b.note ?? '' } }));
+        row.append(fill);
+      }
+    }
+    box.append(row);
+  }
+  if (!readOnly) box.append(...bankedAdd('*', (add) => editBanked({ accounts: keys, add })));
+  return box;
 }
 
 /** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */

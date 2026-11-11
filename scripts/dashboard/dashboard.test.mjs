@@ -1119,5 +1119,15 @@ test('banked resets: kept per account in storage, edited by an allowlisted viewe
   assert.equal((await byHost({ account: KEY, add: { name: 'Full reset', expiresAt: now + 1000 } })).status, 200, 'a host may record one');
   assert.deepEqual((await (await byHost({})).json()).accounts.map((a) => [a.key, a.banked.length]), [[KEY, 1]]);
   assert.equal((await req('/api/hosts/host-a/resets', hostPost('wrong-token-wrong-token', {}))).status, 401);
+  // Many accounts at once: all or none, never twice, dropped by name and expiry.
+  const KEY2 = 'claude:b@example.com|org';
+  await req('/api/hosts/host-a/snapshot', hostPost(token, push({ seq: 3, accounts: [{ ...acct, at: now }, { ...acct, key: KEY2, email: 'b@example.com', at: now }] })));
+  const full = { name: 'Full reset', expiresAt: now + 1000 };
+  assert.equal((await byHost({ accounts: [KEY, 'claude:nobody|'], add: full })).status, 400, 'an unknown account refuses the whole edit');
+  assert.equal((await byHost({ accounts: [KEY, KEY2], add: full })).status, 200);
+  const all = async () => Object.fromEntries((await (await byHost({})).json()).accounts.map((a) => [a.key, a.banked.map((b) => b.name)]));
+  assert.deepEqual(await all(), { [KEY]: ['Full reset'], [KEY2]: ['Full reset'] }, 'the same reset is not added twice');
+  assert.equal((await byHost({ accounts: [KEY, KEY2], drop: full })).status, 200);
+  assert.deepEqual(await all(), { [KEY]: [], [KEY2]: [] });
 });
 

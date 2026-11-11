@@ -197,14 +197,22 @@ export class Registry {
    * reading stays a true floor, and the reader marks it by its age.
    */
   /**
-   * Record a banked reset of `key` (`add`: {name, expiresAt, note?}) or drop one spent (`remove`:
-   * its id). False when no host reports that subscription. Expired entries go on every edit.
+   * Apply a banked-reset edit (api.mjs parseBankedEdit) to each of `accounts`: `add` one (the
+   * same name and expiry is not added twice), `remove` one by id, `drop` one by name and expiry.
+   * False, changing nothing, when any of them is not a subscription a host reports. Expired
+   * entries are hidden at once and leave storage on the next edit.
    */
-  editBanked(key, { add = null, remove = null }) {
-    if (!this.accounts().some((a) => a.key === key && a.kind !== 'balance')) return false;
-    const list = this.liveBanked(key).filter((b) => b.id !== remove);
-    if (add) list.push({ id: crypto.randomUUID().slice(0, 8), name: add.name, expiresAt: add.expiresAt, ...(add.note ? { note: add.note } : {}) });
-    if (list.length) this.banked.set(key, list.sort((x, y) => x.expiresAt - y.expiresAt).slice(0, MAX_BANKED)); else this.banked.delete(key);
+  editBanked({ accounts, add = null, remove = null, drop = null }) {
+    const known = new Set(this.accounts().filter((a) => a.kind !== 'balance').map((a) => a.key));
+    if (!accounts.every((k) => known.has(k))) return false;
+    for (const key of accounts) {
+      const list = this.liveBanked(key).filter((b) => b.id !== remove && !(drop && b.name === drop.name && b.expiresAt === drop.expiresAt));
+      if (add && !list.some((b) => b.name === add.name && b.expiresAt === add.expiresAt)) {
+        list.push({ id: crypto.randomUUID().slice(0, 8), name: add.name, expiresAt: add.expiresAt, ...(add.note ? { note: add.note } : {}) });
+      }
+      if (list.length) this.banked.set(key, list.sort((x, y) => x.expiresAt - y.expiresAt).slice(0, MAX_BANKED)); else this.banked.delete(key);
+    }
+    for (const [key, list] of this.banked) if (!list.some((b) => b.expiresAt > this.now())) this.banked.delete(key);
     this.store?.put('banked', Object.fromEntries(this.banked));
     return true;
   }

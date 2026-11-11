@@ -244,7 +244,10 @@ app-server); the Worker never recomputes it.
 - **Banked resets**: one-off resets an account was granted (Claude's "Full reset", "Fable
   reset"), each with its expiry. No API reports them, so they are recorded by hand in the
   account's detail (+ Add reset, Used) and kept by the gateway in Durable Object storage
-  (`Registry.editBanked`, at most 10 per account); expired ones drop out. Read-only in demo mode.
+  (`Registry.editBanked`, at most 10 per account). Below the hosts, a card covers every Claude
+  account at once: each distinct reset with how many accounts hold it, **Add to all**,
+  **Remove from all**, and + Add reset for all. An expired reset is hidden at once and leaves
+  storage on the next edit. Read-only in demo mode.
 
 ## Accounts: subscriptions and API balances
 
@@ -466,7 +469,7 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 | `GET /api/health` | none | `{ok, schemaVersion, version: {commit, id, at}}` (the live deploy) |
 | `GET /api/dashboard` | viewer: `Authorization: session <token>` or `tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], repos[], configKeys[], configLast{}, configPending[]}` |
 | `POST /api/config` | `Authorization: tma <raw initData>` | `202 {id}`: a `CONFIG_KEYS` change queued; `400` for any other key or value |
-| `POST /api/resets` | viewer | `{account, add: {name, expiresAt, note?}}` or `{account, remove: id}` -> `200 {banked[]}`; `400` for an unknown account or a past expiry |
+| `POST /api/resets` | viewer | `{account` or `accounts[], add: {name, expiresAt, note?}}`, `remove: id` or `drop: {name, expiresAt}` (all or none) -> `200 {banked[]}`; `400` for an unknown account or a past expiry |
 | `POST /api/hosts/:hostId/resets` | `Authorization: Bearer <host token>` | the same edit, or `{}`: `200 {accounts[{key, agent, email, banked}]}` (scripts, no Telegram at hand) |
 | `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted, configChanges[]}` (accepted false = not newer than held; the changes this host should apply) |
 

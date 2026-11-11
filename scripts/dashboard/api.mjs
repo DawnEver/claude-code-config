@@ -44,17 +44,27 @@ export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
 }
 
 const text = (v, max) => (typeof v === 'string' && v.trim() && v.trim().length <= max ? v.trim() : null);
-/** A banked-reset edit: {account, add: {name, expiresAt (future ms), note?}} or {account, remove: id}. Null when malformed. */
+/**
+ * A banked-reset edit of one account (`account`) or several (`accounts`, at most 50): `add`
+ * {name, expiresAt (future ms), note?}, `remove` one by its id, or `drop` {name, expiresAt}
+ * the matching one wherever it is. Null when malformed.
+ */
 export function parseBankedEdit(b, now) {
-  const account = text(b?.account, 300);
-  if (!account) return null;
-  if (b.remove !== undefined) return text(b.remove, 16) ? { account, remove: b.remove } : null;
+  const list = b?.accounts !== undefined ? b.accounts : [b?.account];
+  if (!Array.isArray(list) || !list.length || list.length > 50) return null;
+  const accounts = [...new Set(list.map((a) => text(a, 300)))];
+  if (accounts.includes(null)) return null;
+  if (b.remove !== undefined) return text(b.remove, 16) ? { accounts, remove: b.remove } : null;
+  if (b.drop !== undefined) {
+    const name = text(b.drop?.name, 40);
+    return name && Number.isSafeInteger(b.drop.expiresAt) ? { accounts, drop: { name, expiresAt: b.drop.expiresAt } } : null;
+  }
   const name = text(b.add?.name, 40);
   const expiresAt = b.add?.expiresAt;
   if (!name || !Number.isSafeInteger(expiresAt) || expiresAt <= now) return null;
   const note = b.add.note == null || b.add.note === '' ? null : text(b.add.note, 200);
   if (b.add.note && !note) return null;
-  return { account, add: { name, expiresAt, ...(note ? { note } : {}) } };
+  return { accounts, add: { name, expiresAt, ...(note ? { note } : {}) } };
 }
 
 const json = (status, body) => new Response(JSON.stringify(body), { status,
@@ -140,8 +150,8 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
         // subscription's, an edit is as for a viewer.
         if (Object.keys(raw ?? {}).length) {
           const edit = parseBankedEdit(raw, now());
-          if (!edit || !registry.editBanked(edit.account, edit)) return error(400, 'bad_reset');
-          log(`banked reset ${edit.add ? 'added' : 'removed'} by host ${hostId}`);
+          if (!edit || !registry.editBanked(edit)) return error(400, 'bad_reset');
+          log(`banked reset ${edit.add ? 'added' : 'removed'} by host ${hostId} on ${edit.accounts.length} account(s)`);
         }
         return json(200, { accounts: registry.accounts().filter((a) => a.kind !== 'balance').map(({ key, agent, email, banked }) => ({ key, agent, email, banked })) });
       }
@@ -183,9 +193,9 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       if (text === null) return error(413, 'too_large');
       let edit;
       try { edit = parseBankedEdit(JSON.parse(text), now()); } catch { edit = null; }
-      if (!edit || !registry.editBanked(edit.account, edit)) return error(400, 'bad_reset');
-      log(`banked reset ${edit.add ? 'added' : 'removed'} by ${who.userId}`);
-      return json(200, { banked: registry.liveBanked(edit.account) });
+      if (!edit || !registry.editBanked(edit)) return error(400, 'bad_reset');
+      log(`banked reset ${edit.add ? 'added' : 'removed'} by ${who.userId} on ${edit.accounts.length} account(s)`);
+      return json(200, { banked: Object.fromEntries(edit.accounts.map((k) => [k, registry.liveBanked(k)])) });
     }
     if (url.pathname === '/api/dashboard') return json(200, registry.snapshot());
     if (url.pathname === '/api/code/history') {
