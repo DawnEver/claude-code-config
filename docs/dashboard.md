@@ -57,8 +57,14 @@ no API, no authentication.
   bot token. The token lives only in the local settings of the machine that sets the menu button.
 - **Viewer**: allowlisted by `bridge.allowedUserIds` (the bridge's own allowlist), freshness by
   `auth_date` within `initDataMaxAgeSeconds` (default 24 h — Telegram signs initData once, at
-  open, and a Topic link can reload the app with it; past it the app keeps the last data and asks to be
-  reopened). `initDataUnsafe` and any client-sent id are never trusted.
+  open, and a Topic link can reload the app with it). Every verified read answers with a
+  **viewer session** of the gateway's own (`x-viewer-session`: `v1.<userId>.<expiry>.<HMAC>`,
+  key made once and kept in Durable Object storage), renewed on use and valid
+  `viewerSessionDays` (default 30) since the last read; the page keeps it per Telegram user and
+  signs in with `Authorization: session <token>`, falling back to initData. The allowlist is
+  checked on every use. Only past both does the app keep the last data and ask to be reopened.
+  The page also keeps its last snapshot on the device, so a reload repaints at once, at the
+  reader's scroll position. `initDataUnsafe` and any client-sent id are never trusted.
 - **Host**: a bearer token per machine, minted on that machine; the Worker holds only its
   SHA-256. Read from the machine-local settings layer only: one written into the synced file
   is ignored.
@@ -69,7 +75,8 @@ no API, no authentication.
   same codes label the status card): `working`, `idle`, `needs_approval`, `needs_input`,
   `unknown`, and `ended` for the instant a session is going down — an ended session is
   dropped from the next push rather than listed. The UI never infers a status.
-  A session whose host reports `unknown` is not listed at all.
+  `unknown` is a live session no hook has reported on yet (a fresh start, a daemon restart):
+  listed as **Connected**, not hidden.
 - **Waiting**: a `needs_approval` / `needs_input` session carries `waiting` (at most
   `WAITING_MAX` = 300 characters, dropped at the boundary for any other status): what it waits
   for — Claude's channel permission request (`Bash: <description>`), else the Notification's
@@ -234,6 +241,10 @@ app-server); the Worker never recomputes it.
   the trend (spend per slice against an even spend; hatched = never observed), reset time and
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most
   every 30 min).
+- **Banked resets**: one-off resets an account was granted (Claude's "Full reset", "Fable
+  reset"), each with its expiry. No API reports them, so they are recorded by hand in the
+  account's detail (+ Add reset, Used) and kept by the gateway in Durable Object storage
+  (`Registry.editBanked`, at most 10 per account); expired ones drop out. Read-only in demo mode.
 
 ## Accounts: subscriptions and API balances
 
@@ -453,8 +464,9 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 | Route | Auth | Returns |
 | --- | --- | --- |
 | `GET /api/health` | none | `{ok, schemaVersion, version: {commit, id, at}}` (the live deploy) |
-| `GET /api/dashboard` | `Authorization: tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], repos[], configKeys[], configLast{}, configPending[]}` |
+| `GET /api/dashboard` | viewer: `Authorization: session <token>` or `tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], repos[], configKeys[], configLast{}, configPending[]}` |
 | `POST /api/config` | `Authorization: tma <raw initData>` | `202 {id}`: a `CONFIG_KEYS` change queued; `400` for any other key or value |
+| `POST /api/resets` | viewer | `{account, add: {name, expiresAt, note?}}` or `{account, remove: id}` -> `200 {banked[]}`; `400` for an unknown account or a past expiry |
 | `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted, configChanges[]}` (accepted false = not newer than held; the changes this host should apply) |
 
 Every route shares the per-client `ratePerMinute` (120), keyed by `CF-Connecting-IP`, which

@@ -245,8 +245,8 @@ export class Bridge {
    * This machine's sessions for the dashboard: read-only, from the same registry and
    * adapter snapshots the status cards use. No cwd, no title: the project name stands in.
    * A Topic is listed only once Telegram confirmed it (lazy creation: many sessions have none).
-   * A session whose state is unknown is reported as such; the gateway hides it
-   * (dashboard-schema.mjs parseHostPush), the one place that covers every bridge version.
+   * A session whose state is unknown (connected, no hook reported since, e.g. after a daemon
+   * restart) is reported as such: it is live, and the page lists it as Connected.
    */
   dashboardSessions() {
     return [...this.sessions.values()].filter((s) => s.state !== 'ended')

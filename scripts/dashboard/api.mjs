@@ -3,7 +3,7 @@
 
 import { SCHEMA_VERSION, isHostId, isRepoKey, parseConfigChange, parseHostPush } from '../shared/dashboard-schema.mjs';
 import { Registry } from './registry.mjs';
-import { TELEGRAM_PUBLIC_KEY, verifyHostToken, verifyInitData } from './auth.mjs';
+import { TELEGRAM_PUBLIC_KEY, issueViewerSession, verifyHostToken, verifyInitData, verifyViewerSession, viewerSessionKey } from './auth.mjs';
 import { parseUsageBatch } from '../shared/usage-schema.mjs';
 import { USAGE_FILTER_MAX } from './public/shared/vocab.mjs';
 import { FILTER_DIMS, forgeHistory, ingest, query, report } from './usage-store.mjs';
@@ -14,7 +14,7 @@ export const REPORT_TTL_MS = 5 * 60000;
 
 /**
  * DASHBOARD_CONFIG (JSON): {botId, allowedUserIds, hosts: {machine: sha256}, ttlSeconds?,
- * offlineAlertSeconds?, offlineAlertExclude?, alertLang?, initDataMaxAgeSeconds?, ratePerMinute?}. Malformed = throws: a gateway that cannot
+ * offlineAlertSeconds?, offlineAlertExclude?, alertLang?, initDataMaxAgeSeconds?, viewerSessionDays?, ratePerMinute?}. Malformed = throws: a gateway that cannot
  * authenticate anyone must fail loudly, not serve 401s.
  */
 export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
@@ -37,8 +37,24 @@ export function parseDashboardConfig(raw, publicKey = TELEGRAM_PUBLIC_KEY) {
     offlineAlertExclude: (Array.isArray(c.offlineAlertExclude) ? c.offlineAlertExclude : []).filter((id) => id in hosts),
     alertLang: ['en', 'zh'].includes(c.alertLang) ? c.alertLang : 'en',
     initDataMaxAgeSeconds: c.initDataMaxAgeSeconds > 0 ? c.initDataMaxAgeSeconds : 86400,
+    // A viewer session unused this long ends (auth.mjs): reopening the app from the bot signs in again.
+    viewerSessionDays: c.viewerSessionDays > 0 ? c.viewerSessionDays : 30,
     ratePerMinute: c.ratePerMinute > 0 ? c.ratePerMinute : 120,
   };
+}
+
+const text = (v, max) => (typeof v === 'string' && v.trim() && v.trim().length <= max ? v.trim() : null);
+/** A banked-reset edit: {account, add: {name, expiresAt (future ms), note?}} or {account, remove: id}. Null when malformed. */
+export function parseBankedEdit(b, now) {
+  const account = text(b?.account, 300);
+  if (!account) return null;
+  if (b.remove !== undefined) return text(b.remove, 16) ? { account, remove: b.remove } : null;
+  const name = text(b.add?.name, 40);
+  const expiresAt = b.add?.expiresAt;
+  if (!name || !Number.isSafeInteger(expiresAt) || expiresAt <= now) return null;
+  const note = b.add.note == null || b.add.note === '' ? null : text(b.add.note, 200);
+  if (b.add.note && !note) return null;
+  return { account, add: { name, expiresAt, ...(note ? { note } : {}) } };
 }
 
 const json = (status, body) => new Response(JSON.stringify(body), { status,
@@ -64,6 +80,28 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
   // The Usage tab's report per (days, tz), kept REPORT_TTL_MS: polls of an open tab cost no reads.
   const reports = new Map();
   let window = null;
+  // The viewer-session key: made once per gateway and kept in its storage, so a deploy or an
+  // eviction does not sign every viewer out. Without storage (tests), one per process.
+  let sessionKey = null;
+  const viewerKey = () => (sessionKey ??= (async () => {
+    let raw = store?.get('viewerSessionKey');
+    if (!(raw instanceof Uint8Array) && !(raw instanceof ArrayBuffer)) {
+      raw = crypto.getRandomValues(new Uint8Array(32));
+      store?.put('viewerSessionKey', raw);
+    }
+    return viewerSessionKey(raw);
+  })());
+
+  /** The viewer: by a gateway session, else by Telegram's initData. Allowlisted either way. */
+  async function viewer(header) {
+    const [, scheme, cred] = /^(tma|session) (.+)$/.exec(header ?? '') ?? [];
+    if (scheme === 'session') {
+      const s = await verifyViewerSession(cred, await viewerKey(), now());
+      if (!s.ok) return { ok: false, status: 401 };
+      return config.allowedUserIds.includes(s.userId) ? s : { ok: false, status: 403 };
+    }
+    return verifyInitData(cred, { botId: config.botId, allowedUserIds: config.allowedUserIds, maxAgeSeconds: config.initDataMaxAgeSeconds, now: now(), publicKey: config.publicKey });
+  }
 
   const limited = (request) => {
     // Cloudflare sets CF-Connecting-IP itself; a client cannot forge it.
@@ -107,13 +145,18 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       if (result.error) log(`query by ${hostId} refused: ${result.error}`);
       return json(result.error ? 400 : 200, result);
     }
-    if (request.method !== 'GET' && !(request.method === 'POST' && url.pathname === '/api/config')) return error(404, 'not_found');
-    const who = await verifyInitData(/^tma (.+)$/.exec(request.headers.get('authorization') ?? '')?.[1],
-      { botId: config.botId, allowedUserIds: config.allowedUserIds, maxAgeSeconds: config.initDataMaxAgeSeconds, now: now(), publicKey: config.publicKey });
+    if (request.method !== 'GET' && !(request.method === 'POST' && ['/api/config', '/api/resets'].includes(url.pathname))) return error(404, 'not_found');
+    const who = await viewer(request.headers.get('authorization'));
     if (!who.ok) {
-      log(`viewer refused: ${who.status === 403 ? 'user not allowlisted' : 'initData missing, invalid or expired'}`);
+      log(`viewer refused: ${who.status === 403 ? 'user not allowlisted' : 'sign-in missing, invalid or expired'}`);
       return error(who.status, who.status === 403 ? 'forbidden' : 'unauthorized');
     }
+    const res = await viewerRoute(request, url, who);
+    res.headers.set('x-viewer-session', await issueViewerSession(who.userId, now() + config.viewerSessionDays * 86400000, await viewerKey()));
+    return res;
+  }
+
+  async function viewerRoute(request, url, who) {
     if (url.pathname === '/api/config') {
       // The one write: a change to a CONFIG_KEYS key, queued for a host to apply.
       const text = await body(request, MAX_CONFIG_BODY);
@@ -123,6 +166,16 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
       if (!change) return error(400, 'not_editable');
       log(`config change requested by ${who.userId}: ${change.key}`);
       return json(202, { id: registry.requestChange(change, who.userId) });
+    }
+    if (url.pathname === '/api/resets') {
+      // A banked reset recorded or spent (registry.mjs editBanked): the one store no host feeds.
+      const text = await body(request, MAX_CONFIG_BODY);
+      if (text === null) return error(413, 'too_large');
+      let edit;
+      try { edit = parseBankedEdit(JSON.parse(text), now()); } catch { edit = null; }
+      if (!edit || !registry.editBanked(edit.account, edit)) return error(400, 'bad_reset');
+      log(`banked reset ${edit.add ? 'added' : 'removed'} by ${who.userId}`);
+      return json(200, { banked: registry.liveBanked(edit.account) });
     }
     if (url.pathname === '/api/dashboard') return json(200, registry.snapshot());
     if (url.pathname === '/api/code/history') {

@@ -112,7 +112,7 @@
     font-size: var(--t1); font-weight: var(--w-bold); line-height: 1; color: var(--accent-fg); background: var(--accent); cursor: pointer; }
 
   /* ── Primitive: input ── */
-  :where(select, .search input, .cfg-edit input) { padding: var(--s3) var(--s4); border: 1px solid var(--sep); border-radius: var(--r-ctl); background: var(--bg); font-size: var(--t2); }
+  :where(select, .search input, .cfg-edit input, .banked-form input) { padding: var(--s3) var(--s4); border: 1px solid var(--sep); border-radius: var(--r-ctl); background: var(--bg); font-size: var(--t2); }
 
   /* ── Primitive: tag, badge, dot ── */
   :where(.acct, .mark, .task .tk) { display: inline-block; padding: 0 var(--s3); border-radius: var(--r-tag); font-weight: var(--w-strong); }
@@ -217,6 +217,10 @@
   .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left, .v-exhausted .warn { color: var(--bad); }
   .qref .qrow-top { font-size: var(--t2); }
   .qdetail { margin-top: var(--s1); }
+  .banked-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-top: var(--s1); font-size: var(--t3); }
+  .banked-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); margin-top: var(--s2); }
+  .banked-form input { flex: 1 1 10em; min-width: 0; }
+  .banked > .chip { margin-top: var(--s1); }
   /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
   .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s2) var(--s6); margin-top: var(--s3); }
   .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) 34px auto; gap: var(--s3); align-items: center; font-size: var(--t3); }

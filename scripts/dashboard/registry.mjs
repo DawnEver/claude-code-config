@@ -13,6 +13,8 @@ import { quotaAlertsFor, quotaView } from './public/shared/quota-model.mjs';
 
 /** How many alert ids hosts sent are remembered, so a push re-sent after a lost reply alerts once. */
 const MAX_SEEN_ALERTS = 200;
+/** At most this many banked resets are kept per account. */
+export const MAX_BANKED = 10;
 /** A change handed to a host that does not report it within this goes to the next host. */
 const CHANGE_RETRY_MS = 120000;
 
@@ -39,6 +41,10 @@ export class Registry {
     // Forge sources (bridge.forges), the one record of each: its last reading ({at, repos} or
     // {at, error}), the host holding its lease, and hosts that cannot read it until a time. Kept
     // in storage, so a restart neither empties the Code tab nor makes every host read at once.
+    // Each subscription's banked resets (a one-off full or model reset the vendor granted, to
+    // spend before it expires): no API reports them, so a viewer records them here. Account key
+    // -> [{id, name, expiresAt, note?}].
+    this.banked = new Map(Object.entries(store?.get('banked') ?? {}));
     this.forges = new Map(Object.entries(store?.get('forges') ?? {}).filter(([id]) => id.includes('|')));   // `|` ids only (sourceId)
   }
 
@@ -190,6 +196,21 @@ export class Registry {
    * An offline host's last report still counts: use only grows until a reset, so an old
    * reading stays a true floor, and the reader marks it by its age.
    */
+  /**
+   * Record a banked reset of `key` (`add`: {name, expiresAt, note?}) or drop one spent (`remove`:
+   * its id). False when no host reports that subscription. Expired entries go on every edit.
+   */
+  editBanked(key, { add = null, remove = null }) {
+    if (!this.accounts().some((a) => a.key === key && a.kind !== 'balance')) return false;
+    const list = this.liveBanked(key).filter((b) => b.id !== remove);
+    if (add) list.push({ id: crypto.randomUUID().slice(0, 8), name: add.name, expiresAt: add.expiresAt, ...(add.note ? { note: add.note } : {}) });
+    if (list.length) this.banked.set(key, list.sort((x, y) => x.expiresAt - y.expiresAt).slice(0, MAX_BANKED)); else this.banked.delete(key);
+    this.store?.put('banked', Object.fromEntries(this.banked));
+    return true;
+  }
+
+  liveBanked(key) { return (this.banked.get(key) ?? []).filter((b) => b.expiresAt > this.now()); }
+
   accounts() {
     const byKey = new Map();
     for (const [id, p] of this.hosts) {
@@ -199,6 +220,7 @@ export class Registry {
         byKey.set(a.key, !held || (a.at ?? 0) > (held.at ?? 0) ? { ...a, hosts } : { ...held, hosts });
       }
     }
+    for (const [key, a] of byKey) if (a.kind !== 'balance') byKey.set(key, { ...a, banked: this.liveBanked(key) });
     // Subscriptions first, by agent; then API balances, by provider.
     const order = (a) => [a.kind === 'balance' ? 1 : 0, a.agent ?? a.provider, String(a.label ?? a.email)];
     return [...byKey.values()].sort((a, b) => { const x = order(a), y = order(b); return x[0] - y[0] || x[1].localeCompare(y[1]) || x[2].localeCompare(y[2]); });

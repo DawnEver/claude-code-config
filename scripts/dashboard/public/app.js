@@ -24,7 +24,8 @@ let loading = false;
 let selectsKey = null;
 // Settings of this device: localStorage, never sent anywhere (private mode: none kept).
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  del: (k) => { try { localStorage.removeItem(k); } catch { /* private mode */ } } };
 // The UI language: chosen on this device, else what the Telegram user's language asks for.
 const autoLang = defaultLang(tg?.initDataUnsafe?.user?.language_code ?? navigator.language);
 let langChoice = LANGS.includes(store.get('dashboard.lang')) ? store.get('dashboard.lang') : 'auto';
@@ -43,6 +44,37 @@ let demoOn = store.get('dashboard.demo') === '1';
 let masker = null;   // one per page: names stay put when demo is toggled off and on
 let raw = null;      // the last snapshot as fetched; `snapshot` is what is shown
 const shown = () => (raw && demoOn ? (masker ??= demoMasker())(raw) : raw);
+
+/*
+ * Sign-in: Telegram signs initData only when the app opens, while Telegram keeps an open app
+ * alive for days. The gateway answers every verified read with a session of its own
+ * (api.mjs `x-viewer-session`), renewed on use; this page keeps it for the Telegram user it
+ * was issued to and signs in with it, falling back to initData when it is refused.
+ */
+const SESSION_KEY = `dashboard.session.${tg?.initDataUnsafe?.user?.id ?? 'none'}`;
+let viewerSession = store.get(SESSION_KEY);
+async function api(url, init = {}) {
+  const send = (authorization) => fetch(url, { cache: 'no-store', ...init, headers: { ...init.headers, authorization } });
+  let res = viewerSession ? await send(`session ${viewerSession}`) : null;
+  if (!res || res.status === 401) res = await send(`tma ${tg.initData}`);
+  viewerSession = res.headers.get('x-viewer-session') ?? (res.status === 401 ? null : viewerSession);
+  if (viewerSession) store.set(SESSION_KEY, viewerSession); else store.del(SESSION_KEY);
+  return res;
+}
+
+// The last snapshot, kept on this device: a reload (Telegram's, or after a deploy) repaints at
+// once, at the reader's scroll position, instead of from an empty page.
+const SNAPSHOT_KEY = 'dashboard.lastSnapshot';
+function keepSnapshot() { store.set(SNAPSHOT_KEY, JSON.stringify({ at: lastOk, raw })); }
+function restoreSnapshot() {
+  try {
+    const kept = JSON.parse(store.get(SNAPSHOT_KEY));
+    if (!Array.isArray(kept?.raw?.hosts) || !(kept.at > 0)) return;
+    raw = kept.raw;
+    snapshot = shown();
+    lastOk = kept.at;
+  } catch { /* none kept */ }
+}
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
 // Quota hosts opened from their header: every account row open, plus the host's facts.
@@ -329,12 +361,86 @@ function accountDetail(q, hostId) {
     const first = q.resetCredits.expiries.filter(Boolean).sort((x, y) => x - y)[0];
     box.append(el('div', 'note', tr('quota.credits', { n: q.resetCredits.count, first: first && countdown(first) })));
   }
+  if (q.banked) box.append(bankedPart(q));
   if (q.extraReset) {
     const note = el(q.extraReset.url ? 'button' : 'div', 'note link', tr('quota.extraReset', { in: q.extraReset.at && countdown(q.extraReset.at) }));
     if (q.extraReset.url) note.addEventListener('click', (e) => { e.stopPropagation(); tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener'); });
     box.append(note);
   }
   box.append(sessionsPart(hostSessions(q.key, hostId)));
+  return box;
+}
+
+/*
+ * Banked resets: one-off resets an account was granted (a full reset, a model reset), each to spend
+ * before it expires. No API reports them, so they are recorded here and kept by the gateway
+ * (registry.mjs editBanked): listed by expiry, marked spent with a tap, added with a small form.
+ */
+const BANKED_NAMES = ['Full reset', 'Fable reset'];
+const bankedForm = { key: null, name: BANKED_NAMES[0], when: '', note: '' };
+async function editBanked(body) {
+  try {
+    const res = await api('api/resets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(res.status === 400 ? tr('banked.bad') : `HTTP ${res.status}`);
+    tg?.HapticFeedback?.notificationOccurred?.('success');
+    bankedForm.key = null;
+    await load();
+  } catch (e) {
+    const text = tr('banked.notSaved', { error: e.message });
+    tg?.showAlert ? tg.showAlert(text) : alert(text);
+  }
+}
+const confirmThen = (text, fn) => (tg?.showConfirm ? tg.showConfirm(text, (ok) => ok && fn()) : confirm(text) && fn());
+
+function bankedPart(q) {
+  const box = el('div', 'banked');
+  box.addEventListener('click', (e) => e.stopPropagation());
+  const readOnly = mock || demoOn || !tg?.initData;
+  box.append(el('div', 'note', q.banked.length ? tr('banked.title', { n: q.banked.length }) : tr('banked.none')));
+  for (const b of q.banked) {
+    const row = el('div', 'banked-row');
+    const text = el('span', null, `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })}`);
+    if (b.note) text.title = b.note;
+    row.append(text);
+    if (!readOnly) {
+      const spent = el('button', 'chip', tr('banked.spent'));
+      spent.addEventListener('click', () => confirmThen(tr('banked.spentConfirm', { name: b.name }), () => editBanked({ account: q.key, remove: b.id })));
+      row.append(spent);
+    }
+    box.append(row);
+    if (b.note) box.append(el('div', 'muted', b.note));
+  }
+  if (readOnly) return box;
+  if (bankedForm.key !== q.key) {
+    const add = el('button', 'chip', tr('banked.add'));
+    add.addEventListener('click', () => { Object.assign(bankedForm, { key: q.key, name: BANKED_NAMES[0], when: '', note: '' }); render(); });
+    box.append(add);
+    return box;
+  }
+  const form = el('div', 'banked-form');
+  const input = (type, field, placeholder) => {
+    const i = document.createElement('input');
+    i.type = type; i.value = bankedForm[field]; if (placeholder) i.placeholder = placeholder;
+    i.addEventListener('input', () => { bankedForm[field] = i.value; });
+    return i;
+  };
+  const name = input('text', 'name', tr('banked.name'));
+  const list = el('datalist');
+  list.id = 'banked-names';
+  for (const n of BANKED_NAMES) { const o = document.createElement('option'); o.value = n; list.append(o); }
+  name.setAttribute('list', list.id);
+  const when = input('datetime-local', 'when');
+  const note = input('text', 'note', tr('banked.note'));
+  const save = el('button', 'chip', tr('banked.save'));
+  save.addEventListener('click', () => {
+    const expiresAt = Date.parse(bankedForm.when);   // datetime-local: this device's time zone
+    if (!bankedForm.name.trim() || !(expiresAt > Date.now())) { const t = tr('banked.bad'); return tg?.showAlert ? tg.showAlert(t) : alert(t); }
+    editBanked({ account: q.key, add: { name: bankedForm.name.trim(), expiresAt, note: bankedForm.note.trim() } });
+  });
+  const cancel = el('button', 'chip', tr('banked.cancel'));
+  cancel.addEventListener('click', () => { bankedForm.key = null; render(); });
+  form.append(name, list, el('label', 'muted', tr('banked.expiresAt')), when, note, save, cancel);
+  box.append(form);
   return box;
 }
 
@@ -779,7 +885,7 @@ async function saveConfig(key, value, button) {
   configDirty = false;
   configShown = null;
   try {
-    const res = await fetch('api/config', { method: 'POST', headers: { authorization: `tma ${tg.initData}`, 'content-type': 'application/json' },
+    const res = await api('api/config', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key, value }) });
     if (!res.ok) throw new Error(res.status === 400 ? tr('cfg.badValue') : `HTTP ${res.status}`);
     tg?.HapticFeedback?.notificationOccurred?.('success');
@@ -888,7 +994,7 @@ async function fetchUsage(force = false) {
   const q = new URLSearchParams({ days: String(usageDays), tz: String(tzOffsetMin()) });
   for (const [d, vs] of Object.entries(usageFilter)) for (const v of vs) q.append(d, v);
   try {
-    const res = await fetch(`api/usage?${q}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
+    const res = await api(`api/usage?${q}`);
     usage = res.ok ? { key, report: await res.json(), at: Date.now() }
       : { key, error: res.status === 503 ? ['usage.notSetUp'] : ['usage.unavailable', { status: res.status }], at: Date.now() };
   } catch { usage = { key, error: ['usage.unreachable'], at: Date.now() }; } finally { usageLoading = false; }
@@ -1029,7 +1135,7 @@ function historyOf(r) {
   if (!held || (!held.loading && Date.now() - held.at > USAGE_EVERY_MS)) {
     codeHistory.set(key, { ...held, loading: true });
     const q = new URLSearchParams({ repo: r.key, days: String(codeDays), tz: String(tzOffsetMin()) });
-    fetch(`api/code/history?${q}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' })
+    api(`api/code/history?${q}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((value) => codeHistory.set(key, { at: Date.now(), value }), (e) => codeHistory.set(key, { at: Date.now(), error: e.message }))
       .finally(() => { if (tab === 'code') render(); });
@@ -1265,7 +1371,8 @@ function render() {
   // must not blank another. A redraw keeps the reader where they were on the page.
   const y = window.scrollY;
   if (query.trim()) { isolated(renderSearch); restoreScroll(); return; }
-  if (tab === 'quota') isolated(renderQuota);
+  // A banked-reset form being filled is not rebuilt under the reader's fingers by a poll.
+  if (tab === 'quota' && !document.activeElement?.matches?.('.banked-form input')) isolated(renderQuota);
   if (tab === 'code') isolated(renderCode);
   if (tab === 'usage') isolated(renderUsage);
   // The config form is rebuilt only when its data changed and nobody is editing a shared value:
@@ -1299,8 +1406,8 @@ async function fetchSnapshot() {
   if (mock) { snapshot = mockDashboard(); render(); return; }
   if (!tg?.initData) return stop('app.openFromBot');
   try {
-    const res = await fetch('api/dashboard', { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
-    // Expired sign-in (Telegram only signs initData at open): keep the last data, ask for a reopen.
+    const res = await api('api/dashboard');
+    // Sign-in expired (no session, initData too old): keep the last data, ask for a reopen.
     if (res.status === 401 && snapshot) { $('banner').textContent = tr('app.signInExpiredKeep', { ago: agoText(lastOk) }); return render(); }
     if (res.status === 401) return stop('app.signInExpired');
     if (res.status === 403) return stop('app.notAllowed');
@@ -1310,6 +1417,7 @@ async function fetchSnapshot() {
     raw = next;
     snapshot = shown();
     lastOk = Date.now();
+    keepSnapshot();
     $('banner').textContent = '';
   } catch {
     // Keep the last data, clearly marked as old.
@@ -1380,6 +1488,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) upda
 
 applyLang();
 $('summary').replaceChildren(el('div', 'summary-head', tr('app.loading')));
+if (!mock && tg?.initData) { restoreSnapshot(); render(); }
 load();
 $('force-update').addEventListener('click', () => hardReload());
 if (!mock) { setInterval(load, POLL_MS); showVersion(); updateIfStale(); }

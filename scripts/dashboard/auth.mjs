@@ -63,3 +63,29 @@ export async function newHostToken() {
   const token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return { token, hash: await sha256(token) };
 }
+
+/*
+ * Viewer session: Telegram signs initData only when the Mini App opens, and a Mini App left open
+ * outlives any sane initData age. A verified viewer is therefore handed a session of the
+ * gateway's own, `v1.<userId>.<expiry ms>.<HMAC-SHA256>`, renewed with every read: an app in
+ * use stays signed in, one unused for the session's life signs in again by reopening.
+ */
+export const viewerSessionKey = (raw) => crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+
+const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+export async function issueViewerSession(userId, expiresAt, key) {
+  const body = `v1.${userId}.${expiresAt}`;
+  return `${body}.${b64url(await crypto.subtle.sign('HMAC', key, enc.encode(body)))}`;
+}
+
+/** -> {ok: true, userId} | {ok: false}. The allowlist is checked by the caller, on every use. */
+export async function verifyViewerSession(token, key, now) {
+  const m = /^(v1\.(\d{1,16})\.(\d{1,16}))\.([A-Za-z0-9_-]{43})$/.exec(typeof token === 'string' ? token : '');
+  if (!m) return { ok: false };
+  let valid = false;
+  try { valid = await crypto.subtle.verify('HMAC', key, base64url(m[4]), enc.encode(m[1])); } catch { return { ok: false }; }
+  const userId = Number(m[2]);
+  if (!valid || !(Number(m[3]) > now) || !Number.isSafeInteger(userId)) return { ok: false };
+  return { ok: true, userId };
+}

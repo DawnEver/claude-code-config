@@ -11,7 +11,7 @@ export const LANGS = ['en', 'zh'];
 export const defaultLang = (code) => (/^zh/i.test(String(code ?? '')) ? 'zh' : 'en');
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const STATUS_ZH = { needs_approval: '待批准', needs_input: '待输入', working: '工作中', idle: '空闲', unknown: '未知', ended: '已结束' };
+const STATUS_ZH = { needs_approval: '待批准', needs_input: '待输入', working: '工作中', idle: '空闲', unknown: '在线', ended: '已结束' };
 
 const TABLE = {
   ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [`status.${k}`, { en: v.label, zh: STATUS_ZH[k] }])),
@@ -132,6 +132,19 @@ const TABLE = {
   'quota.atReset': { en: (v) => `→ ${v.n}% ${v.unit} at reset`, zh: (v) => `→ 重置时 ${v.n}%` },
   'quota.resetUnknown': { en: 'reset since the last reading: use unknown', zh: '上次读取后已重置：用量未知' },
   'quota.credits': { en: (v) => `${plural(v.n, 'reset credit')}${v.first ? ` · first expires in ${v.first}` : ''}`, zh: (v) => `${v.n} 次重置额度${v.first ? ` · 最早 ${v.first} 后过期` : ''}` },
+  'banked.title': { en: (v) => `${v.n} banked reset${v.n === 1 ? '' : 's'}`, zh: (v) => `${v.n} 次可用重置` },
+  'banked.none': { en: 'No banked resets recorded', zh: '未记录可用重置' },
+  'banked.expires': { en: (v) => `expires in ${v.in} (${v.at})`, zh: (v) => `${v.in} 后过期（${v.at}）` },
+  'banked.spent': { en: 'Used', zh: '已用' },
+  'banked.spentConfirm': { en: (v) => `Mark "${v.name}" as used?`, zh: (v) => `将「${v.name}」标记为已用？` },
+  'banked.add': { en: '+ Add reset', zh: '+ 添加重置' },
+  'banked.name': { en: 'Name', zh: '名称' },
+  'banked.note': { en: 'Note (optional)', zh: '备注（可选）' },
+  'banked.expiresAt': { en: 'Expires', zh: '过期时间' },
+  'banked.save': { en: 'Save', zh: '保存' },
+  'banked.cancel': { en: 'Cancel', zh: '取消' },
+  'banked.bad': { en: 'A name and a future expiry are needed', zh: '需要名称和未来的过期时间' },
+  'banked.notSaved': { en: (v) => `Not saved: ${v.error}`, zh: (v) => `未保存：${v.error}` },
   'quota.extraReset': { en: (v) => `extra reset announced${v.in ? ` · in ${v.in}` : ''}`, zh: (v) => `已公布额外重置${v.in ? ` · ${v.in} 后` : ''}` },
   'quota.inUse': { en: (v) => `In use by ${plural(v.n, 'session')}`, zh: (v) => `${v.n} 个会话正在使用` },
   'quota.notInUse': { en: 'No session uses this account now', zh: '当前没有会话使用此账号' },

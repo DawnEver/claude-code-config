@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
+import { verifyInitData, verifyHostToken, newHostToken, viewerSessionKey, issueViewerSession, verifyViewerSession } from './auth.mjs';
 import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schema.mjs';
 import { WAITING_MAX } from './public/shared/vocab.mjs';
 import { Registry, FORGE_EVERY_MS, FORGE_FORGET_MS, FORGE_LEASE_MS } from './registry.mjs';
@@ -44,6 +44,19 @@ test('initData: Ed25519-signed for the dashboard bot, fresh and allowlisted only
   for (const bad of [undefined, '', 'signature=zz', 'user=%7B%22id%22%3A42%7D']) assert.equal((await verifyInitData(bad, opts)).status, 401);
 });
 
+test('viewer session: HMAC-signed by the gateway, for one user, until it expires', async () => {
+  const key = await viewerSessionKey(crypto.getRandomValues(new Uint8Array(32)));
+  const token = await issueViewerSession(ALICE, NOW + 60000, key);
+  assert.deepEqual(await verifyViewerSession(token, key, NOW), { ok: true, userId: ALICE });
+  assert.equal((await verifyViewerSession(token, key, NOW + 60001)).ok, false, 'expired');
+  const otherKey = await viewerSessionKey(crypto.getRandomValues(new Uint8Array(32)));
+  assert.equal((await verifyViewerSession(token, otherKey, NOW)).ok, false, 'another gateway key');
+  const [v, , exp, sig] = token.split('.');
+  assert.equal((await verifyViewerSession([v, MALLORY, exp, sig].join('.'), key, NOW)).ok, false, 'tampered user');
+  assert.equal((await verifyViewerSession([v, ALICE, Number(exp) + 9999, sig].join('.'), key, NOW)).ok, false, 'tampered expiry');
+  for (const bad of [undefined, '', 'x.y.z', 'v1.42.1.zz']) assert.equal((await verifyViewerSession(bad, key, NOW)).ok, false);
+});
+
 test('host token: only its own host, by stored hash', async () => {
   const { token, hash } = await newHostToken();
   const hosts = { 'host-a': hash };
@@ -60,7 +73,8 @@ const push = (over = {}) => ({ schemaVersion: 1, bootAt: 1000, seq: 1, sessions:
 test('schema: whitelists fields, derives a Topic link, never forwards the chat id', () => {
   const p = parseHostPush(push({ sessions: [session({ cwd: '/home/u/x', token: 'secret' }), session({ id: 's2', topic: null }),
     session({ id: 's3', status: 'bogus' }), session({ id: 's4', status: 'unknown' }), session({ agent: 'gpt' }), session()] }));
-  assert.equal(p.sessions.length, 2, 'unknown agent, unknown state and duplicate dropped');
+  assert.equal(p.sessions.length, 4, 'unknown agent and duplicate dropped');
+  assert.deepEqual(p.sessions.slice(2).map((s) => s.status), ['unknown', 'unknown'], 'a live session whose state is not known yet stays listed');
   assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'lastPostAt', 'mention', 'name', 'posted', 'project', 'provider', 'repo', 'seat', 'status', 'topic', 'unread']);
   assert.deepEqual(p.sessions[0].topic, { url: 'https://t.me/c/1234567890/77', closed: false });
   assert.equal(p.sessions[1].topic, null);
@@ -108,6 +122,29 @@ async function gateway(over = {}, { db = null } = {}) {
 const asViewer = async (user) => ({ headers: { authorization: `tma ${await initData({ user })}` } });
 const hostPost = (token, body) => ({ method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
   body: typeof body === 'string' ? body : JSON.stringify(body) });
+
+test('api: a viewer stays signed in past the age of initData on the session the gateway hands out, renewed on use', async () => {
+  const g = await gateway({ initDataMaxAgeSeconds: 3600, viewerSessionDays: 1 });
+  const first = await g.req('/api/dashboard', await asViewer(ALICE));
+  assert.equal(first.status, 200);
+  let token = first.headers.get('x-viewer-session');
+  assert.ok(token, 'a session is handed out with the first verified read');
+  const bySession = (t) => ({ headers: { authorization: `session ${t}` } });
+  g.tick(7200 * 1000);   // initData is now too old
+  assert.equal((await g.req('/api/dashboard', await asViewer(ALICE))).status, 401);
+  const later = await g.req('/api/dashboard', bySession(token));
+  assert.equal(later.status, 200, 'the session outlives initData');
+  token = later.headers.get('x-viewer-session');
+  g.tick(20 * 3600 * 1000);
+  assert.equal((await g.req('/api/dashboard', bySession(token))).status, 200, 'renewed: a day past the first sign-in, still in');
+  g.tick(25 * 3600 * 1000);
+  assert.equal((await g.req('/api/dashboard', bySession(token))).status, 401, 'unused for longer than viewerSessionDays');
+  const mallory = await g.req('/api/dashboard', await asViewer(MALLORY));
+  assert.equal(mallory.headers.get('x-viewer-session'), null, 'none for a refused viewer');
+  const g2 = await gateway({ allowedUserIds: [] });
+  const k = await viewerSessionKey(crypto.getRandomValues(new Uint8Array(32)));
+  assert.equal((await g2.req('/api/dashboard', bySession(await issueViewerSession(ALICE, NOW + 60000, k)))).status, 401, 'signed by another gateway');
+});
 
 test('api: host push and viewer read, each authenticated', async () => {
   const g = await gateway();
@@ -1046,3 +1083,37 @@ test('the unread badge jumps to the first unread session, then the next, wrappin
   assert.equal(nextUnread(order, new Set(['b']), 'b'), 'b', 'only one: stays on it');
   assert.equal(nextUnread(order, new Set()), null, 'nothing unread');
 });
+
+test('banked resets: kept per account in storage, edited by an allowlisted viewer, expired ones dropped', async () => {
+  const { token, hash } = await newHostToken();
+  let now = NOW;
+  const kv = new Map();
+  const store = { get: (k) => kv.get(k), put: (k, v) => kv.set(k, structuredClone(v)) };
+  const make = () => createApi(parseDashboardConfig({ botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash }, ratePerMinute: 1000 }, PUBLIC_KEY), { now: () => now, store });
+  let api = make();
+  const req = (p, init = {}) => api(new Request(`https://dashboard.example${p}`, init));
+  const KEY = 'claude:a@example.com|org';
+  const acct = { key: KEY, agent: 'claude', label: null, email: 'a@example.com', aliases: [null], detail: null, problems: [], at: NOW,
+    windows: [{ k: '5h', used: 10, resetsAt: NOW + 3600000, windowMs: 18000000, cells: [], forecast: null }], resetCredits: null, extraReset: null };
+  await req('/api/hosts/host-a/snapshot', hostPost(token, push({ accounts: [acct] })));
+  const edit = async (body, user = ALICE) => req('/api/resets', { method: 'POST', headers: { ...(await asViewer(user)).headers, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await edit({ account: KEY, add: { name: 'Full reset', expiresAt: NOW + 86400000 } }, MALLORY)).status, 403);
+  assert.equal((await edit({ account: 'claude:nobody|', add: { name: 'Full reset', expiresAt: NOW + 86400000 } })).status, 400, 'no such account');
+  assert.equal((await edit({ account: KEY, add: { name: '', expiresAt: NOW + 86400000 } })).status, 400, 'a name is required');
+  assert.equal((await edit({ account: KEY, add: { name: 'Full reset', expiresAt: NOW - 1 } })).status, 400, 'already expired');
+  assert.equal((await edit({ account: KEY, add: { name: 'Full reset', expiresAt: NOW + 86400000 } })).status, 200);
+  assert.equal((await edit({ account: KEY, add: { name: 'Fable reset', expiresAt: NOW + 2 * 86400000, note: 'Refills 5h and Fable' } })).status, 200);
+  const read = async () => (await (await req('/api/dashboard', { headers: { authorization: `tma ${await initData({ authDate: now / 1000 })}` } })).json()).accounts.find((a) => a.key === KEY).banked;
+  let banked = await read();
+  assert.deepEqual(banked.map((b) => [b.name, b.expiresAt, b.note ?? null]), [['Full reset', NOW + 86400000, null], ['Fable reset', NOW + 2 * 86400000, 'Refills 5h and Fable']]);
+  api = make();   // a restart keeps them: they live in storage
+  await req('/api/hosts/host-a/snapshot', hostPost(token, push({ accounts: [acct] })));
+  assert.equal((await read()).length, 2);
+  assert.equal((await edit({ account: KEY, remove: banked[0].id })).status, 200, 'spent');
+  banked = await read();
+  assert.deepEqual(banked.map((b) => b.name), ['Fable reset']);
+  now += 3 * 86400000;
+  await req('/api/hosts/host-a/snapshot', hostPost(token, push({ seq: 2, accounts: [{ ...acct, at: now }] })));
+  assert.deepEqual(await read(), [], 'expired: gone');
+});
+

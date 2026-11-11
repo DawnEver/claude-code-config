@@ -18,7 +18,7 @@ export const STATUS = {
   needs_input: { label: 'Needs input', rank: 1 },
   working: { label: 'Working', rank: 2 },
   idle: { label: 'Idle', rank: 3 },
-  unknown: { label: 'Unknown', rank: 4 },
+  unknown: { label: 'Connected', rank: 4 },
   ended: { label: 'Ended', rank: 5 },
 };
 export const STATUSES = Object.keys(STATUS);
