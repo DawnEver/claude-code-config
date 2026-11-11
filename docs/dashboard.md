@@ -467,6 +467,7 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 | `GET /api/dashboard` | viewer: `Authorization: session <token>` or `tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], repos[], configKeys[], configLast{}, configPending[]}` |
 | `POST /api/config` | `Authorization: tma <raw initData>` | `202 {id}`: a `CONFIG_KEYS` change queued; `400` for any other key or value |
 | `POST /api/resets` | viewer | `{account, add: {name, expiresAt, note?}}` or `{account, remove: id}` -> `200 {banked[]}`; `400` for an unknown account or a past expiry |
+| `POST /api/hosts/:hostId/resets` | `Authorization: Bearer <host token>` | the same edit, or `{}`: `200 {accounts[{key, agent, email, banked}]}` (scripts, no Telegram at hand) |
 | `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted, configChanges[]}` (accepted false = not newer than held; the changes this host should apply) |
 
 Every route shares the per-client `ratePerMinute` (120), keyed by `CF-Connecting-IP`, which

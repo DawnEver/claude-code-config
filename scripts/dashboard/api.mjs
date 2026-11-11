@@ -118,7 +118,7 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
     if (limited(request)) return error(429, 'rate_limited');
     if (request.method === 'GET' && url.pathname === '/api/health') return json(200, { ok: true, schemaVersion: SCHEMA_VERSION });
     // A host's own routes: its snapshot, its usage, and read-only SQL over the usage store.
-    const hostRoute = /^\/api\/hosts\/([^/]+)\/(snapshot|usage|query)$/.exec(url.pathname);
+    const hostRoute = /^\/api\/hosts\/([^/]+)\/(snapshot|usage|query|resets)$/.exec(url.pathname);
     if (hostRoute && request.method === 'POST') {
       const [, hostId, what] = hostRoute;   // a machine name needs no percent-decoding
       if (!isHostId(hostId) || !(await verifyHostToken(hostId, request.headers.get('authorization'), config.hosts))) {
@@ -134,6 +134,16 @@ export function createApi(config, { now = Date.now, log = () => {}, store = null
         if (!parsed) return error(400, 'invalid_snapshot');
         const { accepted, configChanges = [], forgeRead = [] } = registry.accept(hostId, parsed);
         return json(200, { accepted, configChanges, forgeRead });
+      }
+      if (what === 'resets') {
+        // A host may record banked resets too (a script, no Telegram at hand): `{}` lists every
+        // subscription's, an edit is as for a viewer.
+        if (Object.keys(raw ?? {}).length) {
+          const edit = parseBankedEdit(raw, now());
+          if (!edit || !registry.editBanked(edit.account, edit)) return error(400, 'bad_reset');
+          log(`banked reset ${edit.add ? 'added' : 'removed'} by host ${hostId}`);
+        }
+        return json(200, { accounts: registry.accounts().filter((a) => a.kind !== 'balance').map(({ key, agent, email, banked }) => ({ key, agent, email, banked })) });
       }
       if (!db) return error(503, 'no_usage_store');
       if (what === 'usage') {

@@ -1115,5 +1115,9 @@ test('banked resets: kept per account in storage, edited by an allowlisted viewe
   now += 3 * 86400000;
   await req('/api/hosts/host-a/snapshot', hostPost(token, push({ seq: 2, accounts: [{ ...acct, at: now }] })));
   assert.deepEqual(await read(), [], 'expired: gone');
+  const byHost = async (body) => req('/api/hosts/host-a/resets', hostPost(token, body));
+  assert.equal((await byHost({ account: KEY, add: { name: 'Full reset', expiresAt: now + 1000 } })).status, 200, 'a host may record one');
+  assert.deepEqual((await (await byHost({})).json()).accounts.map((a) => [a.key, a.banked.length]), [[KEY, 1]]);
+  assert.equal((await req('/api/hosts/host-a/resets', hostPost('wrong-token-wrong-token', {}))).status, 401);
 });
 
