@@ -36,10 +36,17 @@ function snapshotData() {
 }
 
 let server, origin, browser;
+const resetPosts = [];   // bodies POSTed to /api/resets
 before(async () => {
   server = http.createServer((req, res) => {
     const p = new URL(req.url, 'http://x').pathname;
     if (p === '/api/dashboard') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(snapshotData())); }
+    if (p === '/api/resets' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => { resetPosts.push(JSON.parse(body)); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"banked":{}}'); });
+      return;
+    }
     if (p.startsWith('/api/')) { res.writeHead(404); return res.end(); }
     const f = path.join(ROOT, p === '/' ? 'index.html' : p);
     if (!f.startsWith(ROOT) || !fs.existsSync(f)) { res.writeHead(404); return res.end(); }
@@ -341,3 +348,34 @@ for (const [label, device] of [['phone', PHONE], ['desktop', DESKTOP]]) {
     } finally { await h.page.context().close(); }
   });
 }
+
+test('accounts: banked resets show as pills; editing them takes edit mode', async () => {
+  const h = await open(PHONE);
+  const { page } = h;
+  page.on('dialog', (d) => d.accept());
+  await h.tab('quota');
+  const pills = await page.locator('.qrow .bpill').allTextContents();
+  assert.ok(pills.some((p) => p.includes('Full')) && pills.some((p) => p.includes('Fable')), `pills on the folded row: ${pills}`);
+  const controls = () => page.locator('#quota-view button', { hasText: new RegExp(`^(${t('banked.spent', 'en')}|\${t('banked.add', 'en')})$`) }).count();
+  await page.locator('.qrow', { hasText: 'team-a' }).first().click();
+  assert.equal(await controls(), 0, 'read-only until edit mode');
+  assert.equal(await page.locator('.banked-bulk').count(), 0);
+  await page.click(`.quota-head button`);
+  assert.equal(await page.locator('.banked-bulk').count(), 1, 'the every-account card leads in edit mode');
+  assert.ok(await controls() > 0, 'Used and + Add reset shown');
+  resetPosts.length = 0;
+  await page.locator('.banked-row button', { hasText: t('banked.spent', 'en') }).first().click();
+  await page.waitForTimeout(100);
+  assert.deepEqual(Object.keys(resetPosts[0] ?? {}).sort(), ['account', 'remove'], 'Used removes that reset after a confirm');
+  await page.locator('.banked-bulk button', { hasText: t('banked.add', 'en') }).click();
+  await page.fill('.banked-form input[type=datetime-local]', '2026-12-01T10:00');
+  await page.locator('.banked-form button', { hasText: t('banked.save', 'en') }).click();
+  await page.waitForTimeout(100);
+  const add = resetPosts.at(-1);
+  assert.equal(add.add.name, 'Full reset');
+  assert.ok(Array.isArray(add.accounts) && add.accounts.length >= 1, 'added to every Claude account');
+  await page.click(`.quota-head button`);
+  assert.equal(await controls(), 0, 'Done hides the controls');
+  assert.deepEqual(h.errors, []);
+  await h.close();
+});

@@ -242,9 +242,10 @@ app-server); the Worker never recomputes it.
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most
   every 30 min).
 - **Banked resets**: one-off resets an account was granted (Claude's "Full reset", "Fable
-  reset"), each with its expiry. No API reports them, so they are recorded by hand in the
-  account's detail (+ Add reset, Used) and kept by the gateway in Durable Object storage
-  (`Registry.editBanked`, at most 10 per account). Below the hosts, a card covers every Claude
+  reset"), each with its expiry, shown as pills on every account row beside its windows (with
+  dates when open; orange under a week left). No API reports them, so they are recorded by hand
+  in **edit mode** (the Accounts heading's "Edit resets": + Add reset, Used) and kept by the gateway in Durable Object storage
+  (`Registry.editBanked`, at most 10 per account). In edit mode a card above the hosts covers every Claude
   account at once: each distinct reset with how many accounts hold it, **Add to all**,
   **Remove from all**, and + Add reset for all. An expired reset is hidden at once and leaves
   storage on the next edit. Read-only in demo mode.

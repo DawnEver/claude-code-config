@@ -220,11 +220,16 @@
   .banked-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-top: var(--s1); font-size: var(--t3); }
   .banked-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); margin-top: var(--s2); }
   .banked-form input { flex: 1 1 10em; min-width: 0; }
-  .banked > .chip { margin-top: var(--s1); }
+  .banked > .act { margin-top: var(--s2); }
+  .banked .act { flex: none; padding: var(--s1) var(--s4); border: 1px solid var(--sep); border-radius: var(--r-pill); background: var(--bg); font-size: var(--t3); white-space: nowrap; }
+  .banked .act.danger { color: var(--bad); border-color: currentColor; }
+  .banked .act.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+  .bdate { opacity: .8; }
   .qbanked { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
   .bpill { display: inline-flex; gap: var(--s2); align-items: baseline; padding: var(--s1) var(--s4); border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font-size: var(--t3); white-space: nowrap; }
   .bpill.soon { background: var(--warn); }
-  .banked-bulk { margin-top: var(--s5); }
+  .banked-bulk { margin-bottom: var(--s5); padding: var(--row-pad); border-radius: var(--r-card); background: var(--card); }
+  .quota-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
   /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
   .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s2) var(--s6); margin-top: var(--s3); }
   .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) minmax(34px, auto) auto; gap: var(--s3); align-items: center; font-size: var(--t3); }

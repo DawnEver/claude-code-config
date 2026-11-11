@@ -137,6 +137,8 @@ const TABLE = {
   'banked.expires': { en: (v) => `expires in ${v.in} (${v.at})`, zh: (v) => `${v.in} 后过期（${v.at}）` },
   'banked.spent': { en: 'Used', zh: '已用' },
   'banked.spentConfirm': { en: (v) => `Mark "${v.name}" as used?`, zh: (v) => `将「${v.name}」标记为已用？` },
+  'banked.edit': { en: 'Edit resets', zh: '编辑重置' },
+  'banked.done': { en: 'Done', zh: '完成' },
   'banked.bulk': { en: (v) => `Banked resets · all ${v.n} Claude accounts`, zh: (v) => `可用重置 · 全部 ${v.n} 个 Claude 账户` },
   'banked.on': { en: (v) => `on ${v.n}/${v.of}`, zh: (v) => `${v.n}/${v.of} 个账户` },
   'banked.addAll': { en: 'Add to all', zh: '全部添加' },

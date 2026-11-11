@@ -361,8 +361,12 @@ function accountDetail(q, hostId) {
     const first = q.resetCredits.expiries.filter(Boolean).sort((x, y) => x - y)[0];
     box.append(el('div', 'note', tr('quota.credits', { n: q.resetCredits.count, first: first && countdown(first) })));
   }
-  if (q.banked?.length) box.append(bankedLine(q));
-  if (q.banked) box.append(bankedPart(q));
+  // Open: the pills with their dates and notes; the list with its controls only in edit mode.
+  if (q.banked?.length) {
+    box.append(bankedLine(q, true));
+    for (const b of q.banked.filter((x) => x.note)) box.append(el('div', 'muted', `${b.name}: ${b.note}`));
+  }
+  if (q.banked && editingResets()) box.append(bankedPart(q));
   if (q.extraReset) {
     const note = el(q.extraReset.url ? 'button' : 'div', 'note link', tr('quota.extraReset', { in: q.extraReset.at && countdown(q.extraReset.at) }));
     if (q.extraReset.url) note.addEventListener('click', (e) => { e.stopPropagation(); tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener'); });
@@ -378,6 +382,11 @@ function accountDetail(q, hostId) {
  * (registry.mjs editBanked): listed by expiry, marked spent with a tap, added with a small form.
  */
 const BANKED_NAMES = ['Full reset', 'Fable reset'];
+// Editing resets is rare and "Used" deletes: the controls show only in edit mode, toggled from
+// the Accounts heading (this page's life only). Never in example data or demo mode.
+let resetEdit = false;
+const canEditResets = () => !mock && !demoOn && Boolean(tg?.initData);
+const editingResets = () => resetEdit && canEditResets();
 const bankedForm = { key: null, name: BANKED_NAMES[0], when: '', note: '' };
 async function editBanked(body) {
   try {
@@ -394,11 +403,12 @@ async function editBanked(body) {
 const confirmThen = (text, fn) => (tg?.showConfirm ? tg.showConfirm(text, (ok) => ok && fn()) : confirm(text) && fn());
 
 /** The account's banked resets at a glance, as weighty as its windows: each one's name and time left to spend it. */
-function bankedLine(q) {
+function bankedLine(q, withDate = false) {
   const line = el('div', 'qbanked');
   for (const b of q.banked) {
     const pill = el('span', `bpill${b.expiresAt - Date.now() < 7 * 86400000 ? ' soon' : ''}`);
-    pill.append(el('b', null, `↺ ${b.name.replace(/\s+reset$/i, '')}`), el('span', null, countdown(b.expiresAt)));
+    pill.append(el('b', null, `↺ ${b.name.replace(/\s+reset$/i, '')}`), el('span', null, countdown(b.expiresAt)),
+      ...(withDate ? [el('span', 'bdate', formatTime(b.expiresAt, timeFormat()))] : []));
     pill.title = `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })}${b.note ? ` · ${b.note}` : ''}`;
     line.append(pill);
   }
@@ -408,7 +418,7 @@ function bankedLine(q) {
 function bankedPart(q) {
   const box = el('div', 'banked');
   box.addEventListener('click', (e) => e.stopPropagation());
-  const readOnly = mock || demoOn || !tg?.initData;
+  const readOnly = !editingResets();
   box.append(el('div', 'note', q.banked.length ? tr('banked.title', { n: q.banked.length }) : tr('banked.none')));
   for (const b of q.banked) {
     const row = el('div', 'banked-row');
@@ -416,12 +426,11 @@ function bankedPart(q) {
     if (b.note) text.title = b.note;
     row.append(text);
     if (!readOnly) {
-      const spent = el('button', 'chip', tr('banked.spent'));
+      const spent = el('button', 'act danger', tr('banked.spent'));
       spent.addEventListener('click', () => confirmThen(tr('banked.spentConfirm', { name: b.name }), () => editBanked({ account: q.key, remove: b.id })));
       row.append(spent);
     }
     box.append(row);
-    if (b.note) box.append(el('div', 'muted', b.note));
   }
   if (readOnly) return box;
   box.append(...bankedAdd(q.key, (add) => editBanked({ account: q.key, add })));
@@ -431,7 +440,7 @@ function bankedPart(q) {
 /** "+ Add reset", or its form while open for `key` (an account, or '*' for every Claude account). */
 function bankedAdd(key, save) {
   if (bankedForm.key !== key) {
-    const add = el('button', 'chip', tr('banked.add'));
+    const add = el('button', 'act', tr('banked.add'));
     add.addEventListener('click', () => { Object.assign(bankedForm, { key, name: BANKED_NAMES[0], when: '', note: '' }); render(); });
     return [add];
   }
@@ -447,13 +456,13 @@ function bankedAdd(key, save) {
   list.id = `banked-names-${key}`;
   for (const n of BANKED_NAMES) { const o = document.createElement('option'); o.value = n; list.append(o); }
   name.setAttribute('list', list.id);
-  const ok = el('button', 'chip', tr('banked.save'));
+  const ok = el('button', 'act primary', tr('banked.save'));
   ok.addEventListener('click', () => {
     const expiresAt = Date.parse(bankedForm.when);   // datetime-local: this device's time zone
     if (!bankedForm.name.trim() || !(expiresAt > Date.now())) { const t = tr('banked.bad'); return tg?.showAlert ? tg.showAlert(t) : alert(t); }
     save({ name: bankedForm.name.trim(), expiresAt, note: bankedForm.note.trim() });
   });
-  const cancel = el('button', 'chip', tr('banked.cancel'));
+  const cancel = el('button', 'act', tr('banked.cancel'));
   cancel.addEventListener('click', () => { bankedForm.key = null; render(); });
   form.append(name, list, el('label', 'muted', tr('banked.expiresAt')), input('datetime-local', 'when'), input('text', 'note', tr('banked.note')), ok, cancel);
   return [form];
@@ -646,9 +655,18 @@ function renderQuota() {
     head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
     grid.append(section);
   }
-  box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
-  const bulk = bankedBulk();
+  const head = el('div', 'section-h quota-head', tr('quota.heading', { unit: pref.unit }));
+  if (canEditResets() && (snapshot.accounts ?? []).some((a) => a.banked)) {
+    const toggle = el('button', `chip${resetEdit ? ' on' : ''}`, tr(resetEdit ? 'banked.done' : 'banked.edit'));
+    toggle.setAttribute('aria-pressed', String(resetEdit));
+    toggle.addEventListener('click', () => { resetEdit = !resetEdit; bankedForm.key = null; tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    head.append(toggle);
+  }
+  box.append(head);
+  // In edit mode the every-account card leads: it is what editing is mostly for.
+  const bulk = editingResets() ? bankedBulk() : null;
   if (bulk) box.append(bulk);
+  box.append(grid);
 }
 
 /**
@@ -666,17 +684,17 @@ function bankedBulk() {
     const id = `${b.name}|${b.expiresAt}`;
     seen.set(id, { ...b, n: (seen.get(id)?.n ?? 0) + 1 });
   }
-  const readOnly = mock || demoOn || !tg?.initData;
+  const readOnly = !editingResets();
   for (const b of [...seen.values()].sort((x, y) => x.expiresAt - y.expiresAt)) {
     const row = el('div', 'banked-row');
     row.append(el('span', null, `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })} · ${tr('banked.on', { n: b.n, of: keys.length })}`));
     if (!readOnly) {
-      const drop = el('button', 'chip', tr('banked.removeAll'));
+      const drop = el('button', 'act danger', tr('banked.removeAll'));
       drop.addEventListener('click', () => confirmThen(tr('banked.removeAllConfirm', { name: b.name, n: b.n }),
         () => editBanked({ accounts: keys, drop: { name: b.name, expiresAt: b.expiresAt } })));
       row.append(drop);
       if (b.n < keys.length) {
-        const fill = el('button', 'chip', tr('banked.addAll'));
+        const fill = el('button', 'act', tr('banked.addAll'));
         fill.addEventListener('click', () => editBanked({ accounts: keys, add: { name: b.name, expiresAt: b.expiresAt, note: b.note ?? '' } }));
         row.append(fill);
       }
