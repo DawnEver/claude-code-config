@@ -361,6 +361,7 @@ function accountDetail(q, hostId) {
     const first = q.resetCredits.expiries.filter(Boolean).sort((x, y) => x - y)[0];
     box.append(el('div', 'note', tr('quota.credits', { n: q.resetCredits.count, first: first && countdown(first) })));
   }
+  if (q.banked?.length) box.append(bankedLine(q));
   if (q.banked) box.append(bankedPart(q));
   if (q.extraReset) {
     const note = el(q.extraReset.url ? 'button' : 'div', 'note link', tr('quota.extraReset', { in: q.extraReset.at && countdown(q.extraReset.at) }));
@@ -391,6 +392,18 @@ async function editBanked(body) {
   }
 }
 const confirmThen = (text, fn) => (tg?.showConfirm ? tg.showConfirm(text, (ok) => ok && fn()) : confirm(text) && fn());
+
+/** The account's banked resets at a glance, as weighty as its windows: each one's name and time left to spend it. */
+function bankedLine(q) {
+  const line = el('div', 'qbanked');
+  for (const b of q.banked) {
+    const pill = el('span', `bpill${b.expiresAt - Date.now() < 7 * 86400000 ? ' soon' : ''}`);
+    pill.append(el('b', null, `↺ ${b.name.replace(/\s+reset$/i, '')}`), el('span', null, countdown(b.expiresAt)));
+    pill.title = `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })}${b.note ? ` · ${b.note}` : ''}`;
+    line.append(pill);
+  }
+  return line;
+}
 
 function bankedPart(q) {
   const box = el('div', 'banked');
@@ -511,7 +524,7 @@ function accountRow(q, hostId) {
     name: el('span', `agent ${q.agent ?? q.provider}`, accountName(q)), headline: headline(q),
     right: ref ? el('span', 'see', tr('quota.see', { host: q.refTo })) : null,
     title: ref ? tr('quota.oneBudget', { host: q.refTo }) : null,
-    folded: () => (!ref && q.windows.length ? [quotaMini(q)] : []),
+    folded: () => (!ref ? [...(q.windows.length ? [quotaMini(q)] : []), ...(q.banked?.length ? [bankedLine(q)] : [])] : []),
     open: () => [ref ? sessionsPart(using) : accountDetail(q, hostId)],
     meta, warns: ref ? [] : [...(q.verdict === 'short' || q.verdict === 'exhausted' ? [verdictText(q, { withReset: false, lang })] : []), ...q.problems],
   });

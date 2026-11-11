@@ -221,10 +221,13 @@
   .banked-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); margin-top: var(--s2); }
   .banked-form input { flex: 1 1 10em; min-width: 0; }
   .banked > .chip { margin-top: var(--s1); }
+  .qbanked { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
+  .bpill { display: inline-flex; gap: var(--s2); align-items: baseline; padding: var(--s1) var(--s4); border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font-size: var(--t3); white-space: nowrap; }
+  .bpill.soon { background: var(--warn); }
   .banked-bulk { margin-top: var(--s5); }
   /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
   .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s2) var(--s6); margin-top: var(--s3); }
-  .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) 34px auto; gap: var(--s3); align-items: center; font-size: var(--t3); }
+  .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) minmax(34px, auto) auto; gap: var(--s3); align-items: center; font-size: var(--t3); }
   .qmini .used, .win .used, .reset { text-align: right; white-space: nowrap; }
   .reset:empty { display: none; }
   .k.bind { color: var(--fg); font-weight: var(--w-bold); text-decoration: underline; text-underline-offset: 2px; }
@@ -233,7 +236,7 @@
   .shared { margin-top: var(--s2); }
   .warn { margin-top: var(--s3); color: var(--warn); }
   /* An account's windows: label | bar | use | reset (26 / 44 / 52px fit "5h", "100%", "6d 23h"), its trend and forecast beneath. */
-  .win, .win-sub { display: grid; grid-template-columns: 26px 1fr 44px auto; gap: var(--s4); align-items: center; margin-top: var(--s5); }
+  .win, .win-sub { display: grid; grid-template-columns: 26px 1fr minmax(44px, auto) auto; gap: var(--s4); align-items: center; margin-top: var(--s5); }
   .win .reset { min-width: 52px; }
   .win-sub { gap: var(--s1) var(--s4); margin-top: var(--s2); }
   .win-sub > span { grid-column: 2 / 5; }
