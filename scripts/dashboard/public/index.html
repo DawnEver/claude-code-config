@@ -86,7 +86,7 @@
   :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) + :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) { border-top: 1px solid var(--sep); }
 
   /* ── Primitive: pill — every small control. Variants: chip (larger), filled action, on a track. ── */
-  :where(.chip, .tasks-btn, .range button, .seg button, .tabs button, .qrow-top .go, .cfg-edit button)
+  :where(.chip, .tasks-btn, .range button, .seg button, .tabs button, .qrow-top .go, .cfg-edit button, .act)
     { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); flex: none; padding: var(--pill-pad); border: 0; border-radius: var(--r-pill);
       font-size: var(--t3); font-weight: var(--w-strong); white-space: nowrap; background: var(--press); color: var(--hint); cursor: pointer; }
   :where(.chip, .tabs button, .cfg-edit button) { padding: var(--chip-pad); font-size: var(--t2); }
@@ -221,13 +221,14 @@
   .banked-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); margin-top: var(--s2); }
   .banked-form input { flex: 1 1 10em; min-width: 0; }
   .banked > .act { margin-top: var(--s2); }
-  .banked .act { flex: none; padding: var(--s1) var(--s4); border: 1px solid var(--sep); border-radius: var(--r-pill); background: var(--bg); font-size: var(--t3); white-space: nowrap; }
-  .banked .act.danger { color: var(--bad); border-color: currentColor; }
-  .banked .act.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+  .act.danger { color: var(--bad); }
+  .act.primary { background: var(--accent); color: var(--accent-fg); }
   .bdate { opacity: .8; }
   .qbanked { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
-  .bpill { display: inline-flex; gap: var(--s2); align-items: baseline; padding: var(--s1) var(--s4); border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font-size: var(--t3); white-space: nowrap; }
-  .bpill.soon { background: var(--warn); }
+  .bpill { display: inline-flex; gap: var(--s2); align-items: baseline; padding: var(--pill-pad); border-radius: var(--r-pill); background: var(--press); color: var(--fg); font-size: var(--t3); white-space: nowrap; }
+  .bpill b { font-weight: var(--w-strong); }
+  .bpill.soon { color: var(--warn); }
+  .icon-btn.ready { box-shadow: 0 0 0 2px var(--accent); }
   .banked-bulk { margin-bottom: var(--s5); padding: var(--row-pad); border-radius: var(--r-card); background: var(--card); }
   .quota-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
   /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
@@ -310,15 +311,15 @@
      hover (only where hover exists), a deeper tint while pressed, and a keyboard focus ring. ── */
   :is(.chat.link, .code-item.link, .host-head.toggle, .note.link, .note.toggle) { cursor: pointer; }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle, .note.link, .note.toggle) { transition: background-color .12s; }
-  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go) { transition: filter .12s, background-color .12s; }
+  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go, .act) { transition: filter .12s, background-color .12s; }
   @media (hover: hover) {
     :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):hover { background: var(--hover); }
     :is(.note.link, .note.toggle, .commit):hover { text-decoration: underline; }
-    :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .qrow-top .go):hover { filter: brightness(.95); }
+    :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .qrow-top .go, .act):hover { filter: brightness(.95); }
     :is(.icon-btn, .cfg-edit button):hover { filter: brightness(1.1); }
   }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):active { background: var(--press); }
-  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .cfg-edit button):active { filter: brightness(.88); }
+  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .cfg-edit button, .act):active { filter: brightness(.88); }
   :is(button, [role="button"], [role="link"], summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>

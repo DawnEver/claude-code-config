@@ -357,14 +357,10 @@ function accountDetail(q, hostId) {
     sub.append(trend(w), el('span', `forecast${w.forecast?.short ? ' hot' : ''}`, w.renewed ? tr('quota.resetUnknown') : forecast || ''));
     box.append(row, sub);
   }
-  if (q.resetCredits) {
-    const first = q.resetCredits.expiries.filter(Boolean).sort((x, y) => x - y)[0];
-    box.append(el('div', 'note', tr('quota.credits', { n: q.resetCredits.count, first: first && countdown(first) })));
-  }
   // Open: the pills with their dates and notes; the list with its controls only in edit mode.
-  if (q.banked?.length) {
+  if (resetItems(q).length) {
     box.append(bankedLine(q, true));
-    for (const b of q.banked.filter((x) => x.note)) box.append(el('div', 'muted', `${b.name}: ${b.note}`));
+    for (const b of (q.banked ?? []).filter((x) => x.note)) box.append(el('div', 'muted', `${b.name}: ${b.note}`));
   }
   if (q.banked && editingResets()) box.append(bankedPart(q));
   if (q.extraReset) {
@@ -402,14 +398,25 @@ async function editBanked(body) {
 }
 const confirmThen = (text, fn) => (tg?.showConfirm ? tg.showConfirm(text, (ok) => ok && fn()) : confirm(text) && fn());
 
-/** The account's banked resets at a glance, as weighty as its windows: each one's name and time left to spend it. */
+/**
+ * The resets an account holds, at a glance and as weighty as its windows: Claude's banked resets
+ * (recorded here) and Codex's reset credits (read from the account) in one style, each with its
+ * time left to spend it. `withDate`: the expiry date too (the open card).
+ */
+function resetItems(q) {
+  const credits = q.resetCredits ? Array.from({ length: q.resetCredits.count }, (_, i) => ({ name: tr('banked.credit'), expiresAt: q.resetCredits.expiries[i] ?? null })) : [];
+  return [...(q.banked ?? []), ...credits];
+}
 function bankedLine(q, withDate = false) {
   const line = el('div', 'qbanked');
-  for (const b of q.banked) {
-    const pill = el('span', `bpill${b.expiresAt - Date.now() < 7 * 86400000 ? ' soon' : ''}`);
-    pill.append(el('b', null, `↺ ${b.name.replace(/\s+reset$/i, '')}`), el('span', null, countdown(b.expiresAt)),
-      ...(withDate ? [el('span', 'bdate', formatTime(b.expiresAt, timeFormat()))] : []));
-    pill.title = `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })}${b.note ? ` · ${b.note}` : ''}`;
+  for (const b of resetItems(q)) {
+    const soon = b.expiresAt && b.expiresAt - Date.now() < 7 * 86400000;
+    const pill = el('span', `bpill${soon ? ' soon' : ''}`);
+    pill.append(el('b', null, `↺ ${b.name.replace(/\s+reset$/i, '')}`),
+      ...(b.expiresAt ? [el('span', null, countdown(b.expiresAt))] : []),
+      ...(withDate && b.expiresAt ? [el('span', 'bdate', formatTime(b.expiresAt, timeFormat()))] : []));
+    pill.title = [b.name, b.expiresAt ? tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) }) : tr('banked.noExpiry'),
+      soon ? tr('banked.soon') : null, b.note].filter(Boolean).join(' · ');
     line.append(pill);
   }
   return line;
@@ -427,6 +434,7 @@ function bankedPart(q) {
     row.append(text);
     if (!readOnly) {
       const spent = el('button', 'act danger', tr('banked.spent'));
+      spent.title = tr('banked.spentHint', { name: b.name });
       spent.addEventListener('click', () => confirmThen(tr('banked.spentConfirm', { name: b.name }), () => editBanked({ account: q.key, remove: b.id })));
       row.append(spent);
     }
@@ -441,6 +449,7 @@ function bankedPart(q) {
 function bankedAdd(key, save) {
   if (bankedForm.key !== key) {
     const add = el('button', 'act', tr('banked.add'));
+    add.title = tr(key === '*' ? 'banked.addHintAll' : 'banked.addHint');
     add.addEventListener('click', () => { Object.assign(bankedForm, { key, name: BANKED_NAMES[0], when: '', note: '' }); render(); });
     return [add];
   }
@@ -449,6 +458,7 @@ function bankedAdd(key, save) {
     const i = document.createElement('input');
     i.type = type; i.value = bankedForm[field]; if (placeholder) i.placeholder = placeholder;
     i.addEventListener('input', () => { bankedForm[field] = i.value; });
+    i.title = tr(`banked.${field}Hint`);
     return i;
   };
   const name = input('text', 'name', tr('banked.name'));
@@ -457,6 +467,7 @@ function bankedAdd(key, save) {
   for (const n of BANKED_NAMES) { const o = document.createElement('option'); o.value = n; list.append(o); }
   name.setAttribute('list', list.id);
   const ok = el('button', 'act primary', tr('banked.save'));
+  ok.title = tr(key === '*' ? 'banked.addHintAll' : 'banked.addHint');
   ok.addEventListener('click', () => {
     const expiresAt = Date.parse(bankedForm.when);   // datetime-local: this device's time zone
     if (!bankedForm.name.trim() || !(expiresAt > Date.now())) { const t = tr('banked.bad'); return tg?.showAlert ? tg.showAlert(t) : alert(t); }
@@ -533,7 +544,7 @@ function accountRow(q, hostId) {
     name: el('span', `agent ${q.agent ?? q.provider}`, accountName(q)), headline: headline(q),
     right: ref ? el('span', 'see', tr('quota.see', { host: q.refTo })) : null,
     title: ref ? tr('quota.oneBudget', { host: q.refTo }) : null,
-    folded: () => (!ref ? [...(q.windows.length ? [quotaMini(q)] : []), ...(q.banked?.length ? [bankedLine(q)] : [])] : []),
+    folded: () => (!ref ? [...(q.windows.length ? [quotaMini(q)] : []), ...(resetItems(q).length ? [bankedLine(q)] : [])] : []),
     open: () => [ref ? sessionsPart(using) : accountDetail(q, hostId)],
     meta, warns: ref ? [] : [...(q.verdict === 'short' || q.verdict === 'exhausted' ? [verdictText(q, { withReset: false, lang })] : []), ...q.problems],
   });
@@ -659,6 +670,7 @@ function renderQuota() {
   if (canEditResets() && (snapshot.accounts ?? []).some((a) => a.banked)) {
     const toggle = el('button', `chip${resetEdit ? ' on' : ''}`, tr(resetEdit ? 'banked.done' : 'banked.edit'));
     toggle.setAttribute('aria-pressed', String(resetEdit));
+    toggle.title = tr(resetEdit ? 'banked.doneHint' : 'banked.editHint');
     toggle.addEventListener('click', () => { resetEdit = !resetEdit; bankedForm.key = null; tg?.HapticFeedback?.selectionChanged?.(); render(); });
     head.append(toggle);
   }
@@ -690,11 +702,13 @@ function bankedBulk() {
     row.append(el('span', null, `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })} · ${tr('banked.on', { n: b.n, of: keys.length })}`));
     if (!readOnly) {
       const drop = el('button', 'act danger', tr('banked.removeAll'));
+      drop.title = tr('banked.removeAllHint', { name: b.name, n: b.n });
       drop.addEventListener('click', () => confirmThen(tr('banked.removeAllConfirm', { name: b.name, n: b.n }),
         () => editBanked({ accounts: keys, drop: { name: b.name, expiresAt: b.expiresAt } })));
       row.append(drop);
       if (b.n < keys.length) {
         const fill = el('button', 'act', tr('banked.addAll'));
+        fill.title = tr('banked.addAllHint', { name: b.name, n: keys.length - b.n });
         fill.addEventListener('click', () => editBanked({ accounts: keys, add: { name: b.name, expiresAt: b.expiresAt, note: b.note ?? '' } }));
         row.append(fill);
       }
@@ -1555,7 +1569,14 @@ async function updateIfStale() {
   store.set('dashboard.autoReloadAt', String(Date.now()));
   await hardReload();
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) updateIfStale(); });
+// While the app is in use a new build only marks the ↻ button: a reload would drop the reader's
+// place. It updates by itself at the next open (the check at start), or at a tap on ↻.
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden || !(await stale())) return;
+  const b = $('force-update');
+  b.classList.add('ready');
+  b.title = tr('app.updateReady');
+});
 
 applyLang();
 $('summary').replaceChildren(el('div', 'summary-head', tr('app.loading')));
