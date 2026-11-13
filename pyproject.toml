@@ -32,6 +32,9 @@ trunk = "main"
 integration = "integrate/main"
 merges_only_since = "47438dfe6cb84617cd055f4739e9e53332f34c09"
 pr_merges_since = "47438dfe6cb84617cd055f4739e9e53332f34c09"
+# The merge audit looks for PYTHON tests under the test roots; this repo's tests are node:test files, gated as
+# the base part itself, so there is no Python test root to audit (an empty declaration audits nothing).
+test_roots = []
 
 [tool.dev_lab.branchset]
 trunk = "main"
