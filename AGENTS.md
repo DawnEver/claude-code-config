@@ -6,6 +6,15 @@
   Do NOT mix plugin details here.
 -->
 
+## Family flow
+This repo is a dev-lab family member (`pyproject.toml` `[tool.dev_lab.*]`, no Python package). PRs from
+`pr/*` merge into `integrate/main` through the forge; `main` is live (every host links into it, a push deploys
+the dashboard) and moves only by the nightly `integrate promote`. Tests are `npm test`, posted as the `base`
+part by `dev_lab.dev.commandpart`. Bootstrap with `uv sync --all-groups`, then install the family hooks once per
+checkout: `.venv/Scripts/python -m dev_lab.dev.hook_install --install` (`.venv/bin/python` on POSIX). Workflows are
+rendered (`python -m dev_lab.dev.ciworkflows render`) and `.gitignore`/`.gitattributes`/`.rgignore` too
+(`python -m dev_lab.dev.famfiles --deltas scripts/_famconfig.py`): edit the TOML or the delta, never the output.
+
 ## Setup
 - `npm run setup` - Initial setup
 - `node scripts/setup/setup.js` - Manual setup
@@ -21,8 +30,8 @@
   (home paths, real emails, Telegram chat ids, org cloud folders, plus the machine-local
   denylist `~/.claude/private-markers` — one literal or `/regex/` per line, never tracked;
   it lives in the sync dir so every fleet host shares it, linked by setup as an optional
-  payload file, and doctor WARNs when a sync-dir host lacks it). `.githooks/pre-commit` runs it (`doctor.js --public-hygiene`); setup sets
-  `core.hooksPath`. Exception: inline `public-hygiene: allow (<reason>)`.
+  payload file, and doctor WARNs when a sync-dir host lacks it). The family pre-commit row `public-hygiene` (`pyproject.toml`
+  `[tool.dev_lab.hooks]`) runs it (`doctor.js --public-hygiene`). Exception: inline `public-hygiene: allow (<reason>)`.
 - **Multi-machine only:** `node scripts/setup/setup.js --sync-dir "<path>"` points this
   host at the shared config payload and records `~/.claude/sync-dir`. Add
   `--init-sync-dir` on the FIRST machine to seed an empty payload dir from the templates;

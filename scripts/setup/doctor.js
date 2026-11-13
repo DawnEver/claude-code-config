@@ -16,7 +16,7 @@
 //   node ~/.claude/scripts/setup/doctor.js          full report
 //   node ~/.claude/scripts/setup/doctor.js --hook   SessionStart: silent unless something is wrong
 //   node ~/.claude/scripts/setup/doctor.js --json   machine-readable
-//   node ~/.claude/scripts/setup/doctor.js --public-hygiene   pre-commit gate (.githooks)
+//   node ~/.claude/scripts/setup/doctor.js --public-hygiene   pre-commit gate (the family hook row public-hygiene, pyproject.toml)
 
 import fs from 'fs';
 import os from 'os';
@@ -698,7 +698,7 @@ const MARK = { FAIL: 'FAIL ', WARN: 'WARN ', OK: 'OK   ' };
 
 function main() {
   const args = process.argv.slice(2);
-  // --public-hygiene: the pre-commit gate (.githooks/pre-commit) — that check alone.
+  // --public-hygiene: the pre-commit gate ([tool.dev_lab.hooks] row public-hygiene) — that check alone.
   const findings = args.includes('--public-hygiene') ? checkPublicHygiene()
     : runChecks({ contentCache: args.includes('--hook') ? CONTENT_CACHE_FILE : null });
   const failed = findings.filter((f) => f.level === 'FAIL');

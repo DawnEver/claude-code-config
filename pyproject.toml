@@ -1,0 +1,98 @@
+# claude-code-config as a family member: a manifest only -- no Python package, no Python code. Its tests are
+# `npm test` (node:test), posted as the one `base` part by dev_lab.dev.commandpart on GitHub-hosted runners.
+[project]
+name = "claude-code-config"
+version = "0"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+# The family development system (part producer, hooks, forge door). DEV ONLY: nothing here imports it.
+dev = ["dev-lab"]
+
+[tool.uv.sources]
+# dev-lab floats on integrate/main like every family repo; the lock is the pin.
+dev-lab = { git = "https://github.com/DawnEver/dev-lab.git", branch = "integrate/main" }
+
+[tool.dev_lab.parts]
+output = "output/logs"
+
+[tool.lab_commons.tests]
+produce = ["-m", "dev_lab.dev.commandpart", "{part}", "--", "npm", "test"]
+
+# Two branches: `main` is LIVE -- every fleet host's ~/.claude links into a checkout of it, and a push to it deploys
+# the dashboard Worker -- so it moves only by `integrate promote` (fast-forward) on the nightly full run, the one run
+# that adds macOS to linux+windows (D84) for setup and the launchers. PRs merge into integrate/main.
+# Both shas below are origin/main at adoption: integrate/main is cut there, and every later commit is a forge merge.
+[tool.dev_lab.integrator]
+trunk = "main"
+integration = "integrate/main"
+merges_only_since = "47438dfe6cb84617cd055f4739e9e53332f34c09"
+pr_merges_since = "47438dfe6cb84617cd055f4739e9e53332f34c09"
+# The merge audit looks for PYTHON tests under the test roots; this repo's tests are node:test files, gated as
+# the base part itself, so there is no Python test root to audit (an empty declaration audits nothing).
+test_roots = []
+
+[tool.dev_lab.branchset]
+trunk = "main"
+sessions = ["integrate/main"]
+prune_merged = true
+
+# FORGE-PROTECTION-DECLARED (dev_lab.dev.forgeprotect): the ONE bypass identity per forge; on GitHub the ops App
+# merges break-glass and the repo admin stays. `python -m dev_lab.dev.forge protect plan|check|apply`.
+[tool.dev_lab.protection]
+[tool.dev_lab.protection.forges."github.com"]
+breakglass = ["app:5704921", "role:admin"]
+
+# Who reviews this repo's PRs: the family's isolated judge host (user ruling 2026-11-10); ADVISORY, never a gate.
+[tool.dev_lab.review]
+where = "judge"
+judge_app = 5619495
+
+# Git hooks: the family base (dev_lab/dev/githooks/base.toml), plus this public repo's personal-data gate.
+[tool.dev_lab.hooks]
+
+[[tool.dev_lab.hooks.pre-commit]]
+id = "public-hygiene"
+run = ["node", "scripts/setup/doctor.js", "--public-hygiene"]
+always_run = true
+
+# GitHub Actions: the family's one PR lifecycle (dev_lab/dev/ci_base.toml), rendered to .github/workflows by
+# `python -m dev_lab.dev.ciworkflows render`, never hand-edited. Every job also gets node.
+[tool.dev_lab.ci."ci.yml"]
+
+[tool.dev_lab.ci._steps]
+setup = [
+    { uses = "actions/checkout@v4", with = { ref = "${{ env.HEAD_SHA }}", fetch-depth = 0 } },
+    { uses = "actions/setup-node@v4", with = { node-version = 22 } },
+    { name = "Install uv", uses = "astral-sh/setup-uv@v5", with = { enable-cache = true } },
+    { name = "Sync the environment", run = "uv sync --frozen --all-groups" },
+]
+
+# The bundle prepare the judge reads, on THIS forge (the base places it on Gitea unless a repo names GitHub).
+[tool.dev_lab.ci."review-prepare.yml"]
+forge = "github"
+
+# Deploys the dashboard Worker from main -- so from a promotion (docs/dashboard.md). Code only: the Worker's
+# DASHBOARD_CONFIG secret persists across deploys and changes only with membership (`npm run dashboard -- deploy`).
+[tool.dev_lab.ci."dashboard-deploy.yml"]
+name = "Deploy dashboard"
+on.push = { branches = ["main"], paths = ["scripts/dashboard/**", "scripts/shared/dashboard-schema.mjs", "scripts/shared/usage-schema.mjs"] }
+on.workflow_dispatch = {}
+concurrency = { group = "dashboard-deploy", cancel-in-progress = false }
+jobs.deploy.runs-on = "ubuntu-latest"
+jobs.deploy.steps = [
+    { uses = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" },
+    { uses = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", with = { node-version = 22 } },
+    { name = "Test the dashboard", run = "node --test scripts/dashboard/*.test.mjs scripts/usage/*.test.mjs scripts/bridge/dashboard-push.test.mjs" },
+    { name = "Test the page in a browser", run = "npm install --no-save --no-audit --no-fund playwright && npx playwright install --with-deps chromium-headless-shell && npm run test:e2e" },
+    { name = "Migrate the usage store", env = { CLOUDFLARE_API_TOKEN = "${{ secrets.CLOUDFLARE_API_TOKEN }}" }, run = "npx -y wrangler@4 d1 migrations apply agents-usage --remote --config scripts/dashboard/wrangler.jsonc" },
+    { name = "Deploy the Worker", env = { CLOUDFLARE_API_TOKEN = "${{ secrets.CLOUDFLARE_API_TOKEN }}", DASHBOARD_DOMAIN = "${{ vars.DASHBOARD_DOMAIN }}" }, run = 'npx -y wrangler@4 deploy --config scripts/dashboard/wrangler.jsonc --domain "$DASHBOARD_DOMAIN" --tag "${GITHUB_SHA::7}"' },
+]
+
+# The family files famfiles renders (.gitignore, .gitattributes, .rgignore) read this repo's deltas from this module.
+[tool.dev_lab.render]
+deltas = "scripts/_famconfig.py"
