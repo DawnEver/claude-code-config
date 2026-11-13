@@ -4,7 +4,7 @@
 // JSON-RPC, random port, token in ~/.claude/bridge/runtime.json):
 //   - each session's session-bridge channel (claude_plugins/session-bridge) stays connected:
 //       register {token, sessionId, cwd}, reply {text}, permission_request {...}
-//       <- inbound {text, user}, permission {request_id, behavior}
+//       <- inbound {text, user, userId}, permission {request_id, behavior}
 //   - bridge-hook.js makes one-shot calls: mirror {token, sessionId, kind, text|state}
 //     (kind prompt | final | answer | activity; a final may answer {deliver: [{text, user}]}), and question {token, sessionId, questions, wait},
 //     held open for a Telegram-started turn until the answer arrives
@@ -483,18 +483,18 @@ export class ClaudeAdapter extends EventEmitter {
 
   // ── host interface used by the daemon ──
 
-  async inject(id, text, user) {
+  async inject(id, text, user, { userId = '' } = {}) {
     const s = this.sessions.get(id);
     if (!s) throw new Error('channel disconnected');
     // Agent view moved the conversation on: deliver to the live session, or hold for it.
     const next = s.transcript && continuedIn(s.transcript);
     if (next && next !== id) {
-      if (this.sessions.has(next)) { this.#supersede(id, next); return this.inject(next, text, user); }
-      s.queued.push({ text, user: user ?? '' });
+      if (this.sessions.has(next)) { this.#supersede(id, next); return this.inject(next, text, user, { userId }); }
+      s.queued.push({ text, user: user ?? '', userId });
       return { queued: true, note: `queued: this conversation continued in session ${next} (agent view relaunched it), which has not connected yet; the message is delivered when it does.` };
     }
     if (!s.inbound) {
-      s.queued.push({ text, user: user ?? '' });
+      s.queued.push({ text, user: user ?? '', userId });
       const why = s.thirdParty
         ? 'this session runs a third-party provider, which Claude Code gives no channel'
         : 'this session has no channel (not started with ccc, or relaunched by agent view / in the background, which drops ccc\'s channel flag), so Claude Code drops channel messages';
@@ -503,7 +503,7 @@ export class ClaudeAdapter extends EventEmitter {
       const fix = s.thirdParty ? 'Use ccc or cods to message it directly.' : `Resume it from a terminal with ccc --resume ${id} to message it directly.`;
       return { queued: true, note: `queued: ${why}, so ${when}. ${fix}` };
     }
-    s.peer.notify('inbound', { text, user: user ?? '' });
+    s.peer.notify('inbound', { text, user: user ?? '', userId });
     s.remoteTurn = true;
     s.activity = 'running'; s.stateAt = this.now();
     this.#emitStatus(id);

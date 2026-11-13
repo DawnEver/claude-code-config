@@ -438,7 +438,7 @@ test('a session without inbound queues Telegram messages and hands them to the n
     const replayed = await r.hook({ sessionId: ids, kind: 'final', text: 'spooled earlier answer', replay: true });
     assert.equal(replayed.result.deliver, undefined, 'a spool replay cannot continue the session');
     const res = await r.hook({ sessionId: ids, kind: 'final', text: 'local answer' });
-    assert.deepEqual(res.result.deliver, [{ text: 'idle msg', user: 'u' }, { text: 'second', user: 'v' }]);
+    assert.deepEqual(res.result.deliver, [{ text: 'idle msg', user: 'u', userId: '' }, { text: 'second', user: 'v', userId: '' }]);
     assert.equal(r.a.statusSnapshot('s').state, 'running');
     assert.equal((await r.hook({ sessionId: ids, kind: 'final', text: 'phone answer' })).result.deliver, undefined, 'delivered once');
     assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => e.text), ['spooled earlier answer', 'local answer', 'phone answer'], 'the continuation is a Telegram turn');

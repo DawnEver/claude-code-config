@@ -7,7 +7,7 @@ import os from 'os';
 import net from 'net';
 import http from 'http';
 import path from 'path';
-import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity, pruneChannelLogs, transcriptPathOf } from './server.mjs';
+import { DaemonLink, createChannelServer, readChannelDeclaration, DECLARATION_DOOR, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity, pruneChannelLogs, transcriptPathOf } from './server.mjs';
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
 import { Bridge } from '../../scripts/bridge/daemon.mjs';
 import { TelegramClient } from '../../scripts/bridge/telegram.mjs';
@@ -36,7 +36,7 @@ test('channel only emits one verdict for a valid forwarded request, and invalida
   assert.equal(out.length, 1);
 });
 
-async function rig(configureHub = () => {}) {
+async function rig(configureHub = () => {}, declared = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-'));
   const hub = new ClaudeAdapter();
   const port = await hub.listen(0);
@@ -50,7 +50,7 @@ async function rig(configureHub = () => {}) {
     onInbound: (p) => server.inbound(p), onVerdict: (p) => server.verdict(p),
     onDisconnect: () => server.disconnected(),
   });
-  server = createChannelServer({ write: (m) => out.push(m), link });
+  server = createChannelServer({ write: (m) => out.push(m), link, declared });
   const ups = [];
   hub.on('up', (s) => ups.push(s));
   const cleanup = async () => { link.stop(); await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); };
@@ -171,7 +171,7 @@ test('register, inbound -> channel notification, reply tool -> hub, permission r
 
     await r.hub.inject('s1', 'run the tests', 'alice');
     await until(() => r.out.length);
-    assert.deepEqual(r.out.shift(), { jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content: 'run the tests', meta: { user: 'alice' } } });
+    assert.deepEqual(r.out.shift(), { jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content: 'run the tests', meta: { user: 'alice', user_id: '', declared: 'false' } } });
 
     const replies = [];
     r.hub.on('final', (x) => replies.push(x));
@@ -337,4 +337,59 @@ test('pruneChannelLogs: drops channel logs older than the cutoff, keeps fresh on
   make('channel-1.log', 8); make('channel-2.log', 1); make('daemon.log', 30);
   pruneChannelLogs(dir, { now, maxAgeDays: 7 });
   assert.deepEqual(fs.readdirSync(dir).sort(), ['channel-2.log', 'daemon.log']);
+});
+
+test('a message whose sender id matches the declared channel user is declared', async () => {
+  const r = await rig(() => {}, { 'session-bridge': '1001' });
+  try {
+    await r.hub.inject('s1', 'go', 'alice', { userId: '1001' });
+    await until(() => r.out.length);
+    assert.deepEqual(r.out.shift().params.meta, { user: 'alice', user_id: '1001', declared: 'true' });
+  } finally { await r.cleanup(); }
+});
+
+test('a sender id the declaration does not name, or a username equal to it, is undeclared', async () => {
+  const r = await rig(() => {}, { 'session-bridge': '1001' });
+  try {
+    await r.hub.inject('s1', 'go', 'mallory', { userId: '2002' });
+    await r.hub.inject('s1', 'go', '1001');
+    await until(() => r.out.length === 2);
+    assert.equal(r.out[0].params.meta.declared, 'false');
+    assert.equal(r.out[1].params.meta.declared, 'false', 'a username is never the declared id');
+  } finally { await r.cleanup(); }
+});
+
+test('a declaration for another source grants this channel nothing', () => {
+  const out = [];
+  const s = createChannelServer({ write: (m) => out.push(m), link: {}, declared: { 'other-bridge': '1001' } });
+  s.inbound({ text: 'go', user: 'alice', userId: '1001' });
+  assert.equal(out[0].params.meta.declared, 'false');
+});
+
+test('the declaration is read through the dev-lab door with the recorded python', () => {
+  const calls = [];
+  const run = (...a) => { calls.push(a); return { status: 0, stdout: '{"session-bridge": "1001"}\n', stderr: '' }; };
+  assert.deepEqual(readChannelDeclaration({ python: '/py', run }), { channels: { 'session-bridge': '1001' }, why: null });
+  assert.deepEqual([calls[0][0], calls[0][1]], ['/py', DECLARATION_DOOR]);
+  assert.deepEqual(DECLARATION_DOOR, ['-m', 'dev_lab.dev.devhost', 'channels', '--json']);
+});
+
+test('the declaration fails closed: every door failure declares nothing', () => {
+  const cases = {
+    'no python': [null, () => assert.fail('no door without a python')],
+    'spawn error': ['/py', () => ({ error: new Error('ENOENT') })],
+    'non-zero exit': ['/py', () => ({ status: 2, stdout: '{"session-bridge": "1001"}', stderr: 'refused: channels' })],
+    'not JSON': ['/py', () => ({ status: 0, stdout: 'session-bridge=1001', stderr: '' })],
+    'not an object': ['/py', () => ({ status: 0, stdout: '["1001"]', stderr: '' })],
+    'a non-string user': ['/py', () => ({ status: 0, stdout: '{"session-bridge": 1001}', stderr: '' })],
+    'nothing declared': ['/py', () => ({ status: 0, stdout: '{}', stderr: '' })],
+  };
+  for (const [name, [python, run]] of Object.entries(cases)) {
+    const got = readChannelDeclaration({ python, run });
+    assert.deepEqual(got.channels, {}, name);
+    assert.ok(got.why, name);
+    const out = [];
+    createChannelServer({ write: (m) => out.push(m), link: {}, declared: got.channels }).inbound({ text: 'go', user: 'a', userId: '1001' });
+    assert.equal(out[0].params.meta.declared, 'false', name);
+  }
 });

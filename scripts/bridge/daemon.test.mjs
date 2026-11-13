@@ -212,8 +212,8 @@ function fakeTelegram() {
 function fakeHost(agent, { interrupt = agent === 'codex' } = {}) {
   const h = new EventEmitter();
   h.agent = agent;
-  h.injected = []; h.answered = [];
-  h.inject = async (id, text, user) => { h.injected.push([id, text, user]); };
+  h.injected = []; h.answered = []; h.senderIds = [];
+  h.inject = async (id, text, user, opts) => { h.injected.push([id, text, user]); h.senderIds.push(opts?.userId); };
   h.status = () => 'idle';
   h.answerApproval = (ref, yes, id) => { h.answered.push([ref, yes, id]); return true; };
   h.questionAnswers = []; h.released = [];
@@ -424,6 +424,7 @@ for (const agent of HOSTS) {
       await until(() => r.telegram.reopened.length === 1);
       assert.deepEqual(r.telegram.reopened, [[-100, 100]], 'same Topic');
       assert.deepEqual(host.injected, [['x', 'wake up', 'u']]);
+      assert.deepEqual(host.senderIds, [String(ALICE)], 'the numeric sender id travels beside the username');
       assert.equal(cache()[`-100|${agent}:x`].closedAt, undefined, 'closedAt cleared');
       host.emit('prompt', { id: 'x', text: 'wake up' });   // the echo of the inject
       host.emit('final', { id: 'x', text: 'awake' });
