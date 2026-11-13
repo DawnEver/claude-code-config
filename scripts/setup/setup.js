@@ -787,12 +787,6 @@ export function setup(options = {}) {
   console.log('\n--- CLI Wrappers ---');
   installCliWrappers(claudeDir);
 
-  // The repo is public: .githooks/pre-commit runs doctor's public-hygiene gate.
-  try {
-    execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: sourceDir, stdio: 'ignore' });
-    console.log('OK    git core.hooksPath -> .githooks (public-hygiene pre-commit)');
-  } catch { /* not a git checkout: nothing to gate */ }
-
   // Collectors can run with dashboard credentials alone; Telegram is an optional transport.
   const bridge = readBridgeConfig({
     sharedPath: path.join(claudeDir, 'claude_env_settings.json'),
