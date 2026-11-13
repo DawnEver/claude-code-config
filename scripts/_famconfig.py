@@ -59,17 +59,17 @@ _RGIGNORE: Final = ('.submodules/', '.git/', '!cc-market/')
 _MAKEFILE: Final = (
     '.DEFAULT_GOAL := all',
     '.PHONY: all clean fmt install install-dev lint test test-parallel verify',
-    '	rm -rf output node_modules',
-    '	npm install',
-    '	uv sync --all-groups',
-    '	uv run python -m dev_lab.dev.hook_install --install',
-    '	npm test',
+    '\trm -rf output node_modules',
+    '\tnpm install',
+    '\tuv sync --all-groups',
+    '\tuv run python -m dev_lab.dev.hook_install --install',
+    '\tnpm test',
 )
 
 #: The base's verify recipe is ruff plus pytest; this repo has no Python code and its tests are node:test, so
 #: `verify` runs `npm test` -- the command the forge's base part runs -- instead.
 _MAKEFILE_DROPPED: Final = {
-    '	python -m dev_lab.dev.verify': 'no Python here: the tests are node:test, so verify runs npm test',
+    '\tpython -m dev_lab.dev.verify': 'no Python here: the tests are node:test, so verify runs npm test',
 }
 
 DELTAS: Final[dict[str, Delta]] = {
