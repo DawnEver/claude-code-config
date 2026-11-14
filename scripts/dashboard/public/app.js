@@ -381,6 +381,8 @@ const BANKED_NAMES = ['Full reset', 'Fable reset'];
 // Editing resets is rare and "Used" deletes: the controls show only in edit mode, toggled from
 // the Accounts heading (this page's life only). Never in example data or demo mode.
 let resetEdit = false;
+// The Claude accounts the bulk card edits (empty: all of them), this page's life only.
+const bulkPick = new Set();
 const canEditResets = () => !mock && !demoOn && Boolean(tg?.initData);
 const editingResets = () => resetEdit && canEditResets();
 const bankedForm = { key: null, name: BANKED_NAMES[0], when: '', note: '' };
@@ -688,11 +690,24 @@ function renderQuota() {
 function bankedBulk() {
   const claude = (snapshot.accounts ?? []).filter((a) => a.agent === 'claude' && a.banked);
   if (!claude.length) return null;
-  const keys = claude.map((a) => a.key);
+  const all = claude.map((a) => a.key);
+  for (const k of bulkPick) if (!all.includes(k)) bulkPick.delete(k);
+  // No pick means every account; a tap on an account narrows the edits to the picked ones.
+  const keys = bulkPick.size ? all.filter((k) => bulkPick.has(k)) : all;
+  const picked = claude.filter((a) => keys.includes(a.key));
   const box = el('div', 'banked banked-bulk');
-  box.append(el('div', 'section-h', tr('banked.bulk', { n: keys.length })));
+  box.append(el('div', 'section-h', tr(bulkPick.size ? 'banked.bulkPicked' : 'banked.bulk', { n: keys.length, of: all.length })));
+  const pickRow = el('div', 'bulk-pick');
+  for (const a of claude) {
+    const chip = el('button', `chip${bulkPick.has(a.key) ? ' on' : ''}`, accountTag(a));
+    chip.setAttribute('aria-pressed', String(bulkPick.has(a.key)));
+    chip.title = tr('banked.pickHint');
+    chip.addEventListener('click', () => { if (!bulkPick.delete(a.key)) bulkPick.add(a.key); bankedForm.key = null; tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    pickRow.append(chip);
+  }
+  box.append(pickRow);
   const seen = new Map();
-  for (const a of claude) for (const b of a.banked) {
+  for (const a of picked) for (const b of a.banked) {
     const id = `${b.name}|${b.expiresAt}`;
     seen.set(id, { ...b, n: (seen.get(id)?.n ?? 0) + 1 });
   }
