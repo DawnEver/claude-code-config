@@ -249,17 +249,22 @@ export class Bridge {
    * A session whose state is unknown (connected, no hook reported since, e.g. after a daemon
    * restart) is reported as such: it is live, and the page lists it as Connected.
    */
+  /**
+   * The dashboard's rows: a live session that has a Topic, and only that one (a session never
+   * given a Topic -- lazy, a side or background session, telemetry-only -- is not listed). Its
+   * name is the session's own (its rename, else the native title), else its Topic title: never null.
+   */
   dashboardSessions() {
-    return [...this.sessions.values()].filter((s) => s.state !== 'ended')
+    return [...this.sessions.values()].filter((s) => s.state !== 'ended' && s.topicId && s.chatId !== null)
       .map((s) => ({ s, snap: this.hosts.get(s.agent)?.statusSnapshot?.(s.id) })).map(({ s, snap }) => ({
-      id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null, provider: s.provider ?? null, repo: s.repo ?? null,
+      id: s.id, agent: s.agent, name: s.name ?? s.title, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null, provider: s.provider ?? null, repo: s.repo ?? null,
       unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
       lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
       ...(snap?.observationOnly ? { observationOnly: true } : {}),
       status: statusCode(snap?.state), ...(snap?.waiting ? { waiting: snap.waiting } : {}), ...(snap?.tasks?.length ? { tasks: snap.tasks } : {}),
       lastActivityAt: new Date(s.lastActivity).toISOString(),
-      topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed',
-        ...(s.unread && s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}) } : null,
+      topic: { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed',
+        ...(s.unread && s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}) },
     }));
   }
 
