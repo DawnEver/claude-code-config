@@ -40,6 +40,7 @@ import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
 import { BalanceReader } from './balances.mjs';
 import { ForgeReader } from './forges.mjs';
+import { HpcReader } from './hpc.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
 import { ResourceReader } from './resources.mjs';
@@ -977,6 +978,7 @@ export async function main() {
     } catch (e) { log(`change check: ${e.message}`); }
   }, 60000).unref();
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
+  if (config.hpcError) log(`hpc: off (${config.hpcError})`);
   if (config.dashboard) {
     const accounts = new AccountReader({ machine, log, codex: () => codex.accounts(),
       codexFallback: (home) => `${machine}/home-${codexHomeKey(home)}`,
@@ -990,11 +992,15 @@ export async function main() {
       for (const r of results) log(`dashboard: config ${changes.find((c) => c.id === r.id).key} ${r.ok ? 'applied' : `refused (${r.error})`}`);
       return results;
     };
+    // HPC usage, on a host whose local settings declare the read door (docs/dashboard.md "HPC"); its alerts ride the push.
+    let push = null;
+    const hpc = config.hpc ? new HpcReader({ ...config.hpc, log, stateFile: path.join(BRIDGE_RUNTIME_DIR, `hpc-state-${homeKey}.json`), raise: (a) => push?.raise(a) }) : null;
     // The usage store (docs/usage.md): the transcripts' turns, each quota window, hourly load.
     const usage = new UsagePush({ url: config.dashboard.url, hostToken: config.dashboard.hostToken, machine, log, accounts: () => lastAccounts, history: () => forges.takeHistory(),
+      hpc: () => hpc?.take() ?? null,
       scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
         sources: () => usageSources(os.homedir(), { machine }) }) });
-    const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
+    push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, config.balances) })),
       // Subscriptions and API balances alike: one list of the accounts this host can read.
       accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]), forges,
@@ -1003,6 +1009,7 @@ export async function main() {
     bridge.onAlert = (a) => push.raise(a);
     push.start();
     usage.start();
+    hpc?.start();
   }
   const sweep = (orphans) => (config.deleteClosedAfterHours > 0 ? bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`)) : null);
   if (telegram) {

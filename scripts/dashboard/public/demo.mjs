@@ -91,8 +91,15 @@ export function demoMasker() {
       configLast: Object.fromEntries(Object.entries(snap.configLast ?? {}).map(([k, r]) => [configKey(k),
         { ...r, host: host(r.host), ...(r.error ? { error: text(r.error) } : {}) }])) };
   };
-  /** The Usage tab's report (scripts/dashboard/usage-store.mjs): its projects and machines, under the same names. */
+  /**
+   * The Usage tab's report (scripts/dashboard/usage-store.mjs): its projects and machines, under the same names;
+   * HPC clusters and logins numbered, a login's unread reason (it may name a host) replaced by its template.
+   */
+  const cluster = namer((n) => `cluster-${letter(n)}`);
+  const login = namer((n) => `login-${n}`);
   mask.usage = (r) => r && { ...r, projects: (r.projects ?? []).map((x) => ({ ...x, k: project(x.k) })),
-    machines: (r.machines ?? []).map((x) => ({ ...x, k: host(x.k) })) };
+    machines: (r.machines ?? []).map((x) => ({ ...x, k: host(x.k) })),
+    ...(r.hpc ? { hpc: { ...r.hpc, latest: (r.hpc.latest ?? []).map((g) => ({ ...g, cluster: cluster(g.cluster), account: login(g.account),
+      slurm_account: null, machine: host(g.machine), why: g.why == null ? g.why : 'not reachable' })) } } : {}) };
   return mask;
 }

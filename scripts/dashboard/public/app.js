@@ -3,7 +3,7 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, hpcView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
@@ -1118,6 +1118,35 @@ function usageList(titleKey, rows, dim) {
   return block;
 }
 
+/**
+ * HPC (docs/dashboard.md "HPC"): core-hours per bucket with the one barChart, then a line per
+ * cluster login — its newest reading (jobs, CPU efficiency, failures, quota, a billed budget) or
+ * why it was not read. Not narrowed by the token filters. Nothing when no login was read in range.
+ */
+function hpcBlock(v) {
+  const block = el('div', 'block');
+  const pct = (x) => (x == null ? '–' : `${Math.round(x * 100)}%`);
+  const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.hpc.day', { day: d.day, h: Math.round(d.coreHours) }), segs: [{ cls: 'hpc', pct: d.pct }] })),
+    [tick(v.days[0]), tr('usage.hpc.axis'), tick(v.days.at(-1))]);
+  const list = el('div', 'usage-list');
+  for (const g of v.grants) {
+    const row = el('div', 'u');
+    const meta = g.why != null ? tr('usage.hpc.unread', { why: g.why }) : [
+      tr('usage.hpc.jobs', { n: g.jobs ?? 0 }), tr('usage.hpc.eff', { pct: pct(g.cpuEfficiency) }),
+      ...(g.failures ? [tr('usage.hpc.failures', { n: g.failures, oom: g.oom })] : []),
+      tr('usage.hpc.quota', { storage: pct(g.storage), files: pct(g.files) }),
+      ...(g.budget ? [tr('usage.hpc.budget', { used: pct(g.budget.used), total: Math.round(g.budget.total), window: pct(g.budget.window), until: g.budget.until ?? '' })
+        + (g.budget.ahead ? ` ${tr('usage.hpc.ahead')}` : '')] : []),
+    ].join(' · ');
+    row.append(el('span', 'n', g.role ? `${g.name} · ${g.role}` : g.name), el('span', 'm', meta), el('b', null, g.why != null ? '–' : `${Math.round(g.coreHours ?? 0)}`));
+    row.title = tr('usage.hpc.read', { at: formatTime(g.at, timeFormat()) });
+    list.append(row);
+  }
+  block.append(el('div', 'section-h', tr('usage.hpc.title', { h: Math.round(v.totals.coreHours) })), chart, axis, list);
+  return block;
+}
+
 function renderUsage() {
   const box = $('usage-view');
   box.replaceChildren();
@@ -1150,6 +1179,8 @@ function renderUsage() {
   const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) }),
     segs: ['claude', 'codex'].map((a) => ({ cls: a, pct: d[`${a}Pct`] })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
   box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
+  const hpc = hpcView(demoOn ? masker.usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
+  if (hpc) box.append(hpcBlock(hpc));
   restoreScroll();
 }
 

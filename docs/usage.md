@@ -10,6 +10,7 @@ L0 sources   Claude transcripts  ~/.claude*/projects/**/*.jsonl  (each seat dir 
              Codex rollouts       ~/.codex/{sessions,archived_sessions}/**/*.jsonl
              quota readings       AccountReader (scripts/bridge/quota.mjs)
              load samples         ResourceReader (scripts/bridge/resources.mjs), every dashboard push
+             HPC readings         HpcReader (scripts/bridge/hpc.mjs), a declared read door every few hours
 L1 host      scripts/usage/transcripts.mjs  a transcript -> turn rows (pure)
              scripts/usage/scan.mjs         what is new since the cursor (~/.claude/bridge/usage-cursor.json)
              scripts/usage/push.mjs         batches -> POST /api/hosts/<machine>/usage, every 5 min
@@ -25,6 +26,7 @@ L3 readers   Mini App Usage tab (GET /api/usage)   ·   npm run usage (POST /api
 | what a session's work is worth at API list price | Claude's `cost-state` transcript entry | `session_costs` (Codex reports none) |
 | quota % per window | the live readings the dashboard already takes | `quota_windows`, the highest use per window |
 | CPU / memory / GPU | the bridge's 15 s samples | `resources`, sums per hour |
+| HPC jobs, core-hours, quota, billed budget | a host's declared read door (docs/dashboard.md "HPC") | `hpc_usage`, one row per cluster login per reading hour |
 | project | the cwd's origin repo name (else its dir), an agent worktree counted as its repo | `turns.project` |
 | task | the git branch (a lane: docs/harness-architecture.md) | `turns.branch` |
 | time | a turn runs from its prompt to its last model call or tool result | `started_at`, `ended_at`; view `turn_times` adds the gap since the session's previous turn |

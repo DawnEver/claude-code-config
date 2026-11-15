@@ -42,9 +42,10 @@ export function quotaRows(accounts, now) {
 }
 
 export class UsagePush {
-  constructor({ url, hostToken, machine, scanner, accounts = () => [], history = () => null, everyMs = 5 * 60000, log = () => {}, fetch = globalThis.fetch, timeoutMs = 30000, now = Date.now }) {
+  constructor({ url, hostToken, machine, scanner, accounts = () => [], history = () => null, hpc = () => null, everyMs = 5 * 60000, log = () => {}, fetch = globalThis.fetch, timeoutMs = 30000, now = Date.now }) {
     // `history`: the forges' commits and pull requests to store (forges.mjs ForgeReader takeHistory).
-    Object.assign(this, { url: `${url}/api/hosts/${machine}/usage`, hostToken, scanner, accounts, history, everyMs, log, fetch, timeoutMs, now });
+    // `hpc`: HPC readings to store (bridge/hpc.mjs HpcReader take), on a host that declares them.
+    Object.assign(this, { url: `${url}/api/hosts/${machine}/usage`, hostToken, scanner, accounts, history, hpc, everyMs, log, fetch, timeoutMs, now });
     this.hourly = new HourlyResources();
     this.resources = [];
     this.sentQuota = new Map();   // window key -> the use the store last accepted for it
@@ -109,6 +110,13 @@ export class UsagePush {
           }
         }
         history.stored();
+      }
+      const hpc = this.hpc();
+      if (hpc) {
+        for (let i = 0; i < hpc.rows.length; i += MAX_USAGE_ROWS) {
+          await this.post({ turns: [], costs: [], quota: [], resources: [], hpc: hpc.rows.slice(i, i + MAX_USAGE_ROWS) });
+        }
+        hpc.stored();
       }
       if (this.lastError) this.log('usage: push restored');
       this.lastError = null;

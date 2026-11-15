@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'child_process';
 import { balanceEntries } from './balances.mjs';
 import { forgeSources } from './forges.mjs';
+import { hpcConfig } from './hpc.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
 import { readMergedEnvSettings, ENV_SETTINGS_PATH, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { CONFIG_KEYS, parseConfigChange } from '../shared/dashboard-schema.mjs';
@@ -55,8 +56,9 @@ const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
  * shared:  bridge.projects.<repo>.{chatId, projectInTitle?: 'always'|'main'|'never'}, bridge.fallbackChatId,
  *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.codexSources,
  *          bridge.dashboard.{url, everySeconds?} (push to the dashboard; off without url + hostToken)
- * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram, bridge.dashboard.hostToken
- * Either layer may set any key; local wins — except dashboard.hostToken, local only.
+ * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram, bridge.dashboard.hostToken,
+ *          bridge.hpc.{command, everyHours?} (the HPC collector, scripts/bridge/hpc.mjs)
+ * Either layer may set any key; local wins — except dashboard.hostToken and hpc, local only.
  */
 export function readBridgeConfig({ sharedPath = ENV_SETTINGS_PATH, localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
   const merged = readMergedEnvSettings({ sharedPath, localPath }) ?? {};
@@ -73,10 +75,20 @@ export function readBridgeConfig({ sharedPath = ENV_SETTINGS_PATH, localPath = L
     deleteClosedAfterHours: nonNegative(b.deleteClosedAfterHours, BRIDGE_DEFAULTS.deleteClosedAfterHours),
     codexSources: Array.isArray(b.codexSources) ? b.codexSources.filter((s) => typeof s === 'string') : BRIDGE_DEFAULTS.codexSources,
     ...dashboardConfig(b.dashboard, localBridge(localPath).dashboard?.hostToken),
+    ...hpcCollector(localBridge(localPath).hpc),
     balances: balanceEntries(b.balances),
     forges: forgeSources(b.forges),
     projects,
   };
+}
+
+/**
+ * {hpc, hpcError}: the HPC collector (scripts/bridge/hpc.mjs), or null with the reason a declared
+ * one is off. It runs a command, so it is read from the machine-local layer only: the synced file
+ * (and so the dashboard, or another host) can never make a machine run one.
+ */
+function hpcCollector(raw) {
+  try { return { hpc: hpcConfig(raw), hpcError: null }; } catch (e) { return { hpc: null, hpcError: e.message }; }
 }
 
 function localBridge(localPath) {
