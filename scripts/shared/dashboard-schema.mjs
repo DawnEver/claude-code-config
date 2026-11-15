@@ -42,6 +42,7 @@ function parseSession(s) {
   const t = s.topic;
   const url = t && topicUrl(t.chatId, t.topicId);
   return {
+    // name: its rename / native title, else its Topic title (Bridge.dashboardSessions).
     id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
     // The API platform the session spends instead of a subscription; null = a subscription.
     provider: isProvider(s.provider) ? s.provider : null,
@@ -56,7 +57,8 @@ function parseSession(s) {
     // Posts to the Topic ever (a running count: a page keeps what it has seen) and when the last one came.
     posted: num(s.posted, 0, Number.MAX_SAFE_INTEGER) ?? 0, lastPostAt: iso(s.lastPostAt),
     lastActivityAt: iso(s.lastActivityAt),
-    // The Topic, and the same Topic opened at its first unread post and at its latest post.
+    // The Topic, and the same Topic opened at its first unread post and at its latest post. The daemon
+    // exports only sessions that have one (Bridge.dashboardSessions); null here is a malformed Topic.
     topic: url ? { url, closed: t.closed === true, ...atMessage(t, 'firstUnread', 'firstUnreadUrl'), ...atMessage(t, 'lastPost', 'latestUrl') } : null,
   };
 }

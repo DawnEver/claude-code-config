@@ -77,7 +77,12 @@ no API, no authentication.
   `unknown`, and `ended` for the instant a session is going down — an ended session is
   dropped from the next push rather than listed. The UI never infers a status.
   `unknown` is a live session no hook has reported on yet (a fresh start, a daemon restart):
-  listed as **Connected**, not hidden.
+  listed as **Connected**, not hidden -- provided it has a Topic.
+- **Listed**: only a session with a Telegram Topic (user ruling 2026-11-15). One never given a
+  Topic -- lazy until its first post, a side or background session, telemetry-only mode -- is not
+  exported; `Bridge.dashboardSessions()` is the one place that decides it.
+- **Name**: the session's own name (its `/rename`, else its native title), else its Topic title
+  -- never the project name, which is the row's meta.
 - **Waiting**: a `needs_approval` / `needs_input` session carries `waiting` (at most
   `WAITING_MAX` = 300 characters, dropped at the boundary for any other status): what it waits
   for — Claude's channel permission request (`Bash: <description>`), else the Notification's
