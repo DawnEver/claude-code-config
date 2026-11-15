@@ -370,7 +370,7 @@ test('api: usage and query only for the host by its token; the store absent is a
   assert.equal((await post('host-a/usage', batch, 'Bearer nope-nope-nope-nope')).status, 401);
   const res = await post('host-a/usage', batch);
   assert.equal(res.status, 200);
-  assert.deepEqual((await res.json()).stored, { turns: 1, costs: 0, quota: 0, resources: 0, commits: 0, pulls: 0 });
+  assert.deepEqual((await res.json()).stored, { turns: 1, costs: 0, quota: 0, resources: 0, commits: 0, pulls: 0, hpc: 0 });
   assert.equal(db.sqlite.prepare('SELECT machine FROM turns').get().machine, 'host-a', 'the machine is the authenticated host, never the body');
   assert.equal((await post('host-a/usage', { schemaVersion: 0 })).status, 400);
   const q = await post('host-a/query', { sql: 'SELECT COUNT(*) AS n FROM turns' });
@@ -489,4 +489,58 @@ test('forge history: commits and PRs are kept once however often sent, and bucke
   const week = await forgeHistory(db, { repo, days: 7, now });
   assert.deepEqual([week.unit, week.buckets.length, week.totals], ['day', 7, { commits: 2, opened: 1, merged: 1 }]);
   assert.equal(week.buckets.at(-1).commits, 1, 'today holds the commit two hours ago');
+});
+
+const hpcRow = (o = {}) => ({ cluster: 'c', account: 'svc', hour: Date.parse('2026-10-21T10:00:00Z'), observed_at: Date.parse('2026-10-21T10:20:00Z'),
+  slurm_account: 'acct', role: 'verification', read: 1, why: null, jobs: 7, core_hours: 42.5, cpu_efficiency: 0.8, completed: 2, failed: 1,
+  cancelled: 1, oom: 2, timeout: 1, running: 1, storage: 0.5, files: 0.3, budget_core_hours: null, budget_spent: null, budget_committed: null,
+  budget_since: null, budget_until: null, budget_window: null, ...o });
+
+test('hpc: a reading is stored once per login and hour however often sent; the report carries each login\'s latest and a series', async () => {
+  const db = fakeD1();
+  const batch = (rows) => parseUsageBatch({ schemaVersion: USAGE_SCHEMA_VERSION, hpc: rows });
+  assert.equal(batch([hpcRow(), hpcRow({ cluster: 'bad cluster!' }), hpcRow({ storage: 7 })]).hpc.length, 1, 'a malformed row is dropped');
+  const unread = hpcRow({ account: 'gone', read: 0, why: 'no login host answered', jobs: null, core_hours: null, cpu_efficiency: null, storage: null, files: null });
+  assert.equal(batch([unread]).hpc[0].why, 'no login host answered');
+  await ingest(db, 'host-a', batch([hpcRow(), unread]));
+  await ingest(db, 'host-a', batch([hpcRow()]));   // re-sent after a lost reply
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS n FROM hpc_usage').get().n, 2);
+  await ingest(db, 'host-a', batch([hpcRow({ observed_at: Date.parse('2026-10-21T10:50:00Z'), core_hours: 50 })]));   // re-read within the hour
+  assert.equal(db.sqlite.prepare("SELECT core_hours FROM hpc_usage WHERE account = 'svc'").get().core_hours, 50, 'the newest reading of the hour stands');
+  await ingest(db, 'host-a', batch([hpcRow({ hour: Date.parse('2026-10-20T08:00:00Z'), observed_at: Date.parse('2026-10-20T08:00:00Z'), core_hours: 10 })]));
+  const r = await report(db, { days: 7, now: Date.parse('2026-10-21T12:00:00Z') });
+  assert.deepEqual(r.hpc.latest.map((g) => [g.cluster, g.account, g.core_hours, g.read]), [['c', 'gone', null, 0], ['c', 'svc', 50, 1]]);
+  assert.deepEqual(r.hpc.series.map((s) => [s.day, s.core_hours]), [['2026-10-20', 10], ['2026-10-21', 50]], 'each bucket: every login\'s last reading in it, summed');
+  const none = await report(db, { days: 1, now: Date.parse('2026-10-30T12:00:00Z') });
+  assert.deepEqual(none.hpc, { latest: [], series: [] }, 'nothing read in range: no HPC section');
+});
+
+test('push: HPC readings ride the usage push and are marked stored once accepted', async () => {
+  const posted = [];
+  const fetch = async (url, init) => { posted.push(JSON.parse(init.body)); return new Response('{}'); };
+  const scanner = { collect: async () => ({ turns: [], costs: [], more: false, commit: () => {} }) };
+  let stored = 0;
+  const push = new UsagePush({ url: 'https://d.example', hostToken: 'x', machine: 'host-a', scanner, fetch, now: () => T0,
+    hpc: () => ({ rows: [hpcRow()], stored: () => stored++ }) });
+  assert.equal(await push.tick(), true);
+  assert.deepEqual(posted.map((b) => b.hpc?.length ?? 0), [1]);
+  assert.equal(stored, 1);
+});
+
+test('hpc view: a bar per bucket of the range, each login\'s latest line; demo masks clusters and logins', async () => {
+  const { hpcView } = await import('../dashboard/public/view.mjs');
+  const { demoMasker } = await import('../dashboard/public/demo.mjs');
+  const now = Date.parse('2026-10-21T12:00:00Z');
+  const hpc = { latest: [hpcRow({ budget_core_hours: 20000, budget_spent: 15000, budget_committed: 80, budget_window: 0.5, budget_until: '2027-08-01' }),
+    hpcRow({ account: 'gone', read: 0, why: 'no login host answered', core_hours: null })], series: [{ day: '2026-10-21', core_hours: 42.5 }] };
+  const v = hpcView({ days: 3, unit: 'day', hpc }, now);
+  assert.deepEqual(v.days.map((d) => [d.day, d.coreHours, d.pct]), [['2026-10-19', 0, 0], ['2026-10-20', 0, 0], ['2026-10-21', 42.5, 100]]);
+  assert.equal(v.totals.coreHours, 42.5);
+  const [svc, gone] = v.grants;
+  assert.deepEqual([svc.name, svc.failures, svc.storage, svc.files, svc.budget.used, svc.budget.window], ['c/svc', 4, 0.5, 0.3, 15080 / 20000, 0.5]);
+  assert.equal(svc.budget.ahead, true, 'spending ahead of the window');
+  assert.deepEqual([gone.name, gone.why], ['c/gone', 'no login host answered']);
+  assert.equal(hpcView({ days: 3, unit: 'day', hpc: { latest: [], series: [] } }, now), null, 'no login read: no section');
+  const masked = demoMasker().usage({ days: 3, daily: [], projects: [], models: [], machines: [], hpc });
+  assert.doesNotMatch(JSON.stringify(masked.hpc), /"svc"|"gone"|"c\/|no login host/);
 });

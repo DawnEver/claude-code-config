@@ -484,6 +484,17 @@ test('host alerts: a failed turn is sent once, even when its push is sent again'
   assert.deepEqual(sent.map((a) => [a.kind, a.host, a.error]), [['turn-failed', 'host-a', 'overloaded']]);
 });
 
+test('host alerts: an HPC budget run-out is sent once, numbers only, worded with its grant and window', () => {
+  const { r, sent } = alerting();
+  const over = { id: 'hpc-0123456789ab', kind: 'hpc-budget', grant: 'c/lab', spent: 15000, committed: 80, total: 20000, window: 0.5041,
+    until: '2027-08-01', projected: 29756, url: 'https://evil.test' };
+  r.accept('host-a', parseHostPush(push({ seq: 1, alerts: [over, { ...over, id: 'hpc-bad', grant: 'x y\nz' }] })));
+  r.accept('host-a', parseHostPush(push({ seq: 2, alerts: [over] })));
+  assert.equal(sent.length, 1, 'once per id; a malformed grant is dropped at the boundary');
+  assert.equal(sent[0].url, undefined, 'a host never hands the bot a link');
+  assert.equal(alertText(sent[0], NOW), 'HPC budget running out: c/lab\n15080 of 20000 core-h (75%) with 50% of the window gone, to 2027-08-01 · on pace for 29756');
+});
+
 test('telegramNotifier: plain text to every allowed chat, resolving those reached; a failure is logged without the token', async () => {
   const calls = [], logs = [];
   const fetch = async (url, init) => { calls.push([url, JSON.parse(init.body)]); return { status: 200, json: async () => (calls.length === 1 ? { ok: true } : { ok: false, description: 'Forbidden: bot was blocked by the user' }) }; };

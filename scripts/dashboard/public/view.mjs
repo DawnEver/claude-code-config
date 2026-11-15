@@ -419,15 +419,8 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
     tokens += tokensOf(d); active += d.active_ms ?? 0; turns += d.turns ?? 0;
     input += d.input ?? 0; cacheRead += d.cache_read ?? 0; cacheWrite += d.cache_write ?? 0;
   }
-  // A 24 h report is by hour ('YYYY-MM-DDTHH'), any other by day: every bucket of the range, empty ones too.
   const hourly = report.unit === 'hour';
-  const ms = hourly ? 3600000 : 86400000;
-  const days = [];
-  const today = Math.floor((now + tzOffsetMin * 60000) / ms);
-  for (let i = (hourly ? 24 : report.days) - 1; i >= 0; i--) {
-    const day = new Date((today - i) * ms).toISOString().slice(0, hourly ? 13 : 10);
-    days.push(byDay.get(day) ?? { day, claude: 0, codex: 0, active: 0 });
-  }
+  const days = rangeBuckets(report, now, tzOffsetMin).map((day) => byDay.get(day) ?? { day, claude: 0, codex: 0, active: 0 });
   const max = Math.max(1, ...days.map((d) => d.claude + d.codex));
   // `value` is what a filter sends back: '' for the no-project bucket.
   // A share is of its own list: under a filter, a list spans more than the filtered totals.
@@ -442,6 +435,39 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
     days: days.map((d) => ({ ...d, claudePct: (d.claude / max) * 100, codexPct: (d.codex / max) * 100 })),
     projects: list(report.projects ?? []), models: list(report.models ?? []), machines: list(report.machines ?? []),
   };
+}
+
+/** Every bucket label of a report's range, oldest first: a 24 h report by hour ('YYYY-MM-DDTHH'), any other by day. */
+function rangeBuckets(report, now, tzOffsetMin) {
+  const hourly = report.unit === 'hour';
+  const ms = hourly ? 3600000 : 86400000;
+  const today = Math.floor((now + tzOffsetMin * 60000) / ms);
+  return Array.from({ length: hourly ? 24 : report.days }, (_, i) => new Date((today - (hourly ? 23 : report.days - 1) + i) * ms).toISOString().slice(0, hourly ? 13 : 10));
+}
+
+/**
+ * The Usage tab's HPC section from the report's `hpc` (usage-store.mjs hpcReport), or null when no
+ * login was read in range: core-hours per bucket (each bucket's last 24 h reading per login,
+ * summed) and one line per login — its newest reading, or why it was not read. A billed login's
+ * budget is `ahead` when spent plus committed is a larger share of it than of its window.
+ */
+export function hpcView(report, now = Date.now(), tzOffsetMin = 0) {
+  const hpc = report?.hpc;
+  if (!hpc?.latest?.length) return null;
+  const byDay = new Map((hpc.series ?? []).map((s) => [s.day, s.core_hours]));
+  const days = rangeBuckets(report, now, tzOffsetMin).map((day) => ({ day, coreHours: byDay.get(day) ?? 0 }));
+  const max = Math.max(1e-9, ...days.map((d) => d.coreHours));
+  const grants = hpc.latest.map((g) => {
+    const total = g.budget_core_hours;
+    const used = total > 0 ? ((g.budget_spent ?? 0) + (g.budget_committed ?? 0)) / total : null;
+    return { name: `${g.cluster}/${g.account}`, role: g.role ?? null, at: g.observed_at, why: g.read ? null : g.why,
+      jobs: g.jobs, coreHours: g.core_hours, cpuEfficiency: g.cpu_efficiency, failures: (g.failed ?? 0) + (g.oom ?? 0) + (g.timeout ?? 0),
+      oom: g.oom ?? 0, storage: g.storage, files: g.files,
+      budget: used === null ? null : { used, window: g.budget_window, ahead: used > (g.budget_window ?? 0), spent: g.budget_spent,
+        committed: g.budget_committed, total, until: g.budget_until } };
+  });
+  return { unit: report.unit === 'hour' ? 'hour' : 'day', days: days.map((d) => ({ ...d, pct: (d.coreHours / max) * 100 })),
+    totals: { coreHours: hpc.latest.reduce((n, g) => n + (g.read ? g.core_hours ?? 0 : 0), 0) }, grants };
 }
 
 // ── Code (per repository; read by the hosts that reach each forge, scripts/bridge/forges.mjs) ──

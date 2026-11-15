@@ -191,6 +191,32 @@ a selected value always stays listed (at zero if nothing matches). `GET /api/usa
 filter is held `REPORT_TTL_MS` like a range. The selection is kept per device. Demo mode shows
 masked names, so its rows do not filter.
 
+### HPC
+
+The Usage tab's last block: the Slurm logins a host can read, over the tab's range (the token
+filters do not narrow it). Core-hours per bucket with the same `barChart`, and a line per cluster
+login: jobs, CPU efficiency, failures (failed, out of memory, timed out), storage and file quota
+used, a billed grant's budget (spent plus committed of its total, how much of its window is gone,
+marked when ahead of pace) — or `not read: <why>`. Shown only once a login was read in range.
+
+**The dashboard knows no Slurm.** A host that declares it runs one read door — a command printing
+a JSON report (`scripts/bridge/hpc.mjs` states its schema; dev-lab's is
+`python -m dev_lab.dev.hpcusage report --json`) — every `everyHours` (default 6; each read is an
+ssh round per login), and the usage push stores what it printed (`hpc_usage`, migration 0006).
+Each reading covers the 24 h before it, so a bucket shows each login's last reading in it, never a
+sum of overlapping readings. The last read time and the standing alerts live in
+`~/.claude/bridge/hpc-state-<home>.json`, so a daemon hand-over does not read early; a failed read
+is logged (`hpc: read failed (…)`) and tried again a cadence later.
+
+**Off by default; machine-local only.** It runs a command and needs the machine's own cluster
+logins, so only the local layer declares it — one in the synced file, and so from the dashboard or
+another host, is ignored. Declare it on the one host whose logins reach the clusters, in
+`~/.claude/claude_env_settings.local.json`; a malformed block logs `hpc: off (<reason>)`:
+
+```json
+"bridge": { "hpc": { "command": ["<dev-lab venv python>", "-m", "dev_lab.dev.hpcusage", "report", "--json"], "everyHours": 6 } }
+```
+
 ## Quota
 
 Each host's `AccountReader` (`scripts/bridge/quota.mjs`) groups its Claude config dirs by
@@ -300,6 +326,7 @@ The registry judges what is worth telling, as data, and keeps no list of alerts:
 | host offline (coming back is not alerted) | `Registry.sweep`, on the Durable Object's alarm | silence past `offlineAlertSeconds` |
 | a failed turn (Claude `StopFailure`, Codex `failed`) | the bridge daemon, an outbox on the push (`DashboardPush.raise`) | alert id (a push re-sent after a lost reply alerts once) |
 | a config change refused by a host | `#settle` | report |
+| an HPC budget running out: spent plus committed past its total, or its spend so far projected past it before its window ends | the HPC host (`hpc.mjs budgetAlert`), an outbox on the push | condition (recovering clears it; kept in the host's HPC state) |
 
 - **Budget**: the alarm is set for when the next host would turn silent, never on a fixed timer:
   while hosts push it fires at most once per `offlineAlertSeconds` (288 Durable Object requests
