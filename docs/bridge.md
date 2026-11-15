@@ -289,12 +289,18 @@ Requires Anthropic auth: on a third-party provider (`ccds`) Claude Code drops ch
    ```json
    "bridge": {
      "botToken": "123456789:AA...",
-     "allowedUserIds": [123456789],
      "approvalsFromTelegram": false
    }
    ```
-   `allowedUserIds` gates **every** inbound message by sender (not by chat). Empty = all
-   inbound is dropped. Any key may be set in either layer; local wins.
+   Any key may be set in either layer; local wins.
+   **Who may talk to the bridge** is not a settings key: its one source is the machine
+   declaration, hosts-config `hosts/<machine>.toml` `[dev] channels = { "session-bridge" = "<id>" }`,
+   read through `python -m dev_lab.dev.devhost channels --json`
+   (`scripts/shared/channel-declaration.mjs`, the same reader the channel server uses). That
+   declared id is the allowlist: it gates **every** inbound message and button by sender (not by
+   chat). The daemon reads it once at start. An unreadable or missing declaration fails closed —
+   nothing inbound is accepted, and the daemon log names the door to fix. A leftover
+   `bridge.allowedUserIds` key is never read; the daemon names it once — remove it.
 7. **Run**: `npm run bridge` (foreground) or `npm run bridge:install` (service: a per-user
    HKCU Run key at logon via `conhost --headless` on Windows (no admin), launchd on macOS,
    `systemd --user` on Linux). Also `bridge:status`, `bridge:uninstall`. The service runs

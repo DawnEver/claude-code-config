@@ -48,7 +48,7 @@ import { UsageScanner, sources as usageSources } from '../usage/scan.mjs';
 import { UsagePush } from '../usage/push.mjs';
 import { STATUS } from '../dashboard/public/shared/vocab.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
-import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
+import { readBridgeConfig, bridgeAllowlist, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
 
 /** How long a request for the human may be handled at the machine before anyone is mentioned. */
 const ALERT_GRACE_MS = 30000;
@@ -927,11 +927,14 @@ export async function main() {
   const releaseLock = acquireDaemonLock();
   if (!releaseLock) { log('already running; one getUpdates consumer per bot token'); process.exit(0); }
   process.on('exit', releaseLock);
-  const config = readBridgeConfig();
+  // Resolved once: a declaration edited later takes effect when the daemon restarts.
+  const allowlist = bridgeAllowlist();
+  const config = { ...readBridgeConfig(), allowedUserIds: allowlist.allowedUserIds };
   const machine = readMachineName();
   if (!machine) { log('no machine name (~/.claude/machine.json); run setup.js --machine <NAME>'); process.exit(1); }
   if (!config.botToken && !config.dashboard) { log('no Telegram or dashboard transport configured; see docs/bridge.md'); process.exit(1); }
-  if (config.botToken && !config.allowedUserIds.length) log('bridge.allowedUserIds is empty: inbound Telegram messages will all be dropped');
+  if (allowlist.stale) log(allowlist.stale);
+  if (config.botToken && allowlist.why) log(`bridge allowlist empty, no inbound Telegram message or button is accepted: ${allowlist.why}`);
 
   // The base Codex home scopes this daemon's own cursors; each Codex home has its adapter (CodexHomes).
   const homeKey = codexHomeKey(resolveCodexHome({ env: {} }));
