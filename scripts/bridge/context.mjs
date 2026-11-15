@@ -2,7 +2,8 @@
 // session's working tree. Everything is read through ~/.claude links, never a machine path
 // (docs/sync-architecture.md §2) — the one write is the exception, see applyConfigChange: bridge config is the `bridge` block of the shared
 // claude_env_settings.json with the machine-local claude_env_settings.local.json merged on
-// top, and secrets (bot token, allowlist) exist only in the local layer.
+// top, and secrets (bot token) exist only in the local layer. The sender allowlist is the
+// machine's channel declaration (bridgeAllowlist), never a settings key.
 
 import fs from 'fs';
 import os from 'os';
@@ -17,6 +18,7 @@ import { repoKey } from '../shared/repo-key.mjs';
 import { readMergedEnvSettings, ENV_SETTINGS_PATH, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { CONFIG_KEYS, parseConfigChange } from '../shared/dashboard-schema.mjs';
 import { resolveSyncDir } from '../shared/sync-dir.mjs';
+import { declaredAllowlist, readChannelDeclaration } from '../shared/channel-declaration.mjs';
 
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 /** Machine-local runtime dir: daemon port + IPC token + Telegram caches. Never synced. */
@@ -56,9 +58,10 @@ const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
  * shared:  bridge.projects.<repo>.{chatId, projectInTitle?: 'always'|'main'|'never'}, bridge.fallbackChatId,
  *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.codexSources,
  *          bridge.dashboard.{url, everySeconds?} (push to the dashboard; off without url + hostToken)
- * local:   bridge.botToken, bridge.allowedUserIds, bridge.approvalsFromTelegram, bridge.dashboard.hostToken,
+ * local:   bridge.botToken, bridge.approvalsFromTelegram, bridge.dashboard.hostToken,
  *          bridge.hpc.{command, everyHours?} (the HPC collector, scripts/bridge/hpc.mjs)
  * Either layer may set any key; local wins — except dashboard.hostToken and hpc, local only.
+ * The sender allowlist is not here: it is the machine's channel declaration (bridgeAllowlist).
  */
 export function readBridgeConfig({ sharedPath = ENV_SETTINGS_PATH, localPath = LOCAL_ENV_SETTINGS_PATH } = {}) {
   const merged = readMergedEnvSettings({ sharedPath, localPath }) ?? {};
@@ -68,7 +71,6 @@ export function readBridgeConfig({ sharedPath = ENV_SETTINGS_PATH, localPath = L
     projectInTitle: ['main', 'never'].includes(p.projectInTitle) ? p.projectInTitle : 'always' };
   return {
     botToken: typeof b.botToken === 'string' && !/your-|^$/.test(b.botToken) ? b.botToken : null,
-    allowedUserIds: (b.allowedUserIds ?? []).map(Number).filter(Number.isFinite),
     approvalsFromTelegram: b.approvalsFromTelegram === true,
     fallbackChatId: b.fallbackChatId ?? null,
     idleCloseMinutes: nonNegative(b.idleCloseMinutes, BRIDGE_DEFAULTS.idleCloseMinutes),
@@ -83,7 +85,17 @@ export function readBridgeConfig({ sharedPath = ENV_SETTINGS_PATH, localPath = L
 }
 
 /**
- * {hpc, hpcError}: the HPC collector (scripts/bridge/hpc.mjs), or null with the reason a declared
+ * The bridge's sender allowlist, derived from the machine's channel declaration (hosts-config
+ * hosts/<machine>.toml [dev] channels) — its one source. Fails closed with a why naming the door;
+ * a leftover bridge.allowedUserIds in either settings layer is never read, only named (`stale`).
+ * -> {allowedUserIds, why, stale}
+ */
+export function bridgeAllowlist({ sharedPath = ENV_SETTINGS_PATH, localPath = LOCAL_ENV_SETTINGS_PATH, declaration = readChannelDeclaration() } = {}) {
+  return declaredAllowlist({ declaration, bridge: readMergedEnvSettings({ sharedPath, localPath })?.bridge ?? {} });
+}
+
+/**
+ * {hpc, hpcError}:the HPC collector (scripts/bridge/hpc.mjs), or null with the reason a declared
  * one is off. It runs a command, so it is read from the machine-local layer only: the synced file
  * (and so the dashboard, or another host) can never make a machine run one.
  */
@@ -166,7 +178,7 @@ export function configSummary(config, { localPath = LOCAL_ENV_SETTINGS_PATH } = 
   const editable = Object.fromEntries(keys.map((k) => [k, getPath({ bridge: config }, k)]).filter(([, v]) => v !== undefined));
   const local = readJson(localPath) ?? {};
   return { editable, localOverrides: Object.keys(editable).filter((k) => getPath(local, k) !== undefined),
-    facts: { bridge: Boolean(config.botToken), allowedUsers: config.allowedUserIds.length, approvalsFromTelegram: config.approvalsFromTelegram,
+    facts: { bridge: Boolean(config.botToken), allowedUsers: config.allowedUserIds?.length ?? 0, approvalsFromTelegram: config.approvalsFromTelegram,
       codexSources: config.codexSources, dashboardError: config.dashboardError ?? null } };
 }
 

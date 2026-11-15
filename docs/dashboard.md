@@ -55,7 +55,8 @@ no API, no authentication.
   The Worker verifies `initData` by its **Ed25519 `signature`** (Telegram's third-party
   validation): it needs only the dashboard bot's numeric id and Telegram's public key, never the
   bot token. The token lives only in the local settings of the machine that sets the menu button.
-- **Viewer**: allowlisted by `bridge.allowedUserIds` (the bridge's own allowlist), freshness by
+- **Viewer**: allowlisted by the bridge's own allowlist — the machine's declared `session-bridge` channel user
+  (hosts-config `hosts/<machine>.toml` `[dev] channels`, docs/bridge.md), freshness by
   `auth_date` within `initDataMaxAgeSeconds` (default 24 h — Telegram signs initData once, at
   open, and a Topic link can reload the app with it). Every verified read answers with a
   **viewer session** of the gateway's own (`x-viewer-session`: `v1.<userId>.<expiry>.<HMAC>`,
@@ -473,8 +474,9 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    the variable `DASHBOARD_DOMAIN` (the url's host). It never
    touches `DASHBOARD_CONFIG`, which persists across deploys.
    **Membership deploy**: `host-token` runs it; by hand (`npm run dashboard -- deploy`) only
-   after changing `botId`, `allowedUserIds`, `offlineAlertSeconds` or `alertLang`. It derives the
-   Worker's `DASHBOARD_CONFIG` secret (`botId`, `allowedUserIds`, `hosts`, and the optional shared
+   after changing `botId`, the declared `session-bridge` channel user, `offlineAlertSeconds` or
+   `alertLang`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`, `allowedUserIds` —
+   the deploying machine's channel declaration, never a settings key — `hosts`, and the optional shared
    `bridge.dashboard.offlineAlertSeconds` / `offlineAlertExclude` / `alertLang` — `en` or `zh`) from the merged config —
    never a host token — and the `DASHBOARD_BOT_TOKEN` secret from this machine's
    `bridge.dashboard.botToken` when this machine has it (step 5). Any machine can deploy: one

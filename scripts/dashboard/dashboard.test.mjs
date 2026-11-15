@@ -216,14 +216,16 @@ test('config: DASHBOARD_CONFIG fails loudly, and is derived from the shared brid
   assert.throws(() => parseDashboardConfig({ hosts: {} }), /botId/);
   assert.throws(() => parseDashboardConfig({ botId: BOT_ID, hosts: { 'host-a': 'not-a-hash' } }), /sha256/);
   const { hash } = await newHostToken();
-  const bridge = { allowedUserIds: [ALICE], dashboard: { url: 'https://dashboard.example.com', botId: BOT_ID, hosts: { 'host-a': hash }, hostToken: 'local-secret' } };
-  const derived = dashboardConfigFrom(bridge);
+  // A stale local allowedUserIds (MALLORY) is in the settings; the Worker gets the declared list only.
+  const bridge = { allowedUserIds: [MALLORY], dashboard: { url: 'https://dashboard.example.com', botId: BOT_ID, hosts: { 'host-a': hash }, hostToken: 'local-secret' } };
+  const allowlist = { allowedUserIds: [ALICE], why: null, stale: 'named' };
+  const derived = dashboardConfigFrom(bridge, allowlist);
   assert.deepEqual(derived, { domain: 'dashboard.example.com', config: { botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash } } });
   assert.ok(!JSON.stringify(derived).includes('local-secret'), 'a host token never reaches the Worker');
-  assert.throws(() => dashboardConfigFrom({ ...bridge, dashboard: { ...bridge.dashboard, url: 'https://dashboard.example.com/x' } }), /origin/);
-  assert.throws(() => dashboardConfigFrom({ ...bridge, allowedUserIds: [] }), /allowedUserIds/);
+  assert.throws(() => dashboardConfigFrom({ ...bridge, dashboard: { ...bridge.dashboard, url: 'https://dashboard.example.com/x' } }, allowlist), /origin/);
+  assert.throws(() => dashboardConfigFrom(bridge, { allowedUserIds: [], why: 'nothing declared; declare it in hosts-config', stale: null }), /nobody could open.*hosts-config/);
   const withBot = { ...bridge, dashboard: { ...bridge.dashboard, botToken: `${BOT_ID}:${'x'.repeat(35)}` } };
-  assert.ok(!JSON.stringify(dashboardConfigFrom(withBot)).includes('x'.repeat(35)), 'the bot token never reaches the Worker');
+  assert.ok(!JSON.stringify(dashboardConfigFrom(withBot, allowlist)).includes('x'.repeat(35)), 'the bot token never reaches the Worker');
 });
 
 test('set-menu: the local bot token must be the configured bot', () => {

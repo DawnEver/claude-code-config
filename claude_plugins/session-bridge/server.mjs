@@ -20,13 +20,12 @@ import os from 'os';
 import net from 'net';
 import path from 'path';
 import crypto from 'crypto';
-import { spawnSync } from 'child_process';
 import { lineSplitter } from '../../scripts/bridge/jsonrpc.mjs';
 import { RUNTIME_FILE } from '../../scripts/bridge/context.mjs';
 import { isMain } from '../../scripts/shared/is-main.mjs';
 import { configDir, readSeats, seatOf } from '../../scripts/shared/seats.mjs';
 import { readMachineName } from '../../scripts/shared/machine.mjs';
-import { recordedPython } from '../../scripts/shared/provider-cache.mjs';
+import { CHANNEL_SOURCE, readChannelDeclaration } from '../../scripts/shared/channel-declaration.mjs';
 import { tokens, base, isClaudeProcess, processTable, ancestorsOf } from '../../scripts/shared/process-tree.mjs';
 
 export { isClaudeProcess, processTable, ancestorsOf };
@@ -113,28 +112,6 @@ export class DaemonLink {
 }
 
 /** The MCP side. `write` sends one JSON-RPC message to Claude Code. */
-/** This server's channel source, as the machine declaration names it. */
-export const CHANNEL_SOURCE = 'session-bridge';
-/** dev-lab's door onto the machine's channel declaration: prints {source: user id} ({} when undeclared). */
-export const DECLARATION_DOOR = ['-m', 'dev_lab.dev.devhost', 'channels', '--json'];
-
-/**
- * This machine's session-channel declaration, read once through dev-lab (never a second TOML reader).
- * Fails closed: any failure is an empty declaration plus why, so every message is undeclared.
- * @returns {{channels: Record<string, string>, why: string | null}}
- */
-export function readChannelDeclaration({ python = recordedPython(), run = spawnSync } = {}) {
-  const none = (why) => ({ channels: {}, why });
-  if (!python) return none('no recorded python (run node scripts/setup/setup.js)');
-  const res = run(python, DECLARATION_DOOR, { encoding: 'utf8', timeout: 30000, windowsHide: true });
-  if (res.error) return none(`door failed: ${res.error.message}`);
-  if (res.status !== 0) return none(`door failed: ${String(res.stderr || '').trim().split('\n').pop() || `exit ${res.status}`}`);
-  let doc;
-  try { doc = JSON.parse(res.stdout); } catch { return none('door printed no JSON'); }
-  const valid = doc && typeof doc === 'object' && !Array.isArray(doc)
-    && Object.values(doc).every((v) => typeof v === 'string' && v);
-  return valid ? { channels: doc, why: Object.keys(doc).length ? null : 'nothing declared' } : none('door printed no source -> user object');
-}
 
 export function createChannelServer({ write, link, declared = {} }) {
   const approvals = new Map();
