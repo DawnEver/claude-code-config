@@ -10,14 +10,31 @@ plugin hooks remain a separate, bundled integration.
 
 | Event | Script | Purpose |
 |---|---|---|
+`SessionStart` and `Notification` are one settings entry each, `claude-hook.mjs --event <event>`:
+its `STEPS` table names the scripts below and runs them in order in one node process (a worker
+thread each, isolated, within the budget its own entry had; a failed step is named in the
+systemMessage). Steps that were `async` (prune, ensure) run in one detached background lane.
+
+The live settings are the sync dir's payload, seeded once from the template: a merged rewiring
+reaches them only through `node ~/.claude/scripts/setup/settings-hooks.mjs --apply` (doctor
+reports `payload-hooks-drift` until then). One write serves every workstation, which all link that
+file, and it may land before a workstation has pulled: the SessionStart command bootstraps
+(`claude-hook.mjs` `hookCommand`). With the entry absent it runs the `sync-hook.js --pull` every
+older checkout has, then the entry; still absent, it exits 0 with a systemMessage naming the
+cause (offline / not promoted, or a checkout that did not fast-forward) and the door. A missing
+entry leaves Notification silent. With the entry present it is one `exec node`.
+
+| Event | Script | Purpose |
+|---|---|---|
 | `SessionStart` | `sync-hook.js --pull-background` | Starts the fast-forward of this checkout detached and returns at once with a one-line notice (result in the temp dir's `cc-config-sync-hook.json`); startup only, never fatal |
-| `SessionStart` | `prune-cache-hook.js` | Reports stale cache candidates; automatic deletion is disabled |
+| `SessionStart` | `prune-cache-hook.js` (background) | Reports stale cache candidates; automatic deletion is disabled |
 | `SessionStart` | `setup-check-hook.js` | Verifies/heals `~/.claude` links via `scripts/setup/check-links.js` |
 | `SessionStart` | `doctor.js --hook` | Reports failing invariants only (silent when healthy) |
+| `SessionStart` | `bridge/ensure.mjs` (background) | Starts the bridge daemon when none runs |
 | `SessionEnd` | `sync-hook.js --remind` | Reports uncommitted files / unpushed commits. Pushing stays explicit |
-| `Notification` | `notify-hook.js` | Native OS notification — see [`setup.md`](setup.md) § Notifications |
+| `Notification` | `notify-hook.js`, then `bridge-hook.js` (permission/idle/elicitation only) | Native OS notification — see [`setup.md`](setup.md) § Notifications; the bridge's waiting state |
 | `PreToolUse` (`*`) | `loop-guard-hook.js` | Anti-spin guard: warns on the 3rd identical call, denies from the 4th; near-duplicates too. Knobs are env vars — see `DEFAULTS` in the hook |
-| `Stop` | `sharp-review` plugin | Fires `/sharp-review` once the diff crosses the wave's threshold |
+| `Stop` | `sharp-review` plugin | Off unless a repo sets `"stopHook": true` in `.claude/sharp-review.json`; `/sharp-review` stays manual |
 | `statusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 
 The bridge hooks (`bridge-hook.js`) are documented in [`bridge.md`](bridge.md). The REM hook

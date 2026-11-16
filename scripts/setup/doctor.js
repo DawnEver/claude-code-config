@@ -29,6 +29,7 @@ import { inspectCodexHooks } from './codex-hooks.mjs';
 import { inspectProtectedPluginCaches, inspectPluginCacheLock } from './update-codex-plugins.mjs';
 import { withoutRetiredCodexRootKey } from './codex-config-compose.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
+import { hooksDrift } from './settings-hooks.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
 import {
@@ -189,6 +190,13 @@ export function checkPayloadShape(syncDir, repoRoot = sourceDir, files = SYNC_PA
       if (Object.hasOwn(live, 'model') && (typeof live.model !== 'string' || !live.model.trim())) {
         out.push(finding('FAIL', 'payload-invalid-model', 'claude_settings.json has an invalid model preference',
           'model must be a non-empty model alias or ID when present'));
+      }
+      // The hooks are the template's machine wiring (settings-hooks.mjs): a payload that kept an
+      // older wiring runs scripts the repo has since moved past.
+      const drifted = hooksDrift(live, template);
+      if (drifted.length) {
+        out.push(finding('FAIL', 'payload-hooks-drift', `claude_settings.json hooks differ from the template: ${drifted.join(', ')}`,
+          'the template owns the hooks; apply them: node ~/.claude/scripts/setup/settings-hooks.mjs --apply'));
       }
     }
     // Only the template's shape is required: the payload is the user's own file and may

@@ -57,30 +57,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull-background",
-                        "timeout": 10
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
-                        "timeout": 10,
-                        "async": true
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/setup-check-hook.js",
-                        "timeout": 5
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/setup/doctor.js --hook",
-                        "timeout": 10
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/bridge/ensure.mjs",
-                        "timeout": 10,
-                        "async": true
+                        "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || { node ~/.claude/scripts/hooks/sync-hook.js --pull </dev/null >/dev/null 2>&1; [ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || { if git -C ~/.claude/scripts cat-file -e '@{u}:scripts/hooks/claude-hook.mjs' 2>/dev/null; then w='the pull did not fast-forward this checkout'; else w='its upstream does not carry it yet (offline, or main not yet promoted)'; fi; printf '{\"systemMessage\":\"[claude-hook] SessionStart hooks skipped: claude-hook.mjs is absent and %s. Launch via ccc, or run: node ~/.claude/scripts/hooks/sync-hook.js --pull\"}\\n' \"$w\"; exit 0; }; }; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart",
+                        "timeout": 30
                     }
                 ]
             }
@@ -90,18 +68,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/notify-hook.js",
-                        "async": true
-                    }
-                ]
-            },
-            {
-                "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || exit 0; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event Notification",
+                        "timeout": 75,
                         "async": true
                     }
                 ]
@@ -140,7 +108,7 @@
                 ]
             },
             {
-                "matcher": "*",
+                "matcher": "Agent|Task|Monitor",
                 "hooks": [
                     {
                         "type": "command",
@@ -187,7 +155,7 @@
         ],
         "PostToolUse": [
             {
-                "matcher": "*",
+                "matcher": "AskUserQuestion|Agent|Task|TaskStop",
                 "hooks": [
                     {
                         "type": "command",
@@ -200,7 +168,7 @@
         ],
         "PostToolUseFailure": [
             {
-                "matcher": "Bash|Agent|Task",
+                "matcher": "Agent|Task|Monitor",
                 "hooks": [
                     {
                         "type": "command",

@@ -9,8 +9,13 @@
 //   drops blocks it already sent; with the background shells and agents still running, by
 //   their tool call, so the adapter ends the others);  StopFailure -> failed final;
 //   PreToolUse / PostToolUse / PostToolUseFailure -> activity running (PostToolUse(AskUserQuestion)
-//   -> answer), and for a shell or an agent its task: started, ended, or left in the background;
-//   Notification -> waiting-approval | waiting-input (with its message) | idle.
+//   -> answer), and for a shell, a monitor or an agent its task: started, ended, or left in the
+//   background;  Notification -> waiting-approval | waiting-input (with its message) | idle.
+// The settings template wires the tool events only for AskUserQuestion, Agent/Task, Monitor and
+// TaskStop, never `*`: a node process before and after every tool call cost more than a live
+// view of foreground shells is worth. A background shell still reaches the board from the
+// transcript at the next Stop (backgroundTasks); a foreground one is the turn itself.
+// Notification arrives through claude-hook.mjs, which runs this script in a worker thread.
 // SessionEnd is not mirrored: it also fires on in-process /clear and /resume, and the end of
 // the process is already observed by the daemon as its channel's socket closing.
 // After /clear or /resume the adapter does not know the new id yet: a prompt, final or answer
