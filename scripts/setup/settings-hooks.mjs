@@ -13,8 +13,9 @@
 //
 // The write is IN PLACE (no temp-and-rename): the payload is hard-linked into each checkout's
 // root (setup.js repoMirrorLinks), and a rename would detach every one of those links. One
-// apply serves every workstation, since they all link the same synced file. Apply it only once
-// every workstation has pulled the scripts the new hooks name.
+// apply serves every workstation, since they all link the same synced file, and it may land
+// before a workstation has pulled: the SessionStart command pulls first when the entry it names
+// is absent (claude-hook.mjs hookCommand).
 
 import fs from 'fs';
 import path from 'path';

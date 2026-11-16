@@ -196,7 +196,7 @@ export function checkPayloadShape(syncDir, repoRoot = sourceDir, files = SYNC_PA
       const drifted = hooksDrift(live, template);
       if (drifted.length) {
         out.push(finding('FAIL', 'payload-hooks-drift', `claude_settings.json hooks differ from the template: ${drifted.join(', ')}`,
-          'the template owns the hooks; once every workstation has pulled, apply them: node ~/.claude/scripts/setup/settings-hooks.mjs --apply'));
+          'the template owns the hooks; apply them: node ~/.claude/scripts/setup/settings-hooks.mjs --apply'));
       }
     }
     // Only the template's shape is required: the payload is the user's own file and may

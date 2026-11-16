@@ -17,8 +17,12 @@ systemMessage). Steps that were `async` (prune, ensure) run in one detached back
 
 The live settings are the sync dir's payload, seeded once from the template: a merged rewiring
 reaches them only through `node ~/.claude/scripts/setup/settings-hooks.mjs --apply` (doctor
-reports `payload-hooks-drift` until then). Apply it once every workstation has pulled the
-scripts the new hooks name: one write serves every workstation, which all link that file.
+reports `payload-hooks-drift` until then). One write serves every workstation, which all link that
+file, and it may land before a workstation has pulled: the SessionStart command bootstraps
+(`claude-hook.mjs` `hookCommand`). With the entry absent it runs the `sync-hook.js --pull` every
+older checkout has, then the entry; still absent, it exits 0 with a systemMessage naming the
+cause (offline / not promoted, or a checkout that did not fast-forward) and the door. A missing
+entry leaves Notification silent. With the entry present it is one `exec node`.
 
 | Event | Script | Purpose |
 |---|---|---|

@@ -57,7 +57,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart",
+                        "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || { node ~/.claude/scripts/hooks/sync-hook.js --pull </dev/null >/dev/null 2>&1; [ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || { if git -C ~/.claude/scripts cat-file -e '@{u}:scripts/hooks/claude-hook.mjs' 2>/dev/null; then w='the pull did not fast-forward this checkout'; else w='its upstream does not carry it yet (offline, or main not yet promoted)'; fi; printf '{\"systemMessage\":\"[claude-hook] SessionStart hooks skipped: claude-hook.mjs is absent and %s. Launch via ccc, or run: node ~/.claude/scripts/hooks/sync-hook.js --pull\"}\\n' \"$w\"; exit 0; }; }; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart",
                         "timeout": 30
                     }
                 ]
@@ -68,7 +68,7 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/claude-hook.mjs --event Notification",
+                        "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || exit 0; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event Notification",
                         "timeout": 75,
                         "async": true
                     }

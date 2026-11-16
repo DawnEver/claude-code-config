@@ -47,6 +47,27 @@ export const STEPS = {
   ],
 };
 
+const ENTRY = '~/.claude/scripts/hooks/claude-hook.mjs';
+const PULL = '~/.claude/scripts/hooks/sync-hook.js --pull';
+
+/**
+ * The settings command for `event` (the template carries it verbatim; a test checks): a POSIX sh
+ * line, as every hook command is (`~` paths). The synced settings reach every workstation at
+ * once, ahead of a checkout that has this entry; a bare `claude` there pulls nothing, the pull
+ * being one of the entry's own steps. So when the entry is absent, SessionStart first runs the
+ * pull every older checkout has, then the entry; still absent, it says why and how to get it
+ * (exit 0: never block a session). Notification then stays silent. With the entry present, it
+ * is `exec node <entry>`: one node process. The entry path is the command's first `~` token,
+ * so doctor's hook-missing check reads it.
+ */
+export function hookCommand(event) {
+  const missing = event !== 'SessionStart' ? 'exit 0' : `{ node ${PULL} </dev/null >/dev/null 2>&1; [ -f ${ENTRY} ] || { ` +
+    `if git -C ~/.claude/scripts cat-file -e '@{u}:scripts/hooks/claude-hook.mjs' 2>/dev/null; ` +
+    `then w='the pull did not fast-forward this checkout'; else w='its upstream does not carry it yet (offline, or main not yet promoted)'; fi; ` +
+    `printf '{"systemMessage":"[claude-hook] SessionStart hooks skipped: claude-hook.mjs is absent and %s. Launch via ccc, or run: node ${PULL}"}\\n' "$w"; exit 0; }; }`;
+  return `[ -f ${ENTRY} ] || ${missing}; exec node ${ENTRY} --event ${event}`;
+}
+
 /** The steps of `event` that run in `lane` ('foreground' | 'background') for `payload`. */
 export function stepsFor(event, lane, payload = {}, steps = STEPS) {
   return (steps[event] ?? []).filter((s) => (lane === 'background') === Boolean(s.background) &&
