@@ -33,7 +33,7 @@ import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 import { isValidAlias } from '../shared/seats.mjs';
 import { isProvider } from '../shared/dashboard-schema.mjs';
 import { AGENTS, TASK_KINDS, TASK_STATUSES } from '../dashboard/public/shared/vocab.mjs';
-import { TaskBoard } from './tasks.mjs';
+import { ActivityBoard } from './activity-board.mjs';
 
 /** One background task a turn end still sees open (bridge-hook.js backgroundTasks); null when malformed. */
 function parseOpen(t) {
@@ -198,7 +198,7 @@ export class ClaudeAdapter extends EventEmitter {
           this.sessions.set(sessionId, { peer, socket, ids: new Set([...(previous?.ids ?? []), sessionId]), sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
             queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
-            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null, tasks: previous?.tasks ?? new TaskBoard(),
+            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null, tasks: previous?.tasks ?? new ActivityBoard(),
             // When this claude process started (its channel starts with it): no task of an earlier one runs.
             bornAt: Number.isFinite(p.startedAt) ? p.startedAt : previous?.bornAt ?? null,
             named: previous?.named ?? NO_NAME });
@@ -414,7 +414,7 @@ export class ClaudeAdapter extends EventEmitter {
     if (m.retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
     this.#learnTranscript(id, m.transcriptPath);
     const s = this.sessions.get(id);
-    // Tasks: each start and end is its own fact, applied in any order (TaskBoard keeps the first end).
+    // Tasks: each start and end is its own fact, applied in any order (ActivityBoard keeps the first end).
     const at = Number.isFinite(m.at) ? m.at : this.now();
     if (m.task?.op === 'start') s.tasks.start(m.task.id, { ...m.task, at, until: m.task.timeoutMs ? at + m.task.timeoutMs : null });
     if (m.task?.op === 'end') s.tasks.end(m.task.id, { status: m.task.status, at });

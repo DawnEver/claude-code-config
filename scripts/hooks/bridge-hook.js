@@ -174,7 +174,7 @@ function stoppedTask(payload) {
   return id ? { op: 'end', id, status: 'stopped' } : null;
 }
 
-// The tools whose calls are tasks (tasks.mjs), by kind: a Bash or PowerShell shell, a monitor,
+// The tools whose calls are tasks (activity-board.mjs), by kind: a Bash or PowerShell shell, a monitor,
 // and an agent (`Task` is its older name).
 const TASK_TOOLS = { Bash: 'shell', PowerShell: 'powershell', Monitor: 'monitor', Agent: 'agent', Task: 'agent' };
 // How long a monitor watches when its call says nothing, and at most (Claude Code's own limits).

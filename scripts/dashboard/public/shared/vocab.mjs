@@ -29,7 +29,7 @@ export const QUOTA_STALE_MS = 15 * 60000;
 /** The Usage tab's filter: at most this many selected values per dimension (the page stops there, the API refuses more). */
 export const USAGE_FILTER_MAX = 20;
 
-// A session's tasks (scripts/bridge/tasks.mjs), by kind: a shell (Bash, a Codex command), a
+// A session's tasks (scripts/bridge/activity-board.mjs), by kind: a shell (Bash, a Codex command), a
 // PowerShell, a monitor (watches until it expires), a subagent. This order is the order a session
 // lists them in: subagents, monitors, shells, PowerShell.
 export const TASK_KINDS = ['agent', 'monitor', 'shell', 'powershell'];

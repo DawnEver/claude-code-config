@@ -99,7 +99,7 @@ no API, no authentication.
   PowerShell tool; a Codex command run by powershell/pwsh, labelled by its script), `monitor`
   (Claude's Monitor: always in the background, ends when its `timeout_ms` expires — default 5 min,
   at most 30 — or the session ends), `agent` (a Claude Agent call, a Codex subagent)
-  (`TaskBoard` in `scripts/bridge/tasks.mjs`, one per session): only what runs now, each with
+  (`ActivityBoard` in `scripts/bridge/activity-board.mjs`, one per session): only what runs now, each with
   its start — an ended task is never reported (the board remembers it 10 min only so a late
   start cannot revive it); at most 50, each label one line of at most 200 characters: a Claude shell's `description`
   (what it does), else its command without a leading `cd … &&` and with `~` for home; an

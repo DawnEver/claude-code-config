@@ -330,7 +330,9 @@ export function linkEntry(srcPath, destPath, link, replace) {
     // An unlinked plain file may hold edits the repo never saw -- a hard link that broke
     // and drifted. Keep that one; anything matching the source is safe to drop.
     if (stat.isFile() && !stat.isSymbolicLink() && !filesMatch(srcPath, backupPath)) {
-      notes.push(`replaced existing - kept unlinked copy at ${path.basename(backupPath)}`);
+      // The payload holds tokens and API keys: the kept copy keeps its structure, never a secret.
+      fs.writeFileSync(backupPath, scrubSecrets(fs.readFileSync(backupPath, 'utf8')));
+      notes.push(`replaced existing - kept unlinked copy (secrets redacted) at ${path.basename(backupPath)}`);
     } else {
       fs.rmSync(backupPath, { recursive: true, force: true });
       notes.push('removed existing');
@@ -338,6 +340,26 @@ export function linkEntry(srcPath, destPath, link, replace) {
   }
 
   return { status: 'link', kind, notes };
+}
+
+const SECRET_NAME = /token|secret|password|passwd|credential|api[_-]?key|auth|^key$|_key$|-key$|bearer|cookie/i;
+export const REDACTED = '<redacted>';
+
+/**
+ * A config text with every secret-named value replaced by REDACTED, so a kept backup never holds
+ * a token or key in plaintext. JSON is walked by key; any other text (TOML, env) is scrubbed by
+ * `name = value` / `name: value` lines whose name looks secret.
+ */
+export function scrubSecrets(text) {
+  const walk = (v, secret) => {
+    if (Array.isArray(v)) return v.map((x) => walk(x, secret));
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, secret || SECRET_NAME.test(k))]));
+    return secret && v !== null && typeof v !== 'boolean' ? REDACTED : v;
+  };
+  try { return `${JSON.stringify(walk(JSON.parse(text), false), null, 2)}
+`; } catch { /* not JSON */ }
+  return text.replace(/^(\s*["']?([\w.-]+)["']?\s*[=:]\s*)(.+)$/gm,
+    (line, head, name) => (SECRET_NAME.test(name) ? `${head}"${REDACTED}"` : line));
 }
 
 export function linkSourceRoot(link, { repoRoot = sourceDir, syncDir = repoRoot, claudeRoot = claudeDir } = {}) {
@@ -350,7 +372,7 @@ export function linkSourceRoot(link, { repoRoot = sourceDir, syncDir = repoRoot,
  * the link: the other name then holds a private copy that never sees another host's edit.
  *   - sync copy at least as new as the private one: the change came from the cloud and nothing
  *     was edited here since the break, so re-linking loses nothing (the copy is kept as
- *     .setup-bak when it differs).
+ *     .setup-bak, secrets redacted, when it differs).
  *   - private copy newer: edited here after the break, on top of a stale base. Both sides hold
  *     something; merging is a human's call, so it is reported (doctor: link-detached) and left.
  * -> 'repaired' | 'conflict' | null (nothing to heal: missing, a symlink, linked, cross-volume)

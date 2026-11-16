@@ -18,7 +18,7 @@ import { WsStreamClient } from './ws-stream.mjs';
 import { JsonRpcPeer } from './jsonrpc.mjs';
 import { BRIDGE_DEFAULTS } from './context.mjs';
 import { isProvider } from '../shared/dashboard-schema.mjs';
-import { TaskBoard } from './tasks.mjs';
+import { ActivityBoard } from './activity-board.mjs';
 import { codexHomes, codexHomeKey, codexHomeLabel } from '../shared/codex-home.mjs';
 
 const COMMAND_END = { completed: 'completed', failed: 'failed', declined: 'stopped' };
@@ -29,7 +29,7 @@ const AGENT_RUNNING = ['pendingInit', 'running'];
 const AGENT_END = { completed: 'completed', errored: 'failed', interrupted: 'stopped', shutdown: 'stopped' };
 
 /**
- * A thread item as tasks (tasks.mjs): a command runs from its `inProgress` item to its last;
+ * A thread item as tasks (activity-board.mjs): a command runs from its `inProgress` item to its last;
  * each subagent a collab call names (spawn, wait, close, ...) by its thread, as `agentsStates`
  * says. A subagent's label is the prompt it was spawned with.
  */
@@ -364,7 +364,7 @@ export class CodexAdapter extends EventEmitter {
       activeTurnId: running?.id ?? null,
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
       deliveredMessages: new Set(),
-      tasks: this.threads.get(threadId)?.tasks ?? new TaskBoard(),
+      tasks: this.threads.get(threadId)?.tasks ?? new ActivityBoard(),
       idleSince: th.status?.type === 'idle' ? this.now() : null,
       updatedAt: th.updatedAt ?? 0,
     };
