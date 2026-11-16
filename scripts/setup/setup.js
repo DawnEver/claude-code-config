@@ -348,16 +348,22 @@ export const REDACTED = '<redacted>';
 /**
  * A config text with every secret-named value replaced by REDACTED, so a kept backup never holds
  * a token or key in plaintext. JSON is walked by key; any other text (TOML, env) is scrubbed by
- * `name = value` / `name: value` lines whose name looks secret.
+ * `name = value` / `name: value` lines whose name looks secret. A text with nothing to redact is
+ * returned unchanged: the kept copy is the live edit, and only a secret is ever rewritten.
  */
 export function scrubSecrets(text) {
+  let redacted = false;
   const walk = (v, secret) => {
     if (Array.isArray(v)) return v.map((x) => walk(x, secret));
     if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, secret || SECRET_NAME.test(k))]));
-    return secret && v !== null && typeof v !== 'boolean' ? REDACTED : v;
+    if (!secret || v === null || typeof v === 'boolean') return v;
+    redacted = true;
+    return REDACTED;
   };
-  try { return `${JSON.stringify(walk(JSON.parse(text), false), null, 2)}
-`; } catch { /* not JSON */ }
+  try {
+    const scrubbed = walk(JSON.parse(text), false);
+    return redacted ? `${JSON.stringify(scrubbed, null, 2)}\n` : text;
+  } catch { /* not JSON */ }
   return text.replace(/^(\s*["']?([\w.-]+)["']?\s*[=:]\s*)(.+)$/gm,
     (line, head, name) => (SECRET_NAME.test(name) ? `${head}"${REDACTED}"` : line));
 }
