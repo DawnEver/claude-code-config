@@ -3,6 +3,7 @@
 //
 //   node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart
 //   node ~/.claude/scripts/hooks/claude-hook.mjs --event Notification
+//   node ~/.claude/scripts/hooks/claude-hook.mjs --event PreToolUse
 //
 // A node process per hook script is the cost this removes (a bare `node` boot is ~0.5 s on
 // Windows): STEPS lists, per event, the scripts that event runs, in order, and this entry runs
@@ -12,7 +13,9 @@
 // Each step is isolated: a throw, an exit code or a budget overrun ends that step only (a
 // worker is terminated at its budget, even mid-loop) and the next step still runs. A failed
 // step is NAMED in the merged systemMessage, never swallowed. Outputs merge into one JSON
-// object: systemMessage and additionalContext joined by newlines, other keys last-wins.
+// object: systemMessage and additionalContext joined by newlines, the strictest permission
+// decision (with its reason and updatedInput) wins, other keys last-wins. A step that denies, or
+// exits 2 (a block: the entry exits 2 with its stderr), ends the run: its call will not happen.
 //
 // A `background` step was an `async` hook: it must not hold the session. The entry hands all of
 // an event's background steps, in order, to ONE detached copy of itself (`--lane background`)
@@ -30,7 +33,8 @@ const SCRIPTS = fileURLToPath(new URL('../', import.meta.url));
 /**
  * Per event, the hook scripts it runs, in order. `script` is relative to scripts/; `budgetMs` is
  * the timeout its own settings entry had; `match` filters on a payload field as a settings
- * matcher did; `background` marks a step that ran `async`.
+ * matcher did. A step that ran `async` is `background` (the detached lane: nothing may wait on
+ * it) or `concurrent` (this process, started beside the ordered steps the call waits on anyway).
  */
 export const STEPS = {
   SessionStart: [
@@ -45,6 +49,15 @@ export const STEPS = {
     { script: 'hooks/bridge-hook.js', budgetMs: 10000,
       match: { field: 'notification_type', pattern: 'permission_prompt|idle_prompt|elicitation_dialog' } },
   ],
+  // Every tool call. The bridge's activity edge and task (a foreground shell on the board) runs
+  // beside the guard, as its own async entry did, so the call waits on neither twice. The question
+  // call of AskUserQuestion, which blocks for an answer from Telegram, runs after the guard:
+  // a denied question never waits for its answer.
+  PreToolUse: [
+    { script: 'hooks/loop-guard-hook.js', budgetMs: 5000 },
+    { script: 'hooks/bridge-hook.js', args: ['--question'], budgetMs: 660000, match: { field: 'tool_name', pattern: 'AskUserQuestion' } },
+    { script: 'hooks/bridge-hook.js', budgetMs: 10000, concurrent: true, match: { field: 'tool_name', pattern: '(?!AskUserQuestion$).*' } },
+  ],
 };
 
 const ENTRY = '~/.claude/scripts/hooks/claude-hook.mjs';
@@ -56,7 +69,8 @@ const PULL = '~/.claude/scripts/hooks/sync-hook.js --pull';
  * once, ahead of a checkout that has this entry; a bare `claude` there pulls nothing, the pull
  * being one of the entry's own steps. So when the entry is absent, SessionStart first runs the
  * pull every older checkout has, then the entry; still absent, it says why and how to get it
- * (exit 0: never block a session). Notification then stays silent. With the entry present, it
+ * (exit 0: never block a session). Every other event then exits 0 silently: a missing entry
+ * never blocks a tool call or a notification. With the entry present, it
  * is `exec node <entry>`: one node process. The entry path is the command's first `~` token,
  * so doctor's hook-missing check reads it.
  */
@@ -104,45 +118,79 @@ export function runStep({ script, args = [], budgetMs }, raw, { scriptsDir = SCR
   });
 }
 
-/** One step's outcome as a notice, or null when it ended cleanly. */
+/** Exit code 2 is a hook's block (Claude Code shows its stderr), never a failure. */
+const BLOCK = 2;
+
+/** One step's outcome as a notice, or null when it ended cleanly or blocked. */
 export function failureOf(step, { code, timedOut, error }) {
   if (timedOut) return `${step.script} timed out after ${step.budgetMs / 1000}s`;
   if (error) return `${step.script} failed: ${error}`;
-  if (code) return `${step.script} exited ${code}`;
+  if (code && code !== BLOCK) return `${step.script} exited ${code}`;
   return null;
 }
+
+const parseOutput = (out) => {
+  const text = String(out ?? '').trim();
+  if (!text) return { text };
+  try { const o = JSON.parse(text); return o && typeof o === 'object' && !Array.isArray(o) ? { o } : { text }; } catch { return { text }; }
+};
+
+// A permission decision: the strictest step decides, as Claude Code resolves several hooks.
+const DECISION_RANK = { allow: 1, ask: 2, deny: 3 };
 
 /** Merge the stdout of several hook scripts and the notices of the failed ones into one hook output. */
 export function mergeOutputs(results, event) {
   const merged = {}, messages = [], contexts = [];
+  let decision = null;
   for (const { step, out, failure } of results) {
-    const text = String(out ?? '').trim();
-    if (text) {
-      let o = null;
-      try { o = JSON.parse(text); } catch { /* not JSON */ }
-      if (o && typeof o === 'object' && !Array.isArray(o)) {
-        const { systemMessage, hookSpecificOutput, ...rest } = o;
-        Object.assign(merged, rest);
-        if (systemMessage) messages.push(systemMessage);
-        if (hookSpecificOutput?.additionalContext) contexts.push(hookSpecificOutput.additionalContext);
-      } else messages.push(`[${step.script}] ${text}`);
-    }
+    const { o, text } = parseOutput(out);
+    if (o) {
+      const { systemMessage, hookSpecificOutput: h, ...rest } = o;
+      Object.assign(merged, rest);
+      if (systemMessage) messages.push(systemMessage);
+      if (h?.additionalContext) contexts.push(h.additionalContext);
+      if (h?.permissionDecision && (DECISION_RANK[h.permissionDecision] ?? 0) > (DECISION_RANK[decision?.permissionDecision] ?? 0)) {
+        decision = { permissionDecision: h.permissionDecision,
+          ...(h.permissionDecisionReason ? { permissionDecisionReason: h.permissionDecisionReason } : {}),
+          ...(h.updatedInput ? { updatedInput: h.updatedInput } : {}) };
+      }
+    } else if (text) messages.push(`[${step.script}] ${text}`);
     if (failure) messages.push(`[claude-hook] ${event}: ${failure}`);
   }
   if (messages.length) merged.systemMessage = messages.join('\n');
-  if (contexts.length) merged.hookSpecificOutput = { hookEventName: event, additionalContext: contexts.join('\n') };
+  if (contexts.length || decision) {
+    merged.hookSpecificOutput = { hookEventName: event, ...(contexts.length ? { additionalContext: contexts.join('\n') } : {}), ...decision };
+  }
   return merged;
 }
 
-/** Run `steps` in order, each isolated and within its own budget; the merged hook output. */
+/** True when a step's output denies the call: the steps after it do not run. */
+const denies = (out) => parseOutput(out).o?.hookSpecificOutput?.permissionDecision === 'deny';
+
+const blocks = (r) => r.code === BLOCK && !r.timedOut && !r.error;
+
+/**
+ * Run `steps`, each isolated and within its own budget: the `concurrent` ones start at once
+ * beside the rest (a side effect nothing waits on, as an `async` hook was), the others in order.
+ * -> {output: the merged hook output (table order), blocked: the stderr of a step that exited 2, else null}.
+ * A deny or a block ends the ordered run: the call will not happen, so no later ordered step (a
+ * question waiting minutes for its answer) is spent on it.
+ */
 export async function runSteps(steps, raw, event, { run = runStep } = {}) {
-  const results = [];
+  const started = new Map(steps.filter((s) => s.concurrent).map((s) => [s, run(s, raw)]));
+  const outcomes = new Map();
   for (const step of steps) {
+    if (step.concurrent) continue;
     const r = await run(step, raw);
-    if (r.err) process.stderr.write(r.err);
-    results.push({ step, out: r.out, failure: failureOf(step, r) });
+    outcomes.set(step, r);
+    if (blocks(r) || denies(r.out)) break;
   }
-  return mergeOutputs(results, event);
+  for (const [step, pending] of started) outcomes.set(step, await pending);
+  const done = steps.filter((s) => outcomes.has(s)).map((step) => ({ step, r: outcomes.get(step) }));
+  const block = done.find(({ r }) => blocks(r));
+  if (block) return { output: {}, blocked: block.r.err || `${block.step.script} blocked\n` };
+  for (const { r } of done) if (r.err) process.stderr.write(r.err);
+  return { output: mergeOutputs(done.map(({ step, r }) => ({ step, out: r.out, failure: failureOf(step, r) })), event), blocked: null };
 }
 
 /** Start this event's background steps in one detached copy of this entry, the payload on its stdin. */
@@ -166,10 +214,17 @@ async function main() {
   let payload = {};
   try { payload = JSON.parse(raw || '{}'); } catch { /* the steps parse it themselves */ }
   if (lane === 'foreground' && stepsFor(event, 'background', payload).length) startBackgroundLane(event, raw);
-  const output = await runSteps(stepsFor(event, lane, payload), raw, event);
+  const { output, blocked } = await runSteps(stepsFor(event, lane, payload), raw, event);
+  if (blocked !== null) {   // a step's block is the entry's: its stderr, exit 2
+    await new Promise((done) => process.stderr.write(blocked, done));
+    return BLOCK;
+  }
   // Flushed before exit: stdout may be an asynchronous pipe.
   if (lane === 'foreground' && Object.keys(output).length) await new Promise((done) => process.stdout.write(JSON.stringify(output), done));
+  return 0;
 }
 
 // Exit once done: a terminated or lingering step must not hold the hook open.
-if (isMain(import.meta.url)) main().catch((e) => process.stderr.write(`[claude-hook] ${e.message}\n`)).finally(() => process.exit(0));
+if (isMain(import.meta.url)) {
+  main().catch((e) => { process.stderr.write(`[claude-hook] ${e.message}\n`); return 0; }).then((code) => process.exit(code ?? 0));
+}

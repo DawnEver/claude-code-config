@@ -8,12 +8,13 @@ plugin hooks remain a separate, bundled integration.
 
 ## Hooks
 
-| Event | Script | Purpose |
-|---|---|---|
-`SessionStart` and `Notification` are one settings entry each, `claude-hook.mjs --event <event>`:
+`SessionStart`, `Notification` and `PreToolUse` are one settings entry each, `claude-hook.mjs --event <event>`:
 its `STEPS` table names the scripts below and runs them in order in one node process (a worker
 thread each, isolated, within the budget its own entry had; a failed step is named in the
-systemMessage). Steps that were `async` (prune, ensure) run in one detached background lane.
+systemMessage; a deny or an exit-2 block is the entry's and ends the ordered steps). Steps that
+were `async` run beside the others (the PreToolUse bridge edge) or in one detached background lane
+(prune, ensure). `PostToolUse` / `PostToolUseFailure` run `bridge-hook.js` for every tool, so a
+tool call costs two node processes (pre + post), down from three, and the bridge mirror loses nothing.
 
 The live settings are the sync dir's payload, seeded once from the template: a merged rewiring
 reaches them only through `node ~/.claude/scripts/setup/settings-hooks.mjs --apply` (doctor
@@ -22,7 +23,8 @@ file, and it may land before a workstation has pulled: the SessionStart command 
 (`claude-hook.mjs` `hookCommand`). With the entry absent it runs the `sync-hook.js --pull` every
 older checkout has, then the entry; still absent, it exits 0 with a systemMessage naming the
 cause (offline / not promoted, or a checkout that did not fast-forward) and the door. A missing
-entry leaves Notification silent. With the entry present it is one `exec node`.
+entry leaves Notification and PreToolUse silent (exit 0: a tool call is never blocked). With the
+entry present it is one `exec node`.
 
 | Event | Script | Purpose |
 |---|---|---|
@@ -33,7 +35,7 @@ entry leaves Notification silent. With the entry present it is one `exec node`.
 | `SessionStart` | `bridge/ensure.mjs` (background) | Starts the bridge daemon when none runs |
 | `SessionEnd` | `sync-hook.js --remind` | Reports uncommitted files / unpushed commits. Pushing stays explicit |
 | `Notification` | `notify-hook.js`, then `bridge-hook.js` (permission/idle/elicitation only) | Native OS notification — see [`setup.md`](setup.md) § Notifications; the bridge's waiting state |
-| `PreToolUse` (`*`) | `loop-guard-hook.js` | Anti-spin guard: warns on the 3rd identical call, denies from the 4th; near-duplicates too. Knobs are env vars — see `DEFAULTS` in the hook |
+| `PreToolUse` (`*`) | `loop-guard-hook.js`; beside it `bridge-hook.js` (its `--question` call after it, for AskUserQuestion) | Anti-spin guard: warns on the 3rd identical call, denies from the 4th; near-duplicates too. Knobs are env vars — see `DEFAULTS` in the hook |
 | `Stop` | `sharp-review` plugin | Off unless a repo sets `"stopHook": true` in `.claude/sharp-review.json`; `/sharp-review` stays manual |
 | `statusLine` | `hud-hook.js` | Terminal HUD via [claude-hud](https://github.com/jarrodwatts/claude-hud) |
 

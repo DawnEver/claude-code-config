@@ -68,17 +68,19 @@ Telegram + remote control on the same live session, per-machine bridge in
 - `scripts/runtime/`: `cc.js` / `codex.js` (provider launchers; both run `startup-sync.mjs` before loading repo code and spawn the agent as `<recorded python> -m ai_lab.session`, which owns `LAB_SESSION` — `scripts/shared/session-launcher.mjs`), `cc-launcher.mjs` / `codex-launcher.mjs` (pure env+args projection helpers — reused by `setup-vscode.js` so the two hosts cannot drift), `repo-automode.mjs` (the launch repo's `.claude/automode.json` -> `--settings`, only for an origin in `~/.claude/trusted-origins`; `docs/setup.md` "Auto-mode rules"), `plugin-launcher.mjs` (resolves a plugin script inside the installed cache, used by the `todo` launcher), `win-spawn.mjs` (the Windows spawn shim), `todo-launcher.mjs`
 - `scripts/shared/`: cross-host config helpers — `config.mjs` (`readMergedEnvSettings`, two-layer shared+local merge), `provider-keys.js` (single source of truth for the `ANTHROPIC_*` env-var strip list), `sync-dir.mjs` (resolves the payload dir: `$CLAUDE_SYNC_DIR` → `~/.claude/sync-dir` → repo root, and defines `SYNC_PAYLOAD_FILES`), `is-main.mjs` (the entry-point guard every script that is also a module must use — see Standard), `seats.mjs` (Claude seats: the only alias -> `~/.claude-<alias>` mapping), `dashboard-schema.mjs` (the dashboard wire format shared by the bridge push and the Worker), `claude-defaults.mjs` (UI prefs that live in each config dir's `.claude.json` and so cannot sync — e.g. `diffSidebarOpen: false`; re-applied by `cc.js` per launch and by setup)
 - `scripts/hooks/`: `claude-hook.mjs` (ONE entry for an event several scripts serve —
-  `--event SessionStart|Notification`: its `STEPS` table runs each script in a worker thread of
-  one node process, in order, each isolated and within the budget its own entry had; `async`
-  steps run in one detached background lane), `loop-guard-hook.js` (PreToolUse anti-spin guard — see Workflows),
+  `--event SessionStart|Notification|PreToolUse`: its `STEPS` table runs each script in a worker
+  thread of one node process, in order, each isolated and within the budget its own entry had; a
+  deny or an exit-2 block is the entry's; `async` steps run beside the others (`concurrent`) or in
+  one detached background lane), `loop-guard-hook.js` (PreToolUse anti-spin guard — see Workflows),
   `sync-hook.js` (`--pull-background` on SessionStart, `--remind` on SessionEnd — see Workflows),
   `prune-cache-hook.js` (SessionStart: reports stale plugin-cache candidates without automatic deletion),
   `notify-hook.js` (cross-platform notifications), `hud-hook.js` (statusLine),
   `bridge-hook.js` (UserPromptSubmit + Stop + StopFailure: mirrors Claude prompts/final answers to the
   session bridge's Telegram Topic; Notification drives the bridge's Claude state machine;
-  PreToolUse/PostToolUse/PostToolUseFailure are wired only for Agent/Task, Monitor and TaskStop
-  (their task on the activity board) and AskUserQuestion — never `*`, so an ordinary tool call
-  starts no bridge process; PreToolUse(AskUserQuestion) relays the question and, in a
+  PreToolUse (a step of the `claude-hook.mjs` entry, beside the loop guard), PostToolUse and
+  PostToolUseFailure (matcher `*`) give every tool call its activity edge and every shell, monitor
+  and agent its task on the activity board — the mirror loses nothing, and an ordinary tool call
+  costs two node processes (pre + post), down from three; PreToolUse(AskUserQuestion) relays the question and, in a
   Telegram-started turn, waits up to 10 min for the answer; silent no-op unless the bridge
   daemon runs — `docs/bridge.md`). Every entry runs `async` except Stop (it injects queued
   Telegram messages), PreToolUse(AskUserQuestion) (it returns the answer) and UserPromptSubmit
@@ -132,7 +134,7 @@ Telegram + remote control on the same live session, per-machine bridge in
   missing links, converts the `claude-hud` config symlink to a hard link, warns on
   drifted plain files). `SessionEnd` runs `sync-hook.js --remind` (uncommitted /
   unpushed report; the outbound half stays a deliberate user action — no auto-push).
-  `Notification` runs `notify-hook.js`. `PreToolUse` (matcher `*`) runs
+  `Notification` runs `notify-hook.js`. `PreToolUse` (matcher `*`, through `claude-hook.mjs`) runs
   `loop-guard-hook.js`: per-session anti-spin guard — it hashes each
   `(tool, normalized input)` inside a sliding window, and escalates on both exact
   repeats and near-duplicates (trigram-Jaccard). Defaults: identical calls warn on

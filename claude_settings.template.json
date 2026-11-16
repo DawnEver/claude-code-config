@@ -92,29 +92,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/loop-guard-hook.js",
-                        "timeout": 5
-                    }
-                ]
-            },
-            {
-                "matcher": "AskUserQuestion",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js --question",
-                        "timeout": 660
-                    }
-                ]
-            },
-            {
-                "matcher": "Agent|Task|Monitor",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
-                        "async": true
+                        "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || exit 0; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event PreToolUse",
+                        "timeout": 670
                     }
                 ]
             }
@@ -155,7 +134,7 @@
         ],
         "PostToolUse": [
             {
-                "matcher": "AskUserQuestion|Agent|Task|TaskStop",
+                "matcher": "*",
                 "hooks": [
                     {
                         "type": "command",
@@ -168,7 +147,7 @@
         ],
         "PostToolUseFailure": [
             {
-                "matcher": "Agent|Task|Monitor",
+                "matcher": "*",
                 "hooks": [
                     {
                         "type": "command",
