@@ -67,13 +67,18 @@ Telegram + remote control on the same live session, per-machine bridge in
 - `skills/migrate/`: `/migrate` skill — `migrate.js` (orphaned symlink cleanup + cc-market plugin `.claude/` migrations) and tests
 - `scripts/runtime/`: `cc.js` / `codex.js` (provider launchers; both run `startup-sync.mjs` before loading repo code and spawn the agent as `<recorded python> -m ai_lab.session`, which owns `LAB_SESSION` — `scripts/shared/session-launcher.mjs`), `cc-launcher.mjs` / `codex-launcher.mjs` (pure env+args projection helpers — reused by `setup-vscode.js` so the two hosts cannot drift), `repo-automode.mjs` (the launch repo's `.claude/automode.json` -> `--settings`, only for an origin in `~/.claude/trusted-origins`; `docs/setup.md` "Auto-mode rules"), `plugin-launcher.mjs` (resolves a plugin script inside the installed cache, used by the `todo` launcher), `win-spawn.mjs` (the Windows spawn shim), `todo-launcher.mjs`
 - `scripts/shared/`: cross-host config helpers — `config.mjs` (`readMergedEnvSettings`, two-layer shared+local merge), `provider-keys.js` (single source of truth for the `ANTHROPIC_*` env-var strip list), `sync-dir.mjs` (resolves the payload dir: `$CLAUDE_SYNC_DIR` → `~/.claude/sync-dir` → repo root, and defines `SYNC_PAYLOAD_FILES`), `is-main.mjs` (the entry-point guard every script that is also a module must use — see Standard), `seats.mjs` (Claude seats: the only alias -> `~/.claude-<alias>` mapping), `dashboard-schema.mjs` (the dashboard wire format shared by the bridge push and the Worker), `claude-defaults.mjs` (UI prefs that live in each config dir's `.claude.json` and so cannot sync — e.g. `diffSidebarOpen: false`; re-applied by `cc.js` per launch and by setup)
-- `scripts/hooks/`: `loop-guard-hook.js` (PreToolUse anti-spin guard — see Workflows),
-  `sync-hook.js` (`--pull` on SessionStart, `--remind` on SessionEnd — see Workflows),
+- `scripts/hooks/`: `claude-hook.mjs` (ONE entry for an event several scripts serve —
+  `--event SessionStart|Notification`: its `STEPS` table runs each script in a worker thread of
+  one node process, in order, each isolated and within the budget its own entry had; `async`
+  steps run in one detached background lane), `loop-guard-hook.js` (PreToolUse anti-spin guard — see Workflows),
+  `sync-hook.js` (`--pull-background` on SessionStart, `--remind` on SessionEnd — see Workflows),
   `prune-cache-hook.js` (SessionStart: reports stale plugin-cache candidates without automatic deletion),
   `notify-hook.js` (cross-platform notifications), `hud-hook.js` (statusLine),
   `bridge-hook.js` (UserPromptSubmit + Stop + StopFailure: mirrors Claude prompts/final answers to the
-  session bridge's Telegram Topic; PreToolUse + PostToolUse + Notification drive the
-  bridge's Claude state machine and, with PostToolUseFailure, each Bash/Agent call's task; PreToolUse(AskUserQuestion) relays the question and, in a
+  session bridge's Telegram Topic; Notification drives the bridge's Claude state machine;
+  PreToolUse/PostToolUse/PostToolUseFailure are wired only for Agent/Task, Monitor and TaskStop
+  (their task on the activity board) and AskUserQuestion — never `*`, so an ordinary tool call
+  starts no bridge process; PreToolUse(AskUserQuestion) relays the question and, in a
   Telegram-started turn, waits up to 10 min for the answer; silent no-op unless the bridge
   daemon runs — `docs/bridge.md`). Every entry runs `async` except Stop (it injects queued
   Telegram messages), PreToolUse(AskUserQuestion) (it returns the answer) and UserPromptSubmit
@@ -96,7 +101,7 @@ Telegram + remote control on the same live session, per-machine bridge in
 - `output-styles/`: Output styles (`<name>.md`, `keep-coding-instructions: false`) — symlinked to `~/.claude/output-styles`. Non-coding personas (e.g. `academic`) for terminal use; toggle via `/config` → Output style. Strips coding guidance, keeps the harness/tools. A full system-prompt replacement was rejected (degrades CC to a chatbox) — see `.claude/memory/2026/06/20/persona-vs-output-style.md`.
 - `claude_plugins/`: Custom plugins (e.g., `claude-hud` config; `session-bridge` — the bridge's Claude channel MCP server, plain Node, registered as user-scope MCP server `session-bridge` by setup and re-ensured on every `ccc` launch (`scripts/shared/channel-server.mjs`), and loaded by `ccc` via `--dangerously-load-development-channels server:session-bridge`, see `docs/bridge.md`)
 - `claude_settings.json`: Env vars, permissions, hooks (gitignored). **Sync payload** — lives in the sync dir, not the repo
-- `claude_settings.template.json`: Template for new clones -> auto-copied to `claude_settings.json` by setup
+- `claude_settings.template.json`: Template for new clones -> auto-copied to `claude_settings.json` by setup. Its `hooks` stay its own: doctor FAILs `payload-hooks-drift` when the payload's differ, and `node ~/.claude/scripts/setup/settings-hooks.mjs --apply` writes them into the sync dir's payload in place (every workstation links that one file; apply once all have pulled)
 - `claude_env_settings.json`: Non-secret provider config (base URLs, model pins) — **sync payload**, gitignored. NO API keys
 - `claude_env_settings.template.json`: Desensitized template -> auto-copied to `claude_env_settings.json` by setup. Its `providers.<name>` holds ONLY host projection rules (`claudeApiKeyEnv`, `codexApiKeyEnv`); the provider catalogue (urls, paths, model maps) is ai-lab's, copied by setup into `~/.claude/provider-cache.json` -- see `docs/providers.md`
 - `claude_env_settings.local.template.json`: Desensitized per-machine secrets template -> copied by setup to `~/.claude/claude_env_settings.local.json` (a REAL machine-local dir, never cloud-synced). It holds NO API key: keys live in the git credential store (setup migrates a plaintext `apiKey` there once); all readers deep-merge local over shared

@@ -57,30 +57,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull-background",
-                        "timeout": 10
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
-                        "timeout": 10,
-                        "async": true
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/setup-check-hook.js",
-                        "timeout": 5
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/setup/doctor.js --hook",
-                        "timeout": 10
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/bridge/ensure.mjs",
-                        "timeout": 10,
-                        "async": true
+                        "command": "node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart",
+                        "timeout": 30
                     }
                 ]
             }
@@ -90,18 +68,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/notify-hook.js",
-                        "async": true
-                    }
-                ]
-            },
-            {
-                "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "command": "node ~/.claude/scripts/hooks/claude-hook.mjs --event Notification",
+                        "timeout": 75,
                         "async": true
                     }
                 ]
@@ -140,7 +108,7 @@
                 ]
             },
             {
-                "matcher": "*",
+                "matcher": "Agent|Task|Monitor",
                 "hooks": [
                     {
                         "type": "command",
@@ -187,7 +155,7 @@
         ],
         "PostToolUse": [
             {
-                "matcher": "*",
+                "matcher": "AskUserQuestion|Agent|Task|TaskStop",
                 "hooks": [
                     {
                         "type": "command",
@@ -200,7 +168,7 @@
         ],
         "PostToolUseFailure": [
             {
-                "matcher": "Bash|Agent|Task",
+                "matcher": "Agent|Task|Monitor",
                 "hooks": [
                     {
                         "type": "command",

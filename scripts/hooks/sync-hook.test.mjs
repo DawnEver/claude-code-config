@@ -424,10 +424,10 @@ test('the SessionStart mode is silent off startup (resume, clear, compact)', () 
   assert.equal(runHook(b, '--pull-background', { source: 'resume' }), null);
 });
 
-test('the settings template wires SessionStart to the background mode with a short bound', () => {
-  const tmpl = JSON.parse(fs.readFileSync(path.join(REPO, 'claude_settings.template.json'), 'utf8'));
-  const hooks = tmpl.hooks.SessionStart.flatMap((g) => g.hooks).filter((h) => /sync-hook\.js --pull/.test(h.command));
-  assert.equal(hooks.length, 1);
-  assert.match(hooks[0].command, /--pull-background$/);
-  assert.ok(hooks[0].timeout <= 10, 'a session never waits long on the sync hook');
+test('SessionStart runs the sync hook in the background mode with a short bound', async () => {
+  const { STEPS } = await import('./claude-hook.mjs');
+  const steps = STEPS.SessionStart.filter((s) => s.script === 'hooks/sync-hook.js');
+  assert.equal(steps.length, 1);
+  assert.deepEqual(steps[0].args, ['--pull-background']);
+  assert.ok(steps[0].budgetMs <= 10000, 'a session never waits long on the sync hook');
 });

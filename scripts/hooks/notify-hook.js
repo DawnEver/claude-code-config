@@ -176,7 +176,7 @@ fi`;
 
 // ── Main ──
 
-export function main(args = process.argv.slice(2)) {
+export async function main(args = process.argv.slice(2)) {
 const options = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.harness?.notifications ?? {};
 if (options.enabled !== true) return;
 let isUserPrompt = false;
@@ -196,7 +196,10 @@ let hookEvent = 'waiting';
 let hookCwd = '';
 if (!process.stdin.isTTY) {
   try {
-    const stdinData = fs.readFileSync(0, 'utf8');
+    // The stdin stream, never fd 0: run by claude-hook.mjs in a worker thread, fd 0 is the
+    // entry's own stdin (already read) and the payload arrives on the worker's stream.
+    let stdinData = '';
+    for await (const chunk of process.stdin) stdinData += chunk;
     const input = JSON.parse(stdinData);
     const hookEventName = (input.hook_event_name || '').toLowerCase();
     // Refer to https://code.claude.com/docs/en/hooks
