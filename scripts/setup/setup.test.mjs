@@ -273,6 +273,21 @@ test('linkEntry: a plain file with DIFFERENT content is still protected', () => 
   assert.equal(fs.readFileSync(dest, 'utf8'), '{"edited-live":true}');
 });
 
+// The backup path of the cross-volume --replace test above, reached on one volume, so every
+// host -- not only a two-volume Windows runner -- checks that a kept copy holding no secret is
+// the live edit byte for byte: redaction may rewrite a secret, never the formatting.
+test('linkEntry: --replace keeps a secret-free drifted file byte for byte', () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(tmp('dest'), 'config.json');
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(src, '{"a":1}');
+  fs.writeFileSync(dest, '{"edited-live":true}');
+
+  const r = linkEntry(src, dest, HARDLINK, true);
+  assert.equal(r.kind, 'hardlink');
+  assert.equal(fs.readFileSync(`${dest}.setup-bak`, 'utf8'), '{"edited-live":true}');
+});
+
 // ── the per-machine claude-hud config ────────────────────────────────────────
 
 test('ensureClaudeHudConfig: materialises the real config from the tracked template', async () => {
