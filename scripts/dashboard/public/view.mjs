@@ -140,7 +140,7 @@ export function groupSessions(hosts, by = 'host', order = 'host') {
 export const sessionLabel = (s, lang = 'en') => s.name ?? s.project ?? t('session.unknownProject', lang);
 
 /**
- * A session's running tasks (scripts/bridge/tasks.mjs: only what runs is reported), as listed
+ * A session's running tasks (scripts/bridge/activity-board.mjs: only what runs is reported), as listed
  * by kind in TASK_KINDS order, within a kind as listed (oldest first), each with how long it has run so far.
  */
 export const taskView = (tasks = [], now = Date.now()) => tasks

@@ -401,3 +401,33 @@ test('parseBranchStatus reads dirty count, upstream and ahead from one porcelain
   assert.deepEqual(parseBranchStatus(out), { dirty: 2, upstream: true, ahead: 5 });
   assert.deepEqual(parseBranchStatus('# branch.oid abc\n# branch.head main\n'), { dirty: 0, upstream: false, ahead: 0 });
 });
+
+test('integration: the SessionStart mode returns at once and the detached pull still lands', async () => {
+  const { a, b } = fixture();
+  fs.writeFileSync(path.join(a, 'from-a.txt'), 'bg\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '--quiet', '-m', 'from a');
+  git(a, 'push', '--quiet');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-bg-'));
+  const t0 = Date.now();
+  const notice = runHook(b, '--pull-background', { source: 'startup' }, '', { TMP: tmp, TEMP: tmp, TMPDIR: tmp });
+  assert.ok(Date.now() - t0 < 10_000, 'the hook returned without waiting on the network');
+  assert.match(notice, /^cc-config sync started in the background \(result: .+\)$/);
+  assert.doesNotMatch(notice, /\n/, 'one line');
+  const deadline = Date.now() + 60_000;
+  while (!fs.existsSync(path.join(b, 'from-a.txt')) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+  assert.equal(readText(path.join(b, 'from-a.txt')), 'bg\n', 'the detached pull fast-forwarded');
+});
+
+test('the SessionStart mode is silent off startup (resume, clear, compact)', () => {
+  const { b } = fixture();
+  assert.equal(runHook(b, '--pull-background', { source: 'resume' }), null);
+});
+
+test('the settings template wires SessionStart to the background mode with a short bound', () => {
+  const tmpl = JSON.parse(fs.readFileSync(path.join(REPO, 'claude_settings.template.json'), 'utf8'));
+  const hooks = tmpl.hooks.SessionStart.flatMap((g) => g.hooks).filter((h) => /sync-hook\.js --pull/.test(h.command));
+  assert.equal(hooks.length, 1);
+  assert.match(hooks[0].command, /--pull-background$/);
+  assert.ok(hooks[0].timeout <= 10, 'a session never waits long on the sync hook');
+});

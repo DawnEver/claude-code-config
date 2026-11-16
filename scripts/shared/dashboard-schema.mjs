@@ -51,7 +51,7 @@ function parseSession(s) {
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
     // What it waits for (the permission it asks, its question), only while it waits for the human.
     ...(['needs_approval', 'needs_input'].includes(s.status) && text(s.waiting, WAITING_MAX) ? { waiting: text(s.waiting, WAITING_MAX) } : {}),
-    // The shells and subagents it runs now (scripts/bridge/tasks.mjs).
+    // The shells and subagents it runs now (scripts/bridge/activity-board.mjs).
     ...(Array.isArray(s.tasks) && s.tasks.length ? { tasks: s.tasks.slice(0, MAX_TASKS).map(parseTask).filter(Boolean) } : {}),
     unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,
     // Posts to the Topic ever (a running count: a page keeps what it has seen) and when the last one came.
@@ -63,7 +63,7 @@ function parseSession(s) {
   };
 }
 
-/** One running task of a session (scripts/bridge/tasks.mjs TaskBoard.list): a kind, a one-line label, when it started. */
+/** One running task of a session (scripts/bridge/activity-board.mjs ActivityBoard.list): a kind, a one-line label, when it started. */
 function parseTask(t) {
   const id = text(t?.id, 128);
   if (!id || !TASK_KINDS.includes(t.kind) || !epoch(t.startedAt)) return null;

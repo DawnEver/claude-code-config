@@ -1,4 +1,4 @@
-// scripts/bridge/tasks.mjs — what a session is running besides its own turn: shells and subagents,
+// scripts/bridge/activity-board.mjs — what a session is running besides its own turn: shells and subagents,
 // each from its start to its end. One board per session, fed by either host adapter (Claude's
 // hooks, Codex's app-server items) and read by the dashboard push: what runs now and for how
 // long. A live view, not a history: only running tasks are listed. An ended one is remembered
@@ -22,7 +22,7 @@ export function taskLabel(kind, label) {
   return (kind === 'shell' ? line.replace(LEADING_CD, '').replace(HOME, '~') : line).slice(0, TASK_LABEL_MAX);
 }
 
-export class TaskBoard {
+export class ActivityBoard {
   constructor() {
     this.tasks = new Map();   // id -> {id, kind, label, background, status, startedAt, endedAt, until?}
   }

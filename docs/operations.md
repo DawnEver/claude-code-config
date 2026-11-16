@@ -10,7 +10,7 @@ plugin hooks remain a separate, bundled integration.
 
 | Event | Script | Purpose |
 |---|---|---|
-| `SessionStart` | `sync-hook.js --pull` | Fast-forwards this checkout onto its upstream. Startup only, silent when current, never fatal |
+| `SessionStart` | `sync-hook.js --pull-background` | Starts the fast-forward of this checkout detached and returns at once with a one-line notice (result in the temp dir's `cc-config-sync-hook.json`); startup only, never fatal |
 | `SessionStart` | `prune-cache-hook.js` | Reports stale cache candidates; automatic deletion is disabled |
 | `SessionStart` | `setup-check-hook.js` | Verifies/heals `~/.claude` links via `scripts/setup/check-links.js` |
 | `SessionStart` | `doctor.js --hook` | Reports failing invariants only (silent when healthy) |
