@@ -2,11 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import net from 'node:net';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { STEPS, stepsFor, runStep, runSteps, mergeOutputs, failureOf, startBackgroundLane, hookCommand } from './claude-hook.mjs';
+import { mirrorFor, callHub } from './bridge-hook.js';
+import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 import { checkHooks } from '../setup/doctor.js';
 import { hooksDrift } from '../setup/settings-hooks.mjs';
 
@@ -33,12 +36,38 @@ function nodeProcesses(settings, event, name = '') {
 const perToolCall = (settings, tool, failed = false) =>
   nodeProcesses(settings, 'PreToolUse', tool) + nodeProcesses(settings, failed ? 'PostToolUseFailure' : 'PostToolUse', tool);
 
-const OLD_TOOL_HOOKS = { hooks: {   // the wiring this change retired, kept as the planted control below
-  PreToolUse: [{ matcher: '*', hooks: [{ command: 'node ~/.claude/scripts/hooks/loop-guard-hook.js' }] },
-    { matcher: 'AskUserQuestion', hooks: [{ command: 'node ~/.claude/scripts/hooks/bridge-hook.js --question' }] },
-    { matcher: '*', hooks: [{ command: 'node ~/.claude/scripts/hooks/bridge-hook.js' }] }],
-  PostToolUse: [{ matcher: '*', hooks: [{ command: 'node ~/.claude/scripts/hooks/bridge-hook.js' }] }],
+const BRIDGE = 'node ~/.claude/scripts/hooks/bridge-hook.js';
+const GUARD = 'node ~/.claude/scripts/hooks/loop-guard-hook.js';
+// Two retired wirings, kept as planted controls: the original (three processes per tool call, a
+// faithful mirror) and the narrowed one (one process, but a mirror that lost foreground shells and
+// kept a terminal-approved prompt at waiting-approval).
+const ORIGINAL_TOOL_HOOKS = { hooks: {
+  PreToolUse: [{ matcher: '*', hooks: [{ command: GUARD }] }, { matcher: 'AskUserQuestion', hooks: [{ command: `${BRIDGE} --question` }] },
+    { matcher: '*', hooks: [{ command: BRIDGE }] }],
+  PostToolUse: [{ matcher: '*', hooks: [{ command: BRIDGE }] }],
+  PostToolUseFailure: [{ matcher: 'Bash|Agent|Task', hooks: [{ command: BRIDGE }] }],
 } };
+const NARROWED_TOOL_HOOKS = { hooks: {
+  PreToolUse: [{ matcher: '*', hooks: [{ command: GUARD }] }, { matcher: 'AskUserQuestion', hooks: [{ command: `${BRIDGE} --question` }] },
+    { matcher: 'Agent|Task|Monitor', hooks: [{ command: BRIDGE }] }],
+  PostToolUse: [{ matcher: 'AskUserQuestion|Agent|Task|TaskStop', hooks: [{ command: BRIDGE }] }],
+  PostToolUseFailure: [{ matcher: 'Agent|Task|Monitor', hooks: [{ command: BRIDGE }] }],
+  Notification: template.hooks.Notification,
+} };
+
+/**
+ * Whether `settings` makes the bridge's mirror call (not its question call) for one hook payload:
+ * a matching direct bridge-hook command, or a claude-hook entry whose steps include it.
+ */
+function bridgeMirrors(settings, payload) {
+  const event = payload.hook_event_name;
+  const name = event === 'Notification' ? payload.notification_type : payload.tool_name;
+  return (settings.hooks?.[event] ?? []).filter((g) => matches(g.matcher, name)).flatMap((g) => g.hooks).some((h) => {
+    if (/bridge-hook\.js$/.test(h.command)) return true;
+    const entry = /claude-hook\.mjs --event (\w+)$/.exec(h.command);
+    return Boolean(entry) && stepsFor(entry[1], 'foreground', payload).some((s) => s.script === 'hooks/bridge-hook.js' && !s.args?.includes('--question'));
+  });
+}
 
 test('SessionStart keeps its five scripts in order, each with the budget and lane its own entry had', () => {
   assert.deepEqual(STEPS.SessionStart.map((s) => [s.script, (s.args ?? []).join(' '), s.budgetMs, Boolean(s.background)]), [
@@ -54,43 +83,43 @@ test('every step script exists', () => {
   for (const s of Object.values(STEPS).flat()) assert.ok(fs.existsSync(path.join(SCRIPTS, s.script)), s.script);
 });
 
-test('the template runs SessionStart and Notification through ONE entry each, timed to cover its steps', () => {
-  for (const event of ['SessionStart', 'Notification']) {
+test('the template runs SessionStart, Notification and PreToolUse through ONE entry each, timed to cover its steps', () => {
+  const payloads = [{ notification_type: 'permission_prompt' }, { tool_name: 'AskUserQuestion' }, { tool_name: 'Bash' }];
+  for (const event of ['SessionStart', 'Notification', 'PreToolUse']) {
     const hooks = template.hooks[event].flatMap((g) => g.hooks);
     assert.equal(hooks.length, 1, `${event}: one entry`);
-    assert.equal(template.hooks[event].every((g) => !g.matcher), true, `${event}: the steps filter, not the entry`);
+    assert.equal(template.hooks[event].every((g) => !g.matcher || g.matcher === '*'), true, `${event}: the steps filter, not the entry`);
     assert.equal(hooks[0].command, hookCommand(event), `${event}: the template carries hookCommand verbatim`);
-    const foreground = stepsFor(event, 'foreground', { notification_type: 'permission_prompt' }).reduce((t, s) => t + s.budgetMs, 0);
+    const foreground = Math.max(...payloads.map((p) => stepsFor(event, 'foreground', p).reduce((t, s) => t + s.budgetMs, 0)));
     assert.ok(hooks[0].timeout * 1000 > foreground, `${event}: timeout ${hooks[0].timeout}s covers ${foreground} ms of steps`);
   }
   assert.equal(template.hooks.Notification[0].hooks[0].async, true, 'both Notification handlers were async');
   assert.notEqual(template.hooks.SessionStart[0].hooks[0].async, true, 'its systemMessage must reach the session');
+  assert.notEqual(template.hooks.PreToolUse[0].hooks[0].async, true, 'a deny and a question answer must reach the call');
 });
 
-test('the bridge is wired only for what the session mirror needs', () => {
-  const bridged = Object.entries(template.hooks).flatMap(([event, groups]) => groups
-    .filter((g) => g.hooks.some((h) => /bridge-hook\.js/.test(h.command)))
-    .map((g) => `${event}(${g.matcher ?? ''})${g.hooks.find((h) => /bridge-hook\.js/.test(h.command)).command.includes('--question') ? ' --question' : ''}`));
-  assert.deepEqual(bridged.sort(), [
-    'PostToolUse(AskUserQuestion|Agent|Task|TaskStop)',
-    'PostToolUseFailure(Agent|Task|Monitor)',
-    'PreToolUse(Agent|Task|Monitor)',
-    'PreToolUse(AskUserQuestion) --question',
-    'Stop()',
-    'StopFailure()',
-    'UserPromptSubmit()',
-  ]);
+test('the bridge mirrors every event it did before the consolidation', () => {
+  const direct = Object.entries(template.hooks).flatMap(([event, groups]) => groups
+    .filter((g) => g.hooks.some((h) => /bridge-hook\.js/.test(h.command))).map((g) => `${event}(${g.matcher ?? ''})`));
+  assert.deepEqual(direct.sort(), ['PostToolUse(*)', 'PostToolUseFailure(*)', 'Stop()', 'StopFailure()', 'UserPromptSubmit()']);
   assert.deepEqual(stepsFor('Notification', 'foreground', { notification_type: 'idle_prompt' }).map((s) => s.script),
     ['hooks/notify-hook.js', 'hooks/bridge-hook.js']);
+  const pre = (tool) => stepsFor('PreToolUse', 'foreground', { tool_name: tool }).map((s) => [s.script, ...(s.args ?? [])].join(' '));
+  assert.deepEqual(pre('Bash'), ['hooks/loop-guard-hook.js', 'hooks/bridge-hook.js']);
+  assert.deepEqual(pre('AskUserQuestion'), ['hooks/loop-guard-hook.js', 'hooks/bridge-hook.js --question'], 'its question call, not a second mirror');
+  for (const tool of ['Read', 'Edit', 'Bash', 'PowerShell', 'Agent', 'Monitor', 'TaskStop', 'AskUserQuestion', 'mcp__x__y']) {
+    for (const event of ['PostToolUse', 'PostToolUseFailure']) assert.equal(bridgeMirrors(template, { hook_event_name: event, tool_name: tool }), true, `${event}(${tool})`);
+    if (tool !== 'AskUserQuestion') assert.equal(bridgeMirrors(template, { hook_event_name: 'PreToolUse', tool_name: tool }), true, `PreToolUse(${tool})`);
+  }
 });
 
-test('node processes per tool call: one for an ordinary tool, the retired wiring paid three (planted control)', () => {
-  for (const tool of ['Read', 'Edit', 'Grep', 'Bash', 'PowerShell', 'Write']) {
-    assert.equal(perToolCall(template, tool), 1, tool);
-    assert.equal(perToolCall(OLD_TOOL_HOOKS, tool), 3, `${tool} under the retired wiring`);
+test('node processes per tool call: two (pre + post), down from three', () => {
+  for (const tool of ['Read', 'Edit', 'Grep', 'Bash', 'PowerShell', 'Write', 'Agent', 'Monitor', 'TaskStop', 'AskUserQuestion']) {
+    assert.equal(perToolCall(template, tool), 2, tool);
+    assert.equal(perToolCall(template, tool, true), 2, `${tool} failed`);
   }
-  assert.equal(perToolCall(template, 'Bash', true), 1, 'a failed shell');
-  assert.equal(perToolCall(template, 'Agent'), 3, 'an agent call is a task on the activity board');
+  for (const tool of ['Read', 'Edit', 'Bash']) assert.equal(perToolCall(ORIGINAL_TOOL_HOOKS, tool), 3, `${tool} under the original wiring`);
+  assert.equal(perToolCall(ORIGINAL_TOOL_HOOKS, 'AskUserQuestion'), 4);
   assert.equal(nodeProcesses(template, 'SessionStart'), 1);
   assert.equal(nodeProcesses(template, 'Notification'), 1);
 });
@@ -100,8 +129,58 @@ test('stepsFor: lanes split by background, a match filters on its payload field'
   assert.deepEqual(stepsFor('SessionStart', 'foreground').map((s) => s.script), ['hooks/sync-hook.js', 'hooks/setup-check-hook.js', 'setup/doctor.js']);
   assert.deepEqual(stepsFor('Notification', 'foreground', { notification_type: 'auth_success' }).map((s) => s.script), ['hooks/notify-hook.js']);
   assert.deepEqual(stepsFor('Notification', 'foreground', { notification_type: 'permission_prompt_x' }).map((s) => s.script), ['hooks/notify-hook.js'], 'anchored');
+  assert.equal(stepsFor('PreToolUse', 'foreground', { tool_name: 'AskUserQuestionX' }).at(-1).args, undefined, 'the exclusion is anchored too');
   assert.deepEqual(stepsFor('Nope', 'foreground'), []);
 });
+
+// ── the mirror: what the wired hooks tell the bridge's state machine ──
+
+/** A live hub with one registered channel session 's', and a send that delivers what `settings` mirrors. */
+async function hub(settings) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-hook-hub-'));
+  const a = new ClaudeAdapter();
+  const port = await a.listen(0);
+  const runtimeFile = path.join(dir, 'runtime.json');
+  fs.writeFileSync(runtimeFile, JSON.stringify({ port, token: a.token }));
+  const ch = await new Promise((r) => { const s = net.connect({ host: '127.0.0.1', port }); s.setEncoding('utf8'); s.once('connect', () => r(s)); });
+  await new Promise((r) => { ch.once('data', r); ch.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'register', params: { token: a.token, sessionId: 's' } }) + '\n'); });
+  const send = async (payload, at) => {
+    if (!bridgeMirrors(settings, payload)) return false;
+    await callHub('mirror', { ...mirrorFor({ session_id: 's', ...payload }), at }, { runtimeFile });
+    return true;
+  };
+  const close = async () => { ch.destroy(); await a.close(); fs.rmSync(dir, { recursive: true, force: true }); };
+  return { a, send, close, snap: () => a.statusSnapshot('s') };
+}
+
+test('mirror: a permission approved in the terminal leaves waiting-approval at its PostToolUse; the narrowed wiring stayed (planted control)', async () => {
+  for (const [settings, expected] of [[template, 'running'], [NARROWED_TOOL_HOOKS, 'waiting-approval']]) {
+    const h = await hub(settings);
+    try {
+      await h.send({ hook_event_name: 'UserPromptSubmit', prompt: 'edit it' }, 100);
+      assert.equal(await h.send({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Edit' }, 200), true);
+      assert.equal(h.snap().state, 'waiting-approval');
+      await h.send({ hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_use_id: 'u1', tool_input: {}, tool_response: {} }, 300);
+      assert.equal(h.snap().state, expected, settings === template ? 'the template' : 'the narrowed wiring');
+    } finally { await h.close(); }
+  }
+});
+
+test('mirror: a foreground Bash call reaches the board at its PreToolUse and leaves it at its PostToolUse', async () => {
+  const bash = { tool_name: 'Bash', tool_use_id: 'u1', tool_input: { command: 'npm test', description: 'Run the tests' } };
+  for (const [settings, expected] of [[template, [['u1', 'shell', 'Run the tests']]], [NARROWED_TOOL_HOOKS, undefined]]) {
+    const h = await hub(settings);
+    try {
+      await h.send({ hook_event_name: 'UserPromptSubmit', prompt: 'test it' }, 100);
+      await h.send({ hook_event_name: 'PreToolUse', ...bash }, 200);
+      assert.deepEqual(h.snap().tasks?.map((t) => [t.id, t.kind, t.label]), expected, settings === template ? 'the template' : 'the narrowed wiring');
+      await h.send({ hook_event_name: 'PostToolUse', ...bash, tool_response: { stdout: 'ok' } }, 300);
+      if (settings === template) assert.equal(h.snap().tasks, undefined, 'ended: the board lists only running tasks');
+    } finally { await h.close(); }
+  }
+});
+
+// ── the entry's steps ──
 
 /** A scripts dir holding `files` ({relative path: source}). */
 function fixtureDir(files) {
@@ -134,8 +213,9 @@ test('runSteps: a throw, an exit code and an overrun each end only their step; t
   const steps = ['a.mjs', 'throws.mjs', 'exits.mjs', 'spins.mjs', 'z.mjs'].map((script) => ({ script, budgetMs: script === 'spins.mjs' ? 500 : 5000 }));
   const t0 = Date.now();
   try {
-    const out = await runSteps(steps, '{}', 'SessionStart', { run: (s, raw) => runStep(s, raw, { scriptsDir: dir }) });
+    const { output: out, blocked } = await runSteps(steps, '{}', 'SessionStart', { run: (s, raw) => runStep(s, raw, { scriptsDir: dir }) });
     assert.ok(Date.now() - t0 < 4000, 'no step waits on its budget but the spinning one, terminated at 0.5 s');
+    assert.equal(blocked, null);
     assert.deepEqual(out.ccConfigSync, { pulled: 1 });
     assert.deepEqual(out.hookSpecificOutput, { hookEventName: 'SessionStart', additionalContext: 'ctx' });
     const lines = out.systemMessage.split('\n');
@@ -146,14 +226,65 @@ test('runSteps: a throw, an exit code and an overrun each end only their step; t
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('runSteps: a deny is the entry\'s and ends the run; an exit 2 is the entry\'s block', async () => {
+  const log = path.join(os.tmpdir(), `claude-hook-after-${process.pid}.txt`);
+  const dir = fixtureDir({
+    'warns.mjs': `process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: 'careful' } }));`,
+    'denies.mjs': `process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'looping' } })); process.exit(0);`,
+    'blocks.mjs': `process.stderr.write('blocked: reason\\n'); process.exit(2);`,
+    'after.mjs': `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(log)}, 'ran');`,
+    'allows.mjs': `process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { answers: { q: 'a' } } } }));`,
+  });
+  const run = (s, raw) => runStep(s, raw, { scriptsDir: dir });
+  const steps = (...names) => names.map((script) => ({ script, budgetMs: 5000 }));
+  try {
+    const denied = await runSteps(steps('warns.mjs', 'denies.mjs', 'after.mjs'), '{}', 'PreToolUse', { run });
+    assert.deepEqual(denied, { blocked: null, output: { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: 'careful', permissionDecision: 'deny', permissionDecisionReason: 'looping' } } });
+    assert.equal(fs.existsSync(log), false, 'nothing runs for a denied call');
+    assert.deepEqual(await runSteps(steps('blocks.mjs', 'after.mjs'), '{}', 'PreToolUse', { run }), { output: {}, blocked: 'blocked: reason\n' });
+    assert.equal(fs.existsSync(log), false);
+    const allowed = await runSteps(steps('allows.mjs', 'after.mjs'), '{}', 'PreToolUse', { run });
+    assert.deepEqual(allowed.output.hookSpecificOutput, { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { answers: { q: 'a' } } }, 'a question answer reaches the call');
+    assert.equal(fs.readFileSync(log, 'utf8'), 'ran', 'planted control: an allowed call runs the rest');
+    fs.rmSync(log);
+    const beside = await runSteps([...steps('denies.mjs'), { script: 'after.mjs', budgetMs: 5000, concurrent: true }], '{}', 'PreToolUse', { run });
+    assert.equal(beside.output.hookSpecificOutput.permissionDecision, 'deny');
+    assert.equal(fs.readFileSync(log, 'utf8'), 'ran', 'a concurrent step started beside the denying one, as its own async entry did');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(log, { force: true }); }
+});
+
+test('the real loop guard denies through the shared entry; the bridge activity runs beside it, as before', async () => {
+  const env = { HARNESS_LOOP_GUARD_WARN_AT: '2', HARNESS_LOOP_GUARD_DENY_AT: '3', HARNESS_LOOP_GUARD_DISABLE: '0', HARNESS_AGENT: '', CODEX_THREAD_ID: '', CODEX_SESSION_ID: '' };
+  const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, env);
+  const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: `claude-hook-test-${process.pid}-${Date.now()}`, tool_name: 'Bash', tool_input: { command: 'echo same' } });
+  const steps = stepsFor('PreToolUse', 'foreground', JSON.parse(raw));
+  const ran = [];
+  // The bridge step is stubbed: a live daemon on this machine must not receive a test session.
+  const run = (s, r) => { ran.push(s.script); return s.script === 'hooks/bridge-hook.js' ? Promise.resolve({ out: '', err: '', code: 0, timedOut: false, error: null }) : runStep(s, r); };
+  try {
+    const decisions = [];
+    for (let i = 0; i < 3; i++) {
+      ran.length = 0;
+      const { output } = await runSteps(steps, raw, 'PreToolUse', { run });
+      decisions.push(output.hookSpecificOutput?.permissionDecision ?? (output.hookSpecificOutput?.additionalContext ? 'warn' : 'ok'));
+    }
+    assert.deepEqual(decisions, ['ok', 'warn', 'deny']);
+    assert.deepEqual(ran.sort(), ['hooks/bridge-hook.js', 'hooks/loop-guard-hook.js']);
+  } finally { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+});
+
 test('a missing step script is a named failure, not a silent no-op', async () => {
   const r = await runStep({ script: 'hooks/absent.mjs', budgetMs: 5000 }, '{}', { scriptsDir: os.tmpdir() });
   assert.match(failureOf({ script: 'hooks/absent.mjs', budgetMs: 5000 }, r), /^hooks\/absent\.mjs (failed|exited)/);
 });
 
-test('mergeOutputs: silent steps add nothing; plain text is shown, never injected as context', () => {
+test('mergeOutputs: silent steps add nothing; plain text is shown, never injected as context; the strictest decision wins', () => {
   assert.deepEqual(mergeOutputs([{ step: { script: 'a' }, out: '' }, { step: { script: 'b' }, out: '  ' }], 'SessionStart'), {});
   assert.deepEqual(mergeOutputs([{ step: { script: 'x.js' }, out: 'hello' }], 'SessionStart'), { systemMessage: '[x.js] hello' });
+  const decide = (d, r) => ({ step: { script: d }, out: JSON.stringify({ hookSpecificOutput: { permissionDecision: d, permissionDecisionReason: r } }) });
+  assert.deepEqual(mergeOutputs([decide('allow', 'a'), decide('ask', 'b'), decide('allow', 'c')], 'PreToolUse').hookSpecificOutput,
+    { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'b' });
 });
 
 test('startBackgroundLane: one detached copy of the entry, the payload on its stdin', () => {
@@ -221,6 +352,7 @@ test('bootstrap: with the entry present no pull runs, and the entry gets the pay
   try {
     assert.deepEqual(runCommand('SessionStart', h), { status: 0, out: '', log: ['entry --event SessionStart {"source":"startup"}'] });
     assert.equal(runCommand('Notification', h).log.at(-1), 'entry --event Notification {"source":"startup"}');
+    assert.equal(runCommand('PreToolUse', h).log.at(-1), 'entry --event PreToolUse {"source":"startup"}');
   } finally { rm(h); }
 });
 
@@ -243,23 +375,26 @@ test('bootstrap: still absent after the pull, SessionStart exits 0 naming the ca
   } finally { rm(notCarried, notFastForwarded); }
 });
 
-test('bootstrap: Notification without the entry is silent and pulls nothing', () => {
+test('bootstrap: Notification and PreToolUse without the entry exit 0 silently and pull nothing: a tool call is never blocked', () => {
   const h = home();
-  try { assert.deepEqual(runCommand('Notification', h), { status: 0, out: '', log: [] }); } finally { rm(h); }
+  try {
+    assert.deepEqual(runCommand('Notification', h), { status: 0, out: '', log: [] });
+    assert.deepEqual(runCommand('PreToolUse', h), { status: 0, out: '', log: [] });
+  } finally { rm(h); }
 });
 
 test('doctor reads the entry out of the bootstrap command; the drift check holds on it', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-hook-doc-'));
-  const settings = { hooks: { SessionStart: template.hooks.SessionStart, Notification: template.hooks.Notification } };
+  const events = ['SessionStart', 'Notification', 'PreToolUse'];
+  const settings = { hooks: Object.fromEntries(events.map((e) => [e, template.hooks[e]])) };
   try {
     const missing = checkHooks(settings, dir);
-    assert.deepEqual(missing.map((f) => f.id), ['hook-missing', 'hook-missing'], 'planted: no entry in this home');
+    assert.deepEqual(missing.map((f) => f.id), events.map(() => 'hook-missing'), 'planted: no entry in this home');
     assert.match(missing[0].title, /claude-hook\.mjs/);
     fs.mkdirSync(path.join(dir, '.claude', 'scripts', 'hooks'), { recursive: true });
     fs.copyFileSync(path.join(SCRIPTS, 'hooks', 'claude-hook.mjs'), path.join(dir, '.claude', 'scripts', 'hooks', 'claude-hook.mjs'));
     assert.deepEqual(checkHooks(settings, dir), []);
     assert.deepEqual(hooksDrift(structuredClone(template), template), []);
-    const plain = { type: 'command', command: 'node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart' };
-    assert.deepEqual(hooksDrift({ hooks: { ...template.hooks, SessionStart: [{ hooks: [plain] }] } }, template), ['SessionStart']);
+    assert.deepEqual(hooksDrift({ hooks: { ...template.hooks, ...NARROWED_TOOL_HOOKS.hooks } }, template), ['PostToolUse', 'PostToolUseFailure', 'PreToolUse']);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

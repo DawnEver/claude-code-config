@@ -192,9 +192,10 @@ token in `runtime.json`):
   event. Its socket closing is `down` — the only end signal: one channel is one `claude`
   process, and the socket closes exactly when that process exits.
 - **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit`, `Stop`, `StopFailure`,
-  `Notification` through `claude-hook.mjs`, and the tool events only for `AskUserQuestion`,
-  `Agent`/`Task`, `Monitor` and `TaskStop` — never `*`, so an ordinary tool call starts no
-  bridge process) mirrors every prompt and the
+  `Notification` and `PreToolUse` as steps of the `claude-hook.mjs` entry, and `PostToolUse` /
+  `PostToolUseFailure` for every tool — the mirror misses no edge: a foreground shell reaches the
+  board at its PreToolUse, and a prompt approved in the terminal leaves Needs approval at its
+  PostToolUse) mirrors every prompt and the
   turn's final assistant text with a one-shot `mirror` call, so output does not depend on
   the model calling `reply`; the other events are cheap state edges (`activity`,
   see Session status), and `PreToolUse(AskUserQuestion)` is a `question` call (see Questions).
