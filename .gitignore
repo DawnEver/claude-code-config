@@ -54,6 +54,7 @@ output/
 **/.claude/**/__pycache__/
 **/.claude/**/*.py[cod]
 **/.claude/automode.json
+**/.claude/tasks/.bindings/
 
 # --- claude-code-config delta, 23 of 23 allowed ---
 node_modules/

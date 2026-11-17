@@ -33,7 +33,7 @@ import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
 import { hooksDrift } from './settings-hooks.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import { readBridgeConfig, bridgeSourceRevision } from '../bridge/context.mjs';
-import { RUNTIME_FILE } from '../bridge/runtime-paths.mjs';
+import { RUNTIME_FILE, BRIDGE_RUNTIME_DIR, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
   CLAUDE_LINKS, getCodexLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
@@ -563,6 +563,32 @@ export function checkBridgeRevision({ runtimeFile = RUNTIME_FILE, repoRoot = sou
   }
 }
 
+// The Telegram mirror loses nothing (standing user ruling): bridge-hook.js's spool releases an
+// entry only on the daemon's ack and HOLDS one the daemon refused (or a torn line). A held entry
+// never reached Telegram, so it is a FAIL, surfaced at SessionStart; a backlog the sender has not
+// delivered for a while is a WARN. Counts lines only: the delivery mechanism stays bridge-hook's.
+const SPOOL_STALL_MS = 15 * 60000;
+
+/** Held and long-pending mirror calls in the bridge spool of `dir`. */
+export function checkBridgeSpool({ dir = BRIDGE_RUNTIME_DIR, now = Date.now() } = {}) {
+  const lines = (name) => { try { return fs.readFileSync(path.join(dir, SPOOL_NAMES[name]), 'utf8').split('\n').filter((l) => l.trim()); } catch { return []; } };
+  const out = [];
+  const held = lines('held');
+  if (held.length) {
+    out.push(finding('FAIL', 'bridge-spool-held', `${held.length} mirror call${held.length === 1 ? '' : 's'} the bridge refused are kept in ${path.join(dir, SPOOL_NAMES.held)}; they never reached Telegram`,
+      `the daemon answered them with a definite refusal; read them there, and once the daemon accepts their shape move each line back into ${SPOOL_NAMES.spool} for the sender to deliver (docs/bridge.md § The spool)`));
+  }
+  let acked = 0;
+  try { acked = Number.parseInt(fs.readFileSync(path.join(dir, SPOOL_NAMES.cursor), 'utf8'), 10) || 0; } catch { /* none */ }
+  const pending = [...lines('inflight').slice(acked), ...lines('spool')];
+  const oldest = pending.map((l) => { try { return JSON.parse(l).at; } catch { return NaN; } }).find(Number.isFinite);
+  if (pending.length && now - oldest > SPOOL_STALL_MS) {
+    out.push(finding('WARN', 'bridge-spool-pending', `${pending.length} mirror call${pending.length === 1 ? '' : 's'} wait for the bridge, the oldest ${Math.round((now - oldest) / 60000)} min`,
+      'any hook starts the detached sender, which delivers them in order once the daemon answers; check that the bridge daemon is running (docs/bridge.md § The spool)'));
+  }
+  return out;
+}
+
 // ── runner ──
 
 // A config dir that lost its session-bridge registration (the CLI recreated .claude.json)
@@ -698,6 +724,7 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...content,
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
     ...checkBridgeRevision({ runtimeFile: path.join(home, '.claude', 'bridge', 'runtime.json'), repoRoot }),
+    ...checkBridgeSpool({ dir: path.join(home, '.claude', 'bridge') }),
     ...checkBridgeHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
       localPath: path.join(home, '.claude', 'claude_env_settings.local.json') }),
     ...checkDashboardHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),

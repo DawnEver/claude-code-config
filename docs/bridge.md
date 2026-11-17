@@ -246,18 +246,37 @@ token in `runtime.json`):
 - What a Notification waits for ("Claude needs your permission to use Bash") is posted with
   a nudge, unless a channel permission request already posted it with buttons. An
   AskUserQuestion answered in the terminal is posted as `answered locally: Q -> A`.
-- A prompt, final, answer, notice or task fact the daemon did not take (down, restarting,
-  hung past the 1 s call) is appended to `~/.claude/bridge/spool.jsonl` and the hook returns;
-  a detached sender (`bridge-hook.js --send-spool`, one at a time by `spool.lease`) moves the
-  spool into `spool.inflight.jsonl` and delivers it oldest first, retrying (backoff up to
-  5 s) until the daemon is back, for up to 10 minutes; what it could not deliver waits for
-  the next hook's sender. While a spool is pending, a hook appends to it instead of
-  calling, so the daemon sees every call in order (a Stop's queued Telegram messages then
-  wait for the next Stop). A half-written line is skipped. Entries older than a day, and
-  beyond the newest 1000, are dropped. A replay never hands out queued Telegram messages —
-  only the session's live Stop hook delivers those. Answers are mirrored like prompts:
-  anything typed into the session reaches its Topic.
+- A prompt, final, answer, notice or task fact the daemon did not take is spooled; see
+  [The spool](#the-spool). Answers are mirrored like prompts: anything typed into the
+  session reaches its Topic.
 - No `/interrupt` (use Esc locally).
+
+#### The spool
+
+The mirror loses nothing (a standing user ruling), and every hook finishes under 5 s, so a
+call the daemon did not take (down, restarting, hung past the hook's one 1 s call) is kept
+on disk and delivered later, never waited for and never dropped:
+
+- The hook appends it to `~/.claude/bridge/spool.jsonl` and returns. While a spool is
+  pending, a hook appends instead of calling, so the daemon sees every call in order.
+- Every run of `bridge-hook.js` (any event, the question step and a rename's `--learn` too)
+  that finds the spool pending and no live sender starts the one detached sender
+  (`--send-spool`, one at a time by `spool.lease`). Delivery never waits for a Stop.
+- The sender moves the spool into `spool.inflight.jsonl` (picking up a claim a dead sender
+  left) and delivers it oldest first, retrying with backoff up to 5 s for up to 10 minutes;
+  then the next hook's sender carries on.
+- **Delivery is the only way an entry leaves.** There is no age or count eviction: an entry
+  leaves only once the daemon acks it (`ok: true`); `spool.inflight.cursor` counts the acked
+  prefix, which is compacted away every 200 acks and when the file is done. The cursor is
+  reset before that rewrite, so a crash re-sends acked entries (the adapter drops a final it
+  already sent) and never skips an unacked one.
+- An entry the daemon refuses for good (invalid params, unknown method) and a torn line go to
+  `spool.held.jsonl`: kept, never dropped. `npm run doctor` FAILs with their count
+  (`bridge-spool-held`) and WARNs on a backlog older than 15 minutes (`bridge-spool-pending`).
+  Move a held line back into `spool.jsonl` to retry it.
+- A replay never hands out queued Telegram messages; only the session's live Stop hook
+  delivers those. While a spool is pending, a Stop spools its final, so those messages reach
+  the session at its first Stop after the spool drained.
 
 Nothing to do by hand once this machine has a `bridge.botToken`: the user-scope MCP server
 `session-bridge` (`node <repo>/claude_plugins/session-bridge/server.mjs`; the absolute path
