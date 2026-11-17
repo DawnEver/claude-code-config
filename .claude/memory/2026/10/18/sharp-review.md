@@ -9,7 +9,7 @@ metadata:
 
 
 
-## Review 2026-10-18 (session) — architecture survey (架构锐评) + diff review
+## Review 2026-10-18 (session) — architecture survey (architecture sharp review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -154,7 +154,7 @@ No import cycles found in bridge, gateway or shared.
 
 ## Review 2026-10-18 (follow-up)
 
-## Review 2026-10-18 (session) — diff review + docs review (文档锐评)
+## Review 2026-10-18 (session) — diff review + docs review (docs sharp review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -454,7 +454,7 @@ No import cycles found in bridge, gateway or shared.
 
 ## Review 2026-10-18 (follow-up)
 
-## Review 2026-10-18 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-18 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped
@@ -534,7 +534,7 @@ standing only contains exhausted/short alerts.
 
 ## Review 2026-10-18 (follow-up)
 
-## Review 2026-10-18 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-10-18 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): OK

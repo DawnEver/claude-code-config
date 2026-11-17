@@ -17,7 +17,7 @@ metadata:
 
 ## Review 2026-10-02 (follow-up)
 
-## Review 2026-10-02 (session) — security audit (安全锐评) + adversarial review (对抗性审查)
+## Review 2026-10-02 (session) — security audit (security sharp review) + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped

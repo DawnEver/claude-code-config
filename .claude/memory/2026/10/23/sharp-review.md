@@ -6,7 +6,7 @@ metadata:
 ---
 
 
-## Review 2026-10-23 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-23 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer diff (openai): unavailable
@@ -18,7 +18,7 @@ metadata:
 
 ## Review 2026-10-23 (follow-up)
 
-## Review 2026-10-23 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-23 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer diff (codex): ok

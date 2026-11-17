@@ -6,7 +6,7 @@ metadata:
 ---
 
 
-## Review 2026-08-29 (session) — architecture survey (架构锐评) + diff review
+## Review 2026-08-29 (session) — architecture survey (architecture sharp review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -185,7 +185,7 @@ The listed tests cover resolveSyncDir's precedence table thoroughly — the obvi
 
 ## Review 2026-08-29 (follow-up)
 
-## Review 2026-08-29 (session) — diff review + architecture survey (架构锐评)
+## Review 2026-08-29 (session) — diff review + architecture survey (architecture sharp review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK

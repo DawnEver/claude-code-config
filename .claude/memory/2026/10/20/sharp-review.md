@@ -8,7 +8,7 @@ metadata:
 
 ## Review 2026-10-20 (follow-up)
 
-## Review 2026-10-20 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-20 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK

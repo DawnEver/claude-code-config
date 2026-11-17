@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-## Review 2026-09-27 (session) — dependency review (依赖锐评) + architecture survey (架构锐评)
+## Review 2026-09-27 (session) — dependency review (dependency sharp review) + architecture survey (architecture sharp review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK

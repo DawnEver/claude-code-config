@@ -6,7 +6,7 @@ metadata:
 ---
 
 
-## Review 2026-10-07 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-10-07 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -63,7 +63,7 @@ Works only because calls happen after module init.
 
 ## Review 2026-10-07 (follow-up)
 
-## Review 2026-10-07 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-10-07 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped

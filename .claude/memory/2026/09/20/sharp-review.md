@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-## Review 2026-09-20 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-09-20 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped

@@ -8,7 +8,7 @@ metadata:
 
 
 
-## Review 2026-10-03 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-10-03 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -53,7 +53,7 @@ Failures after the first are warned only once (warnOnce), and old titles go into
 
 ## Review 2026-10-03 (follow-up)
 
-## Review 2026-10-03 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-10-03 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -239,7 +239,7 @@ Untested branch.
 
 ## Review 2026-10-03 (follow-up)
 
-## Review 2026-10-03 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-03 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -405,7 +405,7 @@ Only pure render logic is covered.
 
 ## Review 2026-10-03 (follow-up)
 
-## Review 2026-10-03 (session) — security audit (安全锐评) + diff review
+## Review 2026-10-03 (session) — security audit (security sharp review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): FAILED

@@ -15,7 +15,7 @@ metadata:
 
 ## Review 2026-06-27 (follow-up)
 
-## Review 2026-06-27 (session) — architecture survey (架构锐评)
+## Review 2026-06-27 (session) — architecture survey (architecture sharp review)
 
 ### Reviewer Status
 - Reviewer general (undefined): OK

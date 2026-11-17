@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-## Review 2026-10-22 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-22 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer diff (openrouter): unsupported
