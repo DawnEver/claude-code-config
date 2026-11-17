@@ -397,3 +397,5 @@ The repo's own guidance flags >300 lines for scrutiny; setup.js is 600 and this 
 - **Suggestion:** Fall back to `resolveSyncDir({repoRoot})` (or the repo path) when the link is absent, or emit a one-line 'run npm run setup first' message instead of whatever readMergedEnvSettings does with ENOENT.
 
 Switching to `join(homedir(), '.claude', 'claude_env_settings.json')` is the right call — it is what SR-20260829-027 asked for and it keeps resolveSyncDir out of the hot path. The cost, unmentioned in the comment: the old repo-relative path worked on a fresh clone before setup had ever run, and the new one does not. Combined with `linkEntry`'s silent `skip: source not found` when the payload has not synced yet, a user can end up with no link and a launcher that fails on a missing file with no hint that setup is the fix. Related doc drift: `scripts/shared/config.mjs` line 3 still asserts "claude_env_settings.json rides the OneDrive-synced repo, so every machine sees the same file", which this commit made false.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

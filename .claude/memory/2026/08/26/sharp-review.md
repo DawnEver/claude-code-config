@@ -46,3 +46,5 @@ The whole injection block — including `generateModelsJson`/`injectModelsJson`,
 - **Suggestion:** Guard the normalization on `endIdx !== -1`, and treat the no-marker/append case as 'suffix is empty' explicitly.
 
 In `injectModelProviders`, the normalization check `existing.slice(endIdx + CODEX_TOML_END_MARKER.length) === ''` runs even in the no-marker branch, where `endIdx` is `-1`. The slice then starts at an arbitrary offset near the top of the file rather than at end-of-content, so the comparison is meaningless and the wrong normalization branch is taken on first injection. Harmless today (both branches yield a parseable TOML) but it defeats the stated purpose — making the second-run `no-change` comparison apples-to-apples.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

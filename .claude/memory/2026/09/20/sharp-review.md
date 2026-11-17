@@ -119,3 +119,5 @@ formatReminder unconditionally appends '— push: git -C "${REPO}" push', so for
   binary names for plugins that are now never spawned, so that SessionStart entry is
   dead weight; removing it is pending an explicit decision and is tracked as a todo
   rather than as a review finding.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

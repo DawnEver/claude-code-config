@@ -414,3 +414,5 @@ Only pure render logic is covered.
 - Warning: only 1/2 reviewers succeeded
 
 ### Confirmed findings
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

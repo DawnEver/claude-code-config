@@ -50,3 +50,5 @@ activity feed (GitHub/Gitea notifications) — two sources for one fact. Removed
 thing the forge cannot do: a push reported into the single local session Topic on that branch
 (narrowed by the pushing agent's host via provenance, else dropped), whoever pushed, plus that
 tip's `lab/gate`/`lab/heavy` verdicts. See `docs/coordination.md`.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

@@ -50,3 +50,5 @@ Only w.renewed is checked; stale reading with past resetsAt or null resetsAt ren
 - **Suggestion:** Add view tests for verdictText(q, now, false) and the default; consider an options object.
 
 No test pins either form; the Telegram alert caller relies on the default.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

@@ -159,3 +159,5 @@ Set in #question only when !(p.wait && s.remoteTurn) (line 219), reset in regist
 - **Suggestion:** Alert only for waiting-approval.
 
 #mirror (claude-adapter.mjs:247) hardcodes alert:true.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

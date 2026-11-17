@@ -19,3 +19,5 @@ heavy children (femm) that had to be killed by hand.
 
 **How to apply:** name the exact test paths in every subagent prompt and forbid full runs;
 if a broad run is already going, stop it rather than wait on it.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

@@ -9,3 +9,5 @@ In cc v2.1.170, Claude models under the hybrid provider (mixing DeepSeek Fable/H
 
 **Why:** Claude models do not support auto mode in hybrid mode, which limits practical use.
 **How to apply:** Do not add a hybrid provider again. To mix models from different providers, use the takeover feature to switch within a conversation.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

@@ -37,3 +37,5 @@ metadata:
 - **Suggestion:** Check the mode independently of content (fs.statSync), chmod only when the exec bits are missing, and report an actionable error on EPERM instead of reporting success
 
 Reproduced: install wrappers, chmod ccc 0644, rerun install -> stays non-executable. Before this change, rerunning setup repaired it.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

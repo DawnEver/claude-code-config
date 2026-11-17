@@ -68,3 +68,5 @@ Silent no-op is a known incident class in this repo.
 - **Suggestion:** Add positive-routing and per-host cases; set chat.is_forum in fixture
 
 Suite stays green despite the DM regression.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

@@ -139,3 +139,5 @@ metadata:
 - **Status:** FIXED
 - **Confidence:** single-reviewer
 - **Suggestion:** Add a 30-second timeout to the readline question, defaulting to 'overwrite'.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

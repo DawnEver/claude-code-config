@@ -68,3 +68,5 @@ The generator writes mcp.json only when the source exists but never reconciles a
 - **Suggestion:** Detect that HEAD is already covered by current marketplace version tags or include the latest release commit in the baseline, with a double-run integration test.
 
 Because the baseline is the upstream merge-base, rerunning after a local release but before push sees the same plugin changes and can create another patch bump and tag.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

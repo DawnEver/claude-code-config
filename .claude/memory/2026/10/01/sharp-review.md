@@ -256,3 +256,5 @@ Two sessions resolving to the same fallback id is the real failure mode post-cha
 - **Suggestion:** Keep log machine-local; never mirror to Telegram or sync payload
 
 cwd contains username.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

@@ -609,3 +609,5 @@ A seat called me/pro/codex rewrites ordinary words in events, garbling text and 
 - **Suggestion:** Move to public/demo.mjs, one combined alternation regex per poll, and test against the dashboard-schema field list.
 
 Hard to audit for leaks; pairs rebuilt, sorted and a RegExp compiled per string per 8s poll with ever-growing maps.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"
