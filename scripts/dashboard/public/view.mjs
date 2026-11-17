@@ -212,8 +212,8 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const CAL = {
   en: { weekday: (d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()], day: (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`,
     ampm: (hm, am) => `${hm} ${am ? 'AM' : 'PM'}` },
-  zh: { weekday: (d) => `周${'日一二三四五六'[d.getDay()]}`, day: (d) => `${d.getMonth() + 1}月${d.getDate()}日`,
-    ampm: (hm, am) => `${am ? '上午' : '下午'} ${hm}` },
+  zh: { weekday: (d) => `\u5468${'\u65e5\u4e00\u4e8c\u4e09\u56db\u4e94\u516d'[d.getDay()]}`, day: (d) => `${d.getMonth() + 1}\u6708${d.getDate()}\u65e5`,
+    ampm: (hm, am) => `${am ? '\u4e0a\u5348' : '\u4e0b\u5348'} ${hm}` },
 };
 
 export function ago(iso, now = Date.now(), lang = 'en') {
