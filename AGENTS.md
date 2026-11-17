@@ -22,8 +22,10 @@ rendered (`python -m dev_lab.dev.ciworkflows render`) and `.gitignore`/`.gitattr
 - `npm run doctor` - Read-only invariant check. Every check maps to an incident that
   actually happened here (a hook wired but silently dead, payload/template shape drift,
   absolute machine paths in shared files, orphaned plugin installs, NUL bytes making a
-  file binary to git). Exits 1 on failure; also runs at SessionStart via `--hook`,
-  which reports failures only and is silent when healthy, and reuses the whole-tree
+  file binary to git). Exits 1 on failure; at SessionStart `--hook` reports the FAILs of the last
+  run (`~/.claude/doctor-last.json`) and starts the next one detached (`--hook-refresh`), since every
+  hook finishes under 5 s (D24) and a cold run takes ~10 s; it
+  is silent when healthy, and the run reuses the whole-tree
   content scans (`~/.claude/doctor-cache.json`) while the work tree's fingerprint is unchanged. Add a check here whenever a
   new silent-divergence incident is found — that is the point of the file.
 - Public repo: doctor's `public-hygiene` check FAILs on personal data in any tracked file
@@ -69,7 +71,7 @@ Telegram + remote control on the same live session, per-machine bridge in
 - `scripts/shared/`: cross-host config helpers — `config.mjs` (`readMergedEnvSettings`, two-layer shared+local merge), `provider-keys.js` (single source of truth for the `ANTHROPIC_*` env-var strip list), `sync-dir.mjs` (resolves the payload dir: `$CLAUDE_SYNC_DIR` → `~/.claude/sync-dir` → repo root, and defines `SYNC_PAYLOAD_FILES`), `is-main.mjs` (the entry-point guard every script that is also a module must use — see Standard), `seats.mjs` (Claude seats: the only alias -> `~/.claude-<alias>` mapping), `dashboard-schema.mjs` (the dashboard wire format shared by the bridge push and the Worker), `claude-defaults.mjs` (UI prefs that live in each config dir's `.claude.json` and so cannot sync — e.g. `diffSidebarOpen: false`; re-applied by `cc.js` per launch and by setup)
 - `scripts/hooks/`: `claude-hook.mjs` (ONE entry for an event several scripts serve —
   `--event SessionStart|Notification|PreToolUse`: its `STEPS` table runs each script in a worker
-  thread of one node process, in order, each isolated and within the budget its own entry had; a
+  thread of one node process, in order, each isolated and within its budget (an event fits 5 s, D24); a
   deny or an exit-2 block is the entry's; `async` steps run beside the others (`concurrent`) or in
   one detached background lane), `loop-guard-hook.js` (PreToolUse anti-spin guard — see Workflows),
   `sync-hook.js` (`--pull-background` on SessionStart, `--remind` on SessionEnd — see Workflows),

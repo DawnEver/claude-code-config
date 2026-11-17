@@ -20,7 +20,7 @@
 // A `background` step was an `async` hook: it must not hold the session. The entry hands all of
 // an event's background steps, in order, to ONE detached copy of itself (`--lane background`)
 // before it runs the foreground ones, so they start as early as they used to.
-// The settings timeout of an entry covers the sum of its foreground budgets (a test checks it).
+// The settings timeout of an entry (at most 5 s) covers wallBudgetMs of its foreground steps (a test checks it).
 
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -36,29 +36,39 @@ const SCRIPTS = fileURLToPath(new URL('../', import.meta.url));
  * matcher did. A step that ran `async` is `background` (the detached lane: nothing may wait on
  * it) or `concurrent` (this process, started beside the ordered steps the call waits on anyway).
  */
+// Every hook < 5 s, for the whole EVENT (user ruling D24, 2026-11-17): an event's foreground
+// steps fit wallBudgetMs <= 4500 (a test checks), and each one is fast or hands its slow part
+// to a detached process (sync-hook's pull, doctor's checks, bridge-hook's spool sender).
 export const STEPS = {
   SessionStart: [
-    { script: 'hooks/sync-hook.js', args: ['--pull-background'], budgetMs: 10000 },
+    { script: 'hooks/sync-hook.js', args: ['--pull-background'], budgetMs: 1000 },
     { script: 'hooks/prune-cache-hook.js', budgetMs: 10000, background: true },
-    { script: 'hooks/setup-check-hook.js', budgetMs: 5000 },
-    { script: 'setup/doctor.js', args: ['--hook'], budgetMs: 10000 },
+    { script: 'hooks/setup-check-hook.js', budgetMs: 2000 },
+    { script: 'setup/doctor.js', args: ['--hook'], budgetMs: 1500 },
     { script: 'bridge/ensure.mjs', budgetMs: 10000, background: true },
+    // /clear and /resume rename the session: record its claude process once, beside the rest.
+    { script: 'hooks/bridge-hook.js', args: ['--learn'], budgetMs: 3500, concurrent: true, match: { field: 'source', pattern: 'clear|resume' } },
   ],
   Notification: [
-    { script: 'hooks/notify-hook.js', budgetMs: 60000 },
-    { script: 'hooks/bridge-hook.js', budgetMs: 10000,
+    { script: 'hooks/notify-hook.js', budgetMs: 3000 },
+    { script: 'hooks/bridge-hook.js', budgetMs: 1500,
       match: { field: 'notification_type', pattern: 'permission_prompt|idle_prompt|elicitation_dialog' } },
   ],
   // Every tool call. The bridge's activity edge and task (a foreground shell on the board) runs
   // beside the guard, as its own async entry did, so the call waits on neither twice. The question
-  // call of AskUserQuestion, which blocks for an answer from Telegram, runs after the guard:
-  // a denied question never waits for its answer.
+  // call of AskUserQuestion runs after the guard: a denied question is never posted.
   PreToolUse: [
-    { script: 'hooks/loop-guard-hook.js', budgetMs: 5000 },
-    { script: 'hooks/bridge-hook.js', args: ['--question'], budgetMs: 660000, match: { field: 'tool_name', pattern: 'AskUserQuestion' } },
-    { script: 'hooks/bridge-hook.js', budgetMs: 10000, concurrent: true, match: { field: 'tool_name', pattern: '(?!AskUserQuestion$).*' } },
+    { script: 'hooks/loop-guard-hook.js', budgetMs: 1500 },
+    { script: 'hooks/bridge-hook.js', args: ['--question'], budgetMs: 1500, match: { field: 'tool_name', pattern: 'AskUserQuestion' } },
+    { script: 'hooks/bridge-hook.js', budgetMs: 1500, concurrent: true, match: { field: 'tool_name', pattern: '(?!AskUserQuestion$).*' } },
   ],
 };
+
+/** The longest an entry can take for `steps`: its ordered steps one after another, its concurrent ones beside them. */
+export function wallBudgetMs(steps) {
+  const ordered = steps.filter((s) => !s.concurrent).reduce((t, s) => t + s.budgetMs, 0);
+  return Math.max(ordered, ...steps.filter((s) => s.concurrent).map((s) => s.budgetMs));
+}
 
 const ENTRY = '~/.claude/scripts/hooks/claude-hook.mjs';
 const PULL = '~/.claude/scripts/hooks/sync-hook.js --pull';

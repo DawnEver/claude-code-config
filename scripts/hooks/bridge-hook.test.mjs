@@ -3,8 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { turnTexts, backgroundTasks, parseJsonl, mirrorFor, questionFor, answerOutput, deliverOutput, callHub, spool, flushSpool } from './bridge-hook.js';
+import net from 'net';
+import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import { turnTexts, backgroundTasks, parseJsonl, mirrorFor, questionFor, questionOutput, deliverOutput, callHub, spool, readSpool,
+  sendSpool, startSender, claudePidOf, rememberClaude, CALL_MS, LEASE_STALE_MS } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
+
+const HOOK = fileURLToPath(new URL('./bridge-hook.js', import.meta.url));
 
 const j = (o) => JSON.stringify(o);
 const user = (content) => j({ type: 'user', message: { role: 'user', content } });
@@ -142,14 +148,48 @@ test('mirrorFor: tool use is activity, notifications map to states, SessionEnd i
     assert.equal(at({ hook_event_name: 'SessionEnd', reason }), null, `${reason}: the channel socket closing is the only end signal`);
 });
 
-test('questionFor and answerOutput: AskUserQuestion only; answers ride updatedInput', () => {
+test('questionFor and questionOutput: AskUserQuestion only; a question posted to Telegram denies the dialog, never waits', () => {
   const tool_input = { questions: [{ question: 'Which?', header: 'H', multiSelect: false, options: [{ label: 'A', description: '' }] }] };
   assert.deepEqual(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's', tool_input }, {}),
     { sessionId: 's', questions: tool_input.questions, wait: true });
   assert.equal(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 's', tool_input }, {}), null);
   assert.equal(questionFor({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', session_id: 's', tool_input: {} }, {}), null);
-  assert.deepEqual(answerOutput(tool_input, { 'Which?': 'A' }), { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow',
-    updatedInput: { ...tool_input, answers: { 'Which?': 'A' } } } });
+  const out = questionOutput({ posted: true });
+  assert.equal(out.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /Telegram/);
+  assert.equal(questionOutput({ answers: null }), null, 'a locally typed turn shows the terminal dialog');
+  assert.equal(questionOutput(null), null, 'no bridge: the terminal dialog');
+});
+
+test('the claude process learned at a rename is recalled for that session only; a torn file reads as none', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-pids-'));
+  const file = path.join(dir, 'claude-pids.json');
+  try {
+    assert.equal(claudePidOf('cleared', { file }), undefined, 'nothing learned yet');
+    rememberClaude('cleared', 77, { file });
+    rememberClaude('other', 78, { file });
+    assert.equal(claudePidOf('cleared', { file }), 77);
+    assert.equal(claudePidOf('nested', { file }), undefined, 'a session never learned names no process');
+    fs.writeFileSync(file, '{"cleared":{"pid":7');
+    assert.equal(claudePidOf('cleared', { file }), undefined);
+    rememberClaude('cleared', 79, { file });
+    assert.equal(claudePidOf('cleared', { file }), 79, 'a torn file is rewritten whole');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('every call of a renamed session names the claude process its rename recorded', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
+  const bridge = path.join(home, '.claude', 'bridge');
+  fs.mkdirSync(bridge, { recursive: true });
+  const daemon = await plantedDaemon('ok');
+  try {
+    fs.writeFileSync(path.join(bridge, 'runtime.json'), j({ port: daemon.port, token: 't'.repeat(48) }));
+    rememberClaude('cleared', 77, { file: path.join(bridge, 'claude-pids.json') });
+    await runHook(home, { hook_event_name: 'UserPromptSubmit', session_id: 'cleared', prompt: 'after clear' });
+    await runHook(home, { hook_event_name: 'UserPromptSubmit', session_id: 'plain', prompt: 'never renamed' });
+    assert.equal(daemon.got.find((p) => p.text === 'after clear')?.claudePid, 77);
+    assert.equal(daemon.got.find((p) => p.text === 'never renamed')?.claudePid, undefined, 'PLANTED CONTROL: an unlearned session names none');
+  } finally { await daemon.close(); fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test('callHub delivers to a live hub, and resolves quietly when none runs', async () => {
@@ -173,29 +213,151 @@ test('deliverOutput blocks the stop with the queued Telegram messages', () => {
     { decision: 'block', reason: 'Message from Telegram (u):\nhi\n\nMessage from Telegram:\ntwo' });
 });
 
-test('spooled calls replay oldest first, marked; the first refusal or the budget re-spools the rest', async () => {
+// ── The spool: a call the daemon did not take is never lost and never waited for ──
+// Every hook < 5 s for the whole event (user ruling D24): the hook makes at most ONE bounded call,
+// spools what the daemon did not take, and a detached sender delivers the spool in order.
+
+const spoolFiles = (dir) => {
+  const runtimeFile = path.join(dir, 'runtime.json');
+  fs.writeFileSync(runtimeFile, '{}');
+  return { file: path.join(dir, 'spool.jsonl'), inflight: path.join(dir, 'spool.inflight.jsonl'), lease: path.join(dir, 'spool.lease'), runtimeFile };
+};
+
+test('the sender delivers the spool oldest first, marked as replays; a refusal keeps the rest for a later try', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
-  const file = path.join(dir, 'spool.jsonl');
-  const T = 4000000;
+  const f = spoolFiles(dir);
+  const T = Date.now();
   try {
-    spool({ kind: 'final', texts: ['stale'] }, { file, now: 0 });
-    spool({ kind: 'prompt', text: 'one' }, { file, now: T });
-    spool({ kind: 'final', texts: ['two'] }, { file, now: T + 1 });
-    spool({ kind: 'final', texts: ['three'] }, { file, now: T + 2 });
+    spool({ kind: 'prompt', text: 'one' }, { file: f.file, now: T });
+    spool({ kind: 'final', texts: ['two'] }, { file: f.file, now: T + 1 });
+    fs.appendFileSync(f.file, '{"at":3,"call":{"kind":"fin\n');   // a half-written line is skipped, never fatal
+    spool({ kind: 'final', texts: ['three'] }, { file: f.file, now: T + 2 });
     const sent = [];
-    await flushSpool({ file, now: () => T + 10, send: async (c) => { sent.push(c); return c.kind === 'prompt' ? { ok: true } : null; } });
-    assert.deepEqual(sent, [{ kind: 'prompt', text: 'one', replay: true }, { kind: 'final', texts: ['two'], replay: true }], 'stops at the refusal');
-    // Out of budget after the first send: the rest goes back untried.
-    sent.length = 0;
-    let clock = T + 20;
-    await flushSpool({ file, budgetMs: 100, now: () => clock, send: async (c) => { sent.push(c); clock += 200; return { ok: true }; } });
-    assert.deepEqual(sent.map((c) => c.texts), [['two']]);
-    sent.length = 0;
-    await flushSpool({ file, now: () => clock, send: async (c, timeoutMs) => { assert.ok(timeoutMs > 0); sent.push(c); return { ok: true }; } });
-    assert.deepEqual(sent.map((c) => c.texts), [['three']]);
-    assert.equal(fs.existsSync(file), false);
-    await flushSpool({ file, send: async () => assert.fail('nothing spooled') });
+    let up = false;
+    const send = async (c) => { if (!up) return null; sent.push(c); return { ok: true }; };
+    let clock = 0;
+    const sleep = async (ms) => { clock += ms; if (clock > 2000) up = true; };
+    await sendSpool({ ...f, send, sleep, now: () => clock, lifetimeMs: 60_000, lingerMs: 0 });
+    assert.deepEqual(sent, [{ kind: 'prompt', text: 'one', replay: true }, { kind: 'final', texts: ['two'], replay: true }, { kind: 'final', texts: ['three'], replay: true }],
+      'PLANTED CONTROL: nothing reached a daemon that was down; all three once it came up, in order');
+    assert.equal(fs.existsSync(f.file) || fs.existsSync(f.inflight), false, 'the spool is drained');
+    assert.equal(fs.existsSync(f.lease), false, 'the lease is released');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a sender that runs out of lifetime keeps every undelivered call for the next one', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const f = spoolFiles(dir);
+  try {
+    spool({ kind: 'prompt', text: 'kept' }, { file: f.file, now: Date.now() });
+    let clock = 0;
+    await sendSpool({ ...f, send: async () => null, sleep: async (ms) => { clock += ms; }, now: () => clock, lifetimeMs: 5000, lingerMs: 0 });
+    assert.deepEqual(readSpool(f.inflight).map((e) => e.call.text), ['kept']);
+    assert.equal(fs.existsSync(f.lease), false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('one sender at a time: a fresh lease starts none, a stale one is taken over', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-lease-'));
+  const f = spoolFiles(dir);
+  try {
+    const started = [];
+    const start = () => started.push(1);
+    assert.equal(startSender({ lease: f.lease, start }), true, 'PLANTED CONTROL: no sender runs, so one starts');
+    fs.writeFileSync(f.lease, String(process.pid));
+    assert.equal(startSender({ lease: f.lease, start }), false, 'a sender holds a fresh lease');
+    const old = new Date(Date.now() - LEASE_STALE_MS - 1000);
+    fs.utimesSync(f.lease, old, old);
+    assert.equal(startSender({ lease: f.lease, start }), true, 'a lease nobody renews belongs to a dead sender');
+    assert.equal(started.length, 2);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+/** A planted daemon on 127.0.0.1: `mode` ok | hung. Resolves {port, got, close}. */
+function plantedDaemon(mode = 'ok', port = 0) {
+  const got = [];
+  const server = net.createServer((sock) => {
+    let buf = '';
+    sock.setEncoding('utf8');
+    sock.on('error', () => {});
+    sock.on('data', (d) => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const req = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+        got.push(req.params);
+        if (mode === 'ok') sock.write(j({ jsonrpc: '2.0', id: req.id, result: { ok: true, routed: true } }) + '\n');
+      }
+    });
+  });
+  return new Promise((r) => server.listen(port, '127.0.0.1', () => r({ port: server.address().port, got, close: () => new Promise((c) => server.close(c)) })));
+}
+
+/** Run bridge-hook.js as Claude Code does, under a planted home. Resolves {ms, code, out}. */
+function runHook(home, payload, args = []) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const c = spawn(process.execPath, [HOOK, ...args], { env: { ...process.env, USERPROFILE: home, HOME: home, CLAUDE_CODE_SESSION_ID: '' }, windowsHide: true });
+    let out = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.on('close', (code) => resolve({ ms: Date.now() - t0, code, out }));
+    c.stdin.end(j(payload));
+  });
+}
+
+async function until(cond, ms = 30_000) {
+  for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 100))) if (cond()) return true;
+  return cond();
+}
+
+test('an unreachable bridge: the hook spools the prompt and returns at once; the detached sender delivers it when the bridge is up', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
+  const bridge = path.join(home, '.claude', 'bridge');
+  fs.mkdirSync(bridge, { recursive: true });
+  const probe = await plantedDaemon();
+  const port = probe.port;
+  await probe.close();   // nothing listens: the daemon is down
+  fs.writeFileSync(path.join(bridge, 'runtime.json'), j({ port, token: 't'.repeat(48) }));
+  const prompt = { hook_event_name: 'UserPromptSubmit', session_id: 's', prompt: 'mirror me' };
+  try {
+    const r = await runHook(home, prompt);
+    assert.equal(r.code, 0);
+    assert.ok(r.ms < CALL_MS + 2500, `the hook took ${r.ms} ms`);
+    assert.ok(fs.existsSync(path.join(bridge, 'spool.jsonl')) || fs.existsSync(path.join(bridge, 'spool.inflight.jsonl')), 'the prompt is spooled, never dropped');
+    const daemon = await plantedDaemon('ok', port);   // the bridge comes back on its port
+    try {
+      assert.ok(await until(() => daemon.got.some((p) => p.text === 'mirror me')), 'the detached sender delivered the spooled prompt');
+      assert.equal(daemon.got.find((p) => p.text === 'mirror me').replay, true);
+      assert.ok(await until(() => !fs.existsSync(path.join(bridge, 'spool.lease'))), 'the sender ends once the spool is drained');
+    } finally { await daemon.close(); }
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('a hung bridge costs a hook one bounded call, and the call is spooled; a live bridge takes it directly', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
+  const bridge = path.join(home, '.claude', 'bridge');
+  fs.mkdirSync(bridge, { recursive: true });
+  const stop = { hook_event_name: 'Stop', session_id: 's', last_assistant_message: 'the answer' };
+  const live = await plantedDaemon('ok');
+  try {
+    fs.writeFileSync(path.join(bridge, 'runtime.json'), j({ port: live.port, token: 't'.repeat(48) }));
+    const direct = await runHook(home, stop);
+    assert.ok(live.got.some((p) => p.kind === 'final' && p.texts.includes('the answer')), 'PLANTED CONTROL: a live bridge gets the final directly');
+    assert.equal(fs.existsSync(path.join(bridge, 'spool.jsonl')), false);
+    assert.equal(direct.code, 0);
+  } finally { await live.close(); }
+  const hung = await plantedDaemon('hung');
+  try {
+    fs.writeFileSync(path.join(bridge, 'runtime.json'), j({ port: hung.port, token: 't'.repeat(48) }));
+    const r = await runHook(home, stop);
+    assert.ok(r.ms < CALL_MS + 2500, `a hung bridge held the Stop hook ${r.ms} ms`);
+    assert.ok(readSpool(path.join(bridge, 'spool.jsonl')).concat(readSpool(path.join(bridge, 'spool.inflight.jsonl'))).some((e) => e.call.kind === 'final'),
+      'the final the bridge did not take is spooled');
+  } finally {
+    await hung.close();
+    await until(() => !fs.existsSync(path.join(bridge, 'spool.lease')), 15_000);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('turnTexts: a message from Telegram starts a turn — by the channel or through the Stop hook', () => {

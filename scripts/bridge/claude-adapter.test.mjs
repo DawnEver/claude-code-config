@@ -171,6 +171,21 @@ test('after /clear or /resume the id is new: the claude process routes it, and t
   } finally { await r.a.close(); }
 });
 
+test('a renamed session whose hook names its claude process on the first call is routed at once, nothing held', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 'boot', cwd: '/repo', claudePid: 77 });
+    await r.hook({ sessionId: 'cleared', claudePid: 77, kind: 'prompt', text: 'after clear' });
+    assert.deepEqual(r.events.filter(([k]) => k === 'prompt').map(([, e]) => [e.id, e.text]), [['boot', 'after clear']]);
+    assert.deepEqual(r.a.held, [], 'routed at once: nothing held');
+    await r.hook({ sessionId: 'stray', kind: 'prompt', text: 'stray' });
+    assert.deepEqual(r.a.held.map((h) => h.m.text), ['stray'], 'PLANTED CONTROL: without its process an unknown id routes nothing');
+    ch.destroy();
+    await new Promise((res) => setTimeout(res, 50));
+  } finally { await r.a.close(); }
+});
+
 test('a failed final carries its status to the daemon', async () => {
   const r = await rig();
   try {
@@ -356,29 +371,34 @@ test('hook activity drives the state machine; only the channel closing takes the
 const ASK = [{ question: 'Which colour?', header: 'Colour', multiSelect: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }];
 const ask = async (r, params) => { const s = await r.open(); const res = r.rpc(s, 'question', params); return { s, res }; };
 
-test('a question in a Telegram-started turn waits for the Telegram answer', async () => {
+// A question never holds its hook (every hook < 5 s, user ruling D24): in a Telegram-started
+// turn it is posted there at once and the hook denies the terminal dialog; the tapped answer
+// reaches the session as its next message.
+test('a question in a Telegram-started turn is posted there at once; its answer arrives as the next message', async () => {
   const r = await rig();
-  const questions = [];
+  const questions = [], inbound = [];
   r.a.on('question', (e) => questions.push(e));
   try {
     const ch = await r.open();
+    ch.on('data', lineSplitter((l) => { const m = JSON.parse(l); if (m.method === 'inbound') inbound.push(m.params); }));
     await r.rpc(ch, 'register', { sessionId: 's' });
     await r.a.inject('s', 'from phone', 'u');
     await r.hook({ sessionId: 's', kind: 'prompt', text: '<channel source="session-bridge" user="u">from phone</channel>' });
+    const t0 = Date.now();
     const { s, res } = await ask(r, { sessionId: 's', questions: ASK, wait: true });
-    await new Promise((res2) => setTimeout(res2, 30));
+    assert.deepEqual((await res).result, { posted: true }, 'answered at once, never held open');
+    assert.ok(Date.now() - t0 < 1000);
+    s.destroy();
     assert.equal(questions.length, 1);
     assert.deepEqual(questions[0].questions, [{ id: '0', header: 'Colour', question: 'Which colour?', isOther: true, isSecret: false, multiSelect: false,
       options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }]);
     assert.equal(questions[0].answerable, true);
-    assert.equal(r.a.statusSnapshot('s').state, 'waiting-input');
-    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: Date.now() - 1000 });
-    assert.equal(r.a.statusSnapshot('s').state, 'waiting-input', 'a late async PostToolUse does not end the wait');
+    await new Promise((res2) => setTimeout(res2, 30));
+    assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 's'), true, 'the hook closing its socket does not withdraw a posted question');
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 'other'), false, 'wrong session');
-    assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 's'), true);
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false, 'answered once');
-    assert.deepEqual((await res).result, { answers: { 'Which colour?': 'Blue' } });
-    s.destroy();
+    await until(() => inbound.some((m) => /Which colour\? -> Blue/.test(m.text)));
+    assert.equal(r.a.statusSnapshot('s').state, 'running', 'the answer starts the next turn');
   } finally { await r.a.close(); }
 });
 
@@ -402,26 +422,28 @@ test('a question in a locally typed turn is information only and never waits', a
   } finally { await r.a.close(); }
 });
 
-test('a waiting question is withdrawn when its hook gives up, and released when undeliverable', async () => {
+test('a posted question that cannot be shown on Telegram tells the session to ask it in the terminal; its end withdraws it', async () => {
   const r = await rig();
-  const questions = [], resolved = [];
+  const questions = [], resolved = [], inbound = [];
   r.a.on('question', (e) => questions.push(e));
   r.a.on('question-resolved', (e) => resolved.push(e));
   try {
     const ch = await r.open();
+    ch.on('data', lineSplitter((l) => { const m = JSON.parse(l); if (m.method === 'inbound') inbound.push(m.params); }));
     await r.rpc(ch, 'register', { sessionId: 's' });
     await r.a.inject('s', 'from phone', 'u');
     const first = await ask(r, { sessionId: 's', questions: ASK, wait: true });
-    await new Promise((res) => setTimeout(res, 30));
+    assert.deepEqual((await first.res).result, { posted: true });
     first.s.destroy();
-    await new Promise((res) => setTimeout(res, 30));
-    assert.deepEqual(resolved, [{ id: 's', ref: questions[0].ref }]);
-    assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false);
+    assert.equal(r.a.releaseQuestion(questions[0].ref, 's'), true);
+    await until(() => inbound.some((m) => /could not be shown on Telegram/.test(m.text)));
+    assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false, 'released: no longer answerable');
     const second = await ask(r, { sessionId: 's', questions: ASK, wait: true });
-    await new Promise((res) => setTimeout(res, 30));
-    r.a.releaseQuestion(questions[1].ref, 's');
-    assert.deepEqual((await second.res).result, { answers: null });
+    await second.res;
     second.s.destroy();
+    ch.destroy();
+    await until(() => resolved.some((e) => e.ref === questions[1].ref));
+    assert.equal(r.a.answerQuestion(questions[1].ref, { 0: ['Red'] }, 's'), false, 'the session ended: its question is withdrawn');
   } finally { await r.a.close(); }
 });
 

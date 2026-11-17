@@ -7,7 +7,7 @@
 //       <- inbound {text, user, userId}, permission {request_id, behavior}
 //   - bridge-hook.js makes one-shot calls: mirror {token, sessionId, kind, text|state}
 //     (kind prompt | final | answer | activity; a final may answer {deliver: [{text, user}]}), and question {token, sessionId, questions, wait},
-//     held open for a Telegram-started turn until the answer arrives
+//     answered at once: {posted: true} for a Telegram-started turn (its answer comes as the next message), else {answers: null}
 // and it emits the host-neutral events every adapter emits (see daemon.mjs):
 //   up {id, cwd, backlog}, prompt {id, text}, final {id, text},
 //   approval {id, ref, summary, answerable}, question {id, ref, questions, answerable},
@@ -59,6 +59,9 @@ const BORN_SLACK_MS = 60000;
 const WAITING = new Set(['waiting-approval', 'waiting-input']);
 const STATES = new Set(['running', 'idle', 'waiting-approval', 'waiting-input']);
 const HOLD_MS = 30000;
+// The messages a posted question sends the session: its answer from Telegram, or why there is none.
+const QUESTION_ANSWERED = 'Answer from Telegram to the question you asked:';
+const QUESTION_UNSHOWN = 'The question you asked could not be shown on Telegram. Ask it again in plain text.';
 
 const CONTINUED_TAIL_BYTES = 64 * 1024;   // the record is appended when the conversation moves on
 
@@ -224,8 +227,7 @@ export class ClaudeAdapter extends EventEmitter {
         }
         if (method === 'question') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
-          clearTimeout(authTimer);   // a waiting question outlives the auth window
-          return this.#question(socket, ids(p), p);
+          return this.#question(ids(p), p);
         }
         // An attachment for any agent's session. With the runtime token it names its session
         // (`agent`, `sessionId`: a CLI such as send-attachment.mjs); without, it is this
@@ -270,14 +272,6 @@ export class ClaudeAdapter extends EventEmitter {
     socket.on('error', () => {});
     socket.on('close', () => {
       clearTimeout(authTimer);
-      // A hook that stopped waiting (timeout, killed): its question goes back to the terminal.
-      for (const [id, s] of this.sessions) {
-        for (const [ref, q] of s.questions) {
-          if (q.socket !== socket) continue;
-          s.questions.delete(ref);
-          this.emit('question-resolved', { id, ref });
-        }
-      }
       if (sessionId && this.sessions.get(sessionId)?.socket === socket) this.#end(sessionId);
     });
   }
@@ -296,7 +290,7 @@ export class ClaudeAdapter extends EventEmitter {
     // This invalidates bridge controls; it does not claim Claude accepted a verdict.
     for (const ref of session.approvals) this.emit('approval-resolved', { id, ref, reason: 'correlation-withdrawn' });
     session.approvals.clear();
-    for (const [ref, q] of session.questions) { q.resolve({ answers: null }); this.emit('question-resolved', { id, ref }); }
+    for (const ref of session.questions.keys()) this.emit('question-resolved', { id, ref });
     session.questions.clear();
     this.#emitStatus(id);
   }
@@ -369,11 +363,13 @@ export class ClaudeAdapter extends EventEmitter {
   }
 
   /**
-   * An AskUserQuestion the PreToolUse hook reports. In a turn started from Telegram the hook
-   * waits for the Telegram answer (the terminal dialog is not shown meanwhile); in a turn
-   * typed locally the question is posted as information and the hook returns at once.
+   * An AskUserQuestion the PreToolUse hook reports, answered at once (every hook < 5 s). In a
+   * turn started from Telegram it is posted there to be answered (`posted`: the hook denies the
+   * terminal dialog and the model ends its turn); the tapped answer reaches the session as its
+   * next message (answerQuestion). In a turn typed locally it is posted as information and the
+   * terminal dialog shows.
    */
-  #question(socket, route, p) {
+  #question(route, p) {
     const id = this.#route(route);
     const s = id && this.sessions.get(id);
     if (!s) return { answers: null };
@@ -392,10 +388,9 @@ export class ClaudeAdapter extends EventEmitter {
       this.emit('question', { id, ref, questions, answerable: false });
       return { answers: null };
     }
-    return new Promise((resolve) => {
-      s.questions.set(ref, { socket, questions, resolve });
-      this.emit('question', { id, ref, questions, answerable: true });
-    });
+    s.questions.set(ref, { questions });
+    this.emit('question', { id, ref, questions, answerable: true });
+    return { posted: true };
   }
 
   #mirror(m) {
@@ -524,25 +519,22 @@ export class ClaudeAdapter extends EventEmitter {
 
   #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }
 
-  /** Answer a waiting question: `answers` maps question id -> chosen strings. */
+  /** Answer a posted question: `answers` maps question id -> chosen strings; the session gets them as its next message. */
   answerQuestion(ref, answers, id) {
     const s = this.sessions.get(id);
     const q = s?.questions.get(ref);
     if (!q || !answers || q.questions.some((x) => !answers[x.id]?.length)) return false;
     s.questions.delete(ref);
-    q.resolve({ answers: Object.fromEntries(q.questions.map((x) => [x.question, [].concat(answers[x.id]).map(String).join(', ')])) });
-    s.activity = 'running'; s.stateAt = this.now();
-    this.#emitStatus(id);
+    const lines = q.questions.map((x) => `${x.question} -> ${[].concat(answers[x.id]).map(String).join(', ')}`);
+    this.inject(id, `${QUESTION_ANSWERED}\n${lines.join('\n')}`, '').catch(() => {});
     return true;
   }
 
-  /** The question could not be offered on Telegram: let the terminal dialog show it. */
+  /** The question could not be offered on Telegram: the session is told to ask it in the terminal. */
   releaseQuestion(ref, id) {
     const s = this.sessions.get(id);
-    const q = s?.questions.get(ref);
-    if (!q) return false;
-    s.questions.delete(ref);
-    q.resolve({ answers: null });
+    if (!s?.questions.delete(ref)) return false;
+    this.inject(id, QUESTION_UNSHOWN, '').catch(() => {});
     return true;
   }
 

@@ -19,7 +19,8 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'node:url';
 import { isMain } from '../shared/is-main.mjs';
 import { resolveCodexHome, recordCodexHome } from '../shared/codex-home.mjs';
-import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE, bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
+import { bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
+import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './runtime-paths.mjs';
 
 const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
 const DAEMON = fileURLToPath(new URL('./daemon.mjs', import.meta.url));

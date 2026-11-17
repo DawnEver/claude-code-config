@@ -13,7 +13,7 @@ import {
   checkCodexShellEnv,
   checkRetiredCodexRootKey,
   scanPublicHygiene, parseMarkers, checkPublicHygiene, checkLinks, checkBridgeHost, checkDashboardHost, checkChannelServer,
-  cachedContentChecks, treeFingerprint,
+  cachedContentChecks, treeFingerprint, hookReport, refreshHookReport,
 } from './doctor.js';
 
 test('doctor reports a retired root Codex flag read-only and ignores nested user keys', t => {
@@ -553,6 +553,52 @@ test('checkLinks: unavailable cross-volume repo mirrors are not failures, detach
   const repo = checkLinks({ repoRoot, syncDir, sameVolume: () => false }).filter(f => f.title.startsWith('repo:'));
   assert.deepEqual(repo.map(f => f.id), ['link-detached']);
   assert.match(repo[0].title, /trusted-origins/);
+});
+
+// ── the SessionStart hook: reports the last run, runs the next in the background ──
+// Every hook < 5 s for the whole event (user ruling D24): the checks take ~10 s cold, so the hook
+// reads the findings a detached run left and starts the next one; nothing is skipped.
+
+test('the hook reports the FAILs of the last run and starts the next one, one at a time', () => {
+  const dir = tmp();
+  const lastFile = path.join(dir, 'doctor-last.json');
+  const lease = path.join(dir, 'doctor-refresh.lock');
+  const started = [];
+  const start = () => started.push(1);
+  assert.equal(hookReport({ lastFile, lease, start }), null, 'no run yet: nothing to say');
+  assert.equal(started.length, 1, 'PLANTED CONTROL: the first SessionStart starts a run');
+  fs.writeFileSync(lastFile, JSON.stringify({ at: 1, failed: ['payload drifted', 'hook missing', 'third'] }));
+  fs.writeFileSync(lease, String(process.pid));
+  assert.equal(hookReport({ lastFile, lease, start }), '[doctor] 3 failing invariant(s) — payload drifted; hook missing (+1 more) — run: npm run doctor');
+  assert.equal(started.length, 1, 'a run in progress is not started twice');
+  fs.writeFileSync(lastFile, '{"at":2,"failed":["tor');
+  fs.rmSync(lease);
+  assert.equal(hookReport({ lastFile, lease, start }), null, 'a torn result reads as none');
+  assert.equal(started.length, 2);
+});
+
+test('the background run writes the FAILs it found and lets its lease go', () => {
+  const dir = tmp();
+  const lastFile = path.join(dir, 'doctor-last.json');
+  const lease = path.join(dir, 'doctor-refresh.lock');
+  refreshHookReport({ lastFile, lease, run: () => [{ level: 'WARN', title: 'w' }, { level: 'FAIL', title: 'f' }] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(lastFile, 'utf8')).failed, ['f']);
+  assert.equal(fs.existsSync(lease), false);
+});
+
+test('doctor --hook returns at once and its detached run completes, so the next SessionStart reports it', async () => {
+  const home = tmp();
+  fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+  const env = { ...process.env, USERPROFILE: home, HOME: home };
+  const t0 = Date.now();
+  execFileSync(process.execPath, [path.join(import.meta.dirname, 'doctor.js'), '--hook'], { env, windowsHide: true });
+  const took = Date.now() - t0;
+  assert.ok(took < 3000, `doctor --hook took ${took} ms`);
+  const lastFile = path.join(home, '.claude', 'doctor-last.json');
+  for (const end = Date.now() + 120_000; Date.now() < end && !fs.existsSync(lastFile);) await new Promise((r) => setTimeout(r, 250));
+  assert.ok(fs.existsSync(lastFile), 'the detached run finished and left its findings');
+  assert.ok(Array.isArray(JSON.parse(fs.readFileSync(lastFile, 'utf8')).failed));
+  for (const end = Date.now() + 10_000; Date.now() < end && fs.existsSync(path.join(home, '.claude', 'doctor-refresh.lock'));) await new Promise((r) => setTimeout(r, 100));
 });
 
 // ── the SessionStart hook's content cache ──
