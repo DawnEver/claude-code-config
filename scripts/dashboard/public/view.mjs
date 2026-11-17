@@ -156,7 +156,7 @@ export function chatTime(iso, now = Date.now(), { clock = '24', lang = 'en' } = 
   if (!Number.isFinite(at)) return '';
   const d = new Date(at), today = new Date(now);
   if (d.toDateString() === today.toDateString()) return formatTime(at, { clock, date: 'off', lang });
-  return now - at < 6 * 86400000 ? CAL[lang === 'zh' ? 'zh' : 'en'].weekday(d) : CAL[lang === 'zh' ? 'zh' : 'en'].day(d);
+  return now - at < 6 * 86400000 ? cal(lang).weekday(d) : cal(lang).day(d);
 }
 
 /** A count badge as Telegram draws it: up to 99, then 99+. */
@@ -200,21 +200,19 @@ export function stats(snapshot) {
  */
 export function formatTime(ms, { clock = '24', date = 'day', lang = 'en' } = {}) {
   const d = new Date(ms);
-  const cal = CAL[lang === 'zh' ? 'zh' : 'en'];
+  const c = cal(lang);
   const pad = (n) => String(n).padStart(2, '0');
   const h = d.getHours();
-  const time = clock === '12' ? cal.ampm(`${h % 12 || 12}:${pad(d.getMinutes())}`, h < 12) : `${pad(h)}:${pad(d.getMinutes())}`;
-  const day = date === 'iso' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : date === 'day' ? cal.day(d) : '';
+  const time = clock === '12' ? c.ampm(`${h % 12 || 12}:${pad(d.getMinutes())}`, h < 12) : `${pad(h)}:${pad(d.getMinutes())}`;
+  const day = date === 'iso' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : date === 'day' ? c.day(d) : '';
   return day ? `${day} ${time}` : time;
 }
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-/** How each UI language writes a weekday, a short date and a 12h time. */
-const CAL = {
-  en: { weekday: (d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()], day: (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`,
-    ampm: (hm, am) => `${hm} ${am ? 'AM' : 'PM'}` },
-  zh: { weekday: (d) => `\u5468${'\u65e5\u4e00\u4e8c\u4e09\u56db\u4e94\u516d'[d.getDay()]}`, day: (d) => `${d.getMonth() + 1}\u6708${d.getDate()}\u65e5`,
-    ampm: (hm, am) => `${am ? '\u4e0a\u5348' : '\u4e0b\u5348'} ${hm}` },
-};
+/** How a UI language writes a weekday, a short date and a 12h time: its i18n `cal.*` words. */
+const cal = (lang) => ({
+  weekday: (d) => t('cal.weekdays', lang).split(' ')[d.getDay()],
+  day: (d) => t('cal.day', lang, { day: d.getDate(), month: d.getMonth() + 1, monthName: t('cal.months', lang).split(' ')[d.getMonth()] }),
+  ampm: (hm, am) => t('cal.ampm', lang, { hm, am }),
+});
 
 export function ago(iso, now = Date.now(), lang = 'en') {
   const at = Date.parse(iso);
@@ -313,7 +311,7 @@ export function timeTicks(w, now = Date.now(), lang = 'en') {
   const ticks = [];
   for (const t = first; t.getTime() < w.resetsAt; daily ? t.setDate(t.getDate() + 1) : t.setHours(t.getHours() + 1)) {
     ticks.push({ at: t.getTime(), pos: (t.getTime() - start) / w.windowMs,
-      label: daily ? `${CAL[lang === 'zh' ? 'zh' : 'en'].weekday(t)} ${t.getDate()}` : String(t.getHours()).padStart(2, '0') });
+      label: daily ? `${cal(lang).weekday(t)} ${t.getDate()}` : String(t.getHours()).padStart(2, '0') });
   }
   return { ticks, now: now >= start && now <= w.resetsAt ? (now - start) / w.windowMs : null };
 }

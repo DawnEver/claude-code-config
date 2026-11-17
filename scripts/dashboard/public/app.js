@@ -916,7 +916,7 @@ function columns(blocks) {
 
 function displaySection() {
   const sample = Date.parse('2026-10-21T12:00:00');
-  const languages = displayRow('cfg.language', 'cfg.lang.autoHint', segmented([['auto', tr('cfg.lang.auto')], ['en', 'English'], ['zh', '\u4e2d\u6587']], langChoice, tr('cfg.language'), (v) => {
+  const languages = displayRow('cfg.language', 'cfg.lang.autoHint', segmented([['auto', tr('cfg.lang.auto')], ...LANGS.map((l) => [l, t('lang.name', l)])], langChoice, tr('cfg.language'), (v) => {
     langChoice = v;
     store.set('dashboard.lang', v);
     lang = v === 'auto' ? autoLang : v;
