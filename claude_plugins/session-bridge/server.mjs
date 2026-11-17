@@ -286,14 +286,19 @@ function main() {
   log(`start session=${session.sessionId} from ${identity.source} cwd=${cwd}`);
   const ancestors = ancestorsOf(process.ppid, processTable());
   log(`ancestry ${ancestors.map((a) => `${a.pid}:${base(tokens(a.cmd, 1)[0])}${isClaudeProcess(a.cmd) ? '*' : ''}`).join(' < ') || 'unknown'}`);
-  if (!isMainSession({ ppid: process.ppid, claudePid: process.env.CLAUDE_PID, ancestors })) {
-    // Keep serving MCP so Claude Code sees a healthy server; just never register.
-    log(`nested session (CLAUDE_PID=${process.env.CLAUDE_PID ?? 'unset'}, ancestry ${ancestors.map((a) => a.pid).join('<')}): not bridged`);
-    return;
-  }
-  // The hook routes by this after /clear, when the session id it reports is new.
+  // The hook names this process (its CLAUDE_PID, which Claude Code sets per process), so a call
+  // routes here even when the session id it reports is new (/clear, /resume, a fork).
   const claude = ancestors.find((a) => isClaudeProcess(a.cmd));
   session.claudePid = claude?.pid ?? process.ppid;
+  if (!isMainSession({ ppid: process.ppid, claudePid: process.env.CLAUDE_PID, ancestors })) {
+    // Keep serving MCP so Claude Code sees a healthy server. Register as NESTED only: never a
+    // Topic, and the daemon answers this process's hook calls `nested`, so they are deliberately
+    // not mirrored -- not left waiting in the hooks' spool for a channel that never comes.
+    log(`nested session (CLAUDE_PID=${process.env.CLAUDE_PID ?? 'unset'}, ancestry ${ancestors.map((a) => a.pid).join('<')}): not bridged`);
+    session.nested = true;
+    link.start();
+    return;
+  }
   // This channel starts with its claude process: no background task begun before it still runs (a resumed session's).
   session.startedAt = Math.round(Date.now() - process.uptime() * 1000);
   // Claude Code drops channel messages unless launched with this flag (ccc adds it), and

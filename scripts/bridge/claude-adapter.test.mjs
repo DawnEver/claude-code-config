@@ -112,8 +112,8 @@ test('replacement and disconnect withdraw old approval correlations before nativ
 });
 
 /** Drive the adapter over real TCP like the channel and the hook do. */
-async function rig() {
-  const a = new ClaudeAdapter();
+async function rig(opts = {}) {
+  const a = new ClaudeAdapter(opts);
   const port = await a.listen(0);
   const events = [];
   for (const k of ['up', 'prompt', 'final', 'notice', 'down']) a.on(k, (e) => events.push([k, e]));
@@ -138,20 +138,19 @@ test('unwrapChannel returns the text of a channel prompt, anything else unchange
   assert.equal(unwrapChannel('plain'), 'plain');
 });
 
-test('after /clear or /resume the id is new: the claude process routes it, and the session learns the id', async () => {
+test('after /clear or /resume the id is new: the claude process the hook names routes it, and the session learns the id', async () => {
   const r = await rig();
   try {
     const ch = await r.open();
     await r.rpc(ch, 'register', { sessionId: 'boot', cwd: '/repo', claudePid: 77 });
-    // The hook's first call names only ids and misses; its retry names its own claude process.
-    await r.hook({ sessionId: 'cleared', kind: 'prompt', text: 'after clear' });
-    await r.hook({ sessionId: 'cleared', claudePid: 77, retry: true, kind: 'prompt', text: 'after clear' });
-    // A nested claude's retry names ITS process, so it never lands in the parent's Topic.
-    await r.hook({ sessionId: 'nested', kind: 'prompt', text: 'nested' });
-    await r.hook({ sessionId: 'nested', claudePid: 78, retry: true, kind: 'prompt', text: 'nested' });
+    // Every hook names its claude process (CLAUDE_PID): the new id routes on its first call.
+    const routed = await r.hook({ sessionId: 'cleared', claudePid: 77, kind: 'prompt', text: 'after clear' });
+    assert.deepEqual(routed.result, { ok: true, routed: true });
+    // A process no channel registered under routes nothing: answered, never held here.
+    const stray = await r.hook({ sessionId: 'nested', claudePid: 78, kind: 'prompt', text: 'nested' });
+    assert.deepEqual(stray.result, { ok: true, routed: false }, 'PLANTED CONTROL: an unknown process routes nothing');
     assert.deepEqual(r.events.filter(([k]) => k === 'prompt').map(([, e]) => [e.id, e.text]), [['boot', 'after clear']]);
-    assert.deepEqual(r.a.held.map((h) => h.m.text), ['nested'], 'the routed retry dropped its held first copy');
-    // Learned: later calls name only the id — activity is never retried, nor is a question.
+    // Learned: later calls route by the id alone (a question too).
     await r.hook({ sessionId: 'cleared', kind: 'activity', state: 'waiting-approval' });
     assert.equal(r.a.statusSnapshot('boot').state, 'waiting-approval');
     const asked = [];
@@ -163,7 +162,7 @@ test('after /clear or /resume the id is new: the claude process routes it, and t
     // The conversation later resumed in another process belongs to that process alone.
     const other = await r.open();
     await r.rpc(other, 'register', { sessionId: 'cleared', cwd: '/repo', claudePid: 79 });
-    await r.hook({ sessionId: 'cleared', kind: 'prompt', text: 'resumed elsewhere' });
+    await r.hook({ sessionId: 'cleared', claudePid: 79, kind: 'prompt', text: 'resumed elsewhere' });
     assert.deepEqual(r.events.filter(([k]) => k === 'prompt').at(-1)[1], { id: 'cleared', text: 'resumed elsewhere' });
     other.destroy();
     ch.destroy();
@@ -171,37 +170,97 @@ test('after /clear or /resume the id is new: the claude process routes it, and t
   } finally { await r.a.close(); }
 });
 
-test('a renamed session whose hook names its claude process on the first call is routed at once, nothing held', async () => {
-  const r = await rig();
+test('nothing is held or dropped here: an unroutable call is answered routed:false, again and again, never with a drop', async () => {
+  let clock = 0;
+  const r = await rig({ now: () => clock });
+  const warned = [];
+  r.a.on('warn', (w) => warned.push(w));
   try {
+    for (const t of [0, 31_000, 120_000]) {
+      clock = t;
+      assert.deepEqual((await r.hook({ sessionId: 'early', claudePid: 90, kind: 'prompt', text: 'before its channel' })).result, { ok: true, routed: false });
+    }
+    assert.deepEqual(warned, [], 'no timed drop, no "dropped unroutable" warning');
     const ch = await r.open();
-    await r.rpc(ch, 'register', { sessionId: 'boot', cwd: '/repo', claudePid: 77 });
-    await r.hook({ sessionId: 'cleared', claudePid: 77, kind: 'prompt', text: 'after clear' });
-    assert.deepEqual(r.events.filter(([k]) => k === 'prompt').map(([, e]) => [e.id, e.text]), [['boot', 'after clear']]);
-    assert.deepEqual(r.a.held, [], 'routed at once: nothing held');
-    await r.hook({ sessionId: 'stray', kind: 'prompt', text: 'stray' });
-    assert.deepEqual(r.a.held.map((h) => h.m.text), ['stray'], 'PLANTED CONTROL: without its process an unknown id routes nothing');
+    await r.rpc(ch, 'register', { sessionId: 'early', cwd: '/repo', claudePid: 90 });
+    assert.deepEqual((await r.hook({ sessionId: 'early', claudePid: 90, kind: 'prompt', text: 'before its channel' })).result, { ok: true, routed: true },
+      'PLANTED CONTROL: once its channel is up the same call routes -- the hook spool re-sends it until then');
     ch.destroy();
     await new Promise((res) => setTimeout(res, 50));
   } finally { await r.a.close(); }
 });
 
-test('a prompt held while a renamed session was unknown is delivered once a later call names its claude process', async () => {
-  // The claude process of a rename is learned in the background (bridge-hook.js --learner): a
-  // prompt typed before the learner finished arrives without it and is held, never dropped.
+test('a nested session registers as nested: its calls are answered `nested` (not mirrored) while it lives, never a Topic', async () => {
   const r = await rig();
   try {
+    const nested = await r.open();
+    assert.deepEqual((await r.rpc(nested, 'register', { sessionId: 'n-1', cwd: '/repo', claudePid: 55, nested: true })).result, { ok: true, nested: true });
+    assert.deepEqual((await r.hook({ sessionId: 'n-1', claudePid: 55, kind: 'final', text: 'inner' })).result, { ok: true, routed: false, nested: true });
+    assert.deepEqual(r.events, [], 'no up, no final: a nested session is not bridged');
+    nested.destroy();
+    await new Promise((res) => setTimeout(res, 50));
+    assert.deepEqual((await r.hook({ sessionId: 'n-1', claudePid: 55, kind: 'final', text: 'inner' })).result, { ok: true, routed: false },
+      'PLANTED CONTROL: once its process is gone it is no longer known as nested');
+  } finally { await r.a.close(); }
+});
+
+test('a resumed session with a new id receives an inbound message, and so does an agent-view (no-channel) session, across a daemon restart', async () => {
+  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-queue-'));
+  try {
+    // A resumed session (`claude --resume`/`--fork-session`, a new id) with the channel flag: inbound goes straight in.
+    let r = await rig({ queueDir });
+    const resumed = await r.open();
+    const inbox = [];
+    resumed.on('data', (d) => { for (const l of String(d).split('\n').filter(Boolean)) { const m = JSON.parse(l); if (m.method === 'inbound') inbox.push(m.params.text); } });
+    await r.rpc(resumed, 'register', { sessionId: 'forked-new-id', cwd: '/repo', claudePid: 61 });
+    await r.a.inject('forked-new-id', 'hello resumed', 'u');
+    await new Promise((res) => setTimeout(res, 50));
+    assert.deepEqual(inbox, ['hello resumed']);
+    // An agent-view session: the channel flag is dropped, so inbound waits for its Stop -- on disk.
+    const bg = await r.open();
+    await r.rpc(bg, 'register', { sessionId: 'bg-1', cwd: '/repo', claudePid: 62, inbound: false });
+    assert.equal((await r.a.inject('bg-1', 'hello background', 'u')).queued, true);
+    resumed.destroy(); bg.destroy();
+    await r.a.close();
+    // The daemon restarts (a handover): the queued message survives it.
+    r = await rig({ queueDir });
+    const bg2 = await r.open();
+    await r.rpc(bg2, 'register', { sessionId: 'bg-1', cwd: '/repo', claudePid: 62, inbound: false });
+    const stop = await r.hook({ sessionId: 'bg-1', claudePid: 62, kind: 'final', text: 'turn done' });
+    assert.deepEqual(stop.result.deliver?.map((d) => d.text), ['hello background'], 'the next Stop gets it');
+    assert.deepEqual(fs.readdirSync(queueDir), [], 'and the queue is empty once handed over');
+    // PLANTED CONTROL: without a queue dir, the same restart forgets it.
+    const bare = await rig();
+    const b1 = await bare.open();
+    await bare.rpc(b1, 'register', { sessionId: 'bg-2', cwd: '/repo', claudePid: 63, inbound: false });
+    await bare.a.inject('bg-2', 'lost without a queue dir', 'u');
+    b1.destroy(); await bare.a.close();
+    const bare2 = await rig();
+    const b2 = await bare2.open();
+    await bare2.rpc(b2, 'register', { sessionId: 'bg-2', cwd: '/repo', claudePid: 63, inbound: false });
+    assert.equal((await bare2.hook({ sessionId: 'bg-2', claudePid: 63, kind: 'final', text: 'x' })).result.deliver, undefined);
+    b2.destroy(); await bare2.a.close();
+    bg2.destroy();
+    await r.a.close();
+  } finally { fs.rmSync(queueDir, { recursive: true, force: true }); }
+});
+
+test('a message for a session that is not running waits on disk and is delivered when it is resumed', async () => {
+  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-queue-'));
+  const r = await rig({ queueDir });
+  try {
+    const note = await r.a.inject('closed-1', 'while you were away', 'u');
+    assert.equal(note.queued, true);
+    assert.match(note.note, /delivered when it is resumed/);
     const ch = await r.open();
-    await r.rpc(ch, 'register', { sessionId: 'boot', cwd: '/repo', claudePid: 77 });
-    await r.hook({ sessionId: 'cleared', kind: 'prompt', text: 'typed before the learner finished' });
-    assert.deepEqual(r.a.held.map((h) => h.m.text), ['typed before the learner finished'], 'PLANTED CONTROL: unknown and unnamed, it is held');
-    await r.hook({ sessionId: 'cleared', claudePid: 77, kind: 'activity', state: 'running' });
-    assert.deepEqual(r.events.filter(([k]) => k === 'prompt').map(([, e]) => [e.id, e.text]), [['boot', 'typed before the learner finished']],
-      'the first call that names the process releases what was held for that session');
-    assert.deepEqual(r.a.held, []);
+    const inbox = [];
+    ch.on('data', (d) => { for (const l of String(d).split('\n').filter(Boolean)) { const m = JSON.parse(l); if (m.method === 'inbound') inbox.push(m.params.text); } });
+    await r.rpc(ch, 'register', { sessionId: 'closed-1', cwd: '/repo', claudePid: 64 });
+    await new Promise((res) => setTimeout(res, 50));
+    assert.deepEqual(inbox, ['while you were away'], 'a channel that takes inbound gets it on register');
     ch.destroy();
     await new Promise((res) => setTimeout(res, 50));
-  } finally { await r.a.close(); }
+  } finally { await r.a.close(); fs.rmSync(queueDir, { recursive: true, force: true }); }
 });
 
 test('a failed final carries its status to the daemon', async () => {
@@ -217,13 +276,14 @@ test('a failed final carries its status to the daemon', async () => {
   } finally { await r.a.close(); }
 });
 
-test('mirror calls route by session id, are held before register, never cross sessions, and dedupe against reply', async () => {
+test('mirror calls route by session id, wait (in the hook spool) for their channel, never cross sessions, and dedupe against reply', async () => {
   const r = await rig();
   try {
-    await r.hook({ sessionId: 'uuid-1', kind: 'prompt', text: 'early' });
-    assert.deepEqual(r.events, [], 'held until the channel registers');
+    assert.deepEqual((await r.hook({ sessionId: 'uuid-1', kind: 'prompt', text: 'early' })).result, { ok: true, routed: false });
+    assert.deepEqual(r.events, [], 'nothing routed before the channel registers');
     const ch = await r.open();
     await r.rpc(ch, 'register', { sessionId: 'uuid-1', cwd: '/repo' });
+    await r.hook({ sessionId: 'uuid-1', kind: 'prompt', text: 'early' });   // the spool's re-send
     // A nested session (e.g. `claude -p` run from inside another session) is its own session.
     const parent = await r.open();
     await r.rpc(parent, 'register', { sessionId: 'parent', cwd: '/repo' });
@@ -376,7 +436,6 @@ test('hook activity drives the state machine; only the channel closing takes the
     assert.equal(state(), 'idle');
     assert.ok((await r.hook({ sessionId: 's', kind: 'activity', state: 'bogus' })).error);
     assert.deepEqual(await r.hook({ sessionId: 'ghost', kind: 'activity', state: 'running' }), { jsonrpc: '2.0', id: 1, result: { ok: true, routed: false } });
-    assert.deepEqual(r.a.held, [], 'activity is never held: the next hook carries fresher state');
     assert.ok((await r.hook({ sessionId: 's', kind: 'end' })).error, 'SessionEnd also fires on /clear and /resume: not an end signal');
     assert.equal(state(), 'idle');
     ch.destroy();
@@ -493,21 +552,6 @@ test('a session missing only the flag says to resume with ccc', async () => {
     await r.rpc(ch, 'register', { sessionId: 's', inbound: false });
     assert.match((await r.a.inject('s', 'x', 'u')).note, /not started with ccc[\s\S]*ccc --resume/);
     ch.destroy();
-  } finally { await r.a.close(); }
-});
-
-test('a held hook call that never finds its channel is dropped with a warning, not silently', async () => {
-  const r = await rig();
-  let t = 0;
-  r.a.now = () => t;
-  const warns = [];
-  r.a.on('warn', (m) => warns.push(m));
-  try {
-    await r.hook({ sessionId: 'orphan', kind: 'prompt', text: 'lost' });
-    t = 31000;
-    await r.hook({ sessionId: 'orphan', kind: 'final', text: 'later' });
-    assert.equal(warns.length, 1);
-    assert.match(warns[0], /dropped unroutable prompt for orphan/);
   } finally { await r.a.close(); }
 });
 

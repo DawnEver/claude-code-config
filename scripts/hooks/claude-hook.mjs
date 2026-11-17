@@ -46,9 +46,6 @@ export const STEPS = {
     { script: 'hooks/setup-check-hook.js', budgetMs: 2000 },
     { script: 'setup/doctor.js', args: ['--hook'], budgetMs: 1500 },
     { script: 'bridge/ensure.mjs', budgetMs: 10000, background: true },
-    // /clear and /resume rename the session: file a request for the background learner of its
-    // claude process and keep this process up (beside the rest, at most 3 s) until its snapshot.
-    { script: 'hooks/bridge-hook.js', args: ['--learn'], budgetMs: 3500, concurrent: true, match: { field: 'source', pattern: 'clear|resume' } },
   ],
   Notification: [
     { script: 'hooks/notify-hook.js', budgetMs: 3000 },

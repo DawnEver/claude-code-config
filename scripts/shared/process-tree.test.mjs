@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nearestClaude, parseTable, processTable, processTableAsync } from './process-tree.mjs';
+import { nearestClaude, parseTable, processTable } from './process-tree.mjs';
 
 test('nearestClaude: the first claude CLI above a pid, skipping shells and shims', () => {
   const table = new Map([
@@ -21,12 +21,8 @@ test('parseTable reads both shapes: PowerShell\'s tab-separated lines and ps\'s 
   assert.deepEqual([...parseTable(ps, { ps: true }).entries()], [[1, { ppid: 0, cmd: '/sbin/init' }], [812, { ppid: 1, cmd: 'claude --resume' }], [900, { ppid: 812, cmd: 'node hook.js' }]]);
 });
 
-test('the live table holds this process and its parent, sync and async (the snapshot fires first)', async () => {
-  const sync = processTable();
-  assert.ok(sync.size > 2, `PLANTED CONTROL: a real machine runs more than ${sync.size} processes`);
-  assert.equal(sync.get(process.pid)?.ppid, process.ppid, 'this process, with its parent');
-  let snapped = false;
-  const table = await processTableAsync({ onSnapshot: () => { snapped = true; } });
-  assert.ok(snapped);
-  assert.equal(table.get(process.pid)?.ppid, process.ppid);
+test('the live table holds this process and its parent', () => {
+  const table = processTable();
+  assert.ok(table.size > 2, `PLANTED CONTROL: a real machine runs more than ${table.size} processes`);
+  assert.equal(table.get(process.pid)?.ppid, process.ppid, 'this process, with its parent');
 });

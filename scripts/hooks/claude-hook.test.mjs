@@ -76,11 +76,11 @@ test('SessionStart keeps its scripts in order, each in its lane, the foreground 
     ['hooks/setup-check-hook.js', '', 2000, false, false],
     ['setup/doctor.js', '--hook', 1500, false, false],
     ['bridge/ensure.mjs', '', 10000, true, false],
-    ['hooks/bridge-hook.js', '--learn', 3500, false, true],
   ]);
-  assert.deepEqual(stepsFor('SessionStart', 'foreground', { source: 'startup' }).map((s) => s.args?.[0]), ['--pull-background', undefined, '--hook'],
-    'a startup keeps its id: no process lookup');
-  assert.ok(stepsFor('SessionStart', 'foreground', { source: 'clear' }).some((s) => s.args?.includes('--learn')), '/clear renames: its process is learned');
+  // Every hook names its claude process (CLAUDE_PID): a rename needs no SessionStart lookup.
+  for (const source of ['startup', 'clear', 'resume', 'compact']) {
+    assert.deepEqual(stepsFor('SessionStart', 'foreground', { source }).map((s) => s.args?.[0]), ['--pull-background', undefined, '--hook'], `${source}: no process lookup`);
+  }
 });
 
 // User ruling D24 (2026-11-17): every hook < 5 s, strictly, and the 5 s are for the whole EVENT.

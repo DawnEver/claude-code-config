@@ -565,7 +565,8 @@ export function checkBridgeRevision({ runtimeFile = RUNTIME_FILE, repoRoot = sou
 }
 
 // The Telegram mirror loses nothing (standing user ruling): bridge-hook.js's spool releases an
-// entry only on the daemon's ack and HOLDS one the daemon refused (or a torn line). A held entry
+// entry only once the daemon routed and acked it, and HOLDS one the daemon refused, one whose
+// claude process exited before any channel took it, and a torn line. A held entry
 // never reached Telegram, so it is a FAIL, surfaced at SessionStart; a backlog the sender has not
 // delivered for a while is a WARN. Counts lines only: the delivery mechanism stays bridge-hook's.
 const SPOOL_STALL_MS = 15 * 60000;
@@ -576,12 +577,10 @@ export function checkBridgeSpool({ dir = BRIDGE_RUNTIME_DIR, now = Date.now() } 
   const out = [];
   const held = lines('held');
   if (held.length) {
-    out.push(finding('FAIL', 'bridge-spool-held', `${held.length} mirror call${held.length === 1 ? '' : 's'} the bridge refused are kept in ${path.join(dir, SPOOL_NAMES.held)}; they never reached Telegram`,
-      `the daemon answered them with a definite refusal; read them there, and once the daemon accepts their shape move each line back into ${SPOOL_NAMES.spool} for the sender to deliver (docs/bridge.md § The spool)`));
+    out.push(finding('FAIL', 'bridge-spool-held', `${held.length} mirror call${held.length === 1 ? '' : 's'} the bridge could not deliver ${held.length === 1 ? 'is' : 'are'} kept in ${path.join(dir, SPOOL_NAMES.held)}; never reached Telegram`,
+      `the daemon refused them, or their session ended before any channel took them; read them there, and move a line back into ${SPOOL_NAMES.spool} for the sender to deliver it (docs/bridge.md § The spool)`));
   }
-  let acked = 0;
-  try { acked = Number.parseInt(fs.readFileSync(path.join(dir, SPOOL_NAMES.cursor), 'utf8'), 10) || 0; } catch { /* none */ }
-  const pending = [...lines('inflight').slice(acked), ...lines('spool')];
+  const pending = [...lines('inflight'), ...lines('spool')];   // a delivered line leaves the in-flight file
   const oldest = pending.map((l) => { try { return JSON.parse(l).at; } catch { return NaN; } }).find(Number.isFinite);
   if (pending.length && now - oldest > SPOOL_STALL_MS) {
     out.push(finding('WARN', 'bridge-spool-pending', `${pending.length} mirror call${pending.length === 1 ? '' : 's'} wait for the bridge, the oldest ${Math.round((now - oldest) / 60000)} min`,

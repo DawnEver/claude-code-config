@@ -1,6 +1,6 @@
 // scripts/shared/process-tree.mjs — who is this process's claude? Used by the session-bridge
 // channel (main vs nested session) and bridge-hook.js (routing after /clear or /resume).
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync } from 'child_process';
 
 /** The first `n` tokens of a command line, honouring double quotes. */
 export function tokens(cmd, n) {
@@ -43,22 +43,6 @@ export function processTable({ timeoutMs = 10000 } = {}) {
   try {
     return parseTable(execFileSync(TABLE_QUERY[0], TABLE_QUERY[1], { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] }));
   } catch { return new Map(); /* unknown ancestry: only the CLAUDE_PID rule applies */ }
-}
-
-/**
- * The same table, without blocking: `onSnapshot` fires when the first line arrives -- the OS has
- * taken its snapshot by then, so a process that exits afterwards is still in the table.
- */
-export function processTableAsync({ timeoutMs = 10000, onSnapshot = () => {}, query = TABLE_QUERY } = {}) {
-  return new Promise((resolve) => {
-    let out = '', snapped = false;
-    let child;
-    try { child = spawn(query[0], query[1], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { resolve(new Map()); return; }
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.setEncoding('utf8').on('data', (d) => { out += d; if (!snapped) { snapped = true; onSnapshot(); } });
-    child.on('error', () => { clearTimeout(timer); resolve(new Map()); });
-    child.on('close', () => { clearTimeout(timer); resolve(parseTable(out)); });
-  });
 }
 
 /** [{pid, cmd}] from `pid` upward. */

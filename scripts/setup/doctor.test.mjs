@@ -73,24 +73,23 @@ test('doctor detects native updates that leave a cache root but delete its prote
 });
 import { CLAUDE_LINKS } from './setup.js';
 
-test('checkBridgeSpool: a held entry FAILs with its count; a backlog older than 15 min WARNs; acked lines do not count', () => {
+test('checkBridgeSpool: a held entry FAILs with its count; a backlog older than 15 min WARNs', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-spool-'));
   const now = Date.parse('2026-11-17T12:00:00Z');
   const line = (at) => JSON.stringify({ at, call: { kind: 'prompt', text: 'x' } });
   try {
     assert.deepEqual(checkBridgeSpool({ dir, now }), [], 'an empty spool is healthy');
+    fs.writeFileSync(path.join(dir, 'spool.inflight.jsonl'), line(now - 60000) + '\n');
+    assert.deepEqual(checkBridgeSpool({ dir, now }), [], 'a minute-old backlog is not stalled');
     fs.writeFileSync(path.join(dir, 'spool.inflight.jsonl'), [line(now - 3600000), line(now - 60000)].join('\n') + '\n');
-    fs.writeFileSync(path.join(dir, 'spool.inflight.cursor'), '1');
-    assert.deepEqual(checkBridgeSpool({ dir, now }), [], 'the acked hour-old line does not count; the minute-old one is not stalled');
-    fs.writeFileSync(path.join(dir, 'spool.inflight.cursor'), '0');
     const stalled = checkBridgeSpool({ dir, now });
-    assert.equal(stalled.length, 1, 'PLANTED CONTROL: the unacked hour-old line is a stalled backlog');
+    assert.equal(stalled.length, 1, 'PLANTED CONTROL: an hour-old undelivered line is a stalled backlog');
     assert.equal(stalled[0].level, 'WARN');
     assert.match(stalled[0].title, /^2 mirror calls wait for the bridge, the oldest 60 min/);
     fs.writeFileSync(path.join(dir, 'spool.held.jsonl'), line(now) + '\n');
     const held = checkBridgeSpool({ dir, now }).find((f) => f.id === 'bridge-spool-held');
     assert.equal(held.level, 'FAIL');
-    assert.match(held.title, /^1 mirror call the bridge refused/);
+    assert.match(held.title, /^1 mirror call the bridge could not deliver is kept/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
