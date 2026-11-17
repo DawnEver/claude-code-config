@@ -23,7 +23,8 @@ rendered (`python -m dev_lab.dev.ciworkflows render`) and `.gitignore`/`.gitattr
   actually happened here (a hook wired but silently dead, payload/template shape drift,
   absolute machine paths in shared files, orphaned plugin installs, NUL bytes making a
   file binary to git). Exits 1 on failure; at SessionStart `--hook` reports the FAILs of the last
-  run (`~/.claude/doctor-last.json`) and starts the next one detached (`--hook-refresh`), since every
+  run (`~/.claude/doctor-last.json`) and starts the next one detached (`--hook-refresh`, one at a time by
+  `~/.claude/doctor-refresh.lock`, which names its owner pid: a run killed with its tree is replaced at once), since every
   hook finishes under 5 s (D24) and a cold run takes ~10 s; it
   is silent when healthy, and the run reuses the whole-tree
   content scans (`~/.claude/doctor-cache.json`) while the work tree's fingerprint is unchanged. Add a check here whenever a

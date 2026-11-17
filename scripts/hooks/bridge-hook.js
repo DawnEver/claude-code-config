@@ -46,15 +46,16 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
+import { acquireOwnerLock } from '../shared/owner-lock.mjs';
 import { RUNTIME_FILE, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
 
 /** The one daemon call a hook makes: a healthy daemon answers in milliseconds. */
 export const CALL_MS = 1000;
 // Hard exit: one call, the output flush and the sender start. The settings hook timeout (5 s) exceeds it.
 const RUN_MS = CALL_MS + 1500;
-const LEARN_MS = 3200;   // the process-table query of a rename's SessionStart (claude-hook gives it 3.5 s)
 const inRuntime = (name) => path.join(path.dirname(RUNTIME_FILE), SPOOL_NAMES[name]);
 const SPOOL_FILE = inRuntime('spool');
 const INFLIGHT_FILE = inRuntime('inflight');
@@ -323,13 +324,100 @@ export function deliverOutput(deliver) {
 }
 
 // ── The claude process of a renamed session ──
-// /clear and /resume give a session a new id its channel never registered. The SessionStart of
-// that rename (`--learn`, a concurrent step of claude-hook.mjs) walks this hook's own ancestry to
-// its claude process ONCE (a process-table query: 1.8-3.2 s of PowerShell on Windows, so never on
-// a prompt, stop or tool call) and records it here; every later call of that session names it.
-// Walked from the session's own hook, so a nested claude finds itself, never its parent.
+// /clear and /resume give a session a new id its channel never registered. Its claude process is
+// found by walking this hook's own ancestry (so a nested claude finds itself, never its parent),
+// which takes a process-table query: 1.2-3.9 s of PowerShell on Windows -- more than a 5 s
+// SessionStart can carry beside its other steps (user ruling D24). So ONE detached learner
+// (`--learner`, one at a time by LEARN_LOCK, which names its owner) answers every renamed
+// session's request and records the result in claude-pids.json (atomically); every later call of
+// the session names it. The SessionStart step (`--learn`) only files the request and keeps this
+// process -- and so the shell between it and claude -- alive until the learner's snapshot holds
+// them (its `.snap` marker), for at most LEARN_WAIT_MS. Until the result lands (seconds), the
+// session's prompts and finals are held by the adapter and released by the first call that names
+// the process. A snapshot later than LEARN_WAIT_MS no longer sees the shell: that rename stays
+// unrouted (its calls held, then dropped after 30 s, with a warning) until its next SessionStart.
 
+/** How long the SessionStart step waits for the learner's snapshot (claude-hook gives the step 3.5 s). */
+export const LEARN_WAIT_MS = 3000;
+const LEARN_DIR = path.join(path.dirname(RUNTIME_FILE), 'learn');
+const LEARN_LOCK = path.join(path.dirname(RUNTIME_FILE), 'learn.lock');
+const LEARN_QUERY_MS = 15000;
+const LEARNER_LINGER_MS = 1000;
 const CLAUDE_PIDS_MAX = 200;
+
+const requestFileOf = (dir, sessionId) => path.join(dir, `${createHash('sha1').update(String(sessionId)).digest('hex').slice(0, 16)}.json`);
+const spawnLearner = () => spawn(process.execPath, [fileURLToPath(import.meta.url), '--learner'], { detached: true, stdio: 'ignore', windowsHide: true }).on('error', () => {}).unref();
+
+/**
+ * File this session's request (its id and the pid its ancestry walk starts from) and start the
+ * learner unless a live one holds the lock -- held for it, by this hook, until it takes it over.
+ * Returns the request file, or null without a session.
+ */
+export function requestLearn(payload, { dir = LEARN_DIR, lock = LEARN_LOCK, from = process.ppid, now = Date.now(), start = spawnLearner } = {}) {
+  const sessionId = payload?.session_id;
+  if (!sessionId) return null;
+  fs.mkdirSync(dir, { recursive: true });
+  const file = requestFileOf(dir, sessionId);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ sessionId, from, at: now }));
+  fs.renameSync(tmp, file);
+  const release = acquireOwnerLock(lock, { now });
+  if (release) { try { start(); } catch { release(); } }
+  return file;
+}
+
+/** The SessionStart step: request, then wait (at most `waitMs`) for the learner's snapshot or answer. */
+export async function learnStep(payload, { waitMs = LEARN_WAIT_MS, pids = CLAUDE_PIDS_FILE, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), ...opts } = {}) {
+  if (!payload?.session_id || claudePidOf(payload.session_id, { file: pids })) return;
+  const file = requestLearn(payload, opts);
+  if (!file) return;
+  for (const end = Date.now() + waitMs; Date.now() < end && fs.existsSync(file) && !fs.existsSync(`${file}.snap`);) await sleep(50);
+}
+
+/**
+ * THE LEARNER: take the lock over from the hook that started it, then answer every queued request
+ * from one snapshot per round -- each request's `.snap` marker written the moment the snapshot is
+ * taken, its claude process recorded after the walk -- until none is left for `lingerMs`.
+ */
+export async function runLearner({ dir = LEARN_DIR, lock = LEARN_LOCK, pids = CLAUDE_PIDS_FILE, tableAsync, lingerMs = LEARNER_LINGER_MS,
+  queryMs = LEARN_QUERY_MS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  const tree = await import('../shared/process-tree.mjs');
+  const query = tableAsync ?? tree.processTableAsync;
+  const pending = () => {
+    let names = [];
+    try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.json')); } catch { /* none */ }
+    return names.flatMap((n) => {
+      const file = path.join(dir, n);
+      try { const r = JSON.parse(fs.readFileSync(file, 'utf8')); return r?.sessionId ? [{ ...r, file }] : []; } catch { return []; }
+    });
+  };
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  fs.writeFileSync(lock, String(process.pid));   // handed over by the requesting hook
+  // A hook that filed a request just as this learner let go saw a live owner and started none:
+  // look again after letting go, and carry on while a request waits.
+  do {
+    try {
+      for (let idleSince = Date.now(); ;) {
+        const requests = pending();
+        if (!requests.length) {
+          if (Date.now() - idleSince >= lingerMs) break;
+          await sleep(100);
+          continue;
+        }
+        const table = await query({ timeoutMs: queryMs, onSnapshot: () => { for (const r of requests) try { fs.writeFileSync(`${r.file}.snap`, ''); } catch { /* the step stops waiting anyway */ } } });
+        for (const r of requests) {
+          const pid = tree.nearestClaude(Number(r.from), table);
+          if (pid) rememberClaude(r.sessionId, pid, { file: pids });
+          fs.rmSync(r.file, { force: true });
+          fs.rmSync(`${r.file}.snap`, { force: true });
+        }
+        idleSince = Date.now();
+      }
+    } finally {
+      try { if (fs.readFileSync(lock, 'utf8') === String(process.pid)) fs.rmSync(lock, { force: true }); } catch { /* gone */ }
+    }
+  } while (pending().length && acquireOwnerLock(lock));
+}
 
 /** The claude process recorded for `sessionId`, or undefined. A torn or foreign file reads as none. */
 export function claudePidOf(sessionId, { file = CLAUDE_PIDS_FILE } = {}) {
@@ -533,6 +621,7 @@ const spoolable = (call) => call.kind !== 'activity' || Boolean(call.text) || Bo
 
 async function main() {
   if (process.argv.includes('--send-spool')) { await sendSpool(); return; }
+  if (process.argv.includes('--learner')) { await runLearner(); return; }
   // Most entries run async, so calls can reach the daemon out of order: the stamp orders them.
   const at = Date.now();
   if (!fs.existsSync(RUNTIME_FILE)) return;
@@ -541,10 +630,8 @@ async function main() {
   for await (const c of process.stdin) raw += c;
   const payload = JSON.parse(raw || '{}');
   if (process.argv.includes('--learn')) {
-    // A SessionStart of a rename: the one process-table query this session ever pays.
-    const { nearestClaude, processTable } = await import('../shared/process-tree.mjs');
-    const pid = payload.session_id && nearestClaude(process.ppid, processTable({ timeoutMs: LEARN_MS }));
-    if (pid) rememberClaude(payload.session_id, pid);
+    // A SessionStart of a rename: the background learner finds its claude process (see above).
+    await learnStep(payload);
     return;
   }
   setTimeout(() => process.exit(0), RUN_MS).unref();

@@ -607,6 +607,30 @@ test('the background run writes the FAILs it found and lets its lease go', () =>
   assert.equal(fs.existsSync(lease), false);
 });
 
+test('a refresh lock whose owner is dead is taken over at once; a live owner\'s lock is respected', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = tmp();
+  const lastFile = path.join(dir, 'doctor-last.json');
+  const lease = path.join(dir, 'doctor-refresh.lock');
+  const started = [];
+  const start = () => started.push(1);
+  let ran = 0;
+  const run = () => { ran++; return [{ level: 'FAIL', title: 'f' }]; };
+  fs.writeFileSync(lease, String(process.ppid));   // a live owner (the test runner), just written
+  hookReport({ lastFile, lease, start });
+  refreshHookReport({ lastFile, lease, run });
+  assert.equal(started.length, 0, 'PLANTED CONTROL: a live owner\'s refresh is not started twice');
+  assert.equal(ran, 0, 'PLANTED CONTROL: nor run beside it');
+  // The refresh was killed with its tree: its lock, written a moment ago, names a dead pid.
+  fs.writeFileSync(lease, String(spawnSync(process.execPath, ['-e', '0'], { windowsHide: true }).pid));
+  hookReport({ lastFile, lease, start });
+  assert.equal(started.length, 1, 'the next SessionStart starts a refresh at once, not after the lease');
+  refreshHookReport({ lastFile, lease, run });
+  assert.equal(ran, 1, 'the refresh takes the dead owner\'s lock over and runs');
+  assert.deepEqual(JSON.parse(fs.readFileSync(lastFile, 'utf8')).failed, ['f']);
+  assert.equal(fs.existsSync(lease), false);
+});
+
 test('doctor --hook returns at once and its detached run completes, so the next SessionStart reports it', async () => {
   const home = tmp();
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });

@@ -7,7 +7,8 @@ import net from 'net';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { turnTexts, backgroundTasks, parseJsonl, mirrorFor, questionFor, questionOutput, deliverOutput, callHub, spool, readSpool,
-  sendSpool, startSender, claudePidOf, rememberClaude, CALL_MS, LEASE_STALE_MS } from './bridge-hook.js';
+  sendSpool, startSender, claudePidOf, rememberClaude, CALL_MS, LEASE_STALE_MS, learnStep, requestLearn, runLearner, LEARN_WAIT_MS } from './bridge-hook.js';
+import { wallBudgetMs, stepsFor, STEPS } from './claude-hook.mjs';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 
 const HOOK = fileURLToPath(new URL('./bridge-hook.js', import.meta.url));
@@ -442,6 +443,75 @@ test('a pending spool is drained by a PreToolUse or PostToolUse hook, with no St
       fs.rmSync(home, { recursive: true, force: true });
     }
   }
+});
+
+// ── The claude process of a renamed session: learned by ONE background learner ──
+// Every hook < 5 s for the whole event (D24): the 1.2-3.9 s process-table query leaves the
+// SessionStart step; the step only keeps its process chain alive until the learner's snapshot.
+
+const learnFiles = (dir) => ({ dir: path.join(dir, 'learn'), lock: path.join(dir, 'learn.lock'), pids: path.join(dir, 'claude-pids.json') });
+
+test('a rename\'s learn step returns within its budget while a planted 10 s learner runs; the learner\'s result is there afterwards', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-learn-'));
+  const f = learnFiles(dir);
+  const planted = path.join(dir, 'slow-learner.mjs');
+  fs.writeFileSync(planted, "import fs from 'node:fs'; setTimeout(() => { const t = process.argv[2] + '.tmp'; "
+    + "fs.writeFileSync(t, JSON.stringify({ 's-renamed': { pid: 4321, at: Date.now() } })); fs.renameSync(t, process.argv[2]); }, 10000);");
+  const start = () => spawn(process.execPath, [planted, f.pids], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  try {
+    const t0 = Date.now();
+    await learnStep({ session_id: 's-renamed' }, { ...f, start, from: 1234 });
+    const took = Date.now() - t0;
+    assert.ok(took < LEARN_WAIT_MS + 500, `the learn step took ${took} ms`);
+    assert.equal(claudePidOf('s-renamed', { file: f.pids }), undefined, 'PLANTED CONTROL: the slow learner has not answered yet');
+    const step = STEPS.SessionStart.find((s) => s.args?.includes('--learn'));
+    assert.ok(step.concurrent && step.budgetMs >= LEARN_WAIT_MS + 300, 'the step\'s budget covers its wait');
+    assert.ok(wallBudgetMs(stepsFor('SessionStart', 'foreground', { source: 'clear' })) <= 4500, 'and a clear SessionStart still fits its wall budget');
+    assert.ok(await until(() => claudePidOf('s-renamed', { file: f.pids }) === 4321, 20_000), 'the background learner\'s result landed');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('two sessions starting at once start one learner', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-learn-'));
+  const f = learnFiles(dir);
+  const marks = path.join(dir, 'starts');
+  const code = `import(${j(new URL('./bridge-hook.js', import.meta.url).href)}).then(async (m) => {
+    m.requestLearn({ session_id: process.argv[1] }, { dir: ${j(f.dir)}, lock: ${j(f.lock)}, from: process.pid,
+      start: () => require('node:fs').appendFileSync(${j(marks)}, 'x') });
+    await new Promise((r) => setTimeout(r, 1500));   // the hook stays up while its learner starts
+  })`;
+  try {
+    await Promise.all(['s-a', 's-b'].map((s) => new Promise((resolve) => {
+      spawn(process.execPath, ['-e', code, s], { windowsHide: true, stdio: 'ignore' }).on('exit', resolve);
+    })));
+    assert.equal(fs.readFileSync(marks, 'utf8'), 'x', 'one learner started');
+    assert.equal(fs.readdirSync(f.dir).filter((n) => n.endsWith('.json')).length, 2, 'PLANTED CONTROL: both sessions queued their request');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the learner serves every queued request from one snapshot, marks the snapshot first, then lets its lock go', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-learn-'));
+  const f = learnFiles(dir);
+  try {
+    const a = requestLearn({ session_id: 's-a' }, { ...f, from: 101, start: () => {} });
+    const b = requestLearn({ session_id: 's-b' }, { ...f, from: 201, start: () => {} });
+    const table = new Map([[101, { ppid: 100, cmd: 'bash' }], [100, { ppid: 50, cmd: 'claude --resume x' }],
+      [201, { ppid: 200, cmd: 'bash' }], [200, { ppid: 60, cmd: 'C:\\tools\\claude.exe' }], [50, { ppid: 1, cmd: 'explorer.exe' }]]);
+    let snapshots = 0, markedFirst = false;
+    const tableAsync = async ({ onSnapshot }) => {
+      snapshots++;
+      onSnapshot();
+      markedFirst = fs.existsSync(`${a}.snap`) && fs.existsSync(`${b}.snap`);
+      return table;
+    };
+    await runLearner({ ...f, tableAsync, lingerMs: 0 });
+    assert.equal(snapshots, 1, 'one snapshot for both');
+    assert.ok(markedFirst, 'each waiting step is told its chain is in the snapshot before the walk');
+    assert.equal(claudePidOf('s-a', { file: f.pids }), 100);
+    assert.equal(claudePidOf('s-b', { file: f.pids }), 200);
+    assert.deepEqual(fs.readdirSync(f.dir), [], 'every request answered');
+    assert.equal(fs.existsSync(f.lock), false, 'the lock is released');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('turnTexts: a message from Telegram starts a turn — by the channel or through the Stop hook', () => {

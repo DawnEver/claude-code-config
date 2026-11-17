@@ -34,6 +34,7 @@ import { hooksDrift } from './settings-hooks.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
 import { readBridgeConfig, bridgeSourceRevision } from '../bridge/context.mjs';
 import { RUNTIME_FILE, BRIDGE_RUNTIME_DIR, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
+import { acquireOwnerLock, ownerLockLive } from '../shared/owner-lock.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
   CLAUDE_LINKS, getCodexLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
@@ -633,24 +634,24 @@ const startRefresh = () => spawn(process.execPath, [DOCTOR_FILE, '--hook-refresh
 export function hookReport({ lastFile = LAST_FILE, lease = REFRESH_LEASE, start = startRefresh, now = Date.now() } = {}) {
   let failed = [];
   try { const last = JSON.parse(fs.readFileSync(lastFile, 'utf8')); if (Array.isArray(last?.failed)) failed = last.failed.map(String); } catch { /* none yet, or torn */ }
-  let running = false;
-  try { running = now - fs.statSync(lease).mtimeMs < REFRESH_LEASE_MS; } catch { /* none runs */ }
-  if (!running) try { start(); } catch { /* the next SessionStart tries again */ }
+  if (!ownerLockLive(lease, { maxAgeMs: REFRESH_LEASE_MS, now })) try { start(); } catch { /* the next SessionStart tries again */ }
   return failNotice(failed);
 }
 
-/** The detached run: every check, its FAILs written for the next hook; one at a time by `lease`. */
+/**
+ * The detached run: every check, its FAILs written for the next hook. One at a time by `lease`,
+ * which names its owner: a refresh killed with its tree leaves a lock that is taken over at once.
+ */
 export function refreshHookReport({ lastFile = LAST_FILE, lease = REFRESH_LEASE, run = () => runChecks({ contentCache: CONTENT_CACHE_FILE }), now = Date.now } = {}) {
-  try { fs.writeFileSync(lease, String(process.pid), { flag: 'wx' }); } catch {
-    try { if (now() - fs.statSync(lease).mtimeMs < REFRESH_LEASE_MS) return; fs.writeFileSync(lease, String(process.pid)); } catch { return; }
-  }
+  const release = acquireOwnerLock(lease, { maxAgeMs: REFRESH_LEASE_MS, now: now() });
+  if (!release) return;
   try {
     const failed = run().filter((f) => f.level === 'FAIL').map((f) => f.title);
     const tmp = `${lastFile}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ at: now(), failed }));
     fs.renameSync(tmp, lastFile);
   } finally {
-    fs.rmSync(lease, { force: true });
+    release();
   }
 }
 
