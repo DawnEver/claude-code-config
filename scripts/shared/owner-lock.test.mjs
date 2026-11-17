@@ -36,8 +36,16 @@ test('a torn, pre-boot or over-age lock is not live; release leaves another owne
     assert.equal(ownerLockLive(file), false);
     fs.writeFileSync(file, String(process.pid));
     assert.equal(ownerLockLive(file, { stale: () => true }), false, 'a pid from before this boot');
-    assert.equal(ownerLockLive(file, { maxAgeMs: 0 }), false, 'a live owner past maxAgeMs');
-    const release = acquireOwnerLock(file, { pid: 1, maxAgeMs: 0 });
+    // Age is measured against an mtime set an hour back: a just-written file's mtime (100 ns on NTFS)
+    // can lie ahead of the millisecond-truncated clock, so a 0 ms bound would read it as live. The
+    // boot check is held off: a fresh runner may have booted less than an hour ago.
+    const never = () => false;
+    assert.equal(ownerLockLive(file, { stale: never, maxAgeMs: 60_000 }), true, 'PLANTED CONTROL: a fresh live owner is within maxAgeMs');
+    const anHourAgo = new Date(Date.now() - 3_600_000);
+    fs.utimesSync(file, anHourAgo, anHourAgo);
+    assert.equal(ownerLockLive(file, { stale: never, maxAgeMs: 60_000 }), false, 'a live owner past maxAgeMs');
+    const release = acquireOwnerLock(file, { pid: 1, stale: never, maxAgeMs: 60_000 });
+    assert.equal(typeof release, 'function', 'an over-age lock is taken over');
     fs.writeFileSync(file, '2');
     release();
     assert.equal(fs.readFileSync(file, 'utf8'), '2', 'a release never removes a lock it no longer owns');

@@ -1,5 +1,5 @@
 // scripts/shared/owner-lock.mjs — a lock file that names its owner, for the one-at-a-time jobs:
-// the bridge daemon, doctor's detached refresh, the bridge's claude-process learner.
+// the bridge daemon and doctor's detached refresh.
 // A lock is only ever held by a LIVE owner: one whose pid is dead (killed with its tree, a crash)
 // is taken over at once, never waited out. A pid recorded before this boot may since belong to
 // anything, and `maxAgeMs` bounds even a live owner (a hung job, a reused pid).

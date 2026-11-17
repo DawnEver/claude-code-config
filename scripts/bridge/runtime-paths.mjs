@@ -11,9 +11,10 @@ export const RUNTIME_FILE = path.join(BRIDGE_RUNTIME_DIR, 'runtime.json');
 
 /**
  * The mirror spool's files, by name inside a runtime dir (bridge-hook.js writes and delivers them,
- * doctor.js counts them): what hooks append, what the one sender is delivering and how far the
- * daemon acked it, what the daemon refused (held, never dropped), and the sender's lease.
+ * doctor.js counts them): what hooks append, what the one sender is delivering,
+ * what could not be delivered (held, never dropped), the sender's lease, and the markers of the
+ * sessions that have calls waiting.
  */
 export const SPOOL_NAMES = Object.freeze({
-  spool: 'spool.jsonl', inflight: 'spool.inflight.jsonl', cursor: 'spool.inflight.cursor', held: 'spool.held.jsonl', lease: 'spool.lease',
+  spool: 'spool.jsonl', inflight: 'spool.inflight.jsonl', held: 'spool.held.jsonl', lease: 'spool.lease', sessions: 'spool.sessions',
 });
