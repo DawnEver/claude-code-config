@@ -220,8 +220,66 @@ test('deliverOutput blocks the stop with the queued Telegram messages', () => {
 const spoolFiles = (dir) => {
   const runtimeFile = path.join(dir, 'runtime.json');
   fs.writeFileSync(runtimeFile, '{}');
-  return { file: path.join(dir, 'spool.jsonl'), inflight: path.join(dir, 'spool.inflight.jsonl'), lease: path.join(dir, 'spool.lease'), runtimeFile };
+  return { file: path.join(dir, 'spool.jsonl'), inflight: path.join(dir, 'spool.inflight.jsonl'), cursor: path.join(dir, 'spool.inflight.cursor'),
+    held: path.join(dir, 'spool.held.jsonl'), lease: path.join(dir, 'spool.lease'), runtimeFile, claimGraceMs: 0 };
 };
+
+// The mirror loses nothing (standing user ruling): delivery is the ONLY way an entry leaves the
+// spool -- no age or count eviction; an entry the daemon refuses is held and surfaced, never dropped.
+
+test('delivery is the only way out: 1,500 entries older than a day all reach the daemon, in order', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const f = spoolFiles(dir);
+  const old = Date.now() - 2 * 86400000;
+  try {
+    for (let i = 0; i < 1500; i++) spool({ kind: 'prompt', text: `m${i}` }, { file: f.file, now: old + i });
+    const sent = [];
+    let up = false, clock = 0;
+    const send = async (c) => { if (!up) return null; sent.push(c.text); return { ok: true, routed: true }; };
+    await sendSpool({ ...f, send, sleep: async (ms) => { clock += ms; if (clock > 1000) up = true; }, now: () => clock, lifetimeMs: 10 * 60000, lingerMs: 0 });
+    assert.equal(sent.length, 1500, 'every entry, however old, is delivered once the daemon is up');
+    assert.deepEqual(sent, Array.from({ length: 1500 }, (_, i) => `m${i}`), 'in order');
+    assert.equal(fs.existsSync(f.file) || fs.existsSync(f.inflight), false, 'only now is the spool empty');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a daemon that never acks keeps every entry; an ok:true ack is what releases one', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const f = spoolFiles(dir);
+  try {
+    for (let i = 0; i < 5; i++) spool({ kind: 'prompt', text: `k${i}` }, { file: f.file, now: Date.now() + i });
+    const answers = [null, {}, { ok: false }, { error: { code: -32001, message: 'unauthorized' } }, { routed: true }];
+    let n = 0, clock = 0;
+    const tries = async () => answers[n++ % answers.length];
+    await sendSpool({ ...f, send: tries, sleep: async (ms) => { clock += ms; }, now: () => clock, lifetimeMs: 60_000, lingerMs: 0 });
+    assert.ok(n >= answers.length, `PLANTED CONTROL: every non-ack answer was tried (${n} tries)`);
+    const left = readSpool(f.inflight).slice(Number(fs.existsSync(f.cursor) ? fs.readFileSync(f.cursor, 'utf8') : 0) || 0);
+    assert.deepEqual(left.map((e) => e.call.text), ['k0', 'k1', 'k2', 'k3', 'k4'], 'nothing the daemon did not ack left the spool');
+    assert.equal(fs.existsSync(f.held), false, 'no answer short of a refusal holds an entry');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an entry the daemon refuses, or a torn line, is held and surfaced, never dropped; the rest flows on', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const f = spoolFiles(dir);
+  try {
+    spool({ kind: 'prompt', text: 'a' }, { file: f.file, now: 1 });
+    spool({ kind: 'bogus', text: 'refused' }, { file: f.file, now: 2 });
+    fs.appendFileSync(f.file, '{"at":3,"call":{"kind":"fin\n');
+    spool({ kind: 'prompt', text: 'b' }, { file: f.file, now: 4 });
+    const sent = [];
+    const send = async (c) => (c.kind === 'bogus' ? { error: { code: -32602, message: 'bad kind' } } : (sent.push(c.text), { ok: true }));
+    let clock = 0;
+    await sendSpool({ ...f, send, sleep: async (ms) => { clock += ms; }, now: () => clock, lifetimeMs: 60_000, lingerMs: 0 });
+    assert.deepEqual(sent, ['a', 'b']);
+    const held = fs.readFileSync(f.held, 'utf8');
+    assert.match(held, /"refused"/, 'the refused entry is kept');
+    assert.match(held, /"kind":"fin/, 'the torn line is kept, raw');
+    const { checkBridgeSpool } = await import('../setup/doctor.js');
+    const findings = checkBridgeSpool({ dir });
+    assert.ok(findings.some((x) => x.level === 'FAIL' && x.id === 'bridge-spool-held' && /2 /.test(x.title)), 'doctor counts the held entries');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('the sender delivers the spool oldest first, marked as replays; a refusal keeps the rest for a later try', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
@@ -357,6 +415,32 @@ test('a hung bridge costs a hook one bounded call, and the call is spooled; a li
     await hung.close();
     await until(() => !fs.existsSync(path.join(bridge, 'spool.lease')), 15_000);
     fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('a pending spool is drained by a PreToolUse or PostToolUse hook, with no Stop', async () => {
+  for (const [label, payload, args] of [
+    ['PreToolUse(AskUserQuestion) --question', { hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'q?' }] } }, ['--question']],
+    ['PostToolUse(Read)', { hook_event_name: 'PostToolUse', session_id: 's', tool_name: 'Read', tool_use_id: 'u1', tool_input: {} }, []],
+  ]) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
+    const bridge = path.join(home, '.claude', 'bridge');
+    fs.mkdirSync(bridge, { recursive: true });
+    const daemon = await plantedDaemon('ok');
+    try {
+      fs.writeFileSync(path.join(bridge, 'runtime.json'), j({ port: daemon.port, token: 't'.repeat(48) }));
+      spool({ sessionId: 's', kind: 'final', texts: [`left by a Stop (${label})`] }, { file: path.join(bridge, 'spool.jsonl'), now: Date.now() - 86400000 });
+      const r = await runHook(home, payload, args);
+      assert.equal(r.code, 0);
+      assert.ok(r.ms < CALL_MS + 2500, `${label} took ${r.ms} ms`);
+      assert.ok(await until(() => daemon.got.some((p) => p.texts?.[0] === `left by a Stop (${label})` && p.replay === true), 20_000),
+        `${label} started the sender, which delivered the spooled final`);
+      assert.ok(await until(() => !fs.existsSync(path.join(bridge, 'spool.lease')), 15_000));
+      assert.equal(fs.existsSync(path.join(bridge, 'spool.jsonl')) || fs.existsSync(path.join(bridge, 'spool.inflight.jsonl')), false, 'drained');
+    } finally {
+      await daemon.close();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   }
 });
 

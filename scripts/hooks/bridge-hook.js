@@ -25,8 +25,9 @@
 // EVERY HOOK < 5 s, FOR THE WHOLE EVENT (user ruling D24, 2026-11-17), AND THE MIRROR LOSES NOTHING:
 // a hook makes at most ONE call, bounded by CALL_MS. A call the daemon did not take (down,
 // restarting, hung) is appended to the spool and a detached sender (`--send-spool`, one at a time
-// by its lease) delivers the spool in order, retrying until the daemon is back; while a spool is
-// pending a hook appends to it instead of calling, so order holds. Replays are marked, so the
+// by its lease, started by ANY hook run that finds the spool pending) delivers the spool in order,
+// retrying until the daemon is back; an entry leaves the spool only on the daemon's ack (see "The
+// spool"); while a spool is pending a hook appends to it instead of calling, so order holds. Replays are marked, so the
 // adapter never hands them this session's queued Telegram messages: only a live Stop call can.
 // A session Claude Code gives no channel (ccds, or no flag) has its Telegram messages queued
 // by the daemon; the Stop call gets them back and blocks the stop with them, so the session
@@ -47,24 +48,33 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
-import { RUNTIME_FILE } from '../bridge/runtime-paths.mjs';
+import { RUNTIME_FILE, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
 
 /** The one daemon call a hook makes: a healthy daemon answers in milliseconds. */
 export const CALL_MS = 1000;
 // Hard exit: one call, the output flush and the sender start. The settings hook timeout (5 s) exceeds it.
 const RUN_MS = CALL_MS + 1500;
 const LEARN_MS = 3200;   // the process-table query of a rename's SessionStart (claude-hook gives it 3.5 s)
-const SPOOL_FILE = path.join(path.dirname(RUNTIME_FILE), 'spool.jsonl');
-const INFLIGHT_FILE = path.join(path.dirname(RUNTIME_FILE), 'spool.inflight.jsonl');
-const LEASE_FILE = path.join(path.dirname(RUNTIME_FILE), 'spool.lease');
+const inRuntime = (name) => path.join(path.dirname(RUNTIME_FILE), SPOOL_NAMES[name]);
+const SPOOL_FILE = inRuntime('spool');
+const INFLIGHT_FILE = inRuntime('inflight');
+const CURSOR_FILE = inRuntime('cursor');
+const HELD_FILE = inRuntime('held');
+const LEASE_FILE = inRuntime('lease');
 const CLAUDE_PIDS_FILE = path.join(path.dirname(RUNTIME_FILE), 'claude-pids.json');
-const SPOOL_TTL_MS = 24 * 3600000;
-const SPOOL_MAX = 1000;   // newest kept; a daemon down for a day should not flood the Topic
 /** A sender renews its lease every loop; one older than this died. */
 export const LEASE_STALE_MS = 30_000;
-const SENDER_LIFETIME_MS = 10 * 60000;   // then the spool waits for the next hook's sender
+const SENDER_LIFETIME_MS = 10 * 60000;   // then any next hook that finds the spool pending starts another
 const SENDER_LINGER_MS = 3000;           // an idle sender waits this long for the next call
 const RETRY_MAX_MS = 5000;
+// A hook that opened the spool just before the sender renamed it finishes its one-line append
+// into the claimed file within microseconds; the sender reads the claimed file only after this.
+const CLAIM_GRACE_MS = 500;
+const COMPACT_EVERY = 200;               // acked entries before the in-flight file is rewritten
+// The daemon's definite refusals (JSON-RPC invalid params, unknown method): retrying cannot help,
+// so the entry is HELD (kept in spool.held.jsonl, counted by doctor). Every other answer -- none,
+// a hang, unauthorized (a token rotating with a restart), a result without ok -- is no ack: retried.
+const REFUSED = new Set([-32602, -32601]);
 const NOTIFICATION_STATES = { permission_prompt: 'waiting-approval', elicitation_dialog: 'waiting-input', idle_prompt: 'idle' };
 
 /** How a Telegram message delivered through the Stop hook begins (deliverOutput writes it). */
@@ -337,7 +347,10 @@ export function rememberClaude(sessionId, pid, { file = CLAUDE_PIDS_FILE, now = 
   fs.renameSync(tmp, file);
 }
 
-/** One authenticated call to the hub. Resolves its result, or null on any failure. */
+/**
+ * One authenticated call to the hub. Resolves its result; `{ error }` when the daemon answered
+ * with an error; null when it did not answer (down, hung, a torn reply).
+ */
 export function callHub(method, params, { runtimeFile = RUNTIME_FILE, timeoutMs = CALL_MS } = {}) {
   let rt;
   try { rt = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { return Promise.resolve(null); }
@@ -352,7 +365,10 @@ export function callHub(method, params, { runtimeFile = RUNTIME_FILE, timeoutMs 
     sock.on('data', (d) => {
       buf += d;
       if (!buf.includes('\n')) return;
-      try { done(JSON.parse(buf.slice(0, buf.indexOf('\n'))).result ?? null); } catch { done(null); }
+      try {
+        const msg = JSON.parse(buf.slice(0, buf.indexOf('\n')));
+        done(msg.error ? { error: msg.error } : msg.result ?? null);
+      } catch { done(null); }
     });
     sock.on('error', () => done(null));
     sock.on('close', () => done(null));
@@ -360,21 +376,35 @@ export function callHub(method, params, { runtimeFile = RUNTIME_FILE, timeoutMs 
 }
 
 // ── The spool ──
+// THE MIRROR LOSES NOTHING (standing user ruling): DELIVERY IS THE ONLY WAY AN ENTRY LEAVES. There is
+// no age or count eviction; an entry leaves the spool only once the daemon ACKED it (`ok: true`); one
+// the daemon refuses, and a torn line, go to the held file -- kept, and counted by doctor.
 // Hooks append (one write per call, O_APPEND); only the lease holder (the sender) moves lines out:
-// it claims the spool by rename into its in-flight file, sends from the head of that, and drops a
-// line once the daemon took it. A hook sees a pending spool when either file exists.
+// it claims the spool by rename into its in-flight file (merging any claim a dead sender left),
+// sends from the cursor, and advances the cursor on each ack. The acked prefix is compacted away
+// every COMPACT_EVERY acks and when the file is done -- the cursor reset BEFORE the rewrite, so a
+// crash between the two re-sends acked entries (the daemon drops a final it already sent) and
+// never skips an unacked one. A hook sees a pending spool when the spool or in-flight file exists.
 
 /** Keep a call the daemon did not take, for the sender to deliver. */
 export function spool(call, { file = SPOOL_FILE, now = Date.now() } = {}) {
   try { fs.appendFileSync(file, JSON.stringify({ at: now, call }) + '\n'); } catch { /* best effort */ }
 }
 
-/** The entries of a spool file, oldest first; a half-written or foreign line is skipped. */
-export function readSpool(file) {
+/** A spool file's lines: its entries oldest first, and the raw lines that are not one (torn or foreign). */
+function splitSpool(file) {
   let text = '';
-  try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
-  return text.split('\n').flatMap((l) => { try { const e = JSON.parse(l); return e?.call ? [e] : []; } catch { return []; } });
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return { entries: [], torn: [] }; }
+  const entries = [], torn = [];
+  for (const l of text.split('\n')) {
+    if (!l.trim()) continue;
+    try { const e = JSON.parse(l); if (e?.call) entries.push(e); else torn.push(l); } catch { torn.push(l); }
+  }
+  return { entries, torn };
 }
+
+/** The entries of a spool file, oldest first (a torn line is not an entry; the sender holds it). */
+export const readSpool = (file) => splitSpool(file).entries;
 
 const writeLines = (file, entries) => {
   if (!entries.length) { fs.rmSync(file, { force: true }); return; }
@@ -383,13 +413,32 @@ const writeLines = (file, entries) => {
   fs.renameSync(tmp, file);
 };
 
-/** Move the hooks' spool behind the in-flight file. False when it could not be claimed now (a hook is writing). */
-function claimSpool(file, inflight) {
-  if (!fs.existsSync(file)) return true;
-  const claimed = `${file}.${process.pid}`;
-  try { fs.renameSync(file, claimed); } catch { return false; }
-  writeLines(inflight, [...readSpool(inflight), ...readSpool(claimed)]);
-  fs.rmSync(claimed, { force: true });
+const hold = (held, lines) => { if (lines.length) fs.appendFileSync(held, lines.join('\n') + '\n'); };
+const readCursor = (cursor) => { try { return Math.max(0, Number.parseInt(fs.readFileSync(cursor, 'utf8'), 10) || 0); } catch { return 0; } };
+const writeCursor = (cursor, n) => { const tmp = `${cursor}.${process.pid}.tmp`; fs.writeFileSync(tmp, String(n)); fs.renameSync(tmp, cursor); };
+
+/**
+ * Move the hooks' spool, and any claim a dead sender left (`<spool>.<pid>`), behind the in-flight
+ * file; torn lines go to the held file. False when the spool could not be claimed now.
+ */
+async function claimSpool(file, inflight, held, graceMs, sleep) {
+  const dir = path.dirname(file), base = path.basename(file);
+  const orphans = () => { try { return fs.readdirSync(dir).filter((n) => /^\d+$/.test(n.slice(base.length + 1)) && n.startsWith(`${base}.`)).sort(); } catch { return []; } };
+  let claimedNow = false;
+  if (fs.existsSync(file)) {
+    try { fs.renameSync(file, `${file}.${process.pid}`); claimedNow = true; } catch { /* a hook holds it: next loop */ }
+  }
+  const claims = orphans();
+  if (!claims.length) return !fs.existsSync(file);
+  if (claimedNow && graceMs) await sleep(graceMs);   // a hook mid-append finishes into the claimed file
+  const merged = readSpool(inflight);
+  for (const n of claims) {
+    const { entries, torn } = splitSpool(path.join(dir, n));
+    merged.push(...entries);
+    hold(held, torn);
+  }
+  writeLines(inflight, merged);   // the acked prefix is unchanged, so the cursor still holds
+  for (const n of claims) fs.rmSync(path.join(dir, n), { force: true });
   return true;
 }
 
@@ -405,37 +454,58 @@ function takeLease(lease, now = Date.now()) {
 
 const renew = (lease) => { try { const t = new Date(); fs.utimesSync(lease, t, t); } catch { /* gone: the loop ends */ } };
 
+/** What a daemon answer means for a spooled entry: acked, refused for good, or not taken (retry). */
+export function outcomeOf(r) {
+  if (r?.ok === true) return 'acked';
+  return REFUSED.has(r?.error?.code) ? 'refused' : 'retry';
+}
+
 /**
- * THE SENDER: deliver the spool in order, each call marked as a replay, retrying a daemon that does
- * not take one (backoff up to RETRY_MAX_MS) until `lifetimeMs`; idle for `lingerMs`, it ends. What
- * it could not deliver stays in the in-flight file for the next sender. One at a time, by `lease`.
+ * THE SENDER: deliver the spool in order, each call marked as a replay. An entry leaves only on
+ * the daemon's ack; a refusal holds it; anything else is retried (backoff up to RETRY_MAX_MS) until
+ * `lifetimeMs`, after which it stays for the next sender (any hook that finds the spool pending
+ * starts one). Idle for `lingerMs`, it ends. One at a time, by `lease`.
  */
-export async function sendSpool({ file = SPOOL_FILE, inflight = INFLIGHT_FILE, lease = LEASE_FILE, now = Date.now,
-  sleep = (ms) => new Promise((r) => setTimeout(r, ms)), lifetimeMs = SENDER_LIFETIME_MS, lingerMs = SENDER_LINGER_MS,
-  send = (c) => callHub('mirror', c), runtimeFile = RUNTIME_FILE } = {}) {
+export async function sendSpool({ file = SPOOL_FILE, inflight = INFLIGHT_FILE, cursor = CURSOR_FILE, held = HELD_FILE, lease = LEASE_FILE,
+  now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), lifetimeMs = SENDER_LIFETIME_MS, lingerMs = SENDER_LINGER_MS,
+  claimGraceMs = CLAIM_GRACE_MS, send = (c) => callHub('mirror', c), runtimeFile = RUNTIME_FILE } = {}) {
   const start = now();
   // A hook that appended just as this sender let its lease go saw the lease still fresh and
   // started none: look again after letting go, and carry on while the spool has a line.
   while (now() - start < lifetimeMs && fs.existsSync(runtimeFile) && takeLease(lease)) {
     let idleSince = now(), backoff = 500;
     try {
+      let entries = [], next = 0, acked = 0;
+      const compact = () => {
+        if (next === 0) return;
+        writeCursor(cursor, 0);                      // first: a crash now re-sends, never skips
+        writeLines(inflight, entries.slice(next));
+        entries = entries.slice(next); next = 0; acked = 0;
+      };
+      const load = () => { entries = readSpool(inflight); next = Math.min(readCursor(cursor), entries.length); acked = 0; };
+      load();
       while (now() - start < lifetimeMs) {
         renew(lease);
-        claimSpool(file, inflight);
-        const fresh = readSpool(inflight).filter((e) => !(Date.now() - e.at > SPOOL_TTL_MS)).slice(-SPOOL_MAX);
-        if (!fresh.length) {
-          fs.rmSync(inflight, { force: true });
-          if (!fs.existsSync(file) && now() - idleSince >= lingerMs) break;
-          await sleep(200);
-          continue;
+        if (next >= entries.length) {
+          compact();
+          if (await claimSpool(file, inflight, held, claimGraceMs, sleep)) load();
+          if (next >= entries.length) {
+            if (!fs.existsSync(file) && now() - idleSince >= lingerMs) break;
+            await sleep(200);
+            continue;
+          }
         }
         if (!fs.existsSync(runtimeFile)) break;   // the bridge is uninstalled: the spool waits
-        const r = await send({ ...fresh[0].call, replay: true });
-        if (r === null) { await sleep(backoff); backoff = Math.min(backoff * 2, RETRY_MAX_MS); continue; }
+        const e = entries[next];
+        const outcome = outcomeOf(await send({ ...e.call, replay: true }));
+        if (outcome === 'retry') { await sleep(backoff); backoff = Math.min(backoff * 2, RETRY_MAX_MS); continue; }
+        if (outcome === 'refused') hold(held, [JSON.stringify(e)]);   // kept before it is passed
         backoff = 500;
         idleSince = now();
-        writeLines(inflight, fresh.slice(1));
+        writeCursor(cursor, ++next);
+        if (++acked >= COMPACT_EVERY) compact();
       }
+      if (next >= entries.length && entries.length) compact();
     } finally {
       fs.rmSync(lease, { force: true });
     }
@@ -452,6 +522,12 @@ export function startSender({ lease = LEASE_FILE, now = Date.now(), start = () =
 
 const spoolPending = () => fs.existsSync(SPOOL_FILE) || fs.existsSync(INFLIGHT_FILE);
 
+// Delivery never waits for a particular event: EVERY run of this hook (prompt, tool call, stop,
+// notification, question, a rename's SessionStart) that finds the spool pending and no live sender
+// starts the one detached sender. Two stats when nothing is pending.
+let senderStarted = false;
+const ensureSender = () => { if (!senderStarted && spoolPending()) senderStarted = startSender(); };
+
 /** Content and task facts are worth delivering late; a bare state change is superseded by the next hook. */
 const spoolable = (call) => call.kind !== 'activity' || Boolean(call.text) || Boolean(call.task);
 
@@ -460,6 +536,7 @@ async function main() {
   // Most entries run async, so calls can reach the daemon out of order: the stamp orders them.
   const at = Date.now();
   if (!fs.existsSync(RUNTIME_FILE)) return;
+  ensureSender();
   let raw = '';
   for await (const c of process.stdin) raw += c;
   const payload = JSON.parse(raw || '{}');
@@ -488,9 +565,11 @@ async function main() {
   const call = { ...mirror, ...route, at };
   // A pending spool goes first: this call joins it, so the daemon sees every call in order.
   const r = spoolPending() ? null : await callHub('mirror', call);
-  if (r === null) {
-    if (spoolable(call)) spool(call);
-    if (spoolPending()) startSender();
+  const outcome = outcomeOf(r);
+  if (outcome !== 'acked') {
+    if (outcome === 'refused') hold(HELD_FILE, [JSON.stringify({ at, call })]);   // kept and counted, never dropped
+    else if (spoolable(call)) spool(call);
+    ensureSender();
     return;
   }
   const out = payload.hook_event_name === 'Stop' && deliverOutput(r?.deliver);
