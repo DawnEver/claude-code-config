@@ -420,12 +420,12 @@ test('every message the bot sends has one shape — heading: subject, then detai
   assert.equal(alertText(e, NOW + 2 * HR), lines('Quota exhausted: Codex · a@example.com', '5h window'), 'a passed reset is not counted down');
   assert.equal(alertText({ kind: 'config-refused', key: 'k', value: 3, host: 'h', error: 'busy' }), lines('Config change refused: k = 3', 'by h: busy'));
   assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: new Date(NOW - 6 * 60000).toISOString() }, NOW), lines('Host offline: host-x', 'silent for 6m'));
-  assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: null }, NOW, 'zh'), lines('主机掉线：host-x', '自 dashboard 重启以来未上报'));
+  assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: null }, NOW, 'zh'), lines('\u4e3b\u673a\u6389\u7ebf\uff1ahost-x', '\u81ea dashboard \u91cd\u542f\u4ee5\u6765\u672a\u4e0a\u62a5'));
   assert.equal(alertText({ kind: 'turn-failed', host: 'host-x', agent: 'claude', project: 'p', session: 's', error: 'overloaded: 529', url: 'https://t.me/c/1/2' }),
     lines('Turn failed: Claude · host-x · p · s', 'overloaded: 529', 'https://t.me/c/1/2'));
   assert.equal(alertText({ kind: 'extra-reset', account: { agent: 'claude', label: 'team-a' }, at: NOW + HR, url: 'https://x.test/r' }, NOW),
     lines('Extra reset announced: Claude · team-a', 'in 1h 0m', 'https://x.test/r'));
-  assert.equal(alertText({ kind: 'test', from: 'host-x' }, NOW, 'zh'), lines('测试：host-x', 'dashboard 的提醒会发到这里。'));
+  assert.equal(alertText({ kind: 'test', from: 'host-x' }, NOW, 'zh'), lines('\u6d4b\u8bd5\uff1ahost-x', 'dashboard \u7684\u63d0\u9192\u4f1a\u53d1\u5230\u8fd9\u91cc\u3002'));
   for (const kind of ALERT_KINDS) for (const lang of ['en', 'zh']) assert.doesNotMatch(alertText({ kind, account: {}, host: 'h' }, NOW, lang), /^alert\./, `${kind} ${lang} has its heading`);
 });
 
@@ -829,12 +829,12 @@ test('i18n: the language defaults from Telegram language_code (zh* -> zh, else e
   assert.deepEqual(['zh', 'zh-hans', 'zh-TW', 'ZH'].map(defaultLang), ['zh', 'zh', 'zh', 'zh']);
   assert.deepEqual(['en', 'de', 'ja', '', undefined, null].map(defaultLang), ['en', 'en', 'en', 'en', 'en', 'en']);
   assert.equal(t('tab.config', 'en'), 'Config');
-  assert.equal(t('tab.config', 'zh'), '设置');
+  assert.equal(t('tab.config', 'zh'), '\u8bbe\u7f6e');
   assert.equal(t('tab.config', 'fr'), 'Config', 'an unknown language reads English');
   assert.equal(t('no.such.key', 'zh'), 'no.such.key');
   assert.equal(t('sessions.count', 'en', { n: 1 }), '1 session');
   assert.equal(t('sessions.count', 'en', { n: 3 }), '3 sessions');
-  assert.equal(t('status.needs_approval', 'zh'), '待批准');
+  assert.equal(t('status.needs_approval', 'zh'), '\u5f85\u6279\u51c6');
   for (const k of i18nKeys()) for (const l of LANGS) assert.notEqual(t(k, l, {}), k, `${k} has ${l}`);
 });
 
@@ -846,9 +846,9 @@ test('i18n: every config key and option, every status and chip has words; view t
     ...DISPLAY_STATUSES.map((s) => `status.${s}`), ...Object.keys(GROUPS).map((g) => `group.${g}`)];
   for (const k of keys) assert.notEqual(t(k, 'zh'), k, k);
   assert.equal(configLabel('bridge.projects.api.projectInTitle', 'bridge.projects.*.projectInTitle'), 'Project name in Topic titles · api');
-  assert.equal(stateAge({ status: 'idle', lastActivityAt: new Date(NOW - 125 * 60000).toISOString() }, NOW, 'zh'), '空闲 2h');
-  assert.equal(ago(new Date(NOW - 3 * 60000).toISOString(), NOW, 'zh'), '3m前');
-  assert.equal(formatTime(new Date(2026, 9, 21, 23, 36).getTime(), { lang: 'zh' }), '10月21日 23:36');
+  assert.equal(stateAge({ status: 'idle', lastActivityAt: new Date(NOW - 125 * 60000).toISOString() }, NOW, 'zh'), '\u7a7a\u95f2 2h');
+  assert.equal(ago(new Date(NOW - 3 * 60000).toISOString(), NOW, 'zh'), '3m\u524d');
+  assert.equal(formatTime(new Date(2026, 9, 21, 23, 36).getTime(), { lang: 'zh' }), '10\u670821\u65e5 23:36');
 });
 
 test('view: config rows sit in their group and read the change flow — queued, handed to a host, then the outcome', () => {
