@@ -208,12 +208,20 @@ token in `runtime.json`):
   or a Stop's delivery. Calls name the payload's `session_id` — the conversation id current
   in the process; the hook's `CLAUDE_CODE_SESSION_ID` always equals it, so it adds nothing —
   and are held up to 30 s if they beat the channel's registration. `/clear` and `/resume`
-  change that id, so that rename's SessionStart (`bridge-hook.js --learn`, a concurrent step
-  of `claude-hook.mjs`) walks the hook's own ancestry to its nearest `claude` process ONCE
-  (a process-table query: 1.8-3.2 s of PowerShell on Windows, never on a prompt, stop or tool
-  call) and records it in `~/.claude/bridge/claude-pids.json`; every later call of that
-  session names the process, the channel registered under that same process, and the
-  adapter learns the new id on its first call. An id belongs to one session at a time: a
+  change that id. The hook's own ancestry leads to its nearest `claude` process, but walking
+  it takes a process-table query (1.2-3.9 s of PowerShell on Windows), too long for a 5 s
+  SessionStart beside its other steps. So that rename's SessionStart (`bridge-hook.js --learn`,
+  a concurrent step of `claude-hook.mjs`) files a request in `~/.claude/bridge/learn/` and
+  starts the ONE background learner (`--learner`, one at a time by `learn.lock`, which names
+  its owner pid; a dead owner's lock is taken over at once). The step waits only until the
+  learner's snapshot holds its process chain (a `.snap` marker, at most 3 s, beside the other
+  steps); the learner then walks it and records the process in `claude-pids.json`
+  (atomically), measured within 0.25 s of the step. Every later call of that session names
+  the process, the channel registered under that same process, and the adapter learns the
+  new id on its first such call, releasing the prompts and finals it held for that id
+  meanwhile. A snapshot later than the 3 s wait no longer sees the hook's shell: that rename
+  stays unrouted (held, then dropped after 30 s with a warning) until its next SessionStart.
+  An id belongs to one session at a time: a
   channel registering it, or a call naming its process, takes it from any other. A spooled
   call carries its process too, since a restarted daemon has forgotten every learned id.
   Agent view (and a background relaunch) moves a conversation to a NEW session id in a NEW
@@ -552,7 +560,7 @@ require separate acceptance evidence.
 - Channels together with `--remote-control` in one Claude session.
 - Telegram approval buttons answer a Claude permission request.
 - `deleteForumTopic` on a closed Topic (create, close, delete; a later send fails).
-- Mirroring after `/clear` and an in-process `/resume` (verified with the per-call process retry; its 2026-11-17 replacement, the process the rename's SessionStart learns with `--learn`, is not yet verified live).
+- Mirroring after `/clear` and an in-process `/resume` (verified with the per-call process retry; its 2026-11-17 replacement, the background learner the rename's SessionStart starts with `--learn`, recorded the right claude process in an end-to-end SessionStart run on Windows, not yet in a live Telegram session).
 
 ## Attachments
 

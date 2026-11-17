@@ -295,13 +295,21 @@ export class ClaudeAdapter extends EventEmitter {
     this.#emitStatus(id);
   }
 
-  #route({ sessionId, claudePid }) {
+  #route({ sessionId, claudePid, retry, ...m }) {
     for (const [id, s] of this.sessions) if (s.ids.has(sessionId)) return id;
     if (!claudePid) return null;
     // After /clear or /resume no id matches; the claude process that owns the channel does.
     for (const [id, s] of this.sessions) {
       if (s.claudePid !== claudePid) continue;
-      if (sessionId) { this.#claim(sessionId, id); s.ids.add(sessionId); }
+      if (sessionId) {
+        this.#claim(sessionId, id);
+        s.ids.add(sessionId);
+        // Calls of this id that came before its claude process was learned (bridge-hook.js learns
+        // it in the background) were held: they flow now, ahead of this one -- all but a retry's
+        // own first copy, which this retry delivers.
+        if (retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
+        this.#release();
+      }
       return id;
     }
     return null;

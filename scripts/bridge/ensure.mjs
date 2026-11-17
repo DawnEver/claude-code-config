@@ -13,7 +13,6 @@
 // Fail-open and silent: hook stdout can inject context, so nothing is printed.
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'node:url';
@@ -21,36 +20,17 @@ import { isMain } from '../shared/is-main.mjs';
 import { resolveCodexHome, recordCodexHome } from '../shared/codex-home.mjs';
 import { bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
 import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './runtime-paths.mjs';
+import { acquireOwnerLock, isAlive, predatesBoot } from '../shared/owner-lock.mjs';
 
 const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
 const DAEMON = fileURLToPath(new URL('./daemon.mjs', import.meta.url));
 
-/** True when `file` was written before this boot: its pid may since belong to anything. */
-const predatesBoot = (file, now = Date.now(), uptime = os.uptime()) => fs.statSync(file).mtimeMs < now - uptime * 1000;
-
-export function isAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
-
 /**
- * Exclusive daemon lock: `wx` create holding our pid. A lock whose owner is dead is taken
- * over. Returns a release function, or null when another live daemon holds it.
+ * Exclusive daemon lock (shared/owner-lock.mjs): `wx` create holding our pid; a lock whose owner
+ * is dead, or recorded before this boot, is taken over. Returns a release function, or null when
+ * another live daemon holds it.
  */
-export function acquireDaemonLock(file = LOCK_FILE, { pid = process.pid, alive = isAlive, stale = predatesBoot } = {}) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(file, String(pid), { flag: 'wx' });
-      return () => { try { if (fs.readFileSync(file, 'utf8') === String(pid)) fs.rmSync(file); } catch { /* gone */ } };
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      const owner = Number(fs.readFileSync(file, 'utf8'));
-      if (owner && owner !== pid && alive(owner) && !stale(file)) return null;
-      fs.rmSync(file, { force: true });
-    }
-  }
-  return null;
-}
+export const acquireDaemonLock = (file = LOCK_FILE, opts = {}) => acquireOwnerLock(file, opts);
 
 const LOG_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.log');
 function spawnDaemon() {

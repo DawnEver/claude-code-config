@@ -1,6 +1,6 @@
 // scripts/shared/process-tree.mjs — who is this process's claude? Used by the session-bridge
 // channel (main vs nested session) and bridge-hook.js (routing after /clear or /resume).
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 
 /** The first `n` tokens of a command line, honouring double quotes. */
 export function tokens(cmd, n) {
@@ -20,22 +20,45 @@ export function isClaudeProcess(cmd) {
   return /^node(\.exe)?$/.test(base(prog)) && /@anthropic-ai[\\/]claude-code[\\/]/i.test(a ?? '') && !HOST_MODES.has(b);
 }
 
+// The one process-table query: PowerShell's CIM on Windows (1.2-3.9 s, almost all of it PowerShell
+// starting, measured 2026-11-17), ps elsewhere. Each output line is `pid TAB ppid TAB command`.
+const TABLE_QUERY = process.platform === 'win32'
+  ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command',
+    'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$(if ($_.CommandLine) { $_.CommandLine } else { $_.Name })" }']]
+  : ['ps', ['-A', '-o', 'pid=,ppid=,args=']];
+
+/** The query's output as pid -> {ppid, cmd}; ps pads its columns with spaces, PowerShell's are tab-separated. */
+export function parseTable(out, { ps = TABLE_QUERY[0] === 'ps' } = {}) {
+  const table = new Map();
+  const text = ps ? String(out).replace(/^[ \t]*(\d+)[ \t]+(\d+)[ \t]+/gm, '$1\t$2\t') : String(out);
+  for (const line of text.split(/\r?\n/)) {
+    const [pid, ppid, ...cmd] = line.split('\t');
+    if (pid && ppid) table.set(Number(pid), { ppid: Number(ppid), cmd: cmd.join('\t') });
+  }
+  return table;
+}
+
 /** pid -> {ppid, cmd} for every process; empty when the OS will not say. */
 export function processTable({ timeoutMs = 10000 } = {}) {
-  const table = new Map();
   try {
-    const out = process.platform === 'win32'
-      ? execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
-        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$(if ($_.CommandLine) { $_.CommandLine } else { $_.Name })" }'],
-        { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] })
-      : execFileSync('ps', ['-A', '-o', 'pid=,ppid=,args='], { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] })
-        .replace(/^\s*(\d+)\s+(\d+)\s+/gm, '$1\t$2\t');
-    for (const line of out.split(/\r?\n/)) {
-      const [pid, ppid, ...cmd] = line.split('\t');
-      if (pid && ppid) table.set(Number(pid), { ppid: Number(ppid), cmd: cmd.join('\t') });
-    }
-  } catch { /* unknown ancestry: only the CLAUDE_PID rule applies */ }
-  return table;
+    return parseTable(execFileSync(TABLE_QUERY[0], TABLE_QUERY[1], { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] }));
+  } catch { return new Map(); /* unknown ancestry: only the CLAUDE_PID rule applies */ }
+}
+
+/**
+ * The same table, without blocking: `onSnapshot` fires when the first line arrives -- the OS has
+ * taken its snapshot by then, so a process that exits afterwards is still in the table.
+ */
+export function processTableAsync({ timeoutMs = 10000, onSnapshot = () => {}, query = TABLE_QUERY } = {}) {
+  return new Promise((resolve) => {
+    let out = '', snapped = false;
+    let child;
+    try { child = spawn(query[0], query[1], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { resolve(new Map()); return; }
+    const timer = setTimeout(() => child.kill(), timeoutMs);
+    child.stdout.setEncoding('utf8').on('data', (d) => { out += d; if (!snapped) { snapped = true; onSnapshot(); } });
+    child.on('error', () => { clearTimeout(timer); resolve(new Map()); });
+    child.on('close', () => { clearTimeout(timer); resolve(parseTable(out)); });
+  });
 }
 
 /** [{pid, cmd}] from `pid` upward. */

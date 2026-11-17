@@ -186,6 +186,24 @@ test('a renamed session whose hook names its claude process on the first call is
   } finally { await r.a.close(); }
 });
 
+test('a prompt held while a renamed session was unknown is delivered once a later call names its claude process', async () => {
+  // The claude process of a rename is learned in the background (bridge-hook.js --learner): a
+  // prompt typed before the learner finished arrives without it and is held, never dropped.
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 'boot', cwd: '/repo', claudePid: 77 });
+    await r.hook({ sessionId: 'cleared', kind: 'prompt', text: 'typed before the learner finished' });
+    assert.deepEqual(r.a.held.map((h) => h.m.text), ['typed before the learner finished'], 'PLANTED CONTROL: unknown and unnamed, it is held');
+    await r.hook({ sessionId: 'cleared', claudePid: 77, kind: 'activity', state: 'running' });
+    assert.deepEqual(r.events.filter(([k]) => k === 'prompt').map(([, e]) => [e.id, e.text]), [['boot', 'typed before the learner finished']],
+      'the first call that names the process releases what was held for that session');
+    assert.deepEqual(r.a.held, []);
+    ch.destroy();
+    await new Promise((res) => setTimeout(res, 50));
+  } finally { await r.a.close(); }
+});
+
 test('a failed final carries its status to the daemon', async () => {
   const r = await rig();
   try {
