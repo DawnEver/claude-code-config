@@ -4,7 +4,7 @@ name: coordination-v2-design
 
 # v2 coordination view + issue conventions — approved design (2026-10-01)
 
-User approved the design and all four default decisions ("同意默认决策，按顺序去做").
+User approved the design and all four default decisions ("I agree with the default decisions; do them in order" (user, translated)).
 Principles: first principles, no baggage, Occam, single source of truth. Fits the family
 protocol (lab-commons `the-three-participants.md`): readiness = ref movement on origin;
 chat/notification is a hint, never a trigger.
@@ -50,3 +50,5 @@ activity feed (GitHub/Gitea notifications) — two sources for one fact. Removed
 thing the forge cannot do: a push reported into the single local session Topic on that branch
 (narrowed by the pushing agent's host via provenance, else dropped), whoever pushed, plus that
 tip's `lab/gate`/`lab/heavy` verdicts. See `docs/coordination.md`.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

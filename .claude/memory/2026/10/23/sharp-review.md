@@ -6,7 +6,7 @@ metadata:
 ---
 
 
-## Review 2026-10-23 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-23 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer diff (openai): unavailable
@@ -18,7 +18,7 @@ metadata:
 
 ## Review 2026-10-23 (follow-up)
 
-## Review 2026-10-23 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-23 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer diff (codex): ok
@@ -46,3 +46,5 @@ metadata:
 - **Confidence:** single-reviewer
 - **Reviewers:** diff (codex)
 - **Suggestion:** Stamp question requests and advance stateAt on their transitions; add a test delivering an older activity after a question
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

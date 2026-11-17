@@ -5,7 +5,7 @@ type: feedback
 
 # Run only the tests that cover the change; the integrator runs everything
 
-User instruction (2026-10-01): "integrator 会去负责跑全部测试，你仅仅简单跑相关测试".
+User instruction (2026-10-01): "the integrator is responsible for running the full test suite; you just run the relevant tests" (user, translated).
 
 **Rule:** as a dev agent (and when dispatching subagents), run only the test files that
 cover what changed, plus lint on the changed files. Never start full suites, whole tiers
@@ -19,3 +19,5 @@ heavy children (femm) that had to be killed by hand.
 
 **How to apply:** name the exact test paths in every subagent prompt and forbid full runs;
 if a broad run is already going, stop it rather than wait on it.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

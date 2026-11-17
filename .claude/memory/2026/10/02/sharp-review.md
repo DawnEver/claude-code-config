@@ -17,7 +17,7 @@ metadata:
 
 ## Review 2026-10-02 (follow-up)
 
-## Review 2026-10-02 (session) — security audit (安全锐评) + adversarial review (对抗性审查)
+## Review 2026-10-02 (session) — security audit (security sharp review) + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped
@@ -37,3 +37,5 @@ metadata:
 - **Suggestion:** Check the mode independently of content (fs.statSync), chmod only when the exec bits are missing, and report an actionable error on EPERM instead of reporting success
 
 Reproduced: install wrappers, chmod ccc 0644, rerun install -> stays non-executable. Before this change, rerunning setup repaired it.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"
