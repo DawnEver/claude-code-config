@@ -7,7 +7,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { STEPS, stepsFor, runStep, runSteps, mergeOutputs, failureOf, startBackgroundLane, hookCommand } from './claude-hook.mjs';
+import { STEPS, stepsFor, runStep, runSteps, mergeOutputs, failureOf, startBackgroundLane, hookCommand, wallBudgetMs } from './claude-hook.mjs';
 import { mirrorFor, callHub } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 import { checkHooks } from '../setup/doctor.js';
@@ -69,14 +69,50 @@ function bridgeMirrors(settings, payload) {
   });
 }
 
-test('SessionStart keeps its five scripts in order, each with the budget and lane its own entry had', () => {
-  assert.deepEqual(STEPS.SessionStart.map((s) => [s.script, (s.args ?? []).join(' '), s.budgetMs, Boolean(s.background)]), [
-    ['hooks/sync-hook.js', '--pull-background', 10000, false],
-    ['hooks/prune-cache-hook.js', '', 10000, true],
-    ['hooks/setup-check-hook.js', '', 5000, false],
-    ['setup/doctor.js', '--hook', 10000, false],
-    ['bridge/ensure.mjs', '', 10000, true],
+test('SessionStart keeps its scripts in order, each in its lane, the foreground ones within the 5 s event budget', () => {
+  assert.deepEqual(STEPS.SessionStart.map((s) => [s.script, (s.args ?? []).join(' '), s.budgetMs, Boolean(s.background), Boolean(s.concurrent)]), [
+    ['hooks/sync-hook.js', '--pull-background', 1000, false, false],
+    ['hooks/prune-cache-hook.js', '', 10000, true, false],
+    ['hooks/setup-check-hook.js', '', 2000, false, false],
+    ['setup/doctor.js', '--hook', 1500, false, false],
+    ['bridge/ensure.mjs', '', 10000, true, false],
+    ['hooks/bridge-hook.js', '--learn', 3500, false, true],
   ]);
+  assert.deepEqual(stepsFor('SessionStart', 'foreground', { source: 'startup' }).map((s) => s.args?.[0]), ['--pull-background', undefined, '--hook'],
+    'a startup keeps its id: no process lookup');
+  assert.ok(stepsFor('SessionStart', 'foreground', { source: 'clear' }).some((s) => s.args?.includes('--learn')), '/clear renames: its process is learned');
+});
+
+// User ruling D24 (2026-11-17): every hook < 5 s, strictly, and the 5 s are for the whole EVENT.
+// The timeout is the backstop: Claude Code treats a hook it kills at its timeout as a non-blocking
+// error (the call or prompt proceeds), so a guard killed there allows the call. Each hook is fast
+// on its own, or hands its slow part to a detached process.
+const MAX_HOOK_TIMEOUT_S = 5;
+/** Every hook of a settings object whose timeout is missing or above the ceiling. */
+function timeoutViolations(settings) {
+  return Object.entries(settings?.hooks ?? {}).flatMap(([event, groups]) => (groups ?? []).flatMap((g) => g.hooks ?? [])
+    .filter((h) => !(typeof h.timeout === 'number' && h.timeout > 0 && h.timeout <= MAX_HOOK_TIMEOUT_S))
+    .map((h) => `${event}: timeout ${h.timeout ?? 'missing'} (${String(h.command).slice(-60)})`));
+}
+
+test('every templated hook has a timeout of at most 5 s', () => {
+  const one = (timeout) => ({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node x.js', ...(timeout === undefined ? {} : { timeout }) }] }] } });
+  assert.equal(timeoutViolations(one(15)).length, 1, 'PLANTED CONTROL: a 15 s timeout fails');
+  assert.equal(timeoutViolations(one(undefined)).length, 1, 'PLANTED CONTROL: a missing timeout (the 60 s default) fails');
+  assert.deepEqual(timeoutViolations(one(5)), []);
+  assert.ok(Object.keys(template.hooks).length >= 9, 'the scan sees the templated events');
+  assert.deepEqual(timeoutViolations(template), []);
+});
+
+test('every event runs its foreground steps within the 5 s event budget', () => {
+  assert.equal(wallBudgetMs([{ budgetMs: 1000 }, { budgetMs: 1500 }, { budgetMs: 2000, concurrent: true }]), 2500, 'ordered steps add up');
+  assert.equal(wallBudgetMs([{ budgetMs: 1000 }, { budgetMs: 3500, concurrent: true }]), 3500, 'a concurrent step runs beside them');
+  assert.ok(wallBudgetMs([{ budgetMs: 660000 }]) > 4500, 'PLANTED CONTROL: the old ten-minute question step breaks the budget');
+  const payloads = [{ notification_type: 'permission_prompt' }, { tool_name: 'AskUserQuestion' }, { tool_name: 'Bash' }, { source: 'startup' }, { source: 'clear' }];
+  for (const event of Object.keys(STEPS)) {
+    const total = Math.max(...payloads.map((p) => wallBudgetMs(stepsFor(event, 'foreground', p))));
+    assert.ok(total <= 4500, `${event}: ${total} ms of foreground step budgets`);
+  }
 });
 
 test('every step script exists', () => {
@@ -90,7 +126,7 @@ test('the template runs SessionStart, Notification and PreToolUse through ONE en
     assert.equal(hooks.length, 1, `${event}: one entry`);
     assert.equal(template.hooks[event].every((g) => !g.matcher || g.matcher === '*'), true, `${event}: the steps filter, not the entry`);
     assert.equal(hooks[0].command, hookCommand(event), `${event}: the template carries hookCommand verbatim`);
-    const foreground = Math.max(...payloads.map((p) => stepsFor(event, 'foreground', p).reduce((t, s) => t + s.budgetMs, 0)));
+    const foreground = Math.max(...payloads.map((p) => wallBudgetMs(stepsFor(event, 'foreground', p))));
     assert.ok(hooks[0].timeout * 1000 > foreground, `${event}: timeout ${hooks[0].timeout}s covers ${foreground} ms of steps`);
   }
   assert.equal(template.hooks.Notification[0].hooks[0].async, true, 'both Notification handlers were async');

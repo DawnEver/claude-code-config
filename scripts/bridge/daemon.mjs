@@ -48,7 +48,8 @@ import { UsageScanner, sources as usageSources } from '../usage/scan.mjs';
 import { UsagePush } from '../usage/push.mjs';
 import { STATUS } from '../dashboard/public/shared/vocab.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
-import { readBridgeConfig, bridgeAllowlist, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
+import { readBridgeConfig, bridgeAllowlist, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange } from './context.mjs';
+import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './runtime-paths.mjs';
 
 /** How long a request for the human may be handled at the machine before anyone is mentioned. */
 const ALERT_GRACE_MS = 30000;
@@ -739,7 +740,7 @@ export class Bridge {
       const message = (await this.#send(s, `${head}\n${render(q)}${hint}`, { replyMarkup, alert: [...this.allowed] })).at(-1);
       if (this.questions.get(id) !== pending) return;   // withdrawn while it was being delivered
       if (!message || this.sessions.get(key) !== s) {
-        // Not offered on Telegram after all: the whole request goes back to the terminal.
+        // Not offered on Telegram after all: the host takes it back (Codex: its TUI; Claude: the session is told to ask again).
         for (const [other, x] of this.questions) if (x.group === group) this.questions.delete(other);
         host?.releaseQuestion?.(ref, s.id);
         return;

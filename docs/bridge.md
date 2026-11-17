@@ -202,18 +202,20 @@ token in `runtime.json`):
   `SessionEnd` is not wired: it also fires on an in-process `/clear` or `/resume`, and
   treating it as the end once unregistered a live channel, so a resumed session's turns
   were all dropped (2026-10-08).
-  Each daemon call has a 2 s budget (a waiting question 10 min; a run at most 8.5 s, under
-  the 10 s settings timeout), exits 0 on any failure, and prints nothing except a question's
-  answer. Calls name the payload's `session_id` — the conversation id current in the
-  process; the hook's `CLAUDE_CODE_SESSION_ID` always equals it, so it adds nothing — and
-  are held up to 30 s if they beat the channel's registration. `/clear` and `/resume`
-  change that id, so when no session matches, a prompt, final or answer is retried naming
-  the hook's own nearest `claude` process (a process-table walk, done only on a miss
-  because it is slow); the channel registered under that same process, and the adapter
-  learns the new id, so later activity and questions route by id again. An id belongs to
-  one session at a time: a channel registering it, or a process retry naming it, takes it
-  from any other. A call spooled while the daemon was down carries its process too, since a
-  restarted daemon has forgotten every learned id.
+  Every hook finishes under 5 s for the whole event (user ruling D24, 2026-11-17): a hook
+  makes ONE daemon call of at most 1 s (`CALL_MS`; a run at most 2.5 s, under the 5 s
+  settings timeout), exits 0 on any failure, and prints nothing except a question's denial
+  or a Stop's delivery. Calls name the payload's `session_id` — the conversation id current
+  in the process; the hook's `CLAUDE_CODE_SESSION_ID` always equals it, so it adds nothing —
+  and are held up to 30 s if they beat the channel's registration. `/clear` and `/resume`
+  change that id, so that rename's SessionStart (`bridge-hook.js --learn`, a concurrent step
+  of `claude-hook.mjs`) walks the hook's own ancestry to its nearest `claude` process ONCE
+  (a process-table query: 1.8-3.2 s of PowerShell on Windows, never on a prompt, stop or tool
+  call) and records it in `~/.claude/bridge/claude-pids.json`; every later call of that
+  session names the process, the channel registered under that same process, and the
+  adapter learns the new id on its first call. An id belongs to one session at a time: a
+  channel registering it, or a call naming its process, takes it from any other. A spooled
+  call carries its process too, since a restarted daemon has forgotten every learned id.
   Agent view (and a background relaunch) moves a conversation to a NEW session id in a NEW
   claude process, while the old process and its channel stay connected; the new one does not
   carry ccc's `--dangerously-load-development-channels` flag (agent view passes only
@@ -244,12 +246,17 @@ token in `runtime.json`):
 - What a Notification waits for ("Claude needs your permission to use Bash") is posted with
   a nudge, unless a channel permission request already posted it with buttons. An
   AskUserQuestion answered in the terminal is posted as `answered locally: Q -> A`.
-- A prompt, final or answer the daemon did not take (down, restarting, over the 2 s hook
-  budget) is spooled to `~/.claude/bridge/spool.jsonl` and resent, oldest first, by the next
-  hook run within one 2 s budget; the first refusal or the budget's end puts the rest back.
-  Entries older than an hour, and beyond the newest 100, are dropped. A replay never hands
-  out queued Telegram messages — only the session's live Stop hook delivers those. Answers
-  are mirrored like prompts: anything typed into the session reaches its Topic.
+- A prompt, final, answer, notice or task fact the daemon did not take (down, restarting,
+  hung past the 1 s call) is appended to `~/.claude/bridge/spool.jsonl` and the hook returns;
+  a detached sender (`bridge-hook.js --send-spool`, one at a time by `spool.lease`) moves the
+  spool into `spool.inflight.jsonl` and delivers it oldest first, retrying (backoff up to
+  5 s) until the daemon is back, for up to 10 minutes; what it could not deliver waits for
+  the next hook's sender. While a spool is pending, a hook appends to it instead of
+  calling, so the daemon sees every call in order (a Stop's queued Telegram messages then
+  wait for the next Stop). A half-written line is skipped. Entries older than a day, and
+  beyond the newest 1000, are dropped. A replay never hands out queued Telegram messages —
+  only the session's live Stop hook delivers those. Answers are mirrored like prompts:
+  anything typed into the session reaches its Topic.
 - No `/interrupt` (use Esc locally).
 
 Nothing to do by hand once this machine has a `bridge.botToken`: the user-scope MCP server
@@ -382,12 +389,16 @@ A multi-select Claude question takes one tapped option, or a comma-separated tex
 - **Claude**: `AskUserQuestion` fires `PreToolUse` before its dialog. The hook calls the
   adapter's `question` method. If the turn was started from Telegram (an inject, or a
   UserPromptSubmit carrying a `<channel>`-wrapped prompt; a locally typed prompt clears it),
-  the hook waits up to 10 minutes for the Telegram answer and returns it as
-  `permissionDecision: allow` + `updatedInput.answers` (`{<question text>: <label>}`), so the
-  dialog is never shown — **exclusive**: while it waits the terminal shows nothing to answer.
-  On timeout, hook failure or an undeliverable post it prints nothing and the dialog appears
-  locally. In a locally typed turn the question is posted as information
-  (`answer locally`, no buttons) and the hook returns at once.
+  the adapter posts it there with buttons and answers `{posted: true}` at once; the hook
+  denies the terminal dialog (`permissionDecision: deny`, its reason telling the model the
+  question went to Telegram and to end its turn). The tapped answer reaches the session as
+  its next message (`Answer from Telegram to the question you asked:` + `Q -> A` lines; a
+  session without a channel gets it at its next Stop); a post Telegram refused sends the
+  session `ask it again in plain text`. No hook waits for a human: it used to hold the call
+  up to 10 minutes for the answer, which no hook under the 5 s rule (D24) can. On hook
+  failure or no bridge it prints nothing and the dialog appears locally. In a locally typed
+  turn the question is posted as information (`answer locally`, no buttons) and the hook
+  returns at once.
 
 ### Delivery outcomes
 
@@ -522,7 +533,7 @@ require separate acceptance evidence.
 - Channels together with `--remote-control` in one Claude session.
 - Telegram approval buttons answer a Claude permission request.
 - `deleteForumTopic` on a closed Topic (create, close, delete; a later send fails).
-- Mirroring after `/clear` and an in-process `/resume` through the process-id retry.
+- Mirroring after `/clear` and an in-process `/resume` (verified with the per-call process retry; its 2026-11-17 replacement, the process the rename's SessionStart learns with `--learn`, is not yet verified live).
 
 ## Attachments
 

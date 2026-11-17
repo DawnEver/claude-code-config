@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
-import { RUNTIME_FILE } from './context.mjs';
+import { RUNTIME_FILE } from './runtime-paths.mjs';
 import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 import { isMain } from '../shared/is-main.mjs';
 

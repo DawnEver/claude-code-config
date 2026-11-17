@@ -59,7 +59,7 @@
                     {
                         "type": "command",
                         "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || { node ~/.claude/scripts/hooks/sync-hook.js --pull </dev/null >/dev/null 2>&1; [ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || { if git -C ~/.claude/scripts cat-file -e '@{u}:scripts/hooks/claude-hook.mjs' 2>/dev/null; then w='the pull did not fast-forward this checkout'; else w='its upstream does not carry it yet (offline, or main not yet promoted)'; fi; printf '{\"systemMessage\":\"[claude-hook] SessionStart hooks skipped: claude-hook.mjs is absent and %s. Launch via ccc, or run: node ~/.claude/scripts/hooks/sync-hook.js --pull\"}\\n' \"$w\"; exit 0; }; }; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart",
-                        "timeout": 30
+                        "timeout": 5
                     }
                 ]
             }
@@ -70,7 +70,7 @@
                     {
                         "type": "command",
                         "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || exit 0; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event Notification",
-                        "timeout": 75,
+                        "timeout": 5,
                         "async": true
                     }
                 ]
@@ -82,7 +82,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/sync-hook.js --remind",
-                        "timeout": 10
+                        "timeout": 5
                     }
                 ]
             }
@@ -94,7 +94,7 @@
                     {
                         "type": "command",
                         "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || exit 0; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event PreToolUse",
-                        "timeout": 670
+                        "timeout": 5
                     }
                 ]
             }
@@ -105,7 +105,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 5
                     }
                 ]
             }
@@ -116,7 +116,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 5
                     }
                 ]
             }
@@ -127,7 +127,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "timeout": 5,
                         "async": true
                     }
                 ]
@@ -140,7 +140,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "timeout": 5,
                         "async": true
                     }
                 ]
@@ -153,7 +153,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "timeout": 5,
                         "async": true
                     }
                 ]

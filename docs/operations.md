@@ -10,7 +10,8 @@ plugin hooks remain a separate, bundled integration.
 
 `SessionStart`, `Notification` and `PreToolUse` are one settings entry each, `claude-hook.mjs --event <event>`:
 its `STEPS` table names the scripts below and runs them in order in one node process (a worker
-thread each, isolated, within the budget its own entry had; a failed step is named in the
+thread each, isolated, within its budget: every hook finishes under 5 s for the whole event (user
+ruling D24), so a step that can take longer hands its work to a detached process; a failed step is named in the
 systemMessage; a deny or an exit-2 block is the entry's and ends the ordered steps). Steps that
 were `async` run beside the others (the PreToolUse bridge edge) or in one detached background lane
 (prune, ensure). `PostToolUse` / `PostToolUseFailure` run `bridge-hook.js` for every tool, so a

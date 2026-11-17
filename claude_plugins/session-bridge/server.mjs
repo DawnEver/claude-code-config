@@ -21,7 +21,7 @@ import net from 'net';
 import path from 'path';
 import crypto from 'crypto';
 import { lineSplitter } from '../../scripts/bridge/jsonrpc.mjs';
-import { RUNTIME_FILE } from '../../scripts/bridge/context.mjs';
+import { RUNTIME_FILE } from '../../scripts/bridge/runtime-paths.mjs';
 import { isMain } from '../../scripts/shared/is-main.mjs';
 import { configDir, readSeats, seatOf } from '../../scripts/shared/seats.mjs';
 import { readMachineName } from '../../scripts/shared/machine.mjs';

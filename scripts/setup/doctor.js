@@ -14,7 +14,8 @@
 // Read-only. Never mutates anything. Exits 1 when a check FAILs.
 //
 //   node ~/.claude/scripts/setup/doctor.js          full report
-//   node ~/.claude/scripts/setup/doctor.js --hook   SessionStart: silent unless something is wrong
+//   node ~/.claude/scripts/setup/doctor.js --hook   SessionStart: the last run's FAILs, silent when none; starts the next run detached
+//   node ~/.claude/scripts/setup/doctor.js --hook-refresh   that detached run: writes ~/.claude/doctor-last.json
 //   node ~/.claude/scripts/setup/doctor.js --json   machine-readable
 //   node ~/.claude/scripts/setup/doctor.js --public-hygiene   pre-commit gate (the family hook row public-hygiene, pyproject.toml)
 
@@ -22,7 +23,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { inspectCodexHooks } from './codex-hooks.mjs';
@@ -31,7 +32,8 @@ import { withoutRetiredCodexRootKey } from './codex-config-compose.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
 import { hooksDrift } from './settings-hooks.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
-import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
+import { readBridgeConfig, bridgeSourceRevision } from '../bridge/context.mjs';
+import { RUNTIME_FILE } from '../bridge/runtime-paths.mjs';
 import {
   sourceDir, claudeDir, codexDir, getSyncDir,
   CLAUDE_LINKS, getCodexLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
@@ -584,6 +586,48 @@ export function checkChannelServer({ bridged = Boolean(readBridgeConfig().botTok
 const DOCTOR_FILE = fileURLToPath(import.meta.url);
 const CONTENT_CACHE_FILE = path.join(HOME, '.claude', 'doctor-cache.json');
 
+// ── The SessionStart hook ──
+// Every hook < 5 s for the whole event (user ruling D24, 2026-11-17), and the checks take ~10 s
+// cold (~1.5 s with the content cache warm). So the hook (--hook) never runs them: it reports the
+// FAILs the last run left (doctor-last.json) and starts the next run DETACHED (--hook-refresh, one
+// at a time by its lease), which the next SessionStart reports. A finding shows one session late.
+const LAST_FILE = path.join(HOME, '.claude', 'doctor-last.json');
+const REFRESH_LEASE = path.join(HOME, '.claude', 'doctor-refresh.lock');
+const REFRESH_LEASE_MS = 10 * 60000;
+
+/** The hook's notice for the titles of failing findings, or null when none fail. */
+function failNotice(failed) {
+  if (!failed.length) return null;
+  return `[doctor] ${failed.length} failing invariant(s) — ${failed.slice(0, 2).join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''} — run: npm run doctor`;
+}
+
+const startRefresh = () => spawn(process.execPath, [DOCTOR_FILE, '--hook-refresh'], { detached: true, stdio: 'ignore', windowsHide: true }).on('error', () => {}).unref();
+
+/** The hook: the last run's notice (null when it found no FAIL, or none ran yet), the next run started unless one runs. */
+export function hookReport({ lastFile = LAST_FILE, lease = REFRESH_LEASE, start = startRefresh, now = Date.now() } = {}) {
+  let failed = [];
+  try { const last = JSON.parse(fs.readFileSync(lastFile, 'utf8')); if (Array.isArray(last?.failed)) failed = last.failed.map(String); } catch { /* none yet, or torn */ }
+  let running = false;
+  try { running = now - fs.statSync(lease).mtimeMs < REFRESH_LEASE_MS; } catch { /* none runs */ }
+  if (!running) try { start(); } catch { /* the next SessionStart tries again */ }
+  return failNotice(failed);
+}
+
+/** The detached run: every check, its FAILs written for the next hook; one at a time by `lease`. */
+export function refreshHookReport({ lastFile = LAST_FILE, lease = REFRESH_LEASE, run = () => runChecks({ contentCache: CONTENT_CACHE_FILE }), now = Date.now } = {}) {
+  try { fs.writeFileSync(lease, String(process.pid), { flag: 'wx' }); } catch {
+    try { if (now() - fs.statSync(lease).mtimeMs < REFRESH_LEASE_MS) return; fs.writeFileSync(lease, String(process.pid)); } catch { return; }
+  }
+  try {
+    const failed = run().filter((f) => f.level === 'FAIL').map((f) => f.title);
+    const tmp = `${lastFile}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ at: now(), failed }));
+    fs.renameSync(tmp, lastFile);
+  } finally {
+    fs.rmSync(lease, { force: true });
+  }
+}
+
 /**
  * What the content scans read, as one string: HEAD, every changed or untracked path with
  * its size and mtime (a dirty file edited again keeps its status line), this checker's
@@ -706,27 +750,23 @@ const MARK = { FAIL: 'FAIL ', WARN: 'WARN ', OK: 'OK   ' };
 
 function main() {
   const args = process.argv.slice(2);
+  if (args.includes('--hook-refresh')) { refreshHookReport(); return; }
+  if (args.includes('--hook')) {
+    // FAILs only, and silent when there are none. WARNs are informational — the
+    // dormant-plugin inventory is always non-empty — and a notice that shows up
+    // every session regardless teaches the reader to ignore all of them.
+    const notice = hookReport();
+    if (notice) process.stdout.write(JSON.stringify({ systemMessage: notice }));
+    return;
+  }
   // --public-hygiene: the pre-commit gate ([tool.dev_lab.hooks] row public-hygiene) — that check alone.
-  const findings = args.includes('--public-hygiene') ? checkPublicHygiene()
-    : runChecks({ contentCache: args.includes('--hook') ? CONTENT_CACHE_FILE : null });
+  const findings = args.includes('--public-hygiene') ? checkPublicHygiene() : runChecks();
   const failed = findings.filter((f) => f.level === 'FAIL');
   const warned = findings.filter((f) => f.level === 'WARN');
 
   if (args.includes('--json')) {
     process.stdout.write(JSON.stringify({ findings, failed: failed.length, warned: warned.length }, null, 2));
     process.exitCode = failed.length ? 1 : 0;
-    return;
-  }
-
-  if (args.includes('--hook')) {
-    // FAILs only, and silent when there are none. WARNs are informational — the
-    // dormant-plugin inventory is always non-empty — and a notice that shows up
-    // every session regardless teaches the reader to ignore all of them.
-    if (!failed.length) return;
-    const first = failed.slice(0, 2).map((f) => f.title);
-    process.stdout.write(JSON.stringify({
-      systemMessage: `[doctor] ${failed.length} failing invariant(s) — ${first.join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''} — run: npm run doctor`,
-    }));
     return;
   }
 
