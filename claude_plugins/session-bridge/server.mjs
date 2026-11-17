@@ -26,9 +26,9 @@ import { isMain } from '../../scripts/shared/is-main.mjs';
 import { configDir, readSeats, seatOf } from '../../scripts/shared/seats.mjs';
 import { readMachineName } from '../../scripts/shared/machine.mjs';
 import { CHANNEL_SOURCE, readChannelDeclaration } from '../../scripts/shared/channel-declaration.mjs';
-import { tokens, base, isClaudeProcess, processTable, ancestorsOf } from '../../scripts/shared/process-tree.mjs';
+import { tokens, base, isClaudeProcess, readProcessTable, ancestorsOf } from '../../scripts/shared/process-tree.mjs';
 
-export { isClaudeProcess, processTable, ancestorsOf };
+export { isClaudeProcess, readProcessTable, ancestorsOf };
 const RECONNECT_MS = 5000;
 
 const INSTRUCTIONS = [
@@ -284,7 +284,9 @@ function main() {
   process.stdin.on('data', jsonLines((m) => server.onMessage(m)));
   process.stdin.on('end', () => { log('stdin closed by Claude Code'); link.stop(); process.exit(0); });
   log(`start session=${session.sessionId} from ${identity.source} cwd=${cwd}`);
-  const ancestors = ancestorsOf(process.ppid, processTable());
+  const { table, error: tableError } = readProcessTable();
+  if (tableError) log(`ancestry unknown: ${tableError}; nested detection falls back to CLAUDE_PID alone`);
+  const ancestors = ancestorsOf(process.ppid, table);
   log(`ancestry ${ancestors.map((a) => `${a.pid}:${base(tokens(a.cmd, 1)[0])}${isClaudeProcess(a.cmd) ? '*' : ''}`).join(' < ') || 'unknown'}`);
   // The hook names this process (its CLAUDE_PID, which Claude Code sets per process), so a call
   // routes here even when the session id it reports is new (/clear, /resume, a fork).

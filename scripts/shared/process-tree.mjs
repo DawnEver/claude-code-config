@@ -1,5 +1,6 @@
 // scripts/shared/process-tree.mjs — who is this process's claude? Used by the session-bridge
-// channel (main vs nested session) and bridge-hook.js (routing after /clear or /resume).
+// channel at its start, to tell a main session from a nested one. No hook reads it: a hook names
+// its claude process by the CLAUDE_PID Claude Code gives it.
 import { execFileSync } from 'child_process';
 
 /** The first `n` tokens of a command line, honouring double quotes. */
@@ -20,8 +21,10 @@ export function isClaudeProcess(cmd) {
   return /^node(\.exe)?$/.test(base(prog)) && /@anthropic-ai[\\/]claude-code[\\/]/i.test(a ?? '') && !HOST_MODES.has(b);
 }
 
-// The one process-table query: PowerShell's CIM on Windows (1.2-3.9 s, almost all of it PowerShell
-// starting, measured 2026-11-17), ps elsewhere. Each output line is `pid TAB ppid TAB command`.
+// The one process-table query: PowerShell's CIM on Windows (1.2-3.9 s on a warm workstation, almost
+// all of it PowerShell starting, measured 2026-11-17; past 10 s on a fresh CI runner under load),
+// ps elsewhere. Each output line is `pid TAB ppid TAB command`. Used only by the session-bridge
+// channel at its start (never on a hook), so it may take its time.
 const TABLE_QUERY = process.platform === 'win32'
   ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command',
     'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$(if ($_.CommandLine) { $_.CommandLine } else { $_.Name })" }']]
@@ -38,11 +41,24 @@ export function parseTable(out, { ps = TABLE_QUERY[0] === 'ps' } = {}) {
   return table;
 }
 
-/** pid -> {ppid, cmd} for every process; empty when the OS will not say. */
-export function processTable({ timeoutMs = 10000 } = {}) {
+/**
+ * Every process as pid -> {ppid, cmd}: `{ table, error }`. When the OS will not say, the table is
+ * empty and `error` names why (timed out, failed, said nothing) -- never an empty table that reads
+ * as "no processes". `query` is [command, args], the platform's own by default.
+ */
+export function readProcessTable({ timeoutMs = 30000, query = TABLE_QUERY } = {}) {
+  const [cmd, args] = query;
+  let out;
   try {
-    return parseTable(execFileSync(TABLE_QUERY[0], TABLE_QUERY[1], { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'ignore'] }));
-  } catch { return new Map(); /* unknown ancestry: only the CLAUDE_PID rule applies */ }
+    out = execFileSync(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    const why = e.code === 'ETIMEDOUT' ? `timed out after ${timeoutMs} ms`
+      : e.code === 'ENOENT' ? 'is not on PATH'
+      : `failed (${e.status != null ? `exit ${e.status}` : e.code ?? e.signal}${e.stderr ? `: ${String(e.stderr).trim().split(/\r?\n/)[0]}` : ''})`;
+    return { table: new Map(), error: `the process-table query (${cmd}) ${why}` };
+  }
+  const table = parseTable(out);
+  return table.size ? { table, error: null } : { table, error: `the process-table query (${cmd}) listed no process` };
 }
 
 /** [{pid, cmd}] from `pid` upward. */
@@ -56,7 +72,3 @@ export function ancestorsOf(pid, table, max = 64) {
   return out;
 }
 
-/** The nearest claude CLI at or above `pid`, or null. */
-export function nearestClaude(pid, table = processTable()) {
-  return ancestorsOf(pid, table).find((a) => isClaudeProcess(a.cmd))?.pid ?? null;
-}
