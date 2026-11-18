@@ -7,7 +7,7 @@ import net from 'net';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { turnTexts, backgroundTasks, parseJsonl, mirrorFor, questionFor, questionOutput, deliverOutput, callHub, spool, readSpool,
-  sendSpool, startSender, claudePidOf, rememberClaude, CALL_MS, LEASE_STALE_MS } from './bridge-hook.js';
+  sendSpool, startSender, claudePidOfHook, outcomeOf, CALL_MS, LEASE_STALE_MS } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 
 const HOOK = fileURLToPath(new URL('./bridge-hook.js', import.meta.url));
@@ -161,35 +161,47 @@ test('questionFor and questionOutput: AskUserQuestion only; a question posted to
   assert.equal(questionOutput(null), null, 'no bridge: the terminal dialog');
 });
 
-test('the claude process learned at a rename is recalled for that session only; a torn file reads as none', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-pids-'));
-  const file = path.join(dir, 'claude-pids.json');
-  try {
-    assert.equal(claudePidOf('cleared', { file }), undefined, 'nothing learned yet');
-    rememberClaude('cleared', 77, { file });
-    rememberClaude('other', 78, { file });
-    assert.equal(claudePidOf('cleared', { file }), 77);
-    assert.equal(claudePidOf('nested', { file }), undefined, 'a session never learned names no process');
-    fs.writeFileSync(file, '{"cleared":{"pid":7');
-    assert.equal(claudePidOf('cleared', { file }), undefined);
-    rememberClaude('cleared', 79, { file });
-    assert.equal(claudePidOf('cleared', { file }), 79, 'a torn file is rewritten whole');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+test('claudePidOfHook reads the CLAUDE_PID Claude Code gives its hooks; none outside Claude Code', () => {
+  assert.equal(claudePidOfHook({ CLAUDE_PID: '59760' }), 59760);
+  assert.equal(claudePidOfHook({}), undefined);
+  assert.equal(claudePidOfHook({ CLAUDE_PID: 'x' }), undefined);
 });
 
-test('every call of a renamed session names the claude process its rename recorded', async () => {
+/** A real adapter on 127.0.0.1 with a session `boot` registered under claude process 4242, its runtime file in `bridge`. */
+async function liveAdapter(bridge, { register = true } = {}) {
+  const a = new ClaudeAdapter();
+  const port = await a.listen(0);
+  fs.writeFileSync(path.join(bridge, 'runtime.json'), j({ port, token: a.token }));
+  const prompts = [];
+  a.on('prompt', (e) => prompts.push([e.id, e.text]));
+  let ch = null;
+  const registerBoot = () => new Promise((resolve) => {
+    ch = net.connect({ host: '127.0.0.1', port }, () => ch.write(j({ jsonrpc: '2.0', id: 1, method: 'register', params: { token: a.token, sessionId: 'boot', cwd: '/repo', claudePid: 4242 } }) + '\n'));
+    ch.setEncoding('utf8');
+    ch.on('data', () => resolve());
+  });
+  if (register) await registerBoot();
+  return { a, prompts, registerBoot, close: async () => { ch?.destroy(); await a.close(); } };
+}
+
+test('a missed SessionStart is healed by the next UserPromptSubmit: the hook names its claude process itself', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
   const bridge = path.join(home, '.claude', 'bridge');
   fs.mkdirSync(bridge, { recursive: true });
-  const daemon = await plantedDaemon('ok');
+  const live = await liveAdapter(bridge);
   try {
-    fs.writeFileSync(path.join(bridge, 'runtime.json'), j({ port: daemon.port, token: 't'.repeat(48) }));
-    rememberClaude('cleared', 77, { file: path.join(bridge, 'claude-pids.json') });
-    await runHook(home, { hook_event_name: 'UserPromptSubmit', session_id: 'cleared', prompt: 'after clear' });
-    await runHook(home, { hook_event_name: 'UserPromptSubmit', session_id: 'plain', prompt: 'never renamed' });
-    assert.equal(daemon.got.find((p) => p.text === 'after clear')?.claudePid, 77);
-    assert.equal(daemon.got.find((p) => p.text === 'never renamed')?.claudePid, undefined, 'PLANTED CONTROL: an unlearned session names none');
-  } finally { await daemon.close(); fs.rmSync(home, { recursive: true, force: true }); }
+    // A renamed session (/clear, /resume, a fork) whose SessionStart never ran or learned anything.
+    await runHook(home, { hook_event_name: 'UserPromptSubmit', session_id: 'cleared-new-id', prompt: 'after clear' }, [], { CLAUDE_PID: '4242' });
+    assert.deepEqual(live.prompts, [['boot', 'after clear']], 'its first prompt routes to the session of its claude process');
+    await runHook(home, { hook_event_name: 'UserPromptSubmit', session_id: 'unnamed-id', prompt: 'no process named' });
+    assert.deepEqual(live.prompts, [['boot', 'after clear']], 'PLANTED CONTROL: a hook naming no process routes nothing...');
+    assert.ok(readSpool(path.join(bridge, 'spool.jsonl')).concat(readSpool(path.join(bridge, 'spool.inflight.jsonl'))).some((e) => e.call.text === 'no process named'),
+      '...and its call is spooled, never dropped');
+  } finally {
+    await live.close();
+    await until(() => !fs.existsSync(path.join(bridge, 'spool.lease')), 15_000);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('callHub delivers to a live hub, and resolves quietly when none runs', async () => {
@@ -200,7 +212,6 @@ test('callHub delivers to a live hub, and resolves quietly when none runs', asyn
     const runtimeFile = path.join(dir, 'runtime.json');
     fs.writeFileSync(runtimeFile, j({ port, token: hub.token }));
     assert.deepEqual(await callHub('mirror', { sessionId: 's', kind: 'final', text: 'ok' }, { runtimeFile }), { ok: true, routed: false });
-    assert.deepEqual(hub.held.map((h) => h.m), [{ sessionId: 's', claudePid: null, retry: false, kind: 'final', text: 'ok' }], 'held until its session registers');
     assert.deepEqual(await callHub('question', { sessionId: 's', questions: [{ question: 'q' }], wait: true }, { runtimeFile }), { answers: null });
     assert.equal(await callHub('mirror', { sessionId: 's', kind: 'final', text: 'x' }, { runtimeFile: path.join(dir, 'none.json') }), null);
   } finally { await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); }
@@ -243,19 +254,62 @@ test('delivery is the only way out: 1,500 entries older than a day all reach the
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a daemon that never acks keeps every entry; an ok:true ack is what releases one', async () => {
+test('a daemon that never acks, or never routes, keeps every entry; only a routed ack releases one', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
   const f = spoolFiles(dir);
   try {
-    for (let i = 0; i < 5; i++) spool({ kind: 'prompt', text: `k${i}` }, { file: f.file, now: Date.now() + i });
-    const answers = [null, {}, { ok: false }, { error: { code: -32001, message: 'unauthorized' } }, { routed: true }];
+    for (let i = 0; i < 5; i++) spool({ sessionId: 's', kind: 'prompt', text: `k${i}` }, { file: f.file, now: Date.now() + i });
+    const answers = [null, {}, { ok: false }, { error: { code: -32001, message: 'unauthorized' } }, { routed: true }, { ok: true, routed: false }];
     let n = 0, clock = 0;
     const tries = async () => answers[n++ % answers.length];
     await sendSpool({ ...f, send: tries, sleep: async (ms) => { clock += ms; }, now: () => clock, lifetimeMs: 60_000, lingerMs: 0 });
-    assert.ok(n >= answers.length, `PLANTED CONTROL: every non-ack answer was tried (${n} tries)`);
-    const left = readSpool(f.inflight).slice(Number(fs.existsSync(f.cursor) ? fs.readFileSync(f.cursor, 'utf8') : 0) || 0);
-    assert.deepEqual(left.map((e) => e.call.text), ['k0', 'k1', 'k2', 'k3', 'k4'], 'nothing the daemon did not ack left the spool');
+    assert.ok(n >= answers.length, `PLANTED CONTROL: every answer short of a routed ack was tried (${n} tries)`);
+    assert.deepEqual(readSpool(f.inflight).map((e) => e.call.text), ['k0', 'k1', 'k2', 'k3', 'k4'], 'nothing left the spool');
     assert.equal(fs.existsSync(f.held), false, 'no answer short of a refusal holds an entry');
+    assert.deepEqual(['delivered', 'delivered', 'unrouted', 'refused', 'retry'].map((x, i) => x === outcomeOf([{ ok: true }, { ok: true, routed: false, nested: true }, { ok: true, routed: false }, { error: { code: -32602 } }, null][i])), [true, true, true, true, true]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a call waiting for its channel survives past 30 s and is delivered once the session is routable', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const f = spoolFiles(dir);
+  const live = await liveAdapter(dir, { register: false });
+  f.runtimeFile = path.join(dir, 'runtime.json');
+  try {
+    // Its claude process is named (CLAUDE_PID) but no channel is registered under it yet.
+    spool({ sessionId: 'cleared', claudePid: 4242, kind: 'prompt', text: 'typed early' }, { file: f.file, now: Date.now() });
+    let clock = 0, registered = false, seenAt31 = null;
+    const sleep = async (ms) => {
+      clock += ms;
+      if (clock > 31_000 && !registered) {
+        seenAt31 = [...live.prompts];
+        registered = true;
+        await live.registerBoot();   // the channel of process 4242 comes up after 31 s
+      }
+    };
+    await sendSpool({ ...f, sleep, now: () => clock, lifetimeMs: 120_000, lingerMs: 0, alive: () => true, send: (c) => callHub('mirror', c, { runtimeFile: f.runtimeFile }) });
+    assert.deepEqual(seenAt31, [], 'PLANTED CONTROL: nothing routed in the first 31 s');
+    assert.deepEqual(live.prompts, [['boot', 'typed early']], 'delivered once its channel registered, after the old 30 s drop');
+    assert.equal(fs.existsSync(f.inflight) || fs.existsSync(f.file), false);
+  } finally { await live.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('one session waiting for its channel never blocks another; a session whose process exited unrouted is held', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const f = spoolFiles(dir);
+  try {
+    spool({ sessionId: 'waiting', claudePid: 10, kind: 'prompt', text: 'w1' }, { file: f.file, now: 1 });
+    spool({ sessionId: 'live', claudePid: 20, kind: 'prompt', text: 'l1' }, { file: f.file, now: 2 });
+    spool({ sessionId: 'waiting', claudePid: 10, kind: 'final', text: 'w2' }, { file: f.file, now: 3 });
+    spool({ sessionId: 'gone', claudePid: 30, kind: 'final', text: 'g1' }, { file: f.file, now: 4 });
+    spool({ sessionId: 'live', claudePid: 20, kind: 'final', text: 'l2' }, { file: f.file, now: 5 });
+    const sent = [];
+    const send = async (c) => { sent.push(c.text); return c.sessionId === 'live' ? { ok: true, routed: true } : { ok: true, routed: false }; };
+    let clock = 0;
+    await sendSpool({ ...f, send, sleep: async (ms) => { clock += ms; }, now: () => clock, lifetimeMs: 3000, lingerMs: 0, alive: (pid) => pid !== 30 });
+    assert.deepEqual(sent.slice(0, 4), ['w1', 'l1', 'g1', 'l2'], 'a waiting session\'s later call is not tried behind its first; the others flow');
+    assert.deepEqual(readSpool(f.inflight).map((e) => e.call.text), ['w1', 'w2'], 'the waiting session keeps its calls, in order');
+    assert.match(fs.readFileSync(f.held, 'utf8'), /"g1"/, 'an exited process\'s unroutable call is held, not dropped');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -352,10 +406,10 @@ function plantedDaemon(mode = 'ok', port = 0) {
 }
 
 /** Run bridge-hook.js as Claude Code does, under a planted home. Resolves {ms, code, out}. */
-function runHook(home, payload, args = []) {
+function runHook(home, payload, args = [], env = {}) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const c = spawn(process.execPath, [HOOK, ...args], { env: { ...process.env, USERPROFILE: home, HOME: home, CLAUDE_CODE_SESSION_ID: '' }, windowsHide: true });
+    const c = spawn(process.execPath, [HOOK, ...args], { env: { ...process.env, USERPROFILE: home, HOME: home, CLAUDE_CODE_SESSION_ID: '', CLAUDE_PID: '', ...env }, windowsHide: true });
     let out = '';
     c.stdout.on('data', (d) => { out += d; });
     c.on('close', (code) => resolve({ ms: Date.now() - t0, code, out }));

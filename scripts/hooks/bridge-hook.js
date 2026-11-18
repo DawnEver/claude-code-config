@@ -16,22 +16,22 @@
 // this script in a worker thread beside the loop guard.
 // SessionEnd is not mirrored: it also fires on in-process /clear and /resume, and the end of
 // the process is already observed by the daemon as its channel's socket closing.
-// After /clear or /resume the adapter does not know the new id: that rename's SessionStart
-// (`--learn`, see "The claude process of a renamed session") records this session's claude
-// process once, and every call of the session names it, so the adapter learns the new id on its
-// first call. No process-table query (1.8-3.2 s of PowerShell on Windows) runs on a prompt, stop
-// or tool call, and CLAUDE_PID is never read (a nested claude inherits its parent's).
+// Every call names the session's claude process (`claudePid`, from the hook's CLAUDE_PID; see
+// "The claude process"), so a session whose id is new to the adapter -- /clear, /resume, a fork,
+// an agent-view resume -- routes on its first call, with no process-table query on any hook.
 //
 // EVERY HOOK < 5 s, FOR THE WHOLE EVENT (user ruling D24, 2026-11-17), AND THE MIRROR LOSES NOTHING:
 // a hook makes at most ONE call, bounded by CALL_MS. A call the daemon did not take (down,
-// restarting, hung) is appended to the spool and a detached sender (`--send-spool`, one at a time
-// by its lease, started by ANY hook run that finds the spool pending) delivers the spool in order,
-// retrying until the daemon is back; an entry leaves the spool only on the daemon's ack (see "The
-// spool"); while a spool is pending a hook appends to it instead of calling, so order holds. Replays are marked, so the
-// adapter never hands them this session's queued Telegram messages: only a live Stop call can.
-// A session Claude Code gives no channel (ccds, or no flag) has its Telegram messages queued
-// by the daemon; the Stop call gets them back and blocks the stop with them, so the session
-// continues with those messages as its next turn (with a spool pending, at the next Stop).
+// restarting, hung) or could not route yet (its channel not registered) is appended to the spool
+// and a detached sender (`--send-spool`, one at a time by its lease, started by ANY hook run that
+// finds the spool pending) delivers it, retrying until the daemon routes and acks it (see "The
+// spool"); while a session has spooled calls its hooks append instead of calling, so each
+// session's calls keep their order. Replays are marked, so the adapter never hands them the
+// session's queued Telegram messages: only a live Stop call can.
+// A session Claude Code gives no channel (an agent-view or background session, ccds, no flag) has
+// its Telegram messages queued by the daemon (on disk: a daemon restart loses none); the Stop call
+// gets them back and blocks the stop with them, so the session continues with those messages as
+// its next turn.
 // Every call carries the session's `transcriptPath`: when agent view relaunches a conversation
 // under a new id, Claude Code appends a `continued-in` record there, and the adapter reads it.
 // PreToolUse(AskUserQuestion) is a `question` call instead, answered at once: in a turn started
@@ -46,22 +46,22 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
+import { isAlive } from '../shared/owner-lock.mjs';
 import { RUNTIME_FILE, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
 
 /** The one daemon call a hook makes: a healthy daemon answers in milliseconds. */
 export const CALL_MS = 1000;
 // Hard exit: one call, the output flush and the sender start. The settings hook timeout (5 s) exceeds it.
 const RUN_MS = CALL_MS + 1500;
-const LEARN_MS = 3200;   // the process-table query of a rename's SessionStart (claude-hook gives it 3.5 s)
 const inRuntime = (name) => path.join(path.dirname(RUNTIME_FILE), SPOOL_NAMES[name]);
 const SPOOL_FILE = inRuntime('spool');
 const INFLIGHT_FILE = inRuntime('inflight');
-const CURSOR_FILE = inRuntime('cursor');
+const SESSIONS_DIR = inRuntime('sessions');
 const HELD_FILE = inRuntime('held');
 const LEASE_FILE = inRuntime('lease');
-const CLAUDE_PIDS_FILE = path.join(path.dirname(RUNTIME_FILE), 'claude-pids.json');
 /** A sender renews its lease every loop; one older than this died. */
 export const LEASE_STALE_MS = 30_000;
 const SENDER_LIFETIME_MS = 10 * 60000;   // then any next hook that finds the spool pending starts another
@@ -322,30 +322,16 @@ export function deliverOutput(deliver) {
   return { decision: 'block', reason: msgs.join('\n\n') };
 }
 
-// ── The claude process of a renamed session ──
-// /clear and /resume give a session a new id its channel never registered. The SessionStart of
-// that rename (`--learn`, a concurrent step of claude-hook.mjs) walks this hook's own ancestry to
-// its claude process ONCE (a process-table query: 1.8-3.2 s of PowerShell on Windows, so never on
-// a prompt, stop or tool call) and records it here; every later call of that session names it.
-// Walked from the session's own hook, so a nested claude finds itself, never its parent.
+// ── The claude process ──
+// Claude Code gives every hook it runs CLAUDE_PID = ITS OWN pid (the CLI's hook environment sets
+// `CLAUDE_PID: String(process.pid)` per process, so a nested claude's hooks carry the nested one;
+// read from the installed CLI, 2026-11-17). The session's channel registered under that same
+// process (session-bridge server.mjs, its nearest claude ancestor), so a call naming it routes on
+// its first call however its session id came to be new: /clear, /resume, `claude --resume`,
+// `--fork-session`, an agent-view resume. No process table is read on any hook.
 
-const CLAUDE_PIDS_MAX = 200;
-
-/** The claude process recorded for `sessionId`, or undefined. A torn or foreign file reads as none. */
-export function claudePidOf(sessionId, { file = CLAUDE_PIDS_FILE } = {}) {
-  try { return Number(JSON.parse(fs.readFileSync(file, 'utf8'))?.[sessionId]?.pid) || undefined; } catch { return undefined; }
-}
-
-/** Record `sessionId` -> `pid` (atomically; the newest CLAUDE_PIDS_MAX kept). */
-export function rememberClaude(sessionId, pid, { file = CLAUDE_PIDS_FILE, now = Date.now() } = {}) {
-  let all = {};
-  try { all = JSON.parse(fs.readFileSync(file, 'utf8')) ?? {}; } catch { /* none yet, or torn */ }
-  all[sessionId] = { pid, at: now };
-  const kept = Object.fromEntries(Object.entries(all).filter(([, v]) => Number(v?.pid)).sort((a, b) => b[1].at - a[1].at).slice(0, CLAUDE_PIDS_MAX));
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(kept));
-  fs.renameSync(tmp, file);
-}
+/** The claude process running this hook, or undefined outside Claude Code. */
+export const claudePidOfHook = (env = process.env) => Number.parseInt(env.CLAUDE_PID, 10) || undefined;
 
 /**
  * One authenticated call to the hub. Resolves its result; `{ error }` when the daemon answered
@@ -375,16 +361,20 @@ export function callHub(method, params, { runtimeFile = RUNTIME_FILE, timeoutMs 
   });
 }
 
-// ── The spool ──
+/// ── The spool ──
 // THE MIRROR LOSES NOTHING (standing user ruling): DELIVERY IS THE ONLY WAY AN ENTRY LEAVES. There is
-// no age or count eviction; an entry leaves the spool only once the daemon ACKED it (`ok: true`); one
-// the daemon refuses, and a torn line, go to the held file -- kept, and counted by doctor.
-// Hooks append (one write per call, O_APPEND); only the lease holder (the sender) moves lines out:
-// it claims the spool by rename into its in-flight file (merging any claim a dead sender left),
-// sends from the cursor, and advances the cursor on each ack. The acked prefix is compacted away
-// every COMPACT_EVERY acks and when the file is done -- the cursor reset BEFORE the rewrite, so a
-// crash between the two re-sends acked entries (the daemon drops a final it already sent) and
-// never skips an unacked one. A hook sees a pending spool when the spool or in-flight file exists.
+// no age or count eviction and no timed drop anywhere on the way: an entry leaves the spool only once
+// the daemon ROUTED and acked it (`ok: true`, not `routed: false` -- a call for a channel not
+// registered yet waits here, never in the daemon's memory), or acked it as a nested session's (one
+// the bridge deliberately does not mirror). An entry the daemon refuses, one whose claude process
+// has exited unrouted (its channel can never come back), and a torn line go to the held file --
+// kept, and counted by doctor.
+// Hooks append (one write per call, O_APPEND) and mark their session pending; only the lease holder
+// (the sender) moves lines out: it claims the spool by rename into its in-flight file (merging any
+// claim a dead sender left) and sends it oldest first, PER SESSION -- a session it cannot deliver
+// to yet keeps its entries, in order, while every other session's flow on. Delivered entries are
+// compacted away every COMPACT_EVERY and at each pass's end; a crash in between re-sends delivered
+// entries (the adapter drops a final it already sent), never skips an undelivered one.
 
 /** Keep a call the daemon did not take, for the sender to deliver. */
 export function spool(call, { file = SPOOL_FILE, now = Date.now() } = {}) {
@@ -414,8 +404,25 @@ const writeLines = (file, entries) => {
 };
 
 const hold = (held, lines) => { if (lines.length) fs.appendFileSync(held, lines.join('\n') + '\n'); };
-const readCursor = (cursor) => { try { return Math.max(0, Number.parseInt(fs.readFileSync(cursor, 'utf8'), 10) || 0); } catch { return 0; } };
-const writeCursor = (cursor, n) => { const tmp = `${cursor}.${process.pid}.tmp`; fs.writeFileSync(tmp, String(n)); fs.renameSync(tmp, cursor); };
+
+// A session with spooled calls: its hooks append behind them instead of calling, so its calls keep
+// their order while other sessions call directly. One empty file per session in `sessions`.
+const markerOf = (sessions, sessionId) => path.join(sessions, createHash('sha1').update(String(sessionId ?? '')).digest('hex').slice(0, 16));
+/** Mark `sessionId` as having spooled calls. */
+export function markPending(sessionId, { sessions = SESSIONS_DIR } = {}) {
+  try { fs.mkdirSync(sessions, { recursive: true }); fs.writeFileSync(markerOf(sessions, sessionId), ''); } catch { /* the spool still keeps the call */ }
+}
+/** Does `sessionId` have spooled calls? */
+export const sessionPending = (sessionId, { sessions = SESSIONS_DIR } = {}) => fs.existsSync(markerOf(sessions, sessionId));
+
+/** Clear the markers of sessions with nothing left, once no unclaimed call can name them. */
+function clearMarkers(sessions, left, file) {
+  if (fs.existsSync(file)) return;
+  let names = [];
+  try { names = fs.readdirSync(sessions); } catch { return; }
+  const keep = new Set([...left].map((id) => path.basename(markerOf(sessions, id))));
+  for (const n of names) if (!keep.has(n)) fs.rmSync(path.join(sessions, n), { force: true });
+}
 
 /**
  * Move the hooks' spool, and any claim a dead sender left (`<spool>.<pid>`), behind the in-flight
@@ -437,7 +444,7 @@ async function claimSpool(file, inflight, held, graceMs, sleep) {
     merged.push(...entries);
     hold(held, torn);
   }
-  writeLines(inflight, merged);   // the acked prefix is unchanged, so the cursor still holds
+  writeLines(inflight, merged);
   for (const n of claims) fs.rmSync(path.join(dir, n), { force: true });
   return true;
 }
@@ -454,58 +461,66 @@ function takeLease(lease, now = Date.now()) {
 
 const renew = (lease) => { try { const t = new Date(); fs.utimesSync(lease, t, t); } catch { /* gone: the loop ends */ } };
 
-/** What a daemon answer means for a spooled entry: acked, refused for good, or not taken (retry). */
+/**
+ * What a daemon answer means for a call: delivered (routed and acked, or a nested session's, which
+ * the bridge does not mirror), refused for good, unrouted (its channel not registered), or not
+ * taken (retry).
+ */
 export function outcomeOf(r) {
-  if (r?.ok === true) return 'acked';
-  return REFUSED.has(r?.error?.code) ? 'refused' : 'retry';
+  if (r?.ok === true && (r.routed !== false || r.nested === true)) return 'delivered';
+  if (REFUSED.has(r?.error?.code)) return 'refused';
+  return r?.ok === true ? 'unrouted' : 'retry';
 }
 
 /**
- * THE SENDER: deliver the spool in order, each call marked as a replay. An entry leaves only on
- * the daemon's ack; a refusal holds it; anything else is retried (backoff up to RETRY_MAX_MS) until
- * `lifetimeMs`, after which it stays for the next sender (any hook that finds the spool pending
- * starts one). Idle for `lingerMs`, it ends. One at a time, by `lease`.
+ * THE SENDER: deliver the spool oldest first, per session, each call marked as a replay. An entry
+ * leaves only once delivered; a refusal, or an unrouted call whose claude process has exited,
+ * holds it; anything else keeps it (and the rest of its session) for the next pass, with backoff
+ * up to RETRY_MAX_MS while no pass delivers, until `lifetimeMs` -- then any hook that finds the
+ * spool pending starts the next sender. Idle for `lingerMs`, it ends. One at a time, by `lease`.
  */
-export async function sendSpool({ file = SPOOL_FILE, inflight = INFLIGHT_FILE, cursor = CURSOR_FILE, held = HELD_FILE, lease = LEASE_FILE,
+export async function sendSpool({ file = SPOOL_FILE, inflight = INFLIGHT_FILE, held = HELD_FILE, lease = LEASE_FILE, sessions = SESSIONS_DIR,
   now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), lifetimeMs = SENDER_LIFETIME_MS, lingerMs = SENDER_LINGER_MS,
-  claimGraceMs = CLAIM_GRACE_MS, send = (c) => callHub('mirror', c), runtimeFile = RUNTIME_FILE } = {}) {
+  claimGraceMs = CLAIM_GRACE_MS, send = (c) => callHub('mirror', c), runtimeFile = RUNTIME_FILE, alive = isAlive } = {}) {
   const start = now();
   // A hook that appended just as this sender let its lease go saw the lease still fresh and
   // started none: look again after letting go, and carry on while the spool has a line.
   while (now() - start < lifetimeMs && fs.existsSync(runtimeFile) && takeLease(lease)) {
     let idleSince = now(), backoff = 500;
     try {
-      let entries = [], next = 0, acked = 0;
-      const compact = () => {
-        if (next === 0) return;
-        writeCursor(cursor, 0);                      // first: a crash now re-sends, never skips
-        writeLines(inflight, entries.slice(next));
-        entries = entries.slice(next); next = 0; acked = 0;
-      };
-      const load = () => { entries = readSpool(inflight); next = Math.min(readCursor(cursor), entries.length); acked = 0; };
-      load();
       while (now() - start < lifetimeMs) {
         renew(lease);
-        if (next >= entries.length) {
-          compact();
-          if (await claimSpool(file, inflight, held, claimGraceMs, sleep)) load();
-          if (next >= entries.length) {
-            if (!fs.existsSync(file) && now() - idleSince >= lingerMs) break;
-            await sleep(200);
-            continue;
-          }
+        await claimSpool(file, inflight, held, claimGraceMs, sleep);
+        const entries = readSpool(inflight);
+        if (!entries.length) {
+          clearMarkers(sessions, new Set(), file);
+          if (!fs.existsSync(file) && now() - idleSince >= lingerMs) break;
+          await sleep(200);
+          continue;
         }
         if (!fs.existsSync(runtimeFile)) break;   // the bridge is uninstalled: the spool waits
-        const e = entries[next];
-        const outcome = outcomeOf(await send({ ...e.call, replay: true }));
-        if (outcome === 'retry') { await sleep(backoff); backoff = Math.min(backoff * 2, RETRY_MAX_MS); continue; }
-        if (outcome === 'refused') hold(held, [JSON.stringify(e)]);   // kept before it is passed
-        backoff = 500;
-        idleSince = now();
-        writeCursor(cursor, ++next);
-        if (++acked >= COMPACT_EVERY) compact();
+        const keep = [], waiting = new Set();
+        let passed = 0;
+        for (let i = 0; i < entries.length; i++) {
+          const e = entries[i], key = String(e.call.sessionId ?? '');
+          if (waiting.has(key) || now() - start >= lifetimeMs) { keep.push(e); continue; }
+          renew(lease);
+          const outcome = outcomeOf(await send({ ...e.call, replay: true }));
+          const gone = outcome === 'unrouted' && Number(e.call.claudePid) > 0 && !alive(Number(e.call.claudePid));
+          if (outcome === 'refused' || gone) hold(held, [JSON.stringify(e)]);   // kept before it is passed
+          if (outcome === 'delivered' || outcome === 'refused' || gone) {
+            if (++passed % COMPACT_EVERY === 0) writeLines(inflight, [...keep, ...entries.slice(i + 1)]);
+          } else {
+            waiting.add(key);   // this session's later calls wait behind it
+            keep.push(e);
+          }
+        }
+        if (passed) writeLines(inflight, keep);
+        clearMarkers(sessions, waiting, file);
+        if (passed) { backoff = 500; idleSince = now(); continue; }
+        await sleep(backoff);
+        backoff = Math.min(backoff * 2, RETRY_MAX_MS);
       }
-      if (next >= entries.length && entries.length) compact();
     } finally {
       fs.rmSync(lease, { force: true });
     }
@@ -523,8 +538,8 @@ export function startSender({ lease = LEASE_FILE, now = Date.now(), start = () =
 const spoolPending = () => fs.existsSync(SPOOL_FILE) || fs.existsSync(INFLIGHT_FILE);
 
 // Delivery never waits for a particular event: EVERY run of this hook (prompt, tool call, stop,
-// notification, question, a rename's SessionStart) that finds the spool pending and no live sender
-// starts the one detached sender. Two stats when nothing is pending.
+// notification, question) that finds the spool pending and no live sender starts the one detached
+// sender. Two stats when nothing is pending.
 let senderStarted = false;
 const ensureSender = () => { if (!senderStarted && spoolPending()) senderStarted = startSender(); };
 
@@ -540,15 +555,8 @@ async function main() {
   let raw = '';
   for await (const c of process.stdin) raw += c;
   const payload = JSON.parse(raw || '{}');
-  if (process.argv.includes('--learn')) {
-    // A SessionStart of a rename: the one process-table query this session ever pays.
-    const { nearestClaude, processTable } = await import('../shared/process-tree.mjs');
-    const pid = payload.session_id && nearestClaude(process.ppid, processTable({ timeoutMs: LEARN_MS }));
-    if (pid) rememberClaude(payload.session_id, pid);
-    return;
-  }
   setTimeout(() => process.exit(0), RUN_MS).unref();
-  const claudePid = payload.session_id ? claudePidOf(payload.session_id) : undefined;
+  const claudePid = claudePidOfHook();
   const route = { ...(typeof payload.transcript_path === 'string' && payload.transcript_path ? { transcriptPath: payload.transcript_path } : {}),
     ...(claudePid ? { claudePid } : {}) };
   // Only the dedicated AskUserQuestion step asks: Claude Code merges hook entries with an
@@ -563,12 +571,12 @@ async function main() {
   const mirror = mirrorFor(payload);
   if (!mirror) return;
   const call = { ...mirror, ...route, at };
-  // A pending spool goes first: this call joins it, so the daemon sees every call in order.
-  const r = spoolPending() ? null : await callHub('mirror', call);
+  // This session's spooled calls go first: this one joins them, so the daemon sees its calls in order.
+  const r = sessionPending(call.sessionId) ? null : await callHub('mirror', call);
   const outcome = outcomeOf(r);
-  if (outcome !== 'acked') {
+  if (outcome !== 'delivered') {
     if (outcome === 'refused') hold(HELD_FILE, [JSON.stringify({ at, call })]);   // kept and counted, never dropped
-    else if (spoolable(call)) spool(call);
+    else if (spoolable(call)) { markPending(call.sessionId); spool(call); }
     ensureSender();
     return;
   }

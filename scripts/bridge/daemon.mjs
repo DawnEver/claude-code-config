@@ -945,9 +945,14 @@ export async function main() {
   // The base Codex home scopes this daemon's own cursors; each Codex home has its adapter (CodexHomes).
   const homeKey = codexHomeKey(resolveCodexHome({ env: {} }));
   const telegram = config.botToken ? new TelegramClient({ token: config.botToken, offsetFile: path.join(BRIDGE_RUNTIME_DIR, 'offset.json') }) : null;
-  const claude = new ClaudeAdapter();
+  // Queued inbound messages live on disk: a handover or a crash loses none.
+  const claude = new ClaudeAdapter({ queueDir: path.join(BRIDGE_RUNTIME_DIR, 'inbound') });
   const port = await claude.listen(0);
-  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, sourceRevision, configRevision: bridgeConfigRevision(config) }, null, 2));
+  // The config fingerprint is the SETTINGS' (bridgeConfigRevision()), the one the change check below
+  // and ensure.mjs compute -- never the merged `config`, whose allowlist the settings do not carry:
+  // that mismatch read as a change every minute and handed the daemon over every minute.
+  const startConfig = bridgeConfigRevision();
+  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, sourceRevision, configRevision: startConfig }, null, 2));
   const codex = new CodexHomes({ create: (home, refPrefix) => new CodexAdapter({ home, refPrefix, sources: config.codexSources,
     localObserver: new CodexLocalObserver({ root: path.join(home, 'sessions'), sources: config.codexSources }) }) });
   // The pinned card's account and load: the dashboard push's last reading, else a sample of its own.
@@ -971,7 +976,6 @@ export async function main() {
   // One rule for every change: this daemon read its config and code once, so a change to either
   // (a cloud sync, a pull, a dashboard edit) hands over to a fresh daemon — the same check
   // ensure.mjs makes at session start, so a host never waits for a session to apply it.
-  const startConfig = bridgeConfigRevision(config);
   let handedOver = false;
   // One minute timer for both minute-grained duties: idle-closing Topics, then the change check.
   setInterval(() => {

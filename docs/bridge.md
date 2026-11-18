@@ -41,8 +41,9 @@ and is never mirrored:
   binary itself, not a shim or launcher naming it) sits above its own in the process tree.
   The tree walk is best-effort: under Git Bash (MSYS) the Windows parent chain stops at
   `sh.exe`, but a session's shell always carries `CLAUDE_PID`. `channel-<pid>.log` records
-  the ancestry and the decision. Its channel keeps serving MCP but never registers; its hook calls are
-  dropped after the 30 s hold.
+  the ancestry and the decision. Its channel keeps serving MCP and registers only as NESTED
+  (never a Topic): the daemon answers that process's hook calls `nested`, so they are
+  deliberately not mirrored, and leave the hooks' spool.
 - A Topic a session got before it was known to be non-main is closed quietly
   (`dismiss`) and deleted with the other ended Topics.
 
@@ -207,15 +208,23 @@ token in `runtime.json`):
   settings timeout), exits 0 on any failure, and prints nothing except a question's denial
   or a Stop's delivery. Calls name the payload's `session_id` — the conversation id current
   in the process; the hook's `CLAUDE_CODE_SESSION_ID` always equals it, so it adds nothing —
-  and are held up to 30 s if they beat the channel's registration. `/clear` and `/resume`
-  change that id, so that rename's SessionStart (`bridge-hook.js --learn`, a concurrent step
-  of `claude-hook.mjs`) walks the hook's own ancestry to its nearest `claude` process ONCE
-  (a process-table query: 1.8-3.2 s of PowerShell on Windows, never on a prompt, stop or tool
-  call) and records it in `~/.claude/bridge/claude-pids.json`; every later call of that
-  session names the process, the channel registered under that same process, and the
-  adapter learns the new id on its first call. An id belongs to one session at a time: a
-  channel registering it, or a call naming its process, takes it from any other. A spooled
-  call carries its process too, since a restarted daemon has forgotten every learned id.
+  AND the session's claude process: the hook's `CLAUDE_PID`, which Claude Code sets for every
+  hook to ITS OWN pid (`CLAUDE_PID: String(process.pid)` in the CLI's hook environment, so a
+  nested claude's hooks carry the nested one; read from the installed CLI 2026-11-17). The
+  channel registered under that same process, so every way a session comes back routes on
+  its first call, with no process-table query on any hook:
+  - `/clear` and `/resume` in a terminal: same claude process, new id;
+  - `claude --resume` / `--continue` from a new terminal: a new process, whose channel
+    registers the resumed id (or, with `--fork-session`, a new one) under its own pid;
+  - agent view (open, resume, continue; a background session such as `claude --bg-pty-host
+    ... -- claude --session-id <new> --fork-session --resume ...`): a new process with a new
+    id, its channel registered without inbound (see below).
+  A call no channel can take yet (it beat the channel's registration) is answered
+  `routed: false`, never held in the daemon's memory: it waits in the hook's lossless spool
+  and is re-sent until a channel takes it (see [The spool](#the-spool)). An id belongs to one
+  session at a time: a channel registering it, or a call naming its process, takes it from
+  any other. A spooled call carries its process too, since a restarted daemon has forgotten
+  every learned id.
   Agent view (and a background relaunch) moves a conversation to a NEW session id in a NEW
   claude process, while the old process and its channel stay connected; the new one does not
   carry ccc's `--dangerously-load-development-channels` flag (agent view passes only
@@ -229,11 +238,17 @@ token in `runtime.json`):
   Topic (`supersede claude:<old> -> claude:<new> topic=N`; a Topic the new one had is closed),
   messages go to the live session (queued until its next Stop when it has no channel, with a
   note naming `ccc --resume <id>`), and a message sent before the new session connects is
-  held and delivered when it does. The old channel is refused if it re-registers. Nothing is
-  persisted: after a daemon restart the transcripts say it again.
-  `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g. `ccc -p` run from inside a
-  session) inherits its parent's, which once routed one session's output into another's
-  Topic — the walk finds the nested process instead. Channel prompts are unwrapped to their text, so the echo suppression above
+  queued and delivered when it does. The old channel is refused if it re-registers. After a
+  daemon restart the transcripts say the move again.
+  Inbound never depends on the daemon's memory: every message queued for a session (one
+  without a channel, a relaunch not connected yet, or a session not running at all) is kept in
+  `~/.claude/bridge/inbound/`, one file per session id, so a handover or a crash loses none; a
+  channel that takes inbound gets its queue on register, one without gets it at its next Stop.
+  A message for a session that is not running says so (`queued: this session is not running
+  now; the message is delivered when it is resumed`) instead of failing.
+  The hook's `CLAUDE_PID` names the process RUNNING the hook (Claude Code sets it per process);
+  only an MCP server of a nested claude inherits an outer one, which the channel uses to tell
+  a nested session. Channel prompts are unwrapped to their text, so the echo suppression above
   drops them. `reply` stays for explicit mid-task messages.
 - Every turn end is mirrored, with every assistant text block of the turn (the transcript
   after the last user message, plus `last_assistant_message` when the transcript lags), not
@@ -257,26 +272,30 @@ The mirror loses nothing (a standing user ruling), and every hook finishes under
 call the daemon did not take (down, restarting, hung past the hook's one 1 s call) is kept
 on disk and delivered later, never waited for and never dropped:
 
-- The hook appends it to `~/.claude/bridge/spool.jsonl` and returns. While a spool is
-  pending, a hook appends instead of calling, so the daemon sees every call in order.
-- Every run of `bridge-hook.js` (any event, the question step and a rename's `--learn` too)
-  that finds the spool pending and no live sender starts the one detached sender
-  (`--send-spool`, one at a time by `spool.lease`). Delivery never waits for a Stop.
+- The hook appends it to `~/.claude/bridge/spool.jsonl`, marks its session pending
+  (`spool.sessions/`) and returns. While its session has spooled calls, a hook appends
+  instead of calling, so the daemon sees each session's calls in order; other sessions call
+  directly.
+- Every run of `bridge-hook.js` (any event, the question step too) that finds the spool
+  pending and no live sender starts the one detached sender (`--send-spool`, one at a time
+  by `spool.lease`). Delivery never waits for a Stop.
 - The sender moves the spool into `spool.inflight.jsonl` (picking up a claim a dead sender
-  left) and delivers it oldest first, retrying with backoff up to 5 s for up to 10 minutes;
-  then the next hook's sender carries on.
-- **Delivery is the only way an entry leaves.** There is no age or count eviction: an entry
-  leaves only once the daemon acks it (`ok: true`); `spool.inflight.cursor` counts the acked
-  prefix, which is compacted away every 200 acks and when the file is done. The cursor is
-  reset before that rewrite, so a crash re-sends acked entries (the adapter drops a final it
-  already sent) and never skips an unacked one.
-- An entry the daemon refuses for good (invalid params, unknown method) and a torn line go to
-  `spool.held.jsonl`: kept, never dropped. `npm run doctor` FAILs with their count
-  (`bridge-spool-held`) and WARNs on a backlog older than 15 minutes (`bridge-spool-pending`).
-  Move a held line back into `spool.jsonl` to retry it.
+  left) and delivers it oldest first PER SESSION: a session no channel can take yet keeps
+  its calls, in order, while every other session's flow on. It retries with backoff up to
+  5 s while no pass delivers, for up to 10 minutes; then the next hook's sender carries on.
+- **Delivery is the only way an entry leaves.** There is no age or count eviction and no
+  timed drop: an entry leaves only once the daemon routed and acked it (`ok: true`, not
+  `routed: false`), or answered it `nested` (a nested session, deliberately not mirrored).
+  Delivered entries are compacted away every 200 and at each pass's end; a crash in between
+  re-sends them (the adapter drops a final it already sent), never skips an undelivered one.
+- An entry the daemon refuses for good (invalid params, unknown method), one whose claude
+  process has exited before any channel took it, and a torn line go to `spool.held.jsonl`:
+  kept, never dropped. `npm run doctor` FAILs with their count (`bridge-spool-held`) and
+  WARNs on a backlog older than 15 minutes (`bridge-spool-pending`). Move a held line back
+  into `spool.jsonl` to retry it.
 - A replay never hands out queued Telegram messages; only the session's live Stop hook
-  delivers those. While a spool is pending, a Stop spools its final, so those messages reach
-  the session at its first Stop after the spool drained.
+  delivers those. While that session has spooled calls, its Stop spools its final, so those
+  messages reach it at its first Stop after its calls drained.
 
 Nothing to do by hand once this machine has a `bridge.botToken`: the user-scope MCP server
 `session-bridge` (`node <repo>/claude_plugins/session-bridge/server.mjs`; the absolute path
@@ -552,7 +571,7 @@ require separate acceptance evidence.
 - Channels together with `--remote-control` in one Claude session.
 - Telegram approval buttons answer a Claude permission request.
 - `deleteForumTopic` on a closed Topic (create, close, delete; a later send fails).
-- Mirroring after `/clear` and an in-process `/resume` (verified with the per-call process retry; its 2026-11-17 replacement, the process the rename's SessionStart learns with `--learn`, is not yet verified live).
+- Mirroring after `/clear` and an in-process `/resume` (verified with the per-call process retry; routed since 2026-11-17 by the hook's own `CLAUDE_PID`; see the live verification of that change in its commit).
 
 ## Attachments
 

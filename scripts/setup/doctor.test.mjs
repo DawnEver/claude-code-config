@@ -73,24 +73,23 @@ test('doctor detects native updates that leave a cache root but delete its prote
 });
 import { CLAUDE_LINKS } from './setup.js';
 
-test('checkBridgeSpool: a held entry FAILs with its count; a backlog older than 15 min WARNs; acked lines do not count', () => {
+test('checkBridgeSpool: a held entry FAILs with its count; a backlog older than 15 min WARNs', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-spool-'));
   const now = Date.parse('2026-11-17T12:00:00Z');
   const line = (at) => JSON.stringify({ at, call: { kind: 'prompt', text: 'x' } });
   try {
     assert.deepEqual(checkBridgeSpool({ dir, now }), [], 'an empty spool is healthy');
+    fs.writeFileSync(path.join(dir, 'spool.inflight.jsonl'), line(now - 60000) + '\n');
+    assert.deepEqual(checkBridgeSpool({ dir, now }), [], 'a minute-old backlog is not stalled');
     fs.writeFileSync(path.join(dir, 'spool.inflight.jsonl'), [line(now - 3600000), line(now - 60000)].join('\n') + '\n');
-    fs.writeFileSync(path.join(dir, 'spool.inflight.cursor'), '1');
-    assert.deepEqual(checkBridgeSpool({ dir, now }), [], 'the acked hour-old line does not count; the minute-old one is not stalled');
-    fs.writeFileSync(path.join(dir, 'spool.inflight.cursor'), '0');
     const stalled = checkBridgeSpool({ dir, now });
-    assert.equal(stalled.length, 1, 'PLANTED CONTROL: the unacked hour-old line is a stalled backlog');
+    assert.equal(stalled.length, 1, 'PLANTED CONTROL: an hour-old undelivered line is a stalled backlog');
     assert.equal(stalled[0].level, 'WARN');
     assert.match(stalled[0].title, /^2 mirror calls wait for the bridge, the oldest 60 min/);
     fs.writeFileSync(path.join(dir, 'spool.held.jsonl'), line(now) + '\n');
     const held = checkBridgeSpool({ dir, now }).find((f) => f.id === 'bridge-spool-held');
     assert.equal(held.level, 'FAIL');
-    assert.match(held.title, /^1 mirror call the bridge refused/);
+    assert.match(held.title, /^1 mirror call the bridge could not deliver is kept/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -603,6 +602,30 @@ test('the background run writes the FAILs it found and lets its lease go', () =>
   const lastFile = path.join(dir, 'doctor-last.json');
   const lease = path.join(dir, 'doctor-refresh.lock');
   refreshHookReport({ lastFile, lease, run: () => [{ level: 'WARN', title: 'w' }, { level: 'FAIL', title: 'f' }] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(lastFile, 'utf8')).failed, ['f']);
+  assert.equal(fs.existsSync(lease), false);
+});
+
+test('a refresh lock whose owner is dead is taken over at once; a live owner\'s lock is respected', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = tmp();
+  const lastFile = path.join(dir, 'doctor-last.json');
+  const lease = path.join(dir, 'doctor-refresh.lock');
+  const started = [];
+  const start = () => started.push(1);
+  let ran = 0;
+  const run = () => { ran++; return [{ level: 'FAIL', title: 'f' }]; };
+  fs.writeFileSync(lease, String(process.ppid));   // a live owner (the test runner), just written
+  hookReport({ lastFile, lease, start });
+  refreshHookReport({ lastFile, lease, run });
+  assert.equal(started.length, 0, 'PLANTED CONTROL: a live owner\'s refresh is not started twice');
+  assert.equal(ran, 0, 'PLANTED CONTROL: nor run beside it');
+  // The refresh was killed with its tree: its lock, written a moment ago, names a dead pid.
+  fs.writeFileSync(lease, String(spawnSync(process.execPath, ['-e', '0'], { windowsHide: true }).pid));
+  hookReport({ lastFile, lease, start });
+  assert.equal(started.length, 1, 'the next SessionStart starts a refresh at once, not after the lease');
+  refreshHookReport({ lastFile, lease, run });
+  assert.equal(ran, 1, 'the refresh takes the dead owner\'s lock over and runs');
   assert.deepEqual(JSON.parse(fs.readFileSync(lastFile, 'utf8')).failed, ['f']);
   assert.equal(fs.existsSync(lease), false);
 });

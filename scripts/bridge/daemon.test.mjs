@@ -1048,3 +1048,16 @@ test('the dashboard hears what a waiting session waits for', async () => {
   assert.equal(s.status, 'needs_approval');
   assert.equal(s.waiting, '$ rm -rf build');
 });
+
+// The daemon's change check compares bridgeConfigRevision() -- the SETTINGS -- against the
+// fingerprint it started with; ensure.mjs compares the same against runtime.json. Fingerprinting
+// the merged config (which also carries the allowlist from the channel declaration) at start read
+// as a change every minute: the live daemon handed itself over every minute (2026-11-17), losing
+// whatever it held in memory each time.
+test('the daemon fingerprints its config exactly as its change check and ensure.mjs do', () => {
+  const src = fs.readFileSync(new URL('./daemon.mjs', import.meta.url), 'utf8');
+  const fingerprints = [...src.matchAll(/bridgeConfigRevision\(([^)]*)\)/g)].map((m) => m[1].trim());
+  assert.ok(fingerprints.length >= 2, 'PLANTED CONTROL: the scan sees the start fingerprint and the check');
+  assert.deepEqual(fingerprints.filter(Boolean), [], `every fingerprint is bridgeConfigRevision() of the settings, never of a merged config: ${fingerprints.join(' | ')}`);
+  assert.match(src, /configRevision: startConfig/, 'runtime.json carries the same fingerprint the check compares');
+});

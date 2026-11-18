@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-## Review 2026-09-20 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-09-20 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped
@@ -119,3 +119,5 @@ formatReminder unconditionally appends '— push: git -C "${REPO}" push', so for
   binary names for plugins that are now never spawned, so that SessionStart entry is
   dead weight; removing it is pending an explicit decision and is tracked as a todo
   rather than as a review finding.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"
