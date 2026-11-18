@@ -1,377 +1,72 @@
-// scripts/dashboard/public/shared/i18n.mjs — every word the page shows, in each UI language,
-// defined once: one table {key: {en, zh}} and t(key, lang, vars). An entry is a string or a
-// function of `vars` (counts, names). Status words come from the one vocabulary (vocab.mjs):
-// English is its label, only the other languages are added here. Pure: imports only shared.
+// scripts/dashboard/public/shared/i18n.mjs — every word the page shows, in each UI language.
+// The words are data: locales/strings.json (English, the source of truth) and one
+// locales/strings.<lang>.json per other language, same keys. Status words in English are
+// vocab.mjs labels; the other languages translate them as `status.<key>`.
+// A string is a template: `{name}` a var; `{name?A|B}` A when the var is truthy, else B;
+// `{name=value?A|B}` A when it equals value (plurals: `{n=1?session|sessions}`). A and B
+// may nest templates; `|B` may be omitted. Pure: imports only shared data.
 
 import { STATUS } from './vocab.mjs';
+import en from './locales/strings.json' with { type: 'json' };
+import zh from './locales/strings.zh.json' with { type: 'json' };
 
 export const LANGS = ['en', 'zh'];
+
+const TABLES = {
+  en: { ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [`status.${k}`, v.label])), ...en },
+  zh,
+};
 
 /** The language a Telegram user's `language_code` asks for: any zh* reads Chinese, else English. */
 export const defaultLang = (code) => (/^zh/i.test(String(code ?? '')) ? 'zh' : 'en');
 
-const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const STATUS_ZH = { needs_approval: '\u5f85\u6279\u51c6', needs_input: '\u5f85\u8f93\u5165', working: '\u5de5\u4f5c\u4e2d', idle: '\u7a7a\u95f2', unknown: '\u5728\u7ebf', ended: '\u5df2\u7ed3\u675f' };
+/** The index of the `}` closing the `{` at `open`, nesting counted. */
+function closing(s, open) {
+  for (let i = open, depth = 0; i < s.length; i++) {
+    if (s[i] === '{') depth++;
+    else if (s[i] === '}' && --depth === 0) return i;
+  }
+  throw new Error(`i18n: unclosed { in ${JSON.stringify(s)}`);
+}
 
-const TABLE = {
-  ...Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [`status.${k}`, { en: v.label, zh: STATUS_ZH[k] }])),
-  'status.stale': { en: 'Stale', zh: '\u79bb\u7ebf' },
-  'status.exhausted': { en: 'Exhausted', zh: '\u5df2\u8017\u5c3d' },
+/** `s` split at its top-level `|` (one outside any nested `{}`). */
+function branches(s) {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '{') depth++;
+    else if (s[i] === '}') depth--;
+    else if (s[i] === '|' && depth === 0) return [s.slice(0, i), s.slice(i + 1)];
+  }
+  return [s, ''];
+}
 
-  // Chrome
-  'app.title': { en: 'Agents Dashboard', zh: '\u667a\u80fd\u4f53\u9762\u677f' },
-  'app.loading': { en: 'Loading…', zh: '\u52a0\u8f7d\u4e2d…' },
-  'app.forceUpdate': { en: 'Force update', zh: '\u5f3a\u5236\u66f4\u65b0' },
-  'search.placeholder': { en: 'Search sessions, commands, accounts, repos, settings…', zh: '\u641c\u7d22\u4f1a\u8bdd\u3001\u547d\u4ee4\u3001\u8d26\u6237\u3001\u4ed3\u5e93\u3001\u8bbe\u7f6e…' },
-  'search.none': { en: 'Nothing matches', zh: '\u6ca1\u6709\u5339\u914d\u9879' },
-  'search.more': { en: (v) => `Showing the first ${v.n}: add a word to narrow it`, zh: (v) => `\u4ec5\u663e\u793a\u524d ${v.n} \u9879\uff1a\u518d\u52a0\u4e00\u4e2a\u8bcd\u4ee5\u7f29\u5c0f\u8303\u56f4` },
-  'search.kind.host': { en: 'host', zh: '\u4e3b\u673a' },
-  'search.kind.session': { en: 'session', zh: '\u4f1a\u8bdd' },
-  'search.kind.task': { en: 'task', zh: '\u4efb\u52a1' },
-  'search.kind.account': { en: 'account', zh: '\u8d26\u6237' },
-  'search.kind.repo': { en: 'repo', zh: '\u4ed3\u5e93' },
-  'search.kind.branch': { en: 'branch', zh: '\u5206\u652f' },
-  'search.kind.pull': { en: 'PR', zh: 'PR' },
-  'search.kind.config': { en: 'setting', zh: '\u8bbe\u7f6e' },
-  'app.build': { en: (v) => `build ${v.at}`, zh: (v) => `\u6784\u5efa ${v.at}` },
-  'app.commitDirty': { en: 'deployed from this commit plus uncommitted changes', zh: '\u57fa\u4e8e\u6b64\u63d0\u4ea4\u53ca\u672a\u63d0\u4ea4\u7684\u6539\u52a8\u90e8\u7f72' },
-  'app.commitOpen': { en: 'open this commit on GitHub', zh: '\u5728 GitHub \u4e0a\u6253\u5f00\u6b64\u63d0\u4ea4' },
-  'app.exampleData': { en: 'example data', zh: '\u793a\u4f8b\u6570\u636e' },
-  'app.data': { en: (v) => `data ${v.ago}`, zh: (v) => `\u6570\u636e ${v.ago}` },
-  'app.demoData': { en: (v) => `demo · data ${v.ago}`, zh: (v) => `\u6f14\u793a · \u6570\u636e ${v.ago}` },
-  'app.openFromBot': { en: 'Open this from the Dashboard button of the dashboard bot in Telegram', zh: '\u8bf7\u4ece Telegram \u4e2d\u9762\u677f\u673a\u5668\u4eba\u7684 Dashboard \u6309\u94ae\u6253\u5f00' },
-  'app.updateReady': { en: 'A new version is ready: tap to update (it also loads at the next open)', zh: '\u65b0\u7248\u672c\u5df2\u5c31\u7eea\uff1a\u70b9\u51fb\u66f4\u65b0\uff08\u4e0b\u6b21\u6253\u5f00\u65f6\u4e5f\u4f1a\u81ea\u52a8\u52a0\u8f7d\uff09' },
-  'app.signInExpired': { en: 'Sign-in expired: close and reopen the app', zh: '\u767b\u5f55\u5df2\u8fc7\u671f\uff1a\u8bf7\u5173\u95ed\u540e\u91cd\u65b0\u6253\u5f00' },
-  'app.signInExpiredKeep': { en: (v) => `Sign-in expired · close and reopen the app to refresh (data from ${v.ago})`, zh: (v) => `\u767b\u5f55\u5df2\u8fc7\u671f · \u5173\u95ed\u5e76\u91cd\u65b0\u6253\u5f00\u4ee5\u5237\u65b0\uff08\u6570\u636e\u6765\u81ea ${v.ago}\uff09` },
-  'app.notAllowed': { en: 'This Telegram account is not allowed', zh: '\u6b64 Telegram \u8d26\u53f7\u65e0\u6743\u8bbf\u95ee' },
-  'app.unreachable': { en: 'Gateway unreachable', zh: '\u65e0\u6cd5\u8fde\u63a5\u7f51\u5173' },
-  'app.unreachableKeep': { en: (v) => `Gateway unreachable · showing data from ${v.ago}`, zh: (v) => `\u65e0\u6cd5\u8fde\u63a5\u7f51\u5173 · \u663e\u793a ${v.ago} \u7684\u6570\u636e` },
+/** One `{...}` body against `vars`. */
+function field(body, vars) {
+  const m = /^(\w+)(?:=([^?]*))?\?([\s\S]*)$/.exec(body);
+  if (!m) return String(vars[body] ?? '');
+  const [, name, value, rest] = m;
+  const [yes, no] = branches(rest);
+  const hit = value === undefined ? Boolean(vars[name]) : String(vars[name]) === value;
+  return render(hit ? yes : no, vars);
+}
 
-  // Tabs
-  'tab.sessions': { en: 'Sessions', zh: '\u4f1a\u8bdd' },
-  'tab.quota': { en: 'Accounts', zh: '\u8d26\u6237' },
-  'tab.usage': { en: 'Usage', zh: '\u7528\u91cf' },
-  'tab.code': { en: 'Code', zh: '\u4ee3\u7801' },
-  'tab.config': { en: 'Config', zh: '\u8bbe\u7f6e' },
-
-  // Sessions
-  'group.all': { en: 'All', zh: '\u5168\u90e8' },
-  'group.attention': { en: 'Needs you', zh: '\u5f85\u5904\u7406' },
-  'group.working': { en: 'Working', zh: '\u5de5\u4f5c\u4e2d' },
-  'group.idle': { en: 'Idle', zh: '\u7a7a\u95f2' },
-  'group.stale': { en: 'Offline', zh: '\u79bb\u7ebf' },
-  'filter.host': { en: 'All hosts', zh: '\u5168\u90e8\u4e3b\u673a' },
-  'filter.agent': { en: 'All agents', zh: '\u5168\u90e8\u667a\u80fd\u4f53' },
-  'filter.project': { en: 'All projects', zh: '\u5168\u90e8\u9879\u76ee' },
-  'sessions.none': { en: 'No sessions', zh: '\u6ca1\u6709\u4f1a\u8bdd' },
-  'sessions.noData': { en: 'No data', zh: '\u6ca1\u6709\u6570\u636e' },
-  'sessions.noMatch': { en: 'Nothing matches', zh: '\u6ca1\u6709\u5339\u914d\u9879' },
-  'sessions.noHosts': { en: 'No hosts registered yet', zh: '\u5c1a\u65e0\u4e3b\u673a\u6ce8\u518c' },
-  'sessions.count': { en: (v) => plural(v.n, 'session'), zh: (v) => `${v.n} \u4e2a\u4f1a\u8bdd` },
-  'session.openTopic': { en: 'Open Topic', zh: '\u6253\u5f00\u8bdd\u9898' },
-  'session.topicClosed': { en: 'Topic closed', zh: '\u8bdd\u9898\u5df2\u5173\u95ed' },
-  'session.mention': { en: 'a mention waits for you', zh: '\u6709\u4eba\u63d0\u5230\u4e86\u4f60' },
-  'session.new': { en: 'unread: marked unread, or it newly waits for you', zh: '\u672a\u8bfb\uff1a\u5df2\u6807\u4e3a\u672a\u8bfb\uff0c\u6216\u6709\u65b0\u7684\u7b49\u5f85\u9700\u8981\u4f60\u5904\u7406' },
-  'session.markAllRead': { en: 'Mark all read', zh: '\u5168\u90e8\u6807\u4e3a\u5df2\u8bfb' },
-  'session.markRead': { en: 'Mark read', zh: '\u6807\u4e3a\u5df2\u8bfb' },
-  'session.markUnread': { en: 'Mark unread', zh: '\u6807\u4e3a\u672a\u8bfb' },
-  'session.unreadSessions': { en: (v) => plural(v.n, 'session') + ' with something new', zh: (v) => `${v.n} \u4e2a\u4f1a\u8bdd\u6709\u65b0\u5185\u5bb9` },
-  'session.unread': { en: 'messages since you last wrote in or opened this Topic', zh: '\u81ea\u4f60\u4e0a\u6b21\u53d1\u8a00\u6216\u6253\u5f00\u6b64\u8bdd\u9898\u4ee5\u6765\u7684\u6d88\u606f' },
-  'session.tasksMore': { en: (v) => `+${v.n} more`, zh: (v) => `\u53e6\u6709 ${v.n} \u4e2a` },
-  'task.shell': { en: 'shell', zh: 'shell' },
-  'task.powershell': { en: 'PowerShell', zh: 'PowerShell' },
-  'task.monitor': { en: 'monitor (watches until it expires)', zh: '\u76d1\u89c6\u5668\uff08\u5230\u671f\u81ea\u52a8\u7ed3\u675f\uff09' },
-  'task.agent': { en: 'subagent', zh: '\u5b50\u4ee3\u7406' },
-  'task.tag.shell': { en: 'sh', zh: 'sh' },
-  'task.tag.powershell': { en: 'ps', zh: 'ps' },
-  'task.tag.monitor': { en: 'mon', zh: 'mon' },
-  'task.tag.agent': { en: 'agent', zh: 'agent' },
-  'task.bgTitle': { en: 'in the background', zh: '\u540e\u53f0\u8fd0\u884c' },
-  'session.tasksShow': { en: 'Show all running shells and agents', zh: '\u5c55\u5f00\u5168\u90e8\u8fd0\u884c\u4e2d\u7684 shell \u548c\u5b50\u4ee3\u7406' },
-  'session.tasksHide': { en: 'Hide the shells and agents', zh: '\u6536\u8d77 shell \u548c\u5b50\u4ee3\u7406' },
-  'session.unknownProject': { en: 'unknown project', zh: '\u672a\u77e5\u9879\u76ee' },
-  'time.waiting': { en: (v) => `waiting ${v.span}`, zh: (v) => `\u7b49\u5f85 ${v.span}` },
-  'time.idle': { en: (v) => `idle ${v.span}`, zh: (v) => `\u7a7a\u95f2 ${v.span}` },
-  'time.working': { en: (v) => `working ${v.span}`, zh: (v) => `\u5de5\u4f5c ${v.span}` },
-  'time.reply': { en: (v) => `reply ${v.when}`, zh: (v) => `\u56de\u590d ${v.when}` },
-  'time.replyAgo': { en: (v) => `reply ${v.span} ago`, zh: (v) => `${v.span}\u524d\u56de\u590d` },
-  'time.never': { en: 'never', zh: '\u4ece\u672a' },
-  'time.justNow': { en: 'just now', zh: '\u521a\u521a' },
-  'time.ago': { en: (v) => `${v.span} ago`, zh: (v) => `${v.span}\u524d` },
-
-  // Hosts
-  'host.offlineSeen': { en: (v) => `offline · seen ${v.ago}`, zh: (v) => `\u79bb\u7ebf · \u6700\u540e\u5728\u7ebf ${v.ago}` },
-  'host.noLoad': { en: 'no load reported', zh: '\u672a\u62a5\u544a\u8d1f\u8f7d' },
-  'host.cores': { en: (v) => `${v.n} cores`, zh: (v) => `${v.n} \u6838` },
-  'fact.bridge': { en: 'Telegram bridge', zh: 'Telegram \u6865\u63a5' },
-  'fact.allowedUsers': { en: 'Allowed users', zh: '\u5141\u8bb8\u7684\u7528\u6237' },
-  'fact.approvals': { en: 'Approvals from Telegram', zh: '\u4ece Telegram \u6279\u51c6' },
-  'fact.codexSources': { en: 'Codex sources', zh: 'Codex \u6765\u6e90' },
-  'fact.dashboard': { en: 'Dashboard', zh: '\u9762\u677f' },
-  'fact.on': { en: 'on', zh: '\u5f00' },
-  'fact.off': { en: 'off', zh: '\u5173' },
-
-  // Quota
-  'quota.heading': { en: (v) => `Accounts · quota ${v.unit === 'left' ? 'left' : 'used'} · balances`, zh: (v) => `\u8d26\u6237 · \u989d\u5ea6${v.unit === 'left' ? '\u5269\u4f59' : '\u5df2\u7528'} · \u4f59\u989d` },
-  'quota.left': { en: 'left', zh: '\u5269\u4f59' },
-  'quota.used': { en: 'used', zh: '\u5df2\u7528' },
-  'quota.noAccounts': { en: 'No accounts', zh: '\u6ca1\u6709\u8d26\u53f7' },
-  'quota.bestNow': { en: 'Best now: ', zh: '\u5f53\u524d\u6700\u4f73\uff1a' },
-  'quota.bestNone': { en: 'Best now: none with quota left', zh: '\u5f53\u524d\u6700\u4f73\uff1a\u6ca1\u6709\u5269\u4f59\u989d\u5ea6\u7684\u8d26\u53f7' },
-  'quota.windowTitle': { en: (v) => `${v.ceiling ? (v.unit === 'left' ? 'at most ' : 'at least ') : ''}${v.n}% ${v.unit}${v.ceiling ? ' (stale reading)' : ''}`,
-    zh: (v) => `${v.ceiling ? (v.unit === 'left' ? '\u81f3\u591a' : '\u81f3\u5c11') : ''}${v.unit === 'left' ? '\u5269\u4f59' : '\u5df2\u7528'} ${v.n}%${v.ceiling ? '\uff08\u8bfb\u6570\u8fc7\u671f\uff09' : ''}` },
-  'quota.notRead': { en: 'not read', zh: '\u672a\u8bfb\u53d6' },
-  'quota.notReadTitle': { en: 'the window has reset since the last reading; use unknown until the account is used on this host', zh: '\u81ea\u4e0a\u6b21\u8bfb\u53d6\u540e\u7a97\u53e3\u5df2\u91cd\u7f6e\uff1b\u5728\u6b64\u4e3b\u673a\u4f7f\u7528\u8be5\u8d26\u53f7\u524d\u7528\u91cf\u672a\u77e5' },
-  'quota.notReadSinceReset': { en: 'not read since reset', zh: '\u91cd\u7f6e\u540e\u672a\u8bfb\u53d6' },
-  'quota.notReadSinceResetTitle': { en: 'every window has reset since the last reading: use unknown until the account is used on this host', zh: '\u81ea\u4e0a\u6b21\u8bfb\u53d6\u540e\u6240\u6709\u7a97\u53e3\u5747\u5df2\u91cd\u7f6e\uff1a\u5728\u6b64\u4e3b\u673a\u4f7f\u7528\u524d\u7528\u91cf\u672a\u77e5' },
-  'quota.noReading': { en: 'no reading', zh: '\u65e0\u8bfb\u6570' },
-  'quota.noReadingTitle': { en: 'no window reported for this account yet', zh: '\u6b64\u8d26\u53f7\u5c1a\u672a\u62a5\u544a\u4efb\u4f55\u7a97\u53e3' },
-  'quota.resetsIn': { en: 'resets in', zh: '\u91cd\u7f6e\u4e8e' },
-  'quota.binding': { en: (v) => `binding window: the account's % ${v.unit}`, zh: '\u7ea6\u675f\u7a97\u53e3\uff1a\u8d26\u53f7\u7684\u767e\u5206\u6bd4\u53d6\u81ea\u6b64\u7a97\u53e3' },
-  'quota.evenPace': { en: (v) => `even pace: ${v.n}% ${v.unit} by now`, zh: (v) => `\u5747\u5300\u6d88\u8017\uff1a\u6b64\u65f6\u5e94\u4e3a ${v.n}%` },
-  'quota.runsOutIn': { en: (v) => `runs out in ${v.eta}`, zh: (v) => `${v.eta} \u540e\u8017\u5c3d` },
-  'quota.atReset': { en: (v) => `→ ${v.n}% ${v.unit} at reset`, zh: (v) => `→ \u91cd\u7f6e\u65f6 ${v.n}%` },
-  'quota.resetUnknown': { en: 'reset since the last reading: use unknown', zh: '\u4e0a\u6b21\u8bfb\u53d6\u540e\u5df2\u91cd\u7f6e\uff1a\u7528\u91cf\u672a\u77e5' },
-  'banked.title': { en: (v) => `${v.n} banked reset${v.n === 1 ? '' : 's'}`, zh: (v) => `${v.n} \u6b21\u53ef\u7528\u91cd\u7f6e` },
-  'banked.none': { en: 'No banked resets recorded', zh: '\u672a\u8bb0\u5f55\u53ef\u7528\u91cd\u7f6e' },
-  'banked.expires': { en: (v) => `expires in ${v.in} (${v.at})`, zh: (v) => `${v.in} \u540e\u8fc7\u671f\uff08${v.at}\uff09` },
-  'banked.spent': { en: 'Used', zh: '\u5df2\u7528' },
-  'banked.spentConfirm': { en: (v) => `Mark "${v.name}" as used?`, zh: (v) => `\u5c06\u300c${v.name}\u300d\u6807\u8bb0\u4e3a\u5df2\u7528\uff1f` },
-  'banked.credit': { en: 'Reset credit', zh: '\u91cd\u7f6e\u989d\u5ea6' },
-  'banked.noExpiry': { en: 'no expiry given', zh: '\u672a\u7ed9\u51fa\u8fc7\u671f\u65f6\u95f4' },
-  'banked.soon': { en: 'under a week left', zh: '\u4e0d\u5230\u4e00\u5468\u8fc7\u671f' },
-  'banked.spentHint': { en: (v) => `Mark "${v.name}" as used on this account: the record is deleted`, zh: (v) => `\u5c06\u672c\u8d26\u6237\u7684\u300c${v.name}\u300d\u6807\u8bb0\u4e3a\u5df2\u7528\uff1a\u5220\u9664\u8fd9\u6761\u8bb0\u5f55` },
-  'banked.removeAllHint': { en: (v) => `Delete "${v.name}" from the ${v.n} account(s) holding it`, zh: (v) => `\u4ece\u6301\u6709\u5b83\u7684 ${v.n} \u4e2a\u8d26\u6237\u5220\u9664\u300c${v.name}\u300d` },
-  'banked.addAllHint': { en: (v) => `Add "${v.name}" to the ${v.n} Claude account(s) still without it`, zh: (v) => `\u4e3a\u5c1a\u672a\u8bb0\u5f55\u7684 ${v.n} \u4e2a Claude \u8d26\u6237\u6dfb\u52a0\u300c${v.name}\u300d` },
-  'banked.addHint': { en: 'Record a reset this account was granted', zh: '\u8bb0\u5f55\u672c\u8d26\u6237\u83b7\u5f97\u7684\u4e00\u6b21\u91cd\u7f6e' },
-  'banked.addHintAll': { en: 'Record a reset on the picked Claude accounts (none picked: all) at once', zh: '\u4e3a\u9009\u4e2d\u7684 Claude \u8d26\u6237\uff08\u672a\u9009\u5219\u5168\u90e8\uff09\u540c\u65f6\u8bb0\u5f55\u4e00\u6b21\u91cd\u7f6e' },
-  'banked.nameHint': { en: 'What the reset is called, e.g. Full reset, Fable reset', zh: '\u91cd\u7f6e\u7684\u540d\u79f0\uff0c\u5982 Full reset\u3001Fable reset' },
-  'banked.whenHint': { en: 'When it expires, in this device time zone', zh: '\u8fc7\u671f\u65f6\u95f4\uff08\u672c\u8bbe\u5907\u65f6\u533a\uff09' },
-  'banked.noteHint': { en: 'What it refills (optional)', zh: '\u5b83\u6062\u590d\u4ec0\u4e48\u989d\u5ea6\uff08\u53ef\u9009\uff09' },
-  'banked.editHint': { en: 'Add banked resets or mark them used', zh: '\u6dfb\u52a0\u53ef\u7528\u91cd\u7f6e\u6216\u6807\u8bb0\u4e3a\u5df2\u7528' },
-  'banked.doneHint': { en: 'Leave edit mode', zh: '\u9000\u51fa\u7f16\u8f91\u6a21\u5f0f' },
-  'banked.edit': { en: 'Edit resets', zh: '\u7f16\u8f91\u91cd\u7f6e' },
-  'banked.done': { en: 'Done', zh: '\u5b8c\u6210' },
-  'banked.bulk': { en: (v) => `Banked resets · all ${v.n} Claude accounts`, zh: (v) => `\u53ef\u7528\u91cd\u7f6e · \u5168\u90e8 ${v.n} \u4e2a Claude \u8d26\u6237` },
-  'banked.bulkPicked': { en: (v) => `Banked resets · ${v.n} of ${v.of} Claude accounts`, zh: (v) => `\u53ef\u7528\u91cd\u7f6e · ${v.of} \u4e2a Claude \u8d26\u6237\u4e2d\u9009\u4e2d ${v.n} \u4e2a` },
-  'banked.pickHint': { en: 'Tap to pick: edits below apply to the picked accounts (none picked: all)', zh: '\u70b9\u9009\u8d26\u6237\uff1a\u4e0b\u65b9\u7f16\u8f91\u53ea\u4f5c\u7528\u4e8e\u9009\u4e2d\u7684\u8d26\u6237\uff08\u672a\u9009\u5219\u5168\u90e8\uff09' },
-  'banked.on': { en: (v) => `on ${v.n}/${v.of}`, zh: (v) => `${v.n}/${v.of} \u4e2a\u8d26\u6237` },
-  'banked.addAll': { en: 'Add to these', zh: '\u6dfb\u52a0\u5230\u8fd9\u4e9b\u8d26\u6237' },
-  'banked.removeAll': { en: 'Used on these', zh: '\u8fd9\u4e9b\u8d26\u6237\u5df2\u7528' },
-  'banked.removeAllConfirm': { en: (v) => `Remove "${v.name}" from ${v.n} account(s)?`, zh: (v) => `\u4ece ${v.n} \u4e2a\u8d26\u6237\u5220\u9664\u300c${v.name}\u300d\uff1f` },
-  'banked.add': { en: '+ Add reset', zh: '+ \u6dfb\u52a0\u91cd\u7f6e' },
-  'banked.name': { en: 'Name', zh: '\u540d\u79f0' },
-  'banked.note': { en: 'Note (optional)', zh: '\u5907\u6ce8\uff08\u53ef\u9009\uff09' },
-  'banked.expiresAt': { en: 'Expires', zh: '\u8fc7\u671f\u65f6\u95f4' },
-  'banked.save': { en: 'Save', zh: '\u4fdd\u5b58' },
-  'banked.cancel': { en: 'Cancel', zh: '\u53d6\u6d88' },
-  'banked.bad': { en: 'A name and a future expiry are needed', zh: '\u9700\u8981\u540d\u79f0\u548c\u672a\u6765\u7684\u8fc7\u671f\u65f6\u95f4' },
-  'banked.notSaved': { en: (v) => `Not saved: ${v.error}`, zh: (v) => `\u672a\u4fdd\u5b58\uff1a${v.error}` },
-  'quota.extraReset': { en: (v) => `extra reset announced${v.in ? ` · in ${v.in}` : ''}`, zh: (v) => `\u5df2\u516c\u5e03\u989d\u5916\u91cd\u7f6e${v.in ? ` · ${v.in} \u540e` : ''}` },
-  'quota.inUse': { en: (v) => `In use by ${plural(v.n, 'session')}`, zh: (v) => `${v.n} \u4e2a\u4f1a\u8bdd\u6b63\u5728\u4f7f\u7528` },
-  'quota.notInUse': { en: 'No session uses this account now', zh: '\u5f53\u524d\u6ca1\u6709\u4f1a\u8bdd\u4f7f\u7528\u6b64\u8d26\u53f7' },
-  'quota.sharedAlso': { en: (v) => `one budget, also on ${v.hosts}`, zh: (v) => `\u540c\u4e00\u9884\u7b97\uff0c\u4e5f\u5728 ${v.hosts}` },
-  'quota.reading': { en: (v) => `reading ${v.ago}`, zh: (v) => `\u8bfb\u6570 ${v.ago}` },
-  'quota.see': { en: (v) => `→ see ${v.host}`, zh: (v) => `→ \u89c1 ${v.host}` },
-  'quota.oneBudget': { en: (v) => `one budget: its full card is on ${v.host}`, zh: (v) => `\u540c\u4e00\u9884\u7b97\uff1a\u5b8c\u6574\u5361\u7247\u5728 ${v.host}` },
-  'quota.exhausted': { en: (v) => `${v.k} exhausted${v.reset}`, zh: (v) => `${v.k} \u5df2\u8017\u5c3d${v.reset}` },
-  'quota.short': { en: (v) => `${v.k} runs out in ${v.eta}${v.reset}`, zh: (v) => `${v.k} \u5c06\u5728 ${v.eta} \u540e\u8017\u5c3d${v.reset}` },
-  'quota.resetSuffix': { en: (v) => ` · resets in ${v.in}`, zh: (v) => ` · ${v.in} \u540e\u91cd\u7f6e` },
-
-  // Usage
-  'usage.none': { en: 'none', zh: '\u65e0' },
-  'code.none': { en: 'No forge read yet: list sources in bridge.forges', zh: '\u8fd8\u6ca1\u6709\u8bfb\u53d6\u5230\u4ee3\u7801\u4ed3\u5e93\uff1a\u5728 bridge.forges \u4e2d\u914d\u7f6e\u6765\u6e90' },
-  'code.attention': { en: 'Needs attention', zh: '\u9700\u8981\u5904\u7406' },
-  'code.repos': { en: (v) => `Repositories · ${v.n}`, zh: (v) => `\u4ed3\u5e93 · ${v.n}` },
-  'code.inactive': { en: (v) => `${plural(v.n, 'more repository', 'more repositories')} with no activity in this range`, zh: (v) => `\u53e6\u6709 ${v.n} \u4e2a\u4ed3\u5e93\u5728\u6b64\u8303\u56f4\u5185\u65e0\u6d3b\u52a8` },
-  'code.pushed': { en: (v) => `pushed ${v.ago}`, zh: (v) => `\u63a8\u9001\u4e8e ${v.ago}` },
-  'code.pulls': { en: (v) => plural(v.n, 'PR'), zh: (v) => `${v.n} \u4e2a PR` },
-  'code.branches': { en: (v) => plural(v.n, 'branch', 'branches'), zh: (v) => `${v.n} \u4e2a\u5206\u652f` },
-  'code.working': { en: (v) => `${plural(v.n, 'session')} working`, zh: (v) => `${v.n} \u4e2a\u4f1a\u8bdd\u5728\u5de5\u4f5c` },
-  'code.openPulls': { en: 'Open pull requests', zh: '\u6253\u5f00\u7684 PR' },
-  'code.activeBranches': { en: 'Branches', zh: '\u5206\u652f' },
-  'code.draft': { en: 'draft', zh: '\u8349\u7a3f' },
-  'code.conflict': { en: 'conflict', zh: '\u51b2\u7a81' },
-  'code.review.approved': { en: 'approved', zh: '\u5df2\u6279\u51c6' },
-  'code.review.changes': { en: 'changes requested', zh: '\u8981\u6c42\u4fee\u6539' },
-  'code.review.required': { en: 'review required', zh: '\u5f85\u5ba1\u6838' },
-  'code.ci.success': { en: 'CI passed', zh: 'CI \u901a\u8fc7' },
-  'code.ci.failure': { en: 'CI failed', zh: 'CI \u5931\u8d25' },
-  'code.ci.pending': { en: 'CI running', zh: 'CI \u8fd0\u884c\u4e2d' },
-  'code.ci.none': { en: 'no CI', zh: '\u65e0 CI' },
-  'code.toSessions': { en: (v) => `Sessions of ${v.project}`, zh: (v) => `\u67e5\u770b ${v.project} \u7684\u4f1a\u8bdd` },
-  'code.sessionsChip': { en: 'Sessions', zh: '\u4f1a\u8bdd' },
-  'code.history.none': { en: 'History shows in Telegram (none in the example data)', zh: '\u5386\u53f2\u5206\u5e03\u5728 Telegram \u4e2d\u663e\u793a\uff08\u793a\u4f8b\u6570\u636e\u6ca1\u6709\uff09' },
-  'code.history.error': { en: (v) => `History not available: ${v.error}`, zh: (v) => `\u5386\u53f2\u6570\u636e\u4e0d\u53ef\u7528\uff1a${v.error}` },
-  'code.history.totals': { en: (v) => `${plural(v.commits, 'commit')} · ${plural(v.opened, 'PR')} opened · ${v.merged} merged`, zh: (v) => `${v.commits} \u4e2a\u63d0\u4ea4 · \u65b0\u5f00 ${v.opened} \u4e2a PR · \u5408\u5e76 ${v.merged} \u4e2a` },
-  'code.history.commits': { en: (v) => plural(v.n, 'commit'), zh: (v) => `${v.n} \u4e2a\u63d0\u4ea4` },
-  'code.history.prs': { en: (v) => `${v.opened} opened · ${v.merged} merged`, zh: (v) => `\u65b0\u5f00 ${v.opened} · \u5408\u5e76 ${v.merged}` },
-  'code.history.commitsAxis': { en: (v) => `commits per ${v.unit}`, zh: (v) => `\u6bcf${v.unit === 'hour' ? '\u5c0f\u65f6' : '\u5929'}\u63d0\u4ea4` },
-  'code.history.prsAxis': { en: (v) => `PRs per ${v.unit} (merged, opened)`, zh: (v) => `\u6bcf${v.unit === 'hour' ? '\u5c0f\u65f6' : '\u5929'} PR\uff08\u5408\u5e76\u3001\u65b0\u5f00\uff09` },
-  'code.att.unreadable': { en: (v) => `${v.repo}: not read — ${v.error}`, zh: (v) => `${v.repo}\uff1a\u8bfb\u53d6\u5931\u8d25 — ${v.error}` },
-  'code.hidden': { en: (v) => `${plural(v.n, 'repository', 'repositories')} hidden on this device · Config › Code`, zh: (v) => `${v.n} \u4e2a\u4ed3\u5e93\u5728\u672c\u8bbe\u5907\u9690\u85cf · \u8bbe\u7f6e › \u4ee3\u7801` },
-  'cfg.code': { en: 'Code', zh: '\u4ee3\u7801' },
-  'cfg.textSize': { en: 'Text size', zh: '\u5b57\u53f7' },
-  'cfg.textSize.s': { en: 'Small', zh: '\u5c0f' },
-  'cfg.textSize.m': { en: 'Default', zh: '\u9ed8\u8ba4' },
-  'cfg.textSize.l': { en: 'Large', zh: '\u5927' },
-  'cfg.textSize.xl': { en: 'Larger', zh: '\u7279\u5927' },
-  'cfg.codeRepos': { en: 'Repositories', zh: '\u4ed3\u5e93' },
-  'cfg.codeItems': { en: 'PRs and branches', zh: 'PR \u548c\u5206\u652f' },
-  'cfg.layout.columns': { en: 'Columns', zh: '\u5206\u680f' },
-  'cfg.layout.list': { en: 'List', zh: '\u5217\u8868' },
-  'cfg.codeAttention': { en: 'Needs attention', zh: '\u9700\u8981\u5904\u7406' },
-  'cfg.codeAttention.hint': { en: 'List failing CI, conflicts and unreadable repos above the repositories', zh: '\u5728\u4ed3\u5e93\u5217\u8868\u4e0a\u65b9\u5217\u51fa CI \u5931\u8d25\u3001\u51b2\u7a81\u548c\u65e0\u6cd5\u8bfb\u53d6\u7684\u4ed3\u5e93' },
-  'cfg.code.on': { en: 'Show', zh: '\u663e\u793a' },
-  'cfg.code.off': { en: 'Hide', zh: '\u9690\u85cf' },
-  'cfg.code.default': { en: 'Back to the defaults', zh: '\u6062\u590d\u9ed8\u8ba4' },
-  'code.att.main-failing': { en: (v) => `${v.repo}: CI failing on ${v.branch}`, zh: (v) => `${v.repo}\uff1a${v.branch} \u7684 CI \u5931\u8d25` },
-  'code.att.pr-failing': { en: (v) => `${v.repo} #${v.n}: CI failing`, zh: (v) => `${v.repo} #${v.n}\uff1aCI \u5931\u8d25` },
-  'code.att.pr-conflict': { en: (v) => `${v.repo} #${v.n}: merge conflict`, zh: (v) => `${v.repo} #${v.n}\uff1a\u5b58\u5728\u5408\u5e76\u51b2\u7a81` },
-  'code.att.session-failing': { en: (v) => `${v.repo} ${v.branch}: CI failing where a session works`, zh: (v) => `${v.repo} ${v.branch}\uff1a\u6709\u4f1a\u8bdd\u5728\u6b64\u5206\u652f\uff0cCI \u5931\u8d25` },
-  'usage.mock': { en: 'No usage in the example data', zh: '\u793a\u4f8b\u6570\u636e\u4e2d\u6ca1\u6709\u7528\u91cf' },
-  'usage.notSetUp': { en: 'The usage store is not set up (npm run dashboard -- usage-db)', zh: '\u7528\u91cf\u5b58\u50a8\u5c1a\u672a\u8bbe\u7f6e\uff08npm run dashboard -- usage-db\uff09' },
-  'usage.unavailable': { en: (v) => `Usage unavailable (HTTP ${v.status})`, zh: (v) => `\u7528\u91cf\u4e0d\u53ef\u7528\uff08HTTP ${v.status}\uff09` },
-  'usage.unreachable': { en: 'Usage unreachable', zh: '\u65e0\u6cd5\u83b7\u53d6\u7528\u91cf' },
-  'usage.turns': { en: (v) => `${v.n} turns`, zh: (v) => `${v.n} \u8f6e` },
-  'usage.share': { en: (v) => `${v.n} turns · ${v.pct}% of the tokens`, zh: (v) => `${v.n} \u8f6e · \u5360 ${v.pct}% \u7684 token` },
-  'usage.tokens': { en: 'tokens', zh: 'token' },
-  'usage.tokensTitle': { en: 'input, cache read and write, and output', zh: '\u8f93\u5165\u3001\u7f13\u5b58\u8bfb\u5199\u548c\u8f93\u51fa' },
-  'usage.agentTime': { en: 'agent time', zh: '\u667a\u80fd\u4f53\u65f6\u957f' },
-  'usage.agentTimeTitle': { en: 'turn durations summed: parallel sessions add up', zh: '\u5404\u8f6e\u65f6\u957f\u4e4b\u548c\uff1a\u5e76\u884c\u4f1a\u8bdd\u4f1a\u7d2f\u52a0' },
-  'usage.turnsLabel': { en: 'turns', zh: '\u8f6e\u6b21' },
-  'usage.cacheHit': { en: 'cache hit', zh: '\u7f13\u5b58\u547d\u4e2d' },
-  'usage.cacheHitTitle': { en: 'input tokens read from the prompt cache', zh: '\u4ece\u63d0\u793a\u7f13\u5b58\u8bfb\u53d6\u7684\u8f93\u5165 token' },
-  'usage.apiValue': { en: 'API value', zh: 'API \u4ef7\u503c' },
-  'usage.apiValueTitle': { en: 'what Claude Code priced its sessions at: list price, not a subscription bill', zh: 'Claude Code \u6309\u6807\u4ef7\u4f30\u7b97\u7684\u4f1a\u8bdd\u4ef7\u503c\uff0c\u5e76\u975e\u8ba2\u9605\u8d26\u5355' },
-  'usage.day': { en: (v) => `${v.day}: Claude ${v.claude}, Codex ${v.codex}, ${v.active} agent time`, zh: (v) => `${v.day}\uff1aClaude ${v.claude}\uff0cCodex ${v.codex}\uff0c\u667a\u80fd\u4f53\u65f6\u957f ${v.active}` },
-  'usage.hpc.title': { en: (v) => `HPC · ${v.h} core-h, last 24 h`, zh: (v) => `HPC · \u8fd1 24 \u5c0f\u65f6 ${v.h} \u6838\u65f6` },
-  'usage.hpc.day': { en: (v) => `${v.day}: ${v.h} core-h in the 24 h before the last reading`, zh: (v) => `${v.day}\uff1a\u6700\u540e\u4e00\u6b21\u8bfb\u53d6\u524d 24 \u5c0f\u65f6 ${v.h} \u6838\u65f6` },
-  'usage.hpc.axis': { en: 'core-h, 24 h at each last reading', zh: '\u6838\u65f6 · \u6bcf\u6bb5\u6700\u540e\u4e00\u6b21\u8bfb\u53d6\u7684 24 \u5c0f\u65f6' },
-  'usage.hpc.jobs': { en: (v) => `${v.n} jobs`, zh: (v) => `${v.n} \u4e2a\u4f5c\u4e1a` },
-  'usage.hpc.eff': { en: (v) => `CPU ${v.pct}`, zh: (v) => `CPU \u6548\u7387 ${v.pct}` },
-  'usage.hpc.failures': { en: (v) => `${v.n} failed (${v.oom} OOM)`, zh: (v) => `${v.n} \u5931\u8d25\uff08${v.oom} \u5185\u5b58\u4e0d\u8db3\uff09` },
-  'usage.hpc.quota': { en: (v) => `storage ${v.storage}, files ${v.files}`, zh: (v) => `\u5b58\u50a8 ${v.storage}\uff0c\u6587\u4ef6\u6570 ${v.files}` },
-  'usage.hpc.budget': { en: (v) => `budget ${v.used} of ${v.total} core-h, ${v.window} of window to ${v.until}`,
-    zh: (v) => `\u9884\u7b97\u5df2\u7528 ${v.used} / ${v.total} \u6838\u65f6\uff0c\u5468\u671f\u5df2\u8fc7 ${v.window}\uff08\u81f3 ${v.until}\uff09` },
-  'usage.hpc.ahead': { en: '(ahead of pace)', zh: '\uff08\u8d85\u524d\u4e8e\u8fdb\u5ea6\uff09' },
-  'usage.hpc.unread': { en: (v) => `not read: ${v.why}`, zh: (v) => `\u672a\u8bfb\u53d6\uff1a${v.why}` },
-  'usage.hpc.read': { en: (v) => `read ${v.at}`, zh: (v) => `\u8bfb\u53d6\u4e8e ${v.at}` },
-  'usage.axis': { en: (v) => `tokens per ${v.unit} · Claude / Codex`, zh: (v) => `\u6bcf${v.unit === 'hour' ? '\u5c0f\u65f6' : '\u5929'} token · Claude / Codex` },
-  'usage.clearFilter': { en: 'Clear', zh: '\u6e05\u9664' },
-  'usage.projects': { en: 'Projects', zh: '\u9879\u76ee' },
-  'usage.models': { en: 'Models', zh: '\u6a21\u578b' },
-  'usage.machines': { en: 'Machines', zh: '\u673a\u5668' },
-
-  // Alerts: what the gateway tells the human in the dashboard bot's chat (scripts/dashboard/notify.mjs)
-  'alert.sep': { en: ': ', zh: '\uff1a' },
-  'alert.exhausted': { en: 'Quota exhausted', zh: '\u989d\u5ea6\u5df2\u8017\u5c3d' },
-  'alert.seat-problem': { en: 'Seat problem', zh: '\u5e2d\u4f4d\u5f02\u5e38' },
-  'alert.extra-reset': { en: 'Extra reset announced', zh: '\u5df2\u516c\u5e03\u989d\u5916\u91cd\u7f6e' },
-  'alert.host-offline': { en: 'Host offline', zh: '\u4e3b\u673a\u6389\u7ebf' },
-  'alert.turn-failed': { en: 'Turn failed', zh: '\u5bf9\u8bdd\u8f6e\u6b21\u5931\u8d25' },
-  'alert.config-refused': { en: 'Config change refused', zh: '\u8bbe\u7f6e\u4fee\u6539\u88ab\u62d2' },
-  'alert.hpc-budget': { en: 'HPC budget running out', zh: 'HPC \u9884\u7b97\u5c06\u8017\u5c3d' },
-  'alert.test': { en: 'Test', zh: '\u6d4b\u8bd5' },
-  'alert.detail.hpcBudget': {
-    en: (v) => `${v.used} of ${v.total} core-h (${v.pct}%) with ${v.window}% of the window gone${v.until ? `, to ${v.until}` : ''}${v.projected ? ` · on pace for ${v.projected}` : ''}`,
-    zh: (v) => `\u5df2\u7528 ${v.used} / ${v.total} \u6838\u65f6\uff08${v.pct}%\uff09\uff0c\u5468\u671f\u5df2\u8fc7 ${v.window}%${v.until ? `\uff0c\u81f3 ${v.until}` : ''}${v.projected ? ` · \u6309\u5f53\u524d\u901f\u5ea6\u5c06\u7528 ${v.projected}` : ''}`,
-  },
-  'alert.detail.window': { en: (v) => `${v.k} window${v.in ? ` · resets in ${v.in}` : ''}`, zh: (v) => `${v.k} \u7a97\u53e3${v.in ? ` · ${v.in} \u540e\u91cd\u7f6e` : ''}` },
-  'alert.detail.in': { en: (v) => `in ${v.in}`, zh: (v) => `${v.in} \u540e` },
-  'alert.detail.silent': { en: (v) => `silent for ${v.for}`, zh: (v) => `\u5df2 ${v.for} \u65e0\u4e0a\u62a5` },
-  'alert.detail.neverSeen': { en: 'not heard from since the dashboard restarted', zh: '\u81ea dashboard \u91cd\u542f\u4ee5\u6765\u672a\u4e0a\u62a5' },
-  'alert.detail.refusedBy': { en: (v) => `by ${v.host}: ${v.error}`, zh: (v) => `${v.host} \u62d2\u7edd\uff1a${v.error}` },
-  'alert.detail.test': { en: 'Alerts from the dashboard reach this chat.', zh: 'dashboard \u7684\u63d0\u9192\u4f1a\u53d1\u5230\u8fd9\u91cc\u3002' },
-
-  // Config: this device
-  'cfg.display': { en: 'Display · this device', zh: '\u663e\u793a · \u672c\u8bbe\u5907' },
-  'cfg.shared': { en: 'Shared settings · all hosts', zh: '\u5171\u4eab\u8bbe\u7f6e · \u6240\u6709\u4e3b\u673a' },
-  'cfg.developer': { en: 'Developer', zh: '\u5f00\u53d1\u8005' },
-  'cfg.language': { en: 'Language', zh: '\u8bed\u8a00' },
-  'cfg.lang.auto': { en: 'Auto', zh: '\u81ea\u52a8' },
-  'cfg.lang.autoHint': { en: 'Auto follows your Telegram language', zh: '\u81ea\u52a8\uff1a\u8ddf\u968f Telegram \u7684\u8bed\u8a00' },
-  'cfg.time': { en: 'Time', zh: '\u65f6\u95f4' },
-  'cfg.clock': { en: 'Clock', zh: '\u65f6\u949f' },
-  'cfg.clock.24': { en: '24-hour', zh: '24 \u5c0f\u65f6' },
-  'cfg.clock.12': { en: '12-hour', zh: '12 \u5c0f\u65f6' },
-  'cfg.date': { en: 'Date', zh: '\u65e5\u671f' },
-  'cfg.date.off': { en: 'None', zh: '\u4e0d\u663e\u793a' },
-  'cfg.date.hint': { en: 'How the build time beside the title shows its date', zh: '\u6807\u9898\u65c1\u6784\u5efa\u65f6\u95f4\u7684\u65e5\u671f\u683c\u5f0f' },
-  'cfg.reply': { en: 'Last reply', zh: '\u6700\u540e\u56de\u590d' },
-  'cfg.reply.ago': { en: 'Time ago', zh: '\u591a\u4e45\u524d' },
-  'cfg.reply.clock': { en: 'Clock time', zh: '\u65f6\u523b' },
-  'cfg.reply.hint': { en: 'A session\'s last reply as how long ago (5m ago) or its 24h time (14:05)', zh: '\u4f1a\u8bdd\u6700\u540e\u56de\u590d\u663e\u793a\u4e3a\u591a\u4e45\u4ee5\u524d\uff085 \u5206\u949f\u524d\uff09\u6216 24 \u5c0f\u65f6\u5236\u65f6\u523b\uff0814:05\uff09' },
-  'cfg.accounts': { en: 'Accounts', zh: '\u8d26\u6237' },
-  'cfg.unit': { en: 'Bars show', zh: '\u8fdb\u5ea6\u6761\u663e\u793a' },
-  'cfg.unit.used': { en: 'Used', zh: '\u5df2\u7528' },
-  'cfg.unit.left': { en: 'Left', zh: '\u5269\u4f59' },
-  'cfg.unit.hint': { en: 'Quota bars and numbers as % used (fill = spent) or % left (fill = remaining)', zh: '\u989d\u5ea6\u6761\u4e0e\u6570\u5b57\u663e\u793a\u4e3a\u5df2\u7528\u767e\u5206\u6bd4\uff08\u586b\u5145 = \u5df2\u6d88\u8017\uff09\u6216\u5269\u4f59\u767e\u5206\u6bd4\uff08\u586b\u5145 = \u5269\u4f59\uff09' },
-  'cfg.sessions': { en: 'Sessions', zh: '\u4f1a\u8bdd' },
-  'cfg.groupBy': { en: 'Group by', zh: '\u5206\u7ec4' },
-  'cfg.groupBy.project': { en: 'Project', zh: '\u9879\u76ee' },
-  'cfg.groupBy.host': { en: 'Host', zh: '\u4e3b\u673a' },
-  'cfg.order': { en: 'In a project', zh: '\u9879\u76ee\u5185\u6392\u5e8f' },
-  'cfg.order.host': { en: 'By host', zh: '\u6309\u4e3b\u673a' },
-  'cfg.order.urgency': { en: 'By urgency', zh: '\u6309\u7d27\u6025\u5ea6' },
-  'cfg.order.hint': { en: 'Inside a project group: by workstation, most urgent first within one; or by urgency alone', zh: '\u9879\u76ee\u5206\u7ec4\u5185\uff1a\u6309\u5de5\u4f5c\u7ad9\uff08\u540c\u4e00\u5de5\u4f5c\u7ad9\u5185\u6700\u7d27\u6025\u7684\u5728\u524d\uff09\uff0c\u6216\u4ec5\u6309\u7d27\u6025\u5ea6' },
-  'cfg.openAt': { en: 'Open Topic at', zh: '\u6253\u5f00\u8bdd\u9898\u4e8e' },
-  'cfg.openAt.latest': { en: 'Latest', zh: '\u6700\u65b0' },
-  'cfg.openAt.first': { en: 'First unread', zh: '\u9996\u6761\u672a\u8bfb' },
-  'cfg.openAt.hint': { en: 'Where tapping a session opens its Topic', zh: '\u70b9\u51fb\u4f1a\u8bdd\u65f6\u8bdd\u9898\u6253\u5f00\u7684\u4f4d\u7f6e' },
-  'cfg.layout': { en: 'Layout', zh: '\u5e03\u5c40' },
-  'cfg.pinTabs': { en: 'Tab bar', zh: '\u6807\u7b7e\u680f' },
-  'cfg.pinTabs.on': { en: 'Pinned', zh: '\u56fa\u5b9a' },
-  'cfg.pinTabs.off': { en: 'Scrolls', zh: '\u968f\u9875\u6eda\u52a8' },
-  'cfg.pinTabs.hint': { en: 'Keep the tabs at the top while the page scrolls', zh: '\u9875\u9762\u6eda\u52a8\u65f6\u5c06\u6807\u7b7e\u680f\u56fa\u5b9a\u5728\u9876\u90e8' },
-  'cfg.load': { en: 'Machine load', zh: '\u673a\u5668\u8d1f\u8f7d' },
-  'cfg.taskTags': { en: 'Task tags', zh: '\u4efb\u52a1\u6807\u7b7e' },
-  'cfg.taskTags.text': { en: 'Text', zh: '\u6587\u5b57' },
-  'cfg.taskTags.icons': { en: 'Icons', zh: '\u56fe\u6807' },
-  'cfg.taskLines': { en: 'Task lines', zh: '\u4efb\u52a1\u884c\u6570' },
-  'cfg.taskLines.0': { en: 'None', zh: '\u4e0d\u663e\u793a' },
-  'cfg.taskLines.hint': { en: 'How many running tasks a folded session lists — subagents, monitors, shells, PowerShell, in that order; the tasks icon lists all', zh: '\u6298\u53e0\u7684\u4f1a\u8bdd\u5217\u51fa\u51e0\u4e2a\u8fd0\u884c\u4e2d\u7684\u4efb\u52a1\uff08\u4f9d\u6b21\u4e3a\u5b50\u4ee3\u7406\u3001\u76d1\u89c6\u3001shell\u3001PowerShell\uff09\uff1b\u4efb\u52a1\u56fe\u6807\u5217\u51fa\u5168\u90e8' },
-  'cfg.taskTags.hint': { en: 'How a session names what it runs — sh, ps, mon, agent — as words or as icons; filled in the foreground, outlined in the background', zh: '\u4f1a\u8bdd\u91cc\u8fd0\u884c\u7684\u4efb\u52a1\uff08sh\u3001ps\u3001mon\u3001agent\uff09\u7528\u6587\u5b57\u8fd8\u662f\u56fe\u6807\u8868\u793a\uff1b\u5b9e\u5fc3\u4e3a\u524d\u53f0\uff0c\u63cf\u8fb9\u4e3a\u540e\u53f0' },
-  'cfg.load.detailed': { en: 'Detailed', zh: '\u8be6\u7ec6' },
-  'cfg.load.compact': { en: 'Compact', zh: '\u7b80\u6d01' },
-  'cfg.load.off': { en: 'Off', zh: '\u5173\u95ed' },
-  'cfg.load.hint': { en: 'CPU, memory and GPU under each host; detailed adds the hardware line (in compact, tap the load of a host to show it)', zh: '\u6bcf\u53f0\u4e3b\u673a\u4e0b\u7684 CPU\u3001\u5185\u5b58\u548c GPU\uff1b\u8be6\u7ec6\u6a21\u5f0f\u53e6\u663e\u793a\u786c\u4ef6\u4fe1\u606f\uff08\u7b80\u6d01\u6a21\u5f0f\u4e0b\u70b9\u51fb\u8d1f\u8f7d\u5373\u53ef\u5c55\u5f00\uff09' },
-  'cfg.demo': { en: 'Demo mode', zh: '\u6f14\u793a\u6a21\u5f0f' },
-  'cfg.demo.hint': { en: 'Mask machines, accounts, projects and ids on this device (config edits off)', zh: '\u5728\u672c\u8bbe\u5907\u4e0a\u9690\u85cf\u673a\u5668\u3001\u8d26\u53f7\u3001\u9879\u76ee\u548c ID\uff08\u7981\u7528\u8bbe\u7f6e\u4fee\u6539\uff09' },
-
-  // Config: shared settings
-  'cfg.group.topics': { en: 'Topic lifecycle', zh: '\u8bdd\u9898\u751f\u547d\u5468\u671f' },
-  'cfg.group.dashboard': { en: 'Dashboard', zh: '\u9762\u677f' },
-  'cfg.group.projects': { en: 'Projects', zh: '\u9879\u76ee' },
-  'cfg.save': { en: 'Save', zh: '\u4fdd\u5b58' },
-  'cfg.noHosts': { en: 'No host has reported its config yet', zh: '\u5c1a\u65e0\u4e3b\u673a\u62a5\u544a\u5176\u8bbe\u7f6e' },
-  'cfg.onlyThese': { en: 'Only these can change here. Who may control a host, where sessions are mirrored and every secret stay in the files.', zh: '\u6b64\u5904\u53ea\u80fd\u4fee\u6539\u8fd9\u4e9b\u3002\u8c01\u80fd\u63a7\u5236\u4e3b\u673a\u3001\u4f1a\u8bdd\u955c\u50cf\u5230\u54ea\u91cc\u4ee5\u53ca\u6240\u6709\u5bc6\u94a5\u90fd\u53ea\u5728\u6587\u4ef6\u4e2d\u3002' },
-  'cfg.range': { en: (v) => `${v.min}–${v.max}`, zh: (v) => `${v.min}–${v.max}` },
-  'cfg.queued': { en: (v) => `${v.value} queued: waiting for a host`, zh: (v) => `${v.value} \u5df2\u6392\u961f\uff1a\u7b49\u5f85\u4e3b\u673a` },
-  'cfg.handed': { en: (v) => `${v.value} handed to ${v.host}`, zh: (v) => `${v.value} \u5df2\u4ea4\u7ed9 ${v.host}` },
-  'cfg.applied': { en: (v) => `${v.value} applied by ${v.host} · ${v.ago}`, zh: (v) => `${v.value} \u5df2\u7531 ${v.host} \u5e94\u7528 · ${v.ago}` },
-  'cfg.refused': { en: (v) => `${v.value} refused by ${v.host}: ${v.error} · ${v.ago}`, zh: (v) => `${v.value} \u88ab ${v.host} \u62d2\u7edd\uff1a${v.error} · ${v.ago}` },
-  'cfg.differs': { en: (v) => `${v.host} still reads ${v.value} (syncing)`, zh: (v) => `${v.host} \u4ecd\u4e3a ${v.value}\uff08\u540c\u6b65\u4e2d\uff09` },
-  'cfg.overrides': { en: (v) => `overridden locally on ${v.hosts}: a shared edit does not reach ${v.n === 1 ? 'it' : 'them'}`, zh: (v) => `${v.hosts} \u672c\u5730\u8986\u76d6\uff1a\u5171\u4eab\u4fee\u6539\u4e0d\u4f1a\u751f\u6548` },
-  'cfg.mark.differs': { en: 'syncing', zh: '\u540c\u6b65\u4e2d' },
-  'cfg.mark.overrides': { en: 'local override', zh: '\u672c\u5730\u8986\u76d6' },
-  'cfg.notSaved': { en: (v) => `Not saved: ${v.error}`, zh: (v) => `\u672a\u4fdd\u5b58\uff1a${v.error}` },
-  'cfg.badValue': { en: 'not an allowed value', zh: '\u4e0d\u662f\u5141\u8bb8\u7684\u503c' },
-  'config.bridge.idleCloseMinutes': { en: 'Close an idle Topic after (minutes, 0 = never)', zh: '\u7a7a\u95f2\u8bdd\u9898\u5173\u95ed\u65f6\u95f4\uff08\u5206\u949f\uff0c0 = \u4ece\u4e0d\uff09' },
-  'config.bridge.deleteClosedAfterHours': { en: 'Delete a closed Topic after (hours, 0 = never)', zh: '\u5df2\u5173\u95ed\u8bdd\u9898\u5220\u9664\u65f6\u95f4\uff08\u5c0f\u65f6\uff0c0 = \u4ece\u4e0d\uff09' },
-  'config.bridge.dashboard.everySeconds': { en: 'Push to the dashboard every (seconds)', zh: '\u63a8\u9001\u5230\u9762\u677f\u7684\u95f4\u9694\uff08\u79d2\uff09' },
-  'config.bridge.projects.*.projectInTitle': { en: 'Project name in Topic titles', zh: '\u8bdd\u9898\u6807\u9898\u4e2d\u7684\u9879\u76ee\u540d' },
-  'config.option.always': { en: 'Always', zh: '\u603b\u662f' },
-  'config.option.main': { en: 'Main', zh: '\u4e3b\u5206\u652f' },
-  'config.option.never': { en: 'Never', zh: '\u4ece\u4e0d' },
-};
+/** A template with its vars filled in. */
+export function render(s, vars = {}) {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '{') { out += s[i]; continue; }
+    const end = closing(s, i);
+    out += field(s.slice(i + 1, end), vars);
+    i = end;
+  }
+  return out;
+}
 
 /** `key` in `lang`, English when that language lacks it, the key itself when nothing has it. */
 export function t(key, lang = 'en', vars = {}) {
-  const e = TABLE[key];
-  const v = e?.[lang] ?? e?.en;
-  return v === undefined ? key : typeof v === 'function' ? v(vars) : v;
+  const v = TABLES[lang]?.[key] ?? TABLES.en[key];
+  return v === undefined ? key : render(v, vars);
 }
 
 /** Every key the table defines (for the tests: each has every language). */
-export const i18nKeys = () => Object.keys(TABLE);
+export const i18nKeys = () => Object.keys(TABLES.en);
