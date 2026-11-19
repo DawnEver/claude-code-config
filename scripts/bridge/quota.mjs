@@ -6,6 +6,10 @@
 //     renders), and the dir's `.claude.json` `oauthAccount` (email + organization).
 //   - Codex quota: the shared app-server's `account/rateLimits` (codex-adapter.mjs), recorded
 //     on every read into the bridge runtime's codex-usage.jsonl series.
+//   - Antigravity (agy) quota: its statusLine payload's `quota` ({<pool>-<span>: {remaining_fraction,
+//     reset_in_seconds | resets_at}}), teed by scripts/hooks/agy-statusline.mjs into one series per
+//     pool (agy-usage-<account>-<pool>.jsonl in the bridge runtime); the account is the login agy
+//     logs (cli.log `applyAuthResult: email=`). Each pool is its own account entry.
 //   - Expected seats: top-level `seats` of claude_env_settings.json, re-read every read.
 // A series (quota-series.mjs) holds each window's samples while it is current; its last
 // sample is the quota now, the rest say where in the window it was spent (the trend).
@@ -15,6 +19,9 @@
 
 import fs from 'fs';
 import os from 'os';
+import path from 'path';
+import { createHash } from 'crypto';
+import { BRIDGE_RUNTIME_DIR } from './runtime-paths.mjs';
 import { readBridgeConfig } from './context.mjs';
 import { balanceKeyFor } from './balances.mjs';
 import { fetchExtraResets } from './extra-resets.mjs';
@@ -149,6 +156,8 @@ export const planName = (id) => PLAN_NAMES[id] ?? String(id).split('_').map((w) 
 /** An account's key, the same everywhere it is stored (the dashboard's quota, the usage store's turns). */
 export const claudeAccountKey = (account, fallback) => `claude:${(account?.email ?? fallback).toLowerCase()}|${account?.orgUuid ?? account?.org ?? ''}`;
 export const codexAccountKey = (email, fallback) => `codex:${(email ?? fallback).toLowerCase()}`;
+/** An Antigravity login's key (the usage store's turns); its quota pools add `|<pool>` (accountModels). */
+export const agyAccountKey = (email, fallback) => `agy:${(email ?? fallback).toLowerCase()}`;
 
 const who = (email, org) => [email, org].filter(Boolean).join(' · ') || 'not logged in';
 
@@ -200,7 +209,7 @@ function claudeGroups(dirs, seats, machine) {
  * label (null for the base home) becomes an alias of its account, so a session finds it by its
  * home as a Claude session finds its seat; two homes on one login merge into one account.
  */
-export function accountModels({ machine, seats, claude = [], codex = [], extra = null, now }) {
+export function accountModels({ machine, seats, claude = [], codex = [], agy = [], extra = null, now }) {
   const scheduled = (s) => (s ? { at: s.at ?? null, url: s.url ?? null } : null);
   const out = [];
   for (const g of claudeGroups(claude, seats, machine)) {
@@ -228,6 +237,12 @@ export function accountModels({ machine, seats, claude = [], codex = [], extra =
     codexByKey.set(key, a);
     out.push(a);
   }
+  // Antigravity: one entry per quota pool of its login; a session spends the first (agy names no pool per session).
+  agy.forEach((p, i) => {
+    if (!p.quota) return;
+    out.push({ key: `agy:${(p.account?.email ?? machine).toLowerCase()}|${p.pool}`, agent: 'agy', label: p.pool, email: p.account?.email ?? null,
+      aliases: i === 0 ? [null] : [], detail: null, problems: [], at: p.quota.at, windows: windowModels(p.quota, now), resetCredits: null, extraReset: null });
+  });
   return out;
 }
 
@@ -254,7 +269,7 @@ export function accountFor(session, accounts, balanceEntries = []) {
 export class AccountReader {
   constructor({ machine, codex = () => [], codexSeriesFile = null, codexFallback = () => machine, log = () => {}, now = Date.now,
     extraResets = () => fetchExtraResets({ log }), extraEveryMs = 30 * 60000,
-    sources = { seats: () => readSeats(), claude: readClaudeDirs } }) {
+    sources = { seats: () => readSeats(), claude: readClaudeDirs, agy: () => readAgy() } }) {
     Object.assign(this, { machine, codex, codexSeriesFile, codexFallback, now, extraResets, extraEveryMs, sources });
     this.extra = { at: -Infinity, value: null, pending: null };
   }
@@ -273,6 +288,78 @@ export class AccountReader {
       return { label, account, quota, resetCredits: cx?.resetCredits ?? null, fallback: this.codexFallback(home) };
     });
     const seats = this.sources.seats();
-    return accountModels({ machine: this.machine, seats, codex, claude: this.sources.claude(seats, this.machine), extra: this.extra.value, now });
+    return accountModels({ machine: this.machine, seats, codex, claude: this.sources.claude(seats, this.machine), agy: this.sources.agy?.() ?? [], extra: this.extra.value, now });
   }
+}
+
+// ── Antigravity (agy) ──
+
+/** agy's own state dir (cli.log, brain/, settings.json). */
+export const AGY_DIR = path.join(os.homedir(), '.gemini', 'antigravity-cli');
+const AGY_POOL = /^[a-z0-9][a-z0-9._-]{0,39}$/i;
+const AGY_SPANS = { daily: 24 * H, day: 24 * H, weekly: 168 * H, week: 168 * H };
+
+/** A quota tier's name -> {pool, windowMs}: `gemini-5h` -> gemini 5h, `claude_weekly` -> claude 7d; null when it names no span. */
+export function agyTier(name) {
+  const m = /^(.*?)[-_ ]?(?:(\d{1,3})\s*([hd])|(daily|day|weekly|week))$/i.exec(String(name ?? '').trim());
+  if (!m) return null;
+  const windowMs = m[2] ? Number(m[2]) * (m[3].toLowerCase() === 'h' ? H : 24 * H) : AGY_SPANS[m[4].toLowerCase()];
+  const pool = (m[1] || 'agy').toLowerCase();
+  return windowMs > 0 && AGY_POOL.test(pool) ? { pool, windowMs } : null;
+}
+
+/**
+ * statusLine `quota` -> windows per pool: {<pool>: {<span>: {used, resetsAt, windowMs}}}.
+ * `remaining_fraction` is what is left (0..1); the reset is `resets_at` (epoch s or ms) or `reset_in_seconds` from `now`.
+ */
+export function agyPools(quota, now = Date.now()) {
+  const pools = {};
+  for (const [name, q] of Object.entries(quota && typeof quota === 'object' ? quota : {})) {
+    const tier = agyTier(name);
+    const frac = q?.remaining_fraction;
+    if (!tier || typeof frac !== 'number' || !Number.isFinite(frac)) continue;
+    const resetsAt = q.resets_at > 0 ? (q.resets_at < 1e12 ? q.resets_at * 1000 : q.resets_at)
+      : Number.isFinite(q.reset_in_seconds) && q.reset_in_seconds >= 0 ? now + q.reset_in_seconds * 1000 : null;
+    if (!resetsAt) continue;
+    (pools[tier.pool] ??= {})[span(tier.windowMs)] = { used: pct((1 - frac) * 100), resetsAt, windowMs: tier.windowMs };
+  }
+  return pools;
+}
+
+const AGY_LOG_TAIL = 512 * 1024;
+
+/** The login agy last applied (cli.log `applyAuthResult: email=...`), or null. Read from the log's tail. */
+export function readAgyEmail(dir = AGY_DIR) {
+  let tail = '';
+  try {
+    const fd = fs.openSync(path.join(dir, 'cli.log'), 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const buf = Buffer.alloc(Math.min(size, AGY_LOG_TAIL));
+      tail = buf.toString('utf8', 0, fs.readSync(fd, buf, 0, buf.length, size - buf.length));
+    } finally { fs.closeSync(fd); }
+  } catch { return null; }
+  let email = null;
+  for (const m of tail.matchAll(/applyAuthResult: email=([^\s,]+@[^\s,]+)/g)) email = m[1];
+  return email;
+}
+
+const agyAccountHash = (email) => createHash('sha256').update((email ?? 'unknown').toLowerCase()).digest('hex').slice(0, 16);
+/** One pool's series file, scoped by the login (as codex-usage-<home>-<account>.jsonl). */
+export const agySeriesFile = (email, pool, dir = BRIDGE_RUNTIME_DIR) => path.join(dir, `agy-usage-${agyAccountHash(email)}-${pool}.jsonl`);
+
+/** agy-statusline.mjs side: record each pool of the statusLine's `quota` into its series. Fail-silent; returns the pools. */
+export function teeAgyUsage(statusLine, { email = readAgyEmail(), dir = BRIDGE_RUNTIME_DIR, now = Date.now() } = {}) {
+  const pools = agyPools(statusLine?.quota, now);
+  for (const [pool, windows] of Object.entries(pools)) recordSample(agySeriesFile(email, pool, dir), windows, now);
+  return pools;
+}
+
+/** This machine's agy pools as [{pool, account: {email}, quota}]: the current login's series, freshest pool first. */
+export function readAgy({ email = readAgyEmail(), dir = BRIDGE_RUNTIME_DIR } = {}) {
+  const prefix = `agy-usage-${agyAccountHash(email)}-`;
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((n) => n.startsWith(prefix) && n.endsWith('.jsonl')); } catch { return []; }
+  return names.map((n) => ({ pool: n.slice(prefix.length, -'.jsonl'.length), account: email ? { email } : null, quota: quotaOf(readSeries(path.join(dir, n))) }))
+    .filter((p) => AGY_POOL.test(p.pool) && p.quota).sort((a, b) => b.quota.at - a.quota.at || a.pool.localeCompare(b.pool));
 }

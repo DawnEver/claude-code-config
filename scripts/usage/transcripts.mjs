@@ -158,3 +158,32 @@ export function codexTranscript(text) {
   });
   return { session, repositoryUrl: meta.repositoryUrl ?? null, turns: rows, costs: [] };
 }
+
+/**
+ * An Antigravity transcript (`~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs/transcript.jsonl`)
+ * -> {session, turns, costs}. The session is its conversation id (the brain dir; `session` names
+ * it, the transcript does not). A turn opens at each USER_INPUT (human) or SYSTEM_MESSAGE (a
+ * subagent's message or a timer: system); every PLANNER_RESPONSE is one model call with its own
+ * usage: `input_tokens` uncached, `cache_read_tokens`, `output_tokens`. agy records no cwd and no branch.
+ */
+export function agyTranscript(text, { session = null } = {}) {
+  const turns = [];
+  let cur = null;
+  const open = (e, at, origin) => {
+    cur = { id: `${session ?? 'agy'}:${e.step_index ?? turns.length}`, start: at, end: at, origin, client: 'agy', branch: null, cwd: null, calls: [], tools: {} };
+    turns.push(cur);
+  };
+  for (const e of lines(text)) {
+    const at = ms(e.created_at);
+    if (at === null) continue;
+    if (e.type === 'USER_INPUT') { open(e, at, 'human'); continue; }
+    if (e.type === 'SYSTEM_MESSAGE') { open(e, at, 'system'); continue; }
+    if (e.type === 'PLANNER_RESPONSE' && e.model) {
+      if (!cur) open(e, at, 'system');
+      cur.calls.push({ model: e.model, usage: { input: n(e.input_tokens), cache_read: n(e.cache_read_tokens), cache_write: 0, output: n(e.output_tokens), reasoning: 0 } });
+      for (const t of Array.isArray(e.tool_calls) ? e.tool_calls : []) if (typeof t?.name === 'string') cur.tools[t.name] = (cur.tools[t.name] ?? 0) + 1;
+    }
+    if (cur) cur.end = Math.max(cur.end, at);
+  }
+  return { session, turns: turns.filter((t) => t.calls.length).flatMap(rowsOf), costs: [] };
+}
