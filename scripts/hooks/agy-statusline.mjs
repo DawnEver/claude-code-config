@@ -5,6 +5,9 @@
 // series (quota.mjs teeAgyUsage, only on a host with a configured dashboard, as hud-hook.js for
 // Claude) and prints one line: model, context use, each pool's most-used window. Never fails the line.
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { isMain } from '../shared/is-main.mjs';
 
 /** The status line for a payload: `Claude Opus 5.5 (Low) · ctx 31% · gemini 5h 2% · claude 7d 40%`. */
@@ -26,6 +29,16 @@ async function main() {
   if (!process.stdin.isTTY) for await (const c of process.stdin) raw += c;
   let p = null;
   try { p = JSON.parse(raw); } catch { /* not JSON */ }
+  if (p && typeof p === 'object' && Object.keys(p).length > 0 && !process.env.NODE_TEST_CONTEXT && process.env.CC_CONFIG_AGY_SMOKE !== '1') {
+    try {
+      const dir = path.join(os.homedir(), '.claude', 'bridge');
+      fs.mkdirSync(dir, { recursive: true });
+      const dst = path.join(dir, 'agy-statusline-last.json');
+      const tmp = `${dst}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(p));
+      fs.renameSync(tmp, dst);
+    } catch { /* diagnostic snapshot only */ }
+  }
   let pools = {};
   try {
     const { recordsQuota, teeAgyUsage, agyPools } = await import('../bridge/quota.mjs');

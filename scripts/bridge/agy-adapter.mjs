@@ -181,8 +181,10 @@ export class AgyAdapter extends EventEmitter {
         this.#state(id, s, 'idle', at);
         return { ok: true, terminate: true, reason: INTERRUPTED };
       }
-      // invocationNum 1 opens a turn: a prompt typed here, or a continuation the Stop hook asked for.
-      if (p.invocationNum === 1 || p.invocationNum === undefined) {
+      // Turn opening: whenever the session is not already mid-turn (`s.activity !== 'running'`,
+      // covering multi-turn sessions where `invocationNum` increases monotonically across turns)
+      // or explicitly at invocation 0/1.
+      if (s.activity !== 'running' || p.invocationNum === 0 || p.invocationNum === 1) {
         s.tasks.settleForeground(at);
         s.sent = new Set();
         const text = typeof p.text === 'string' ? p.text.trim() : '';

@@ -129,12 +129,18 @@ test('statusLine: merged only when unset or ours, preserving user keys and smoke
   assert.equal(s.theme, 'dark');
   assert.equal(s.statusLine.type, 'command');
   assert.equal(s.statusLine.enabled, true);
-  assert.match(s.statusLine.command, /^node "[^"~]+\/hooks\/agy-statusline\.mjs"$/);
+  assert.equal(s.statusLine.command.includes('"'), false, 'zero double-quotes so statusline_runner cannot mangle argv');
+  assert.match(s.statusLine.command, /^node (\S+\/hooks\/agy-statusline\.mjs|-e eval\(Buffer\.from\('[A-Za-z0-9+/=]+','base64'\)\.toString\(\)\))$/);
   assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir, smoke: ok }).status, 'unchanged');
-  // Updating an old path pointing to agy-statusline.mjs overwrites cleanly.
-  fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { type: 'command', command: 'node "/old/hooks/agy-statusline.mjs"', enabled: true } }));
+  // Updating an old quoted path pointing to agy-statusline.mjs overwrites cleanly and re-enables.
+  fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { type: 'command', command: 'node "/old/hooks/agy-statusline.mjs"', enabled: false } }));
   assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir, smoke: ok }).status, 'written');
-  // Real smoke run against agy-statusline.mjs (plain-text stdout, not JSON).
+  // Real smoke run against agy-statusline.mjs (both whitespace-token spawn and cmd /c), plus spaced path.
   fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { command: '' } }));
   assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: REAL_SCRIPTS }).status, 'written');
+  const spaced = path.join(o.root, 'dir with spaces', 'scripts');
+  fs.cpSync(REAL_SCRIPTS, spaced, { recursive: true });
+  fs.writeFileSync(settingsFile, JSON.stringify({ statusLine: { command: '' } }));
+  assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: spaced }).status, 'written');
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).statusLine.command.includes('"'), false);
 });

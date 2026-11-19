@@ -209,8 +209,14 @@ export function createChannelServer({ write, link, declared = {} }) {
  * the outer session's CLAUDE_PID (a top-level session sets none for its MCP servers), or
  * has a second claude above its own in the process tree.
  */
+/** Is this command line an Antigravity CLI / language-server process? */
+export function isAgyProcess(cmd) {
+  return /^(?:agy|language_server[^.]*)(?:\.exe)?$/i.test(base(tokens(cmd, 1)[0]));
+}
+
 export function isMainSession({ ppid, claudePid, ancestors }) {
   const claudes = ancestors.filter((a) => isClaudeProcess(a.cmd));
+  if (!claudes.length && ancestors.some((a) => isAgyProcess(a.cmd))) return false;
   const own = claudes[0]?.pid ?? ppid;
   if (claudePid && String(claudePid) !== String(own)) return false;
   return claudes.length <= 1;
@@ -291,6 +297,10 @@ function main() {
   // The hook names this process (its CLAUDE_PID, which Claude Code sets per process), so a call
   // routes here even when the session id it reports is new (/clear, /resume, a fork).
   const claude = ancestors.find((a) => isClaudeProcess(a.cmd));
+  if (!claude && ancestors.some((a) => isAgyProcess(a.cmd))) {
+    log('non-Claude host (Antigravity): serving MCP only; agy-adapter owns the bridge session');
+    return;
+  }
   session.claudePid = claude?.pid ?? process.ppid;
   if (!isMainSession({ ppid: process.ppid, claudePid: process.env.CLAUDE_PID, ancestors })) {
     // Keep serving MCP so Claude Code sees a healthy server. Register as NESTED only: never a

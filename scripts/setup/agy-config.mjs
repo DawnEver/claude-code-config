@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { writeFileAtomic } from './codex-config-file.mjs';
@@ -55,14 +56,18 @@ export function managedAgyHook({ scriptsDir }) {
  * stdin). A hook that fails blocks every tool call in every agy session, so setup installs nothing
  * that does not answer with JSON and exit 0 here.
  */
-export function smokeRunCommand(command, { cwd, json = true, run = spawnSync } = {}) {
+export function smokeRunCommand(command, { cwd, json = true, requireDecision = false, verbatim = true, run = spawnSync } = {}) {
   const [shell, args, extra] = process.platform === 'win32'
-    ? ['cmd.exe', ['/d', '/c', command], { windowsVerbatimArguments: true }] : ['sh', ['-c', command], {}];
+    ? ['cmd.exe', ['/d', '/c', command], verbatim ? { windowsVerbatimArguments: true } : {}] : ['sh', ['-c', command], {}];
   const r = run(shell, args, { cwd, input: '{}', encoding: 'utf8', timeout: 20000, windowsHide: true,
     env: { ...process.env, CC_CONFIG_AGY_SMOKE: '1' }, ...extra });
   if (r.error || r.status !== 0) return { ok: false, why: r.error?.message || String(r.stderr || '').trim().split('\n').pop() || `exit ${r.status}` };
   if (!json) return { ok: true };
-  try { JSON.parse(r.stdout || ''); return { ok: true }; } catch { return { ok: false, why: `non-JSON output: ${String(r.stdout).slice(0, 80)}` }; }
+  let parsed;
+  try { parsed = JSON.parse(r.stdout || ''); } catch { return { ok: false, why: `non-JSON output: ${String(r.stdout).slice(0, 80)}` }; }
+  if (requireDecision && (!parsed || typeof parsed.decision !== 'string' || !parsed.decision))
+    return { ok: false, why: 'PreToolUse hook returned empty decision (agy treats {} as deny)' };
+  return { ok: true };
 }
 
 export function managedMcpServer({ repoRoot }) {
@@ -119,7 +124,7 @@ export function installAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marke
   const hook = managedAgyHook({ scriptsDir });
   if (JSON.stringify(readObject(path.join(agyDir, 'hooks.json')).value[HOOK_NAME]) !== JSON.stringify(hook)) {
     fs.mkdirSync(agyDir, { recursive: true });
-    const probe = (smoke ?? smokeRunCommand)(hook.PreToolUse[0].hooks[0].command, { cwd: agyDir });
+    const probe = (smoke ?? smokeRunCommand)(hook.PreToolUse[0].hooks[0].command, { cwd: agyDir, requireDecision: true });
     if (!probe.ok) throw new Error(`agy hook command failed its smoke run (${probe.why}); hooks.json left unchanged`);
   }
   const results = {};
@@ -166,13 +171,19 @@ export const AGY_SETTINGS = path.join(os.homedir(), '.gemini', 'antigravity-cli'
 const STATUSLINE_SCRIPT = 'agy-statusline.mjs';
 
 export function managedStatusLine({ scriptsDir }) {
-  return { type: 'command', command: `node "${slash(path.resolve(scriptsDir, 'hooks', STATUSLINE_SCRIPT))}"`, enabled: true };
+  const file = slash(path.resolve(scriptsDir, 'hooks', STATUSLINE_SCRIPT));
+  // agy's statusline_runner passes `command` without shell quote-stripping / via EscapeArg on
+  // Windows (`"` becomes a literal `"` in node's argv[1], causing MODULE_NOT_FOUND). Emit zero
+  // double-quotes: bare forward-slash path when safe, else a quote-free, space-free base64 loader.
+  const command = !/[\s"&|<>^()%!']/u.test(file)
+    ? `node ${file}`
+    : `node -e eval(Buffer.from('${Buffer.from(`process.argv[1]=${JSON.stringify(file)};import(${JSON.stringify(pathToFileURL(file).href)})`).toString('base64')}','base64').toString())`;
+  return { type: 'command', command, enabled: true };
 }
 
 /**
  * Merge our statusLine into agy's settings.json, only when it is unset or already ours.
- * When the script exists on disk, smoke-run it first; when absent (`pr/agy-bridge` adds it),
- * merge the command directly (agy ignores a missing statusLine gracefully until it lands).
+ * Re-enables `enabled: true` if an earlier broken command caused agy to auto-disable after 30 failures.
  * Returns { status: 'written'|'unchanged'|'skipped', why? }.
  */
 export function installAgyStatusLine({ settingsFile = AGY_SETTINGS, scriptsDir, smoke } = {}) {
@@ -180,11 +191,27 @@ export function installAgyStatusLine({ settingsFile = AGY_SETTINGS, scriptsDir, 
     throw new Error('refusing to write the live agy settings.json from a test: give the test a temp HOME');
   const { before, value } = readObject(settingsFile);
   const current = value.statusLine?.command;
-  if (current && !String(current).includes(STATUSLINE_SCRIPT)) return { status: 'skipped', why: 'statusLine is the user\'s own' };
+  const isOurs = (cmd) => {
+    if (!cmd) return true;
+    const s = String(cmd);
+    if (s.includes(STATUSLINE_SCRIPT)) return true;
+    const m = /Buffer\.from\('([A-Za-z0-9+/=]+)','base64'\)/.exec(s);
+    if (!m) return false;
+    try { return Buffer.from(m[1], 'base64').toString('utf8').includes(STATUSLINE_SCRIPT); } catch { return false; }
+  };
+  if (!isOurs(current)) return { status: 'skipped', why: 'statusLine is the user\'s own' };
   const line = managedStatusLine({ scriptsDir });
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   if (smoke || fs.existsSync(path.join(scriptsDir, 'hooks', STATUSLINE_SCRIPT))) {
-    const probe = (smoke ?? smokeRunCommand)(line.command, { cwd: path.dirname(settingsFile), json: false });
+    // Probe both non-verbatim cmd /c (EscapeArg) and direct whitespace-token spawn (no shell),
+    // the two ways agy's statusline_runner invokes `command`.
+    const probe = (smoke ?? ((cmd, opts) => {
+      const tokens = cmd.trim().split(/\s+/);
+      const direct = spawnSync(tokens[0], tokens.slice(1), { cwd: opts.cwd, input: '{}', encoding: 'utf8', timeout: 20000, windowsHide: true });
+      if (direct.error || direct.status !== 0)
+        return { ok: false, why: direct.error?.message || String(direct.stderr || '').trim().split('\n').pop() || `exit ${direct.status}` };
+      return smokeRunCommand(cmd, { ...opts, json: false, verbatim: false });
+    }))(line.command, { cwd: path.dirname(settingsFile), json: false, verbatim: false });
     if (!probe.ok) return { status: 'skipped', why: `smoke run failed: ${probe.why}` };
   }
   const next = JSON.stringify({ ...value, statusLine: line }, null, 2) + '\n';

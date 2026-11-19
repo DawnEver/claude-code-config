@@ -38,7 +38,7 @@ test('PreToolUse deny maps to agy decision; warn waits for the next PreInvocatio
   const d = deps(t, { guard: async () => ({ verdict: 'deny', reason: 'loop' }) });
   assert.deepEqual(await runAgyHook({ hookEventName: 'PreToolUse', conversationId: 'c', toolCall: { name: 'run_command' } }, d), { decision: 'deny', reason: 'loop' });
   d.guard = async () => ({ verdict: 'warn', reason: 'third identical call' });
-  assert.deepEqual(await runAgyHook({ hookEventName: 'PreToolUse', conversationId: 'c', toolCall: { name: 'run_command' } }, d), {}, 'never auto-allow');
+  assert.deepEqual(await runAgyHook({ hookEventName: 'PreToolUse', conversationId: 'c', toolCall: { name: 'run_command' } }, d), { decision: 'ask' }, 'defers to toolPermission, never empty {}');
   const next = await runAgyHook({ hookEventName: 'PreInvocation', conversationId: 'c' }, d);
   assert.match(next.injectSteps[0].systemMessage.systemMessage, /third identical call/);
   assert.deepEqual(await runAgyHook({ hookEventName: 'PreInvocation', conversationId: 'c' }, d), {}, 'consumed once');
@@ -51,7 +51,7 @@ test('bridge results merge: injectSteps, PreToolUse forwarded, Stop continue pas
   assert.deepEqual(await runAgyHook({ hookEventName: 'PostToolUse' }, d), {});
   assert.deepEqual(await runAgyHook({ hookEventName: 'Stop', fullyIdle: true }, d), { decision: 'continue', reason: 'Telegram: hi' });
   assert.deepEqual(await runAgyHook({ hookEventName: 'Stop', continuationActive: true }, d), { decision: 'continue', reason: 'Telegram: hi' }, 'the adapter decides what is new');
-  assert.deepEqual(await runAgyHook({ hookEventName: 'PreToolUse', toolCall: {} }, d), {});
+  assert.deepEqual(await runAgyHook({ hookEventName: 'PreToolUse', toolCall: {} }, d), { decision: 'ask' });
   assert.deepEqual(seen, ['PreInvocation', 'PostToolUse', 'Stop', 'Stop', 'PreToolUse']);
 });
 
@@ -83,19 +83,20 @@ test('a throwing bridge fails open', async t => {
   assert.deepEqual(await runAgyHook({ hookEventName: 'Stop', continuationActive: true }, d), {});
 });
 
-test('CLI: any failure answers {} and exits 0; PreToolUse {} works cleanly and smoke run has no side effects', () => {
+test('CLI: any failure fails open (ask on PreToolUse, {} elsewhere) and exits 0', () => {
   const script = fileURLToPath(new URL('./agy-hook.mjs', import.meta.url));
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-cli-'));
   try {
-    for (const [args, input, env] of [
-      [['--event', 'PreToolUse'], '{}', { HOME: tmpHome, USERPROFILE: tmpHome }],
-      [['--event', 'PostToolUse'], 'not json', { HOME: tmpHome, USERPROFILE: tmpHome }],
-      [['--send-notification', 'not json'], '', { HOME: tmpHome, USERPROFILE: tmpHome }],
-      [['--event', 'PreToolUse'], '{}', { CC_CONFIG_AGY_SMOKE: '1', HOME: tmpHome, USERPROFILE: tmpHome }],
+    for (const [args, input, env, expected] of [
+      [['--event', 'PreToolUse'], '{}', { HOME: tmpHome, USERPROFILE: tmpHome }, '{"decision":"ask"}'],
+      [['--event', 'PreToolUse'], 'not json', { HOME: tmpHome, USERPROFILE: tmpHome }, '{"decision":"ask"}'],
+      [['--event', 'PostToolUse'], 'not json', { HOME: tmpHome, USERPROFILE: tmpHome }, '{}'],
+      [['--send-notification', 'not json'], '', { HOME: tmpHome, USERPROFILE: tmpHome }, '{}'],
+      [['--event', 'PreToolUse'], '{}', { CC_CONFIG_AGY_SMOKE: '1', HOME: tmpHome, USERPROFILE: tmpHome }, '{"decision":"ask"}'],
     ]) {
       const r = spawnSync(process.execPath, [script, ...args], { input, encoding: 'utf8', env: { ...process.env, ...env } });
       assert.equal(r.status, 0, args.join(' '));
-      assert.equal(r.stdout, '{}', args.join(' '));
+      assert.equal(r.stdout, expected, args.join(' '));
     }
   } finally {
     fs.rmSync(tmpHome, { recursive: true, force: true });

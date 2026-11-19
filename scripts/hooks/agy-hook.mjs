@@ -3,7 +3,9 @@
 // Wired by setup into ~/.gemini/config/hooks.json as the named hook `cc-config`
 // (scripts/setup/agy-config.mjs). agy hooks are synchronous and block the agent loop,
 // so anything slow (a git pull, starting the bridge daemon) runs in a detached child.
-// Contracts are agy's (camelCase stdin/stdout); every failure degrades to `{}`.
+// Contracts are agy's (camelCase stdin/stdout); PreToolUse requires a non-empty `decision`
+// (`{}` is treated by agy as an empty-decision denial), so neutral pass-through and fail-open
+// on PreToolUse emit `{"decision":"ask"}` (defers to the user's configured toolPermission).
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -16,6 +18,12 @@ const SCRIPTS = fileURLToPath(new URL('../', import.meta.url));
 const SELF = fileURLToPath(import.meta.url);
 export const AGY_HOME = path.join(os.homedir(), '.gemini', 'config');
 const hooksDir = home => path.join(home, 'harness-hooks');
+
+const isPreToolArgv = (argv = process.argv) => {
+  const i = argv.indexOf('--event');
+  return i >= 0 && argv[i + 1] === 'PreToolUse';
+};
+export const neutralJson = (argv = process.argv) => isPreToolArgv(argv) ? '{"decision":"ask"}' : '{}';
 
 /** One step agy injects into the conversation (SessionStart / PreInvocation). */
 export const systemStep = text => ({ systemMessage: { systemMessage: text } });
@@ -44,8 +52,9 @@ function detached(args) {
   child.unref();
 }
 
-// A loop-guard warning cannot ride PreToolUse without a decision, and `allow` would skip the
-// user's permission prompt. It waits for the next PreInvocation, which injects it.
+// A loop-guard warning cannot ride PreToolUse alongside an explanation without denying, and `allow`
+// would skip the user's permission prompt. `ask` defers to toolPermission while the warning waits
+// for the next PreInvocation, which injects it.
 const warnFile = (home, conversationId) =>
   path.join(hooksDir(home), 'pending', `${crypto.createHash('sha256').update(String(conversationId)).digest('hex').slice(0, 32)}.txt`);
 function stashWarning(home, conversationId, reason) {
@@ -100,10 +109,10 @@ export async function runAgyHook(input, deps = {}) {
     const result = await attempt(deps.guard ?? (async () => (await import('./loop-guard-hook.js')).guardCall(input, { env, host: 'agy' })));
     if (result?.verdict === 'deny') return { decision: 'deny', reason: result.reason };
     if (result?.verdict === 'warn' && input.conversationId) await attempt(() => stashWarning(home, input.conversationId, result.reason));
-    // The adapter may answer for the user (a Telegram approval); it can wait up to 600 s.
+    // The adapter may answer for the user (a Telegram question or approval); it can wait up to 600 s.
     const answer = await forwardBridge();
     if (answer?.decision) return answer.reason ? { decision: answer.decision, reason: answer.reason } : { decision: answer.decision };
-    return {};
+    return { decision: 'ask' };
   } else if (event === 'PreInvocation') {
     // A Telegram interrupt stops the turn before the model runs.
     if (bridged?.terminate) return { terminationBehavior: 'terminate', injectSteps: [{ errorMessage: { userMessage: bridged.reason || 'Interrupted.' } }] };
@@ -162,7 +171,7 @@ async function sendNotification(n) {
 
 async function main() {
   const argv = process.argv;
-  if (process.env.CC_CONFIG_AGY_SMOKE === '1') return void process.stdout.write('{}'); // setup's smoke run
+  if (process.env.CC_CONFIG_AGY_SMOKE === '1') return void process.stdout.write(neutralJson(argv));
   if (argv.includes('--background-start')) return backgroundStart();
   if (argv.includes('--remind')) return remind();
   if (argv.includes('--send-notification')) return sendNotification(JSON.parse(argv[argv.indexOf('--send-notification') + 1]));
@@ -175,9 +184,9 @@ async function main() {
   process.stdout.write(JSON.stringify(await runAgyHook(input, { definition: definitionIndex >= 0 ? argv[definitionIndex + 1] : null })));
 }
 
-// A hook that exits non-zero blocks every agy tool call: whatever happens, answer {} and exit 0.
+// A hook that exits non-zero or returns `{}` on PreToolUse blocks every agy tool call.
 if (isMain(import.meta.url)) {
-  const failOpen = () => { try { process.stdout.write('{}'); } catch { /* closed pipe */ } process.exit(0); };
+  const failOpen = () => { try { process.stdout.write(neutralJson()); } catch { /* closed pipe */ } process.exit(0); };
   process.on('uncaughtException', failOpen);
   process.on('unhandledRejection', failOpen);
   main().then(() => process.exit(0), failOpen);
