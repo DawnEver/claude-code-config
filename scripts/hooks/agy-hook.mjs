@@ -93,7 +93,17 @@ export async function runAgyHook(input, deps = {}) {
     const forward = deps.bridge !== undefined ? deps.bridge : await loadBridge();
     return forward ? await forward(event, input) : null;
   });
-  // PreToolUse forwards after the loop guard: a denied call never reaches Telegram.
+  const runProject = () => attempt(async () => {
+    if (deps.projectHooks !== undefined) return deps.projectHooks ? await deps.projectHooks(event, input) : null;
+    if (deps.agyHome !== undefined) return null; // isolated unit tests unless projectHooks explicitly supplied
+    const [{ runProjectClaudeHooks }, { isAgyMainSession }] = await Promise.all([
+      import('./project-claude-hooks.mjs'),
+      import('../bridge/agy-adapter.mjs'),
+    ]);
+    const isSubagent = Boolean(input.conversationId) && !isAgyMainSession(input, { env, ancestry: false });
+    return runProjectClaudeHooks(event, input, { env, isSubagent });
+  });
+  // PreToolUse forwards after the loop guard and project guard: a denied call never reaches Telegram.
   const bridged = BRIDGE_EVENTS.has(event) && event !== 'PreToolUse' ? await forwardBridge() : null;
 
   if (event === 'SessionStart') {
@@ -105,20 +115,30 @@ export async function runAgyHook(input, deps = {}) {
     const checked = await attempt(deps.doctor ?? (() => JSON.parse(execFileSync(process.execPath,
       [path.join(SCRIPTS, 'setup', 'doctor.js'), '--hook'], { encoding: 'utf8', timeout: 8000, windowsHide: true }) || '{}')));
     if (checked?.systemMessage) messages.push(checked.systemMessage);
+    const proj = await runProject();
+    if (proj?.contexts?.length) messages.push(...proj.contexts);
   } else if (event === 'PreToolUse') {
     const result = await attempt(deps.guard ?? (async () => (await import('./loop-guard-hook.js')).guardCall(input, { env, host: 'agy' })));
     if (result?.verdict === 'deny') return { decision: 'deny', reason: result.reason };
     if (result?.verdict === 'warn' && input.conversationId) await attempt(() => stashWarning(home, input.conversationId, result.reason));
+    const proj = await runProject();
+    if (proj?.denyReason) return { decision: 'deny', reason: proj.denyReason };
+    if (proj?.contexts?.length && input.conversationId) await attempt(() => stashWarning(home, input.conversationId, proj.contexts.join('\n')));
     // The adapter may answer for the user (a Telegram question or approval); it can wait up to 600 s.
     const answer = await forwardBridge();
     if (answer?.decision) return answer.reason ? { decision: answer.decision, reason: answer.reason } : { decision: answer.decision };
+    if (proj?.allowDoor) return { decision: 'allow' };
     return { decision: 'ask' };
   } else if (event === 'PreInvocation') {
     // A Telegram interrupt stops the turn before the model runs.
     if (bridged?.terminate) return { terminationBehavior: 'terminate', injectSteps: [{ errorMessage: { userMessage: bridged.reason || 'Interrupted.' } }] };
     const pending = input.conversationId ? takeWarnings(home, input.conversationId) : '';
     if (pending) messages.push(pending);
+    const proj = await runProject();
+    if (proj?.contexts?.length) messages.push(...proj.contexts);
   } else if (event === 'Stop') {
+    const proj = await runProject();
+    if (proj?.blockReason && !input.continuationActive) return { decision: 'continue', reason: proj.blockReason };
     const notification = agyNotification(input, event);
     if (notification) await attempt(() => (deps.notify ?? (n => detached(['--send-notification', JSON.stringify(n)])))(notification));
     // agy has no SessionEnd: a finished, idle turn is the closest point for the repo reminder.
@@ -131,7 +151,11 @@ export async function runAgyHook(input, deps = {}) {
     return {};
   }
 
-  if (event === 'PostToolUse') return {};
+  if (event === 'PostToolUse') {
+    const proj = await runProject();
+    if (proj?.contexts?.length && input.conversationId) await attempt(() => stashWarning(home, input.conversationId, proj.contexts.join('\n')));
+    return {};
+  }
   const steps = [...(bridged?.injectSteps ?? [])];
   if (messages.length && ['SessionStart', 'PreInvocation'].includes(event)) steps.push(systemStep(messages.join('\n')));
   return steps.length ? { injectSteps: steps } : {};

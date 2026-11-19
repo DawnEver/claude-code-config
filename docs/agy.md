@@ -44,14 +44,15 @@ agy hooks run synchronously and block the loop. Slow work runs in a detached chi
 
 | Event | Does | Output |
 |---|---|---|
-| SessionStart | Detached: `syncBeforeLaunch` + `ensureDaemon`. Inline: `checkLinks`, `doctor --hook` | `injectSteps` system message listing warnings/FAILs |
-| PreToolUse `*` (timeout 660 s) | `guardCall(..., {host: 'agy'})`: thread = `conversationId`, `toolCall.name/args`, cosmetic args (`toolSummary`, `WaitMsBeforeAsync`) ignored. Then the bridge, which may answer for the user (up to 600 s, only in Telegram-started turns) | guard deny, else the bridge's `{decision, reason}` |
-| PreInvocation | Delivers pending loop-guard warnings. A bridge `terminate` stops the turn | `injectSteps`, or `terminationBehavior: "terminate"` with an `errorMessage` |
-| PostToolUse | Bridge only | `{}` |
-| Stop | Notification ("Antigravity - Done"). The repo reminder runs when the agent is idle and not continuing, at most once per hour per state | `{decision: "continue", reason}` only for queued Telegram input |
+| SessionStart | Detached: `syncBeforeLaunch` + `ensureDaemon`. Inline: `checkLinks`, `doctor --hook`, plus the checkout's `.claude/settings.json` `SessionStart` hooks | `injectSteps` system message listing warnings/FAILs/context |
+| PreToolUse `*` (timeout 660 s) | `guardCall(..., {host: 'agy'})`, then the checkout's `.claude/settings*.json` hooks (`deny-commands.js` + `deny-rules.json`, `doc_principles.py`, `dev_lab.dev.hookdispatch PreToolUse`) via `project-claude-hooks.mjs`, then the bridge (up to 600 s in Telegram-started turns), then `permissions.allow` `Bash(...)` family doors | `{decision: "deny", reason}`, bridge `{decision, reason}`, `{decision: "allow"}` for sanctioned doors, else `{decision: "ask"}` |
+| PreInvocation | Delivers pending warnings and runs the checkout's `UserPromptSubmit` hooks (`hookdispatch UserPromptSubmit`) on the turn's first invocation. A bridge `terminate` stops the turn | `injectSteps`, or `terminationBehavior: "terminate"` with an `errorMessage` |
+| PostToolUse | Runs the checkout's `PostToolUse` / `PostToolUseFailure` hooks (`walls` ledger) and forwards to the bridge | `{}` |
+| Stop | Runs the checkout's `Stop` / `SubagentStop` gates (`strays`, `handback`, `scratch`, `walls`, `shellreaper`), then notification ("Antigravity - Done") and repo reminder | `{decision: "continue", reason}` for a Stop gate block or queued Telegram input |
 
-A loop-guard **warning** gets no PreToolUse output. Answering `allow` would skip the user's
-permission prompt. The warning is stashed instead, and the next PreInvocation injects it.
+A loop-guard **warning** outputs `{decision: "ask"}` on PreToolUse (never empty `{}`, which agy treats as a denial, and never `allow`, which would skip the user's permission prompt for non-door commands). The warning text is stashed and injected on the next PreInvocation.
+
+Only top-level interactive **main sessions** (`isAgyMainSession`: `is_internal !== true` in `conversation_metadata.json`, `presence/<id>.lock` present, not in `.gemini/antigravity-cli/worktrees/`, not `-p` print mode, and not nested inside another agent) are bridged to Telegram and the dashboard. Subagents still run `project-claude-hooks.mjs` with `agent_id` populated so `SUBAGENT-NO-PUSH` and other subagent-scoped deny rules enforce identically.
 
 Bridge events (SessionStart, PreInvocation, PreToolUse, PostToolUse, Stop) are forwarded to
 `scripts/bridge/agy-adapter.mjs` `forwardAgyHook(event, input)` once that file exists. It may return
