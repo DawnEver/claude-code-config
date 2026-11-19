@@ -55,12 +55,13 @@ export function managedAgyHook({ scriptsDir }) {
  * stdin). A hook that fails blocks every tool call in every agy session, so setup installs nothing
  * that does not answer with JSON and exit 0 here.
  */
-export function smokeRunCommand(command, { cwd, run = spawnSync } = {}) {
+export function smokeRunCommand(command, { cwd, json = true, run = spawnSync } = {}) {
   const [shell, args, extra] = process.platform === 'win32'
     ? ['cmd.exe', ['/d', '/c', command], { windowsVerbatimArguments: true }] : ['sh', ['-c', command], {}];
   const r = run(shell, args, { cwd, input: '{}', encoding: 'utf8', timeout: 20000, windowsHide: true,
     env: { ...process.env, CC_CONFIG_AGY_SMOKE: '1' }, ...extra });
   if (r.error || r.status !== 0) return { ok: false, why: r.error?.message || String(r.stderr || '').trim().split('\n').pop() || `exit ${r.status}` };
+  if (!json) return { ok: true };
   try { JSON.parse(r.stdout || ''); return { ok: true }; } catch { return { ok: false, why: `non-JSON output: ${String(r.stdout).slice(0, 80)}` }; }
 }
 
@@ -183,7 +184,7 @@ export function installAgyStatusLine({ settingsFile = AGY_SETTINGS, scriptsDir, 
   const line = managedStatusLine({ scriptsDir });
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   if (smoke || fs.existsSync(path.join(scriptsDir, 'hooks', STATUSLINE_SCRIPT))) {
-    const probe = (smoke ?? smokeRunCommand)(line.command, { cwd: path.dirname(settingsFile) });
+    const probe = (smoke ?? smokeRunCommand)(line.command, { cwd: path.dirname(settingsFile), json: false });
     if (!probe.ok) return { status: 'skipped', why: `smoke run failed: ${probe.why}` };
   }
   const next = JSON.stringify({ ...value, statusLine: line }, null, 2) + '\n';

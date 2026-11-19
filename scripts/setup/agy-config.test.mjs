@@ -134,4 +134,7 @@ test('statusLine: merged only when unset or ours, preserving user keys and smoke
   // Updating an old path pointing to agy-statusline.mjs overwrites cleanly.
   fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { type: 'command', command: 'node "/old/hooks/agy-statusline.mjs"', enabled: true } }));
   assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir, smoke: ok }).status, 'written');
+  // Real smoke run against agy-statusline.mjs (plain-text stdout, not JSON).
+  fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { command: '' } }));
+  assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: REAL_SCRIPTS }).status, 'written');
 });
