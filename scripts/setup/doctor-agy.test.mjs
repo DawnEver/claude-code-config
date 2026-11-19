@@ -11,16 +11,16 @@ test('checkAgyConfig: silent without agy, FAIL on missing hook or legacy session
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const agyHome = path.join(home, '.gemini', 'config');
   const scriptsDir = path.join(home, '.claude', 'scripts');
-  const repoRoot = path.join(home, 'repo');
-  assert.deepEqual(checkAgyConfig({ agyHome, scriptsDir, repoRoot }), []);
+  const marketDir = path.join(home, 'family', 'cc-market');
+  assert.deepEqual(checkAgyConfig({ agyHome, scriptsDir, marketDir }), []);
   fs.mkdirSync(agyHome, { recursive: true });
   fs.writeFileSync(path.join(agyHome, 'mcp_config.json'), JSON.stringify({
     mcpServers: { 'session-bridge': { command: 'node', args: ['C:/repo/claude_plugins/session-bridge/server.mjs'] } },
   }));
-  const ids = checkAgyConfig({ agyHome, scriptsDir, repoRoot }).map(f => f.id);
+  const ids = checkAgyConfig({ agyHome, scriptsDir, marketDir }).map(f => f.id);
   assert.ok(ids.includes('agy-native-hooks') && ids.includes('agy-mcp'));
-  installAgyConfig({ agyDir: agyHome, scriptsDir, repoRoot, smoke: () => ({ ok: true }) });
-  assert.deepEqual(checkAgyConfig({ agyHome, scriptsDir, repoRoot }).map(f => f.level), ['WARN']);
+  installAgyConfig({ agyDir: agyHome, scriptsDir, marketDir, smoke: () => ({ ok: true }) });
+  assert.deepEqual(checkAgyConfig({ agyHome, scriptsDir, marketDir }).map(f => f.level), ['WARN']);
 });
 
 test('checkRuleFileSize: passes under 24,000 bytes and FAILs when AGENTS.md or GLOBAL-AGENTS.md exceeds it', t => {

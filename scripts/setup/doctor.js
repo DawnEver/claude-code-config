@@ -28,6 +28,7 @@ import { createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { inspectCodexHooks } from './codex-hooks.mjs';
 import { inspectAgyConfig, agyInstalled } from './agy-config.mjs';
+import { readMarketDir } from '../shared/market-dir.mjs';
 import { inspectProtectedPluginCaches, inspectPluginCacheLock } from './update-codex-plugins.mjs';
 import { withoutRetiredCodexRootKey } from './codex-config-compose.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
@@ -312,9 +313,10 @@ export function checkPlugins(settings, home = HOME) {
 // observable install inventory, so compare it with the configured marketplace clone.
 // This catches retired plugins (a plugin removed from its marketplace)
 // without treating disabled-but-still-available plugins as orphans.
-export function checkCodexPluginCache(repoRoot = sourceDir, home = HOME) {
+export function checkCodexPluginCache(marketDir, home = HOME) {
+  if (!marketDir) return [];
   const cache = path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'plugins', 'cache', 'cc-market');
-  const manifest = path.join(repoRoot, 'cc-market', '.agents', 'plugins', 'marketplace.json');
+  const manifest = path.join(marketDir, '.agents', 'plugins', 'marketplace.json');
   if (!fs.existsSync(cache) || !fs.existsSync(manifest)) return [];
   let known;
   try {
@@ -719,7 +721,9 @@ export function cachedContentChecks({ cacheFile = CONTENT_CACHE_FILE, fingerprin
   return findings;
 }
 
-export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME, contentCache = null } = {}) {
+// `market` is this machine's declared cc-market checkout (shared/market-dir.mjs); a test home has none.
+export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME, contentCache = null,
+  market = home === HOME ? readMarketDir() : { dir: null, why: null } } = {}) {
   const settingsPath = path.join(syncDir, 'claude_settings.json');
   let settings = null;
   try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { /* reported by checkPayloadShape */ }
@@ -743,12 +747,13 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkPayloadShape(syncDir, repoRoot),
     ...checkLinks({ repoRoot, syncDir, home }),
     ...checkPlugins(settings, home),
-    ...checkCodexPluginCache(repoRoot, home),
+    ...(market.why ? [finding('FAIL', 'cc-market-location', 'the cc-market checkout is not declared', market.why)] : []),
+    ...checkCodexPluginCache(market.dir, home),
     ...checkHygiene(repoRoot),
     ...checkNativeCodexHooks({ codexHome: home === HOME ? codexDir : path.join(home, '.codex'), scriptsDir: path.join(home, '.claude', 'scripts') }),
     ...checkProtectedCodexCaches({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
     ...checkPluginCacheLock({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
-    ...checkAgyConfig({ agyHome: path.join(home, '.gemini', 'config'), scriptsDir: path.join(home, '.claude', 'scripts'), repoRoot }),
+    ...checkAgyConfig({ agyHome: path.join(home, '.gemini', 'config'), scriptsDir: path.join(home, '.claude', 'scripts'), marketDir: market.dir }),
     ...content,
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
     ...checkBridgeRevision({ runtimeFile: path.join(home, '.claude', 'bridge', 'runtime.json'), repoRoot }),
@@ -766,9 +771,9 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
 
 // agy's hooks.json / plugins.json are merged, not linked, so the link table cannot see a lost
 // managed part; like Codex, an installed hook that never ran is a silent gap.
-export function checkAgyConfig({ agyHome = agyDir, scriptsDir = path.join(claudeDir, 'scripts'), repoRoot = sourceDir } = {}) {
+export function checkAgyConfig({ agyHome = agyDir, scriptsDir = path.join(claudeDir, 'scripts'), marketDir = null } = {}) {
   if (!agyInstalled(agyHome)) return [];
-  const state = inspectAgyConfig({ agyDir: agyHome, scriptsDir, repoRoot, home: path.dirname(path.dirname(agyHome)) });
+  const state = inspectAgyConfig({ agyDir: agyHome, scriptsDir, marketDir });
   const fix = 'run setup (it merges the managed parts and preserves user entries)';
   const out = [];
   if (!state.installed) out.push(finding('FAIL', 'agy-native-hooks', 'agy hooks.json lacks the current cc-config hook', fix));

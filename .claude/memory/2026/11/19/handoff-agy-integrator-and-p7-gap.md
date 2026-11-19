@@ -20,7 +20,7 @@ Land the remaining Antigravity CLI (`agy`) family-alignment PRs across the 5 rep
 2. **Prepared & verified `dev-lab` worktree (ready to push under a bound session)**:
    - Isolated worktree (DO NOT touch primary dirty checkout): `pr/agy/native-harness` @ `90b5fb1f` (2 commits atop `origin/integrate/main` `b309028c`: `50a1a50c` + `90b5fb1f`), 124 targeted tests + `ruff` + `filechecks` + `privatemarkers` all green.
 3. **Cloudflare Dashboard Worker & Local Bridge Daemon**:
-   - Deployed DO KV host-persistence fix (`https://dashboard.mingyangbao.site/`, version `5de2aa7d`) and restarted local bridge daemon onto `1f2acee` with live zero-token `agy -p /quota --output-format json` (`claude-gpt` + `gemini` quota pools).
+   - Deployed DO KV host-persistence fix (the dashboard host, version `5de2aa7d`) and restarted local bridge daemon onto `1f2acee` with live zero-token `agy -p /quota --output-format json` (`claude-gpt` + `gemini` quota pools).
 4. **Closed `LAB_COMMONS_HOME` non-Claude host gap**:
    - Updated `cc-market/rem/scripts/session-binding.mjs` (`33091f9`) to fall back to `~/.claude/settings.json` `env.LAB_COMMONS_HOME` when Codex or Antigravity hooks run without Claude's settings `env` block injected.
 

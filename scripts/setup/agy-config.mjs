@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { writeFileAtomic } from './codex-config-file.mjs';
+import { readMarketDir } from '../shared/market-dir.mjs';
 
 export const AGY_DIR = path.join(os.homedir(), '.gemini', 'config');
 export const HOOK_NAME = 'cc-config';
@@ -126,9 +127,10 @@ function stripLegacyBridgeMcp(agyDir) {
 
 /**
  * Merge the managed hook and plugin entry, and clean up any stale managed session-bridge MCP entry.
- * `marketDir` absent -> no plugin entry (a stale one is removed).
+ * `marketDir` defaults to the machine's declared cc-market checkout (shared/market-dir.mjs); undeclared ->
+ * no plugin entry (a stale one is removed). A cc-market folder beside this repo is never guessed.
  */
-export function installAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marketDir = repoRoot && path.join(repoRoot, 'cc-market'), smoke } = {}) {
+export function installAgyConfig({ agyDir = AGY_DIR, scriptsDir, marketDir = readMarketDir().dir, smoke } = {}) {
   if (process.env.NODE_TEST_CONTEXT && path.resolve(agyDir) === path.resolve(AGY_DIR))
     throw new Error('refusing to write the live ~/.gemini/config from a test: give the test a temp HOME / agyDir');
   const hook = managedAgyHook({ scriptsDir });
@@ -152,7 +154,7 @@ export function installAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marke
 const readJson = file => { try { const t = fs.readFileSync(file, 'utf8'); return t.trim() ? JSON.parse(t) : {}; } catch { return null; } };
 
 /** What doctor reports: managed parts present and current, no stale session-bridge MCP, and hook receipts. */
-export function inspectAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marketDir = repoRoot && path.join(repoRoot, 'cc-market') } = {}) {
+export function inspectAgyConfig({ agyDir = AGY_DIR, scriptsDir, marketDir = readMarketDir().dir } = {}) {
   const hooks = readJson(path.join(agyDir, 'hooks.json'));
   const installed = !!hooks && JSON.stringify(hooks[HOOK_NAME]) === JSON.stringify(managedAgyHook({ scriptsDir }));
   const mcp = readJson(path.join(agyDir, 'mcp_config.json'));

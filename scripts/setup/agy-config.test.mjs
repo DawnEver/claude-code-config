@@ -56,6 +56,17 @@ test('merges managed hooks/plugins, cleans legacy session-bridge MCP, and preser
   assert.equal(state.executed, false);
 });
 
+test('a cc-market folder beside the repo is never used unless it is the declared checkout', t => {
+  const o = fixture(t);
+  installAgyConfig({ ...o, marketDir: null });
+  const plugins = JSON.parse(fs.readFileSync(path.join(o.agyDir, 'plugins.json'), 'utf8'));
+  assert.deepEqual(plugins.entries ?? [], [], 'undeclared: no plugin entry, though repo/cc-market exists');
+  assert.equal(fs.existsSync(path.join(o.repoRoot, 'cc-market')), true, 'planted: the nested folder is there');
+  installAgyConfig({ ...o });
+  const declared = JSON.parse(fs.readFileSync(path.join(o.agyDir, 'plugins.json'), 'utf8'));
+  assert.equal(declared.entries.length, 1, 'control: the declared checkout is listed');
+});
+
 test('every managed command is absolute, has no ~, and names an existing script that answers valid JSON', t => {
   const o = fixture(t);
   const hook = managedAgyHook({ scriptsDir: REAL_SCRIPTS });

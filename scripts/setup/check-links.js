@@ -169,7 +169,7 @@ export function checkLinks() {
     fs.mkdirSync(path.join(agyDir, 'skills'), { recursive: true });
     check(getAgyLinks(), agyDir, 'agy: ');
     try {
-      if (installAgyConfig({ agyDir, scriptsDir: path.join(claudeDir, 'scripts'), repoRoot: sourceDir }).changed)
+      if (installAgyConfig({ agyDir, scriptsDir: path.join(claudeDir, 'scripts') }).changed)
         repaired.push('agy hooks/plugins config (re-merged)');
     } catch (error) { warnings.push(`agy config: ${error.message}`); }
   }

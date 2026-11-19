@@ -41,7 +41,7 @@ Cross-platform config sync & multi-host harness for **Claude Code**, **Codex**, 
 - **Configs & Assets:**
   - Sync payloads (gitignored, live in sync dir): `claude_settings.json`, `claude_env_settings.json`, `codex_config.toml` (hand-edited head only), seeded from `*.template.*`. Machine-local secrets: `~/.claude/claude_env_settings.local.json` (bridge/dashboard tokens only; API keys in git credential store).
   - `GLOBAL-AGENTS.md`: single global rules source linked to `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.gemini/config/GEMINI.md`. Never write repo-specific memory there.
-  - `cc-market/`: gitignored clone of `DawnEver/cc-market` (`rem`, `sharp-review`, `evolve`, `fabric` enabled; `watch`, `cc-latex`, `cc-academia` dormant). See `cc-market/AGENTS.md`.
+  - cc-market (`DawnEver/cc-market`; `rem`, `sharp-review`, `evolve`, `fabric` enabled; `watch`, `cc-latex`, `cc-academia` dormant) is a family repo checked out beside the others, declared in the machine file `[repos] cc-market` and read by `scripts/shared/market-dir.mjs`; never a clone inside this repo. See its own `AGENTS.md`.
   - `claude_plugins/`: `claude-hud` config; `session-bridge` (Claude channel MCP server).
   - `skills/`, `system-prompt/`, `output-styles/`, `keybindings.json`, `.claude/rules/rem/`, `.claude/memory/`.
 
