@@ -182,3 +182,18 @@ test('parallel hook processes preserve the complete read-modify-write transactio
   assert.equal(files.length, 1);
   assert.equal(JSON.parse(readFileSync(join(stateDir, files[0]), 'utf8')).entries.length, 8);
 });
+
+test('agy: toolCall payload keyed by conversation, cosmetic args ignored, polling tools exempt', (t) => {
+  const stateDir = mkdtempSync(join(tmpdir(), 'guard-agy-'));
+  t.after(() => rmSync(stateDir, { recursive: true, force: true }));
+  const call = (conversationId, toolSummary, name = 'run_command') => guardCall(
+    { conversationId, toolCall: { name, args: { CommandLine: 'npm test', toolSummary, WaitMsBeforeAsync: 500 } } },
+    { host: 'agy', env: {}, settings: {}, stateDir, now: NOW });
+  assert.equal(call('c1', 'a').verdict, 'ok');
+  assert.equal(call('c1', 'b').verdict, 'ok');
+  assert.equal(call('c2', 'c').verdict, 'ok');
+  assert.equal(call('c1', 'd').verdict, 'warn');
+  assert.equal(call('c1', 'e').verdict, 'deny');
+  assert.equal(call(null, 'f'), null, 'no conversation fails open');
+  assert.equal(call('c1', 'g', 'manage_task'), null);
+});

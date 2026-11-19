@@ -27,6 +27,7 @@ import { execFileSync, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { inspectCodexHooks } from './codex-hooks.mjs';
+import { inspectAgyConfig, agyInstalled } from './agy-config.mjs';
 import { inspectProtectedPluginCaches, inspectPluginCacheLock } from './update-codex-plugins.mjs';
 import { withoutRetiredCodexRootKey } from './codex-config-compose.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
@@ -36,8 +37,8 @@ import { readBridgeConfig, bridgeSourceRevision } from '../bridge/context.mjs';
 import { RUNTIME_FILE, BRIDGE_RUNTIME_DIR, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
 import { acquireOwnerLock, ownerLockLive } from '../shared/owner-lock.mjs';
 import {
-  sourceDir, claudeDir, codexDir, getSyncDir,
-  CLAUDE_LINKS, getCodexLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
+  sourceDir, claudeDir, codexDir, agyDir, getSyncDir,
+  CLAUDE_LINKS, getCodexLinks, getAgyLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
 } from './setup.js';
 import { accountFile } from '../shared/seats.mjs';
 import { channelServerPath, channelServerState } from '../shared/channel-server.mjs';
@@ -233,11 +234,16 @@ export function linkedTo(src, dest) {
 // a cloud client that replaces the synced file breaks that link, and from then on this host
 // reads and writes a private copy — every edit made here or synced in from another host is
 // silently lost to the other side.
-export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir(), sameVolume: volume = sameVolume } = {}) {
+export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir(), home = HOME, sameVolume: volume = sameVolume } = {}) {
+  const hostClaude = home === HOME ? claudeDir : path.join(home, '.claude');
+  const hostCodex = home === HOME ? codexDir : path.join(home, '.codex');
+  const hostAgy = home === HOME ? agyDir : path.join(home, '.gemini', 'config');
   const out = [];
   const tables = [
-    { label: 'claude', base: claudeDir, links: CLAUDE_LINKS },
-    { label: 'codex', base: codexDir, links: getCodexLinks(repoRoot) },
+    { label: 'claude', base: hostClaude, links: CLAUDE_LINKS },
+    { label: 'codex', base: hostCodex, links: getCodexLinks(repoRoot) },
+    // agy only where it is installed: setup never creates ~/.gemini.
+    ...(agyInstalled(hostAgy) ? [{ label: 'agy', base: hostAgy, links: getAgyLinks(repoRoot) }] : []),
     // The repo-root mirror: the checkout's own hard link to each payload file.
     { label: 'repo', base: repoRoot, links: repoMirrorLinks({ syncDir, repoRoot }) },
   ];
@@ -714,13 +720,14 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkHooks(settings, home),
     ...checkPayloadPaths(syncDir),
     ...checkPayloadShape(syncDir, repoRoot),
-    ...checkLinks({ repoRoot, syncDir }),
+    ...checkLinks({ repoRoot, syncDir, home }),
     ...checkPlugins(settings, home),
     ...checkCodexPluginCache(repoRoot, home),
     ...checkHygiene(repoRoot),
     ...checkNativeCodexHooks({ codexHome: home === HOME ? codexDir : path.join(home, '.codex'), scriptsDir: path.join(home, '.claude', 'scripts') }),
     ...checkProtectedCodexCaches({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
     ...checkPluginCacheLock({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
+    ...checkAgyConfig({ agyHome: path.join(home, '.gemini', 'config'), scriptsDir: path.join(home, '.claude', 'scripts'), repoRoot }),
     ...content,
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
     ...checkBridgeRevision({ runtimeFile: path.join(home, '.claude', 'bridge', 'runtime.json'), repoRoot }),
@@ -734,6 +741,21 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
       configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
     ...checkRetiredCodexRootKey({ configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
   ];
+}
+
+// agy's hooks.json / mcp_config.json / plugins.json are merged, not linked, so the link table
+// cannot see a lost managed part; like Codex, an installed hook that never ran is a silent gap.
+export function checkAgyConfig({ agyHome = agyDir, scriptsDir = path.join(claudeDir, 'scripts'), repoRoot = sourceDir } = {}) {
+  if (!agyInstalled(agyHome)) return [];
+  const state = inspectAgyConfig({ agyDir: agyHome, scriptsDir, repoRoot, home: path.dirname(path.dirname(agyHome)) });
+  const fix = 'run setup (it merges the managed parts and preserves user entries)';
+  const out = [];
+  if (!state.installed) out.push(finding('FAIL', 'agy-native-hooks', 'agy hooks.json lacks the current cc-config hook', fix));
+  if (!state.mcp) out.push(finding('FAIL', 'agy-mcp', 'agy mcp_config.json lacks the session-bridge server', fix));
+  if (!state.plugins) out.push(finding('FAIL', 'agy-plugins', 'agy plugins.json lacks the current cc-market entry', fix));
+  if (state.installed && !state.executed) out.push(finding('WARN', 'agy-native-hooks', 'agy hooks are installed but their execution has not been observed',
+    `not observed: ${Object.entries(state.events).filter(([, v]) => !v.executed).map(([name]) => name).join(', ')}; start an agy session`));
+  return out;
 }
 
 function checkNativeCodexHooks({ codexHome = codexDir, scriptsDir = path.join(claudeDir, 'scripts') } = {}) {

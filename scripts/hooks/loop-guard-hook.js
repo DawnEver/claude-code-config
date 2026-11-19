@@ -60,7 +60,23 @@ const BASE_EXEMPT = [
   'sleep',
   'request_user_input',
   'request_user_input_async',
+  // agy (Antigravity CLI): task polling, timers, messaging and questions.
+  'manage_task',
+  'manage_subagents',
+  'schedule',
+  'send_message',
+  'ask_question',
 ];
+
+/** agy's PreToolUse payload (camelCase `toolCall`) in the shape every other host already uses.
+ * Presentation-only args (a fresh summary per call, a wait budget) are dropped: they would hide
+ * a repeated `run_command` CommandLine behind cosmetic differences. */
+const AGY_COSMETIC_ARGS = new Set(['toolSummary', 'toolAction', 'WaitMsBeforeAsync']);
+function agyPayload(payload) {
+  if (!payload?.toolCall) return payload;
+  const args = Object.fromEntries(Object.entries(payload.toolCall.args ?? {}).filter(([k]) => !AGY_COSMETIC_ARGS.has(k)));
+  return { ...payload, tool_name: payload.toolCall.name, tool_input: args, session_id: payload.conversationId };
+}
 
 const num = (raw, fallback) => {
   const n = Number(raw);
@@ -173,6 +189,7 @@ function guardCall(payload, { env = process.env, host, settings, stateDir, now =
   try {
     if (settings === undefined) settings = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.harness?.loopGuard ?? {};
     const cfg = loadConfig(env, settings);
+    if (host === 'agy') payload = agyPayload(payload);
     const tool = payload.tool_name;
     const identity = sessionIdentity(env, payload, { host });
     const nativeTool = host === 'codex' ? tool?.replace(/^(?:functions|collaboration|clock)\./, '') : tool;

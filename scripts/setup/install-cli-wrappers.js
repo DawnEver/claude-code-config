@@ -6,7 +6,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 
 /** The provider launchers, per host binary they need: [wrapper name, provider argument]. */
-const LAUNCHERS = { claude: [['ccc', 'claude'], ['ccds', 'deepseek']], codex: [['codc', 'codex'], ['cods', 'deepseek']] };
+const LAUNCHERS = { claude: [['ccc', 'claude'], ['ccds', 'deepseek']], codex: [['codc', 'codex'], ['cods', 'deepseek']], agy: [['agyc', 'agy']] };
 /** Every wrapper this repo writes. `migrate` removes any other marked wrapper as an orphan. */
 export const WRAPPER_NAMES = [...Object.values(LAUNCHERS).flat().map(([name]) => name), 'todo'];
 
@@ -79,8 +79,9 @@ const isWritableDir = (dir) => { try { fs.accessSync(dir, fs.constants.W_OK); re
 export function resolveWrapperBinDirs(locate = locateBinDir, writable = isWritableDir) {
   const claudeBin = locate('claude');
   const codexBin = locate('codex');
-  const binDir = [claudeBin, codexBin].find((d) => d && writable(d)) ?? null;
-  return { hasClaude: !!claudeBin, hasCodex: !!codexBin, binDir };
+  const agyBin = locate('agy');
+  const binDir = [claudeBin, codexBin, agyBin].find((d) => d && writable(d)) ?? null;
+  return { hasClaude: !!claudeBin, hasCodex: !!codexBin, hasAgy: !!agyBin, binDir };
 }
 export function wrapperPaths(binDir, name, windows = isWindows) {
   return windows ? [path.join(binDir, `${name}.cmd`), path.join(binDir, name)] : [path.join(binDir, name)];
@@ -109,7 +110,7 @@ export function installCliWrappers(claudeDir) {
   removeLegacyProfileSources();
   // On Windows: write .cmd (CMD/PowerShell) + no-extension script (Git Bash).
   // On macOS/Linux: write no-extension shell script only.
-  const { hasClaude, hasCodex, binDir } = resolveWrapperBinDirs();
+  const { hasClaude, hasCodex, hasAgy, binDir } = resolveWrapperBinDirs();
   if (!binDir) {
     console.log('SKIP  wrappers - no user-writable claude/codex bin dir (never re-run setup with sudo)');
     return;
@@ -171,6 +172,18 @@ export function installCliWrappers(claudeDir) {
     console.log('      cods    - Codex + DeepSeek (single-source-of-truth: providers.deepseek)');
   } else {
     console.log('      codc/cods - skipped (codex binary not found)');
+  }
+
+  // agyc launches the `agy` binary (see agy.js), so install it only when agy is present.
+  if (hasAgy) {
+    const agyJsPath = resolveScript('runtime/agy.js');
+    for (const [name] of LAUNCHERS.agy) {
+      if (isWindows) writeIfChanged(path.join(binDir, `${name}.cmd`), cmdWrapper(name, agyJsPath, '%*'), `${name}.cmd`);
+      writeIfChanged(path.join(binDir, name), shWrapper(name, agyJsPath, '"$@"'), name, 0o755);
+    }
+    console.log('      agyc    - Antigravity CLI + startup sync');
+  } else {
+    console.log('      agyc - skipped (agy binary not found)');
   }
 
   // Todo CLI wrapper — task management
