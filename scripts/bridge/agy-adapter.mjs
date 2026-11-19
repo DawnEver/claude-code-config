@@ -23,6 +23,7 @@ import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { ActivityBoard } from './activity-board.mjs';
 import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './runtime-paths.mjs';
+import { tokens, base, isClaudeProcess, readProcessTable, ancestorsOf } from '../shared/process-tree.mjs';
 
 /** Each agy conversation's workspace, as its hooks named it: the usage store's project (agy's transcripts carry no cwd). */
 export const AGY_CWD_FILE = path.join(BRIDGE_RUNTIME_DIR, 'agy-cwd.json');
@@ -120,13 +121,17 @@ export class AgyAdapter extends EventEmitter {
     fs.renameSync(tmp, file);
   }
 
-  #up(id, cwd) {
+  #up(id, cwd, name = null) {
     if (cwd && this.cwdFile) noteCwd(this.cwdFile, id, cwd);
     let s = this.sessions.get(id);
-    if (s) { if (cwd && !s.cwd) s.cwd = cwd; return s; }
-    s = { pending: new Map(), localQuestions: new Map(), interrupt: false, cwd: cwd ?? null, activity: null, stateAt: 0, lastAt: this.now(), tasks: new ActivityBoard(), queued: this.#loadQueue(id), sent: new Set(), remoteTurn: false };
+    if (s) {
+      if (cwd && !s.cwd) s.cwd = cwd;
+      if (name && name !== s.name) { s.name = name; this.emit('name', { id, name }); }
+      return s;
+    }
+    s = { pending: new Map(), localQuestions: new Map(), interrupt: false, cwd: cwd ?? null, name: name ?? null, activity: null, stateAt: 0, lastAt: this.now(), tasks: new ActivityBoard(), queued: this.#loadQueue(id), sent: new Set(), remoteTurn: false };
     this.sessions.set(id, s);
-    this.emit('up', { id, cwd: s.cwd, seat: null, provider: null, name: null, backlog: [] });
+    this.emit('up', { id, cwd: s.cwd, seat: null, provider: null, name: s.name, backlog: [] });
     return s;
   }
 
@@ -165,7 +170,7 @@ export class AgyAdapter extends EventEmitter {
     const id = typeof p.sessionId === 'string' && p.sessionId.length <= 128 ? p.sessionId : '';
     if (!id || !AGY_EVENTS.includes(p.event)) throw Object.assign(new Error('agy: sessionId and a known event required'), { code: -32602 });
     const at = Number.isFinite(p.at) ? p.at : this.now();
-    const s = this.#up(id, typeof p.cwd === 'string' && p.cwd ? p.cwd : null);
+    const s = this.#up(id, typeof p.cwd === 'string' && p.cwd ? p.cwd : null, typeof p.name === 'string' && p.name ? p.name : null);
     s.lastAt = this.now();
     if (p.turnOrigin === 'telegram') s.remoteTurn = true;
     else if (p.turnOrigin === 'local') s.remoteTurn = false;
@@ -396,7 +401,85 @@ export function agyQuestions(args) {
 const TAIL_BYTES = 256 * 1024;
 const CALL_MS = 1200;
 const WAIT_CALL_MS = WAIT_MS + 5000;
-export const AGY_SETTINGS_FILE = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
+export const AGY_APP_DIR = path.join(os.homedir(), '.gemini', 'antigravity-cli');
+export const AGY_SETTINGS_FILE = path.join(AGY_APP_DIR, 'settings.json');
+const SESSION_KIND_FILE = path.join(BRIDGE_RUNTIME_DIR, 'agy-session-kind.json');
+const SUBAGENT_WORKTREE_RE = /[\\/]\.gemini[\\/]antigravity[^\\/]*[\\/]worktrees[\\/]/i;
+const PRINT_FLAG_RE = /^(?:-p|--print|--prompt)(?:=|$)/;
+
+function readConversationMeta(id, appDir) {
+  if (!id || !appDir) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(appDir, 'cache', 'conversation_metadata.json'), 'utf8'));
+    return raw?.conversations?.[id] ?? null;
+  } catch { return null; }
+}
+
+const isAgyCliProcess = (cmd) => /^agy(?:\.exe)?$/i.test(base(tokens(cmd, 1)[0]));
+const isCodexCliProcess = (cmd) => /^codex(?:\.exe)?$/i.test(base(tokens(cmd, 1)[0]));
+const hasPrintModeFlag = (cmd) => tokens(cmd, 32).slice(1).some((t) => PRINT_FLAG_RE.test(t));
+
+/**
+ * Only top-level interactive main sessions belong on the bridge/dashboard (matching Claude's
+ * `isMainSession`). Filters out:
+ *   1. Subagents (`conversation_metadata.json` `is_internal: true`, missing `presence/<id>.lock`
+ *      when `presence/` exists, or a `.gemini/antigravity-cli/worktrees/` cwd);
+ *   2. Nested `agy` started from inside a Claude, Codex, or outer `agy` session;
+ *   3. Non-interactive one-shot `agy -p` / `--print` / `--prompt` runs.
+ * Process ancestry is checked at most once per `conversationId` and cached in `kindFile`.
+ */
+export function isAgyMainSession(input = {}, {
+  appDir = AGY_APP_DIR,
+  kindFile = SESSION_KIND_FILE,
+  env = process.env,
+  ppid = process.ppid,
+  ancestry = null,
+} = {}) {
+  const id = String(input?.conversationId ?? '');
+  if (!id) return false;
+  if (input.isSubagent === true || input.isInternal === true) return false;
+  const cwd = Array.isArray(input.workspacePaths) && input.workspacePaths[0] ? String(input.workspacePaths[0]) : String(input.cwd ?? '');
+  if (SUBAGENT_WORKTREE_RE.test(cwd)) return false;
+  if (env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_PID || env.CODEX_THREAD_ID) return false;
+  if (appDir) {
+    const meta = readConversationMeta(id, appDir);
+    if (meta?.is_internal === true || meta?.summary?.Internal === true) return false;
+    const presenceDir = path.join(appDir, 'presence');
+    if (fs.existsSync(presenceDir) && !fs.existsSync(path.join(presenceDir, `${id}.lock`))) return false;
+  }
+  if (ancestry === false) return true;
+  if (!ancestry && kindFile) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(kindFile, 'utf8'))?.[id];
+      if (typeof cached === 'boolean') return cached;
+    } catch { /* first check for this conversationId */ }
+  }
+  const chain = Array.isArray(ancestry) ? ancestry : (() => {
+    const { table } = readProcessTable();
+    return ancestorsOf(ppid, table);
+  })();
+  let main = true;
+  if (chain.length) {
+    if (chain.some((a) => isClaudeProcess(a.cmd) || isCodexCliProcess(a.cmd))) main = false;
+    const agys = chain.filter((a) => isAgyCliProcess(a.cmd));
+    if (agys.length > 1) main = false;
+    if (agys[0] && hasPrintModeFlag(agys[0].cmd)) main = false;
+  }
+  if (!ancestry && kindFile && chain.length) {
+    try {
+      let map = {};
+      try { map = JSON.parse(fs.readFileSync(kindFile, 'utf8')) || {}; } catch {}
+      delete map[id];
+      map[id] = main;
+      const keep = Object.fromEntries(Object.entries(map).slice(-500));
+      fs.mkdirSync(path.dirname(kindFile), { recursive: true });
+      const tmp = `${kindFile}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(keep));
+      fs.renameSync(tmp, kindFile);
+    } catch { /* best effort cache */ }
+  }
+  return main;
+}
 /** Tools agy gates on permission when `toolPermission` is not `always-proceed`. */
 export const APPROVAL_TOOLS = new Set(['run_command', 'write_file', 'edit_file']);
 
@@ -442,14 +525,17 @@ export function agyPromptText(text) {
 const TELEGRAM_MESSAGE = 'Message from Telegram';
 
 /** The hook payload (agy camelCase stdin) -> the IPC call's params. */
-export function agyCallFor(event, input = {}, { settingsFile = AGY_SETTINGS_FILE } = {}) {
+export function agyCallFor(event, input = {}, { settingsFile = AGY_SETTINGS_FILE, appDir = AGY_APP_DIR } = {}) {
   const tc = input.toolCall && typeof input.toolCall === 'object' ? input.toolCall : null;
   const failed = Boolean(input.error || tc?.error || tc?.status === 'error');
   const needsApproval = event === 'PreToolUse' && (input.needsApproval === true
     || (input.needsApproval !== false && agyNeedsApproval(tc?.name, settingsFile)));
+  const id = String(input.conversationId ?? '');
+  const title = appDir ? String(readConversationMeta(id, appDir)?.summary?.Title ?? '').trim() : '';
   return {
-    sessionId: String(input.conversationId ?? ''), event, at: Date.now(),
+    sessionId: id, event, at: Date.now(),
     cwd: Array.isArray(input.workspacePaths) && input.workspacePaths[0] ? String(input.workspacePaths[0]) : input.cwd ?? null,
+    ...(title ? { name: title } : {}),
     ...(Number.isFinite(input.invocationNum) ? { invocationNum: input.invocationNum } : {}),
     ...(input.continuationActive === true ? { continuationActive: true } : {}),
     ...(input.turnOrigin === 'telegram' || input.turnOrigin === 'local' ? { turnOrigin: input.turnOrigin } : {}),
@@ -470,10 +556,15 @@ export function agyCallFor(event, input = {}, { settingsFile = AGY_SETTINGS_FILE
  *   - SessionStart / PreInvocation injected steps -> `{ injectSteps }`
  * Fails open and silent (`{}`) if the daemon is unreachable, refuses, or times out.
  */
-export async function forwardAgyHook(event, input, { runtimeFile = RUNTIME_FILE, settingsFile = AGY_SETTINGS_FILE, call = null, timeoutMs } = {}) {
+export async function forwardAgyHook(event, input, opts = {}) {
+  const { runtimeFile = RUNTIME_FILE, settingsFile = AGY_SETTINGS_FILE, call = null, timeoutMs } = opts;
+  const isolated = Boolean(call) || (opts.runtimeFile !== undefined && opts.runtimeFile !== RUNTIME_FILE);
+  const appDir = opts.appDir !== undefined ? opts.appDir : (isolated ? null : AGY_APP_DIR);
+  const ancestry = opts.ancestry !== undefined ? opts.ancestry : (isolated ? false : null);
   try {
     if (!AGY_EVENTS.includes(event) || !input?.conversationId || !fs.existsSync(runtimeFile)) return {};
-    const params = agyCallFor(event, input, { settingsFile });
+    if (!isAgyMainSession(input, { appDir, ancestry })) return {};
+    const params = agyCallFor(event, input, { settingsFile, appDir });
     const interactive = event === 'PreToolUse' && (params.toolCall?.name === 'ask_question' || params.needsApproval === true);
     const send = call ?? (await import('../hooks/bridge-hook.js')).callHub;
     const r = await send('agy', params, { runtimeFile, timeoutMs: timeoutMs ?? (interactive ? WAIT_CALL_MS : CALL_MS) });

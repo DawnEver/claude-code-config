@@ -17,7 +17,7 @@ test('agy quota tiers: pool and span from the name', () => {
   assert.equal(agyTier('gemini'), null);
 });
 
-test('statusLine quota -> windows per pool (remaining fraction, reset in seconds or at)', () => {
+test('statusLine quota -> windows per pool (remaining fraction, used_percentage, ISO reset_time, bucket arrays)', () => {
   const now = 1_800_000_000_000;
   const pools = agyPools({ 'gemini-5h': { remaining_fraction: 0.979, reset_in_seconds: 3600 },
     'claude-7d': { remaining_fraction: 0.5, resets_at: now / 1000 + 86400 }, junk: { remaining_fraction: 1 } }, now);
@@ -26,6 +26,12 @@ test('statusLine quota -> windows per pool (remaining fraction, reset in seconds
   assert.equal(pools.gemini['5h'].resetsAt, now + 3600000);
   assert.equal(pools.claude['7d'].used, 50);
   assert.equal(pools.claude['7d'].resetsAt, now + 86400000);
+  const buckets = agyPools({ quota_buckets: [
+    { quota_bucket_name: 'claude', remaining_fraction: 0.25, reset_time: new Date(now + 4 * H).toISOString() },
+    { name: 'Gemini Pro', used_percentage: 40, reset_time: new Date(now + 3 * H).toISOString() },
+  ] }, now);
+  assert.equal(buckets.claude['5h'].used, 75);
+  assert.equal(buckets['gemini-pro']['5h'].used, 40);
 });
 
 test('teed series become one dashboard account per pool, keyed by the login; a session spends the freshest', () => {
@@ -49,11 +55,20 @@ test('teed series become one dashboard account per pool, keyed by the login; a s
   assert.equal(push.sessions[0]?.agent, 'agy');
 });
 
-test('the agy login is the last applyAuthResult in cli.log', () => {
+test('the agy login falls back to log/cli-*.log when cli.log is 0 bytes, and surfaces an authenticated account before first sample', () => {
   const dir = tmp();
-  fs.writeFileSync(path.join(dir, 'cli.log'), 'x applyAuthResult: email=old@example.com, authMethod=consumer\ny applyAuthResult: email=new@example.com, authMethod=consumer\n');
-  assert.equal(readAgyEmail(dir), 'new@example.com');
-  assert.equal(readAgyEmail(tmp()), null);
+  fs.writeFileSync(path.join(dir, 'cli.log'), '');
+  fs.mkdirSync(path.join(dir, 'log'));
+  fs.writeFileSync(path.join(dir, 'log', 'cli-20261119_120000.log'), 'I1119 applyAuthResult: email=live@example.com, authMethod=consumer\n');
+  assert.equal(readAgyEmail(dir), 'live@example.com');
+  const reader = new AccountReader({ machine: 'm', now: () => 1_800_000_000_000, extraResets: async () => null,
+    sources: { seats: () => [], claude: () => [], agy: () => [], agyEmail: () => readAgyEmail(dir) } });
+  const accts = reader.read().filter((a) => a.agent === 'agy');
+  assert.equal(accts.length, 1);
+  assert.equal(accts[0].key, 'agy:live@example.com');
+  assert.equal(accts[0].email, 'live@example.com');
+  assert.deepEqual(accts[0].windows, []);
+  assert.equal(accountFor({ agent: 'agy', seat: null }, accts), 'agy:live@example.com');
 });
 
 test('the agy status line names model, context and each pool', () => {

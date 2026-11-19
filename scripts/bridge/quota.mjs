@@ -209,7 +209,7 @@ function claudeGroups(dirs, seats, machine) {
  * label (null for the base home) becomes an alias of its account, so a session finds it by its
  * home as a Claude session finds its seat; two homes on one login merge into one account.
  */
-export function accountModels({ machine, seats, claude = [], codex = [], agy = [], extra = null, now }) {
+export function accountModels({ machine, seats, claude = [], codex = [], agy = [], agyEmail = null, extra = null, now }) {
   const scheduled = (s) => (s ? { at: s.at ?? null, url: s.url ?? null } : null);
   const out = [];
   for (const g of claudeGroups(claude, seats, machine)) {
@@ -237,12 +237,18 @@ export function accountModels({ machine, seats, claude = [], codex = [], agy = [
     codexByKey.set(key, a);
     out.push(a);
   }
-  // Antigravity: one entry per quota pool of its login; a session spends the first (agy names no pool per session).
-  agy.forEach((p, i) => {
-    if (!p.quota) return;
-    out.push({ key: `agy:${(p.account?.email ?? machine).toLowerCase()}|${p.pool}`, agent: 'agy', label: p.pool, email: p.account?.email ?? null,
-      aliases: i === 0 ? [null] : [], detail: null, problems: [], at: p.quota.at, windows: windowModels(p.quota, now), resetCredits: null, extraReset: null });
-  });
+  // Antigravity: one entry per quota pool of its login; when logged in before the first statusLine
+  // sample lands, still surface the authenticated account (windows: []) like Claude/Codex seats.
+  const liveAgy = agy.filter((p) => p.quota);
+  if (liveAgy.length) {
+    liveAgy.forEach((p, i) => {
+      out.push({ key: `agy:${(p.account?.email ?? machine).toLowerCase()}|${p.pool}`, agent: 'agy', label: p.pool, email: p.account?.email ?? null,
+        aliases: i === 0 ? [null] : [], detail: p.detail ?? null, problems: [], at: p.quota.at, windows: windowModels(p.quota, now), resetCredits: null, extraReset: null });
+    });
+  } else if (agyEmail) {
+    out.push({ key: `agy:${agyEmail.toLowerCase()}`, agent: 'agy', label: null, email: agyEmail,
+      aliases: [null], detail: null, problems: [], at: null, windows: [], resetCredits: null, extraReset: null });
+  }
   return out;
 }
 
@@ -269,7 +275,7 @@ export function accountFor(session, accounts, balanceEntries = []) {
 export class AccountReader {
   constructor({ machine, codex = () => [], codexSeriesFile = null, codexFallback = () => machine, log = () => {}, now = Date.now,
     extraResets = () => fetchExtraResets({ log }), extraEveryMs = 30 * 60000,
-    sources = { seats: () => readSeats(), claude: readClaudeDirs, agy: () => readAgy() } }) {
+    sources = { seats: () => readSeats(), claude: readClaudeDirs, agy: () => readAgy(), agyEmail: () => readAgyEmail() } }) {
     Object.assign(this, { machine, codex, codexSeriesFile, codexFallback, now, extraResets, extraEveryMs, sources });
     this.extra = { at: -Infinity, value: null, pending: null };
   }
@@ -288,7 +294,9 @@ export class AccountReader {
       return { label, account, quota, resetCredits: cx?.resetCredits ?? null, fallback: this.codexFallback(home) };
     });
     const seats = this.sources.seats();
-    return accountModels({ machine: this.machine, seats, codex, claude: this.sources.claude(seats, this.machine), agy: this.sources.agy?.() ?? [], extra: this.extra.value, now });
+    const agyList = this.sources.agy?.() ?? [];
+    const agyEmail = agyList.length ? null : (this.sources.agyEmail?.() ?? null);
+    return accountModels({ machine: this.machine, seats, codex, claude: this.sources.claude(seats, this.machine), agy: agyList, agyEmail, extra: this.extra.value, now });
   }
 }
 
@@ -308,33 +316,66 @@ export function agyTier(name) {
   return windowMs > 0 && AGY_POOL.test(pool) ? { pool, windowMs } : null;
 }
 
+function parseResetMs(q, now) {
+  for (const raw of [q?.reset_time, q?.resets_at]) {
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw < 1e12 ? raw * 1000 : raw;
+    if (typeof raw === 'string' && raw.trim()) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n;
+      const ms = Date.parse(raw);
+      if (Number.isFinite(ms) && ms > 0) return ms;
+    }
+  }
+  if (Number.isFinite(q?.reset_in_seconds) && q.reset_in_seconds >= 0) return now + q.reset_in_seconds * 1000;
+  return null;
+}
+
 /**
- * statusLine `quota` -> windows per pool: {<pool>: {<span>: {used, resetsAt, windowMs}}}.
- * `remaining_fraction` is what is left (0..1); the reset is `resets_at` (epoch s or ms) or `reset_in_seconds` from `now`.
+ * statusLine payload or its quota block -> windows per pool: {<pool>: {<span>: {used, resetsAt, windowMs}}}.
+ * Accepts object maps or bucket arrays (`quota`, `quotas`, `quota_buckets`, `quota_info`), fractions
+ * (`remaining_fraction`, `quota_remaining`) or `used_percentage`, and `reset_time` (ISO/epoch), `resets_at`,
+ * or `reset_in_seconds`. Buckets without a span suffix infer their rolling window from `resetsAt - now`.
  */
 export function agyPools(quota, now = Date.now()) {
   const pools = {};
-  for (const [name, q] of Object.entries(quota && typeof quota === 'object' ? quota : {})) {
-    const tier = agyTier(name);
-    const frac = q?.remaining_fraction;
-    if (!tier || typeof frac !== 'number' || !Number.isFinite(frac)) continue;
-    const resetsAt = q.resets_at > 0 ? (q.resets_at < 1e12 ? q.resets_at * 1000 : q.resets_at)
-      : Number.isFinite(q.reset_in_seconds) && q.reset_in_seconds >= 0 ? now + q.reset_in_seconds * 1000 : null;
+  if (!quota || typeof quota !== 'object') return pools;
+  const raw = !Array.isArray(quota) && (quota.quota ?? quota.quotas ?? quota.quota_buckets ?? quota.quota_info)
+    ? (quota.quota ?? quota.quotas ?? quota.quota_buckets ?? quota.quota_info)
+    : quota;
+  const entries = Array.isArray(raw)
+    ? raw.map((b) => [b?.quota_bucket_name ?? b?.quota_bucket ?? b?.bucket ?? b?.name ?? b?.id ?? b?.model ?? '', b])
+    : Object.entries(raw && typeof raw === 'object' ? raw : {});
+  for (const [name, q] of entries) {
+    if (!q || typeof q !== 'object') continue;
+    const resetsAt = parseResetMs(q, now);
     if (!resetsAt) continue;
-    (pools[tier.pool] ??= {})[span(tier.windowMs)] = { used: pct((1 - frac) * 100), resetsAt, windowMs: tier.windowMs };
+    const frac = typeof q.remaining_fraction === 'number' ? q.remaining_fraction
+      : typeof q.quota_remaining === 'number' ? q.quota_remaining : null;
+    const used = frac !== null && Number.isFinite(frac) ? pct((1 - frac) * 100)
+      : pct(q.used_percentage);
+    if (used === null) continue;
+    let tier = agyTier(name);
+    if (!tier && resetsAt > now) {
+      const slug = String(name ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'agy';
+      const rem = resetsAt - now;
+      const windowMs = rem <= 6 * H ? 5 * H : rem <= 25 * H ? 24 * H : 168 * H;
+      if (AGY_POOL.test(slug)) tier = { pool: slug, windowMs };
+    }
+    if (!tier) continue;
+    (pools[tier.pool] ??= {})[span(tier.windowMs)] = { used, resetsAt, windowMs: tier.windowMs };
   }
   return pools;
 }
 
 const AGY_LOG_TAIL = 512 * 1024;
 
-/** The login agy last applied (cli.log `applyAuthResult: email=...`), or null. Read from the log's tail. */
-export function readAgyEmail(dir = AGY_DIR) {
+function readLogTailEmail(file) {
   let tail = '';
   try {
-    const fd = fs.openSync(path.join(dir, 'cli.log'), 'r');
+    const fd = fs.openSync(file, 'r');
     try {
       const size = fs.fstatSync(fd).size;
+      if (!size) return null;
       const buf = Buffer.alloc(Math.min(size, AGY_LOG_TAIL));
       tail = buf.toString('utf8', 0, fs.readSync(fd, buf, 0, buf.length, size - buf.length));
     } finally { fs.closeSync(fd); }
@@ -344,13 +385,31 @@ export function readAgyEmail(dir = AGY_DIR) {
   return email;
 }
 
+/** The login agy last applied (`cli.log` or newest `log/cli-*.log` when `cli.log` is empty on Windows). */
+export function readAgyEmail(dir = AGY_DIR) {
+  const direct = readLogTailEmail(path.join(dir, 'cli.log'));
+  if (direct) return direct;
+  let logs = [];
+  try {
+    const logDir = path.join(dir, 'log');
+    logs = fs.readdirSync(logDir).filter((n) => /^cli-.*\.log$/i.test(n))
+      .map((n) => { const f = path.join(logDir, n); return { f, mtime: fs.statSync(f).mtimeMs }; })
+      .sort((a, b) => b.mtime - a.mtime).slice(0, 5);
+  } catch { return null; }
+  for (const { f } of logs) {
+    const found = readLogTailEmail(f);
+    if (found) return found;
+  }
+  return null;
+}
+
 const agyAccountHash = (email) => createHash('sha256').update((email ?? 'unknown').toLowerCase()).digest('hex').slice(0, 16);
 /** One pool's series file, scoped by the login (as codex-usage-<home>-<account>.jsonl). */
 export const agySeriesFile = (email, pool, dir = BRIDGE_RUNTIME_DIR) => path.join(dir, `agy-usage-${agyAccountHash(email)}-${pool}.jsonl`);
 
-/** agy-statusline.mjs side: record each pool of the statusLine's `quota` into its series. Fail-silent; returns the pools. */
+/** agy-statusline.mjs side: record each pool of the statusLine's quota into its series. Fail-silent; returns the pools. */
 export function teeAgyUsage(statusLine, { email = readAgyEmail(), dir = BRIDGE_RUNTIME_DIR, now = Date.now() } = {}) {
-  const pools = agyPools(statusLine?.quota, now);
+  const pools = agyPools(statusLine, now);
   for (const [pool, windows] of Object.entries(pools)) recordSample(agySeriesFile(email, pool, dir), windows, now);
   return pools;
 }

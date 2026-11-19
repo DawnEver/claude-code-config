@@ -42,7 +42,7 @@ async function main() {
   let pools = {};
   try {
     const { recordsQuota, teeAgyUsage, agyPools } = await import('../bridge/quota.mjs');
-    pools = recordsQuota() ? teeAgyUsage(p) : agyPools(p?.quota);
+    pools = recordsQuota() ? teeAgyUsage(p) : agyPools(p);
   } catch { /* quota is optional */ }
   process.stdout.write(statusText(p, pools) + '\n');
 }

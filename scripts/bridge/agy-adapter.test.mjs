@@ -5,7 +5,7 @@ import os from 'os';
 import path from 'path';
 import {
   AgyAdapter, agyCallFor, agyNeedsApproval, agyPromptText, agyQuestions, agyTurnTexts,
-  forwardAgyHook, readAgyCwds, toolTaskId,
+  forwardAgyHook, isAgyMainSession, readAgyCwds, toolTaskId,
 } from './agy-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { Bridge } from './daemon.mjs';
@@ -158,6 +158,29 @@ test('forwardAgyHook contract: { injectSteps?, stopContinue?, decision?, reason?
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => null }), {});
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => ({ error: { code: 401 } }) }), {});
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => { throw new Error('x'); } }), {});
+});
+
+test('isAgyMainSession: keeps only top-level interactive main sessions and syncs conversation Title', async () => {
+  const appDir = tmp();
+  fs.mkdirSync(path.join(appDir, 'cache'), { recursive: true });
+  fs.mkdirSync(path.join(appDir, 'presence'), { recursive: true });
+  fs.writeFileSync(path.join(appDir, 'presence', 'main-1.lock'), '');
+  fs.writeFileSync(path.join(appDir, 'presence', 'print-1.lock'), '');
+  fs.writeFileSync(path.join(appDir, 'cache', 'conversation_metadata.json'), JSON.stringify({
+    conversations: {
+      'main-1': { is_internal: false, summary: { Title: 'Refactor Harness', Internal: false } },
+      'sub-1': { is_internal: true },
+    },
+  }));
+  const interactiveChain = [{ pid: 10, cmd: 'C:\\Users\\u\\AppData\\Local\\agy\\bin\\agy.exe -c' }];
+  assert.equal(isAgyMainSession({ conversationId: 'main-1', cwd: '/repo' }, { appDir, env: {}, ancestry: interactiveChain }), true);
+  assert.equal(isAgyMainSession({ conversationId: 'sub-1', cwd: '/repo' }, { appDir, env: {}, ancestry: interactiveChain }), false, 'is_internal subagent excluded');
+  assert.equal(isAgyMainSession({ conversationId: 'no-lock', cwd: '/repo' }, { appDir, env: {}, ancestry: interactiveChain }), false, 'missing presence lock excluded');
+  assert.equal(isAgyMainSession({ conversationId: 'main-1', cwd: 'C:\\Users\\u\\.gemini\\antigravity-cli\\worktrees\\p\\sub-1' }, { appDir, env: {}, ancestry: interactiveChain }), false, 'subagent worktree excluded');
+  assert.equal(isAgyMainSession({ conversationId: 'print-1', cwd: '/repo' }, { appDir, env: {}, ancestry: [{ pid: 11, cmd: 'agy.exe -p "hello"' }] }), false, 'one-shot -p print mode excluded');
+  assert.equal(isAgyMainSession({ conversationId: 'main-1', cwd: '/repo' }, { appDir, env: {}, ancestry: [{ pid: 12, cmd: 'agy.exe' }, { pid: 10, cmd: 'agy.exe' }] }), false, 'nested agy inside agy excluded');
+  assert.equal(isAgyMainSession({ conversationId: 'main-1', cwd: '/repo' }, { appDir, env: { CLAUDE_CODE_SESSION_ID: 'x' }, ancestry: interactiveChain }), false, 'nested inside Claude excluded');
+  assert.equal(agyCallFor('PreInvocation', { conversationId: 'main-1', cwd: '/repo' }, { appDir }).name, 'Refactor Harness');
 });
 
 async function ipcRig({ approvalsFromTelegram = true, waitMs = 5000 } = {}) {
