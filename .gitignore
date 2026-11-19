@@ -41,6 +41,7 @@ output/
 !**/.claude/workflows/**
 !**/.claude/rules/
 !**/.claude/rules/**
+.claude/rules/MEMORY.md
 !**/.claude/memory/
 !**/.claude/memory/**
 !**/.claude/tasks/
