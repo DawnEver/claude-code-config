@@ -5,9 +5,10 @@
 // (HARNESS_MACHINE / HARNESS_AGENT=agy / committer name, scripts/shared/machine.mjs) and
 // resolves how to run the binary through ai-lab's session launcher.
 
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
-import { sessionSpawn as defaultSessionSpawn } from '../shared/session-launcher.mjs';
+import { sessionSpawn as defaultSessionSpawn, SESSION_MODULE } from '../shared/session-launcher.mjs';
 
 export const AGY_BINARY = 'agy';
 
@@ -32,9 +33,21 @@ export function buildAgyInvocation({ extraArgs = [], env = process.env, machine 
  * launcher carries a lab session itself: inherited LAB_SESSION, else a fresh UUID.
  * @returns {{ command: string, args: string[], env: NodeJS.ProcessEnv, notice?: string }}
  */
-export function resolveAgySpawn(args, env, { sessionSpawn = defaultSessionSpawn, log = () => {}, uuid = randomUUID } = {}) {
+function pythonSupportsAgy(python, run = spawnSync) {
+  const r = run(python, ['-c', `import sys, ${SESSION_MODULE} as s; sys.exit(0 if 'agy' in s.AGENTS else 1)`],
+    { stdio: 'ignore', windowsHide: true });
+  return !r.error && r.status === 0;
+}
+
+export function resolveAgySpawn(args, env, { sessionSpawn = defaultSessionSpawn, supportsAgy = pythonSupportsAgy, log = () => {}, uuid = randomUUID } = {}) {
   const session = sessionSpawn(AGY_BINARY, args, { log });
-  if (!session.error) return { command: session.command, args: session.args, env, notice: session.notice };
+  if (!session.error) {
+    if (sessionSpawn !== defaultSessionSpawn || session.command === AGY_BINARY || supportsAgy(session.command)) {
+      return { command: session.command, args: session.args, env, notice: session.notice };
+    }
+    return { command: AGY_BINARY, args, env: { ...env, LAB_SESSION: env.LAB_SESSION || uuid() },
+      notice: `${SESSION_MODULE} on this host predates agy support; running agy directly` };
+  }
   return { command: AGY_BINARY, args, env: { ...env, LAB_SESSION: env.LAB_SESSION || uuid() },
     notice: `${session.error}; running agy directly` };
 }

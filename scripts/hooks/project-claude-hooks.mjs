@@ -1,7 +1,7 @@
 // scripts/hooks/project-claude-hooks.mjs — zero-duplication bridge from Antigravity CLI hooks
 // onto a repository's own `.claude/settings.json` (`hooks` + `permissions.allow`).
 //
-// Family repos (motronics-studio, dev-lab, lab-commons, ai-lab, cc-market, ...) declare their
+// Family repos (consumer-a, dev-lab, lab-commons, ai-lab, cc-market, ...) declare their
 // command-deny engine (`.claude/hooks/deny-commands.js` + `deny-rules.json`), `dev_lab.dev.hookdispatch`
 // lifecycle handlers (`codeplace`, `consentguard`, `walls`, `strays`, `handback`, `scratch`,
 // `hostalarm`, `forgefeed`, ...), and `permissions.allow` `Bash(...)` doors once in `.claude/settings.json`.

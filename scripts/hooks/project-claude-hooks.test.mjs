@@ -123,26 +123,26 @@ test('project agent-guard fails closed when missing, allows its own --install do
   assert.deepEqual(stopBlocked, { decision: 'continue', reason: 'strays: clean scratch first' });
 });
 
-test('live motronics-studio integration (when present in LAB_COMMONS_SIBLINGS): enforces real deny-commands.js + family doors', (t) => {
+test('live consumer-a integration (when present in LAB_COMMONS_SIBLINGS): enforces real deny-commands.js + family doors', (t) => {
   const sib = String(process.env.LAB_COMMONS_SIBLINGS ?? '').split(',').map((s) => s.split('=')).find(([k]) => k === 'consumer-a')?.[1];
   if (!sib || !fs.existsSync(path.join(sib, '.claude', 'hooks', 'deny-commands.js'))) {
     return t.skip('consumer-a checkout with installed agent-guard not present on this host');
   }
-  // Subagent attempting raw `git push` -> refused by SUBAGENT-NO-PUSH / NETWORK-VERB in motronics-studio's real engine!
+  // Subagent attempting raw `git push` -> refused by SUBAGENT-NO-PUSH / NETWORK-VERB in consumer-a's real engine!
   const refused = runProjectClaudeHooks('PreToolUse', {
     conversationId: 'subagent-live-check',
     workspacePaths: [sib],
     cwd: sib,
     toolCall: { name: 'run_command', args: { CommandLine: 'git push --force origin main' } },
   }, { isSubagent: true });
-  assert.ok(refused?.denyReason, 'real motronics-studio engine refuses git push --force');
+  assert.ok(refused?.denyReason, 'real consumer-a engine refuses git push --force');
 
-  // Sanctioned motronics CLI door -> passes guard and matches permissions.allow!
+  // Sanctioned family verify door -> passes guard and matches permissions.allow!
   const door = runProjectClaudeHooks('PreToolUse', {
     conversationId: 'main-live-check',
     workspacePaths: [sib],
     cwd: sib,
-    toolCall: { name: 'run_command', args: { CommandLine: '.venv/Scripts/python.exe -m motronics case list --all' } },
+    toolCall: { name: 'run_command', args: { CommandLine: '.venv/Scripts/python.exe -m dev_lab.dev.verify --help' } },
   }, { isSubagent: false });
   assert.equal(door?.denyReason, undefined);
   assert.equal(door?.allowDoor, true);
