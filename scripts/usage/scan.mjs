@@ -10,21 +10,30 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { claudeTranscript, codexTranscript } from './transcripts.mjs';
+import { claudeTranscript, codexTranscript, agyTranscript } from './transcripts.mjs';
 import { gitContext, repoNameFromUrl } from '../bridge/context.mjs';
 import { aliasOf, baseDir, readAccount } from '../shared/seats.mjs';
-import { claudeAccountKey, codexAccountKey } from '../bridge/quota.mjs';
+import { claudeAccountKey, codexAccountKey, agyAccountKey, readAgyEmail } from '../bridge/quota.mjs';
+import { readAgyCwds } from '../bridge/agy-adapter.mjs';
 import { codexHomes as recordedCodexHomes, codexHomeKey, codexHomeLabel, codexHomesFile } from '../shared/codex-home.mjs';
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 
-async function* walk(dir, depth) {
+/** Each agent's transcript parser: text + the file it came from -> {session, turns, costs}. */
+export const PARSERS = {
+  claude: (text, file) => claudeTranscript(text, { subagent: path.basename(path.dirname(file)) === 'subagents' }),
+  codex: (text) => codexTranscript(text),
+  // `<brain>/<conversation>/.system_generated/logs/transcript.jsonl`: the conversation id is the brain dir.
+  agy: (text, file) => agyTranscript(text, { session: path.basename(path.resolve(file, '..', '..', '..')) }),
+};
+
+async function* walk(dir, depth, only = null) {
   let entries;
   try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory() && depth > 0) yield* walk(p, depth - 1);
-    else if (e.isFile() && e.name.endsWith('.jsonl')) yield p;
+    if (e.isDirectory() && depth > 0) yield* walk(p, depth - 1, only);
+    else if (e.isFile() && e.name.endsWith('.jsonl') && (!only || e.name === only)) yield p;
   }
 }
 
@@ -33,7 +42,7 @@ async function* walk(dir, depth) {
  * `~/.claude-<alias>` seat dir) and each Codex home's sessions (codex-home.mjs codexHomes; its label is the row's seat). A projects dir reached twice (a seat dir
  * that links it back to the base) is read once.
  */
-export function sources(home = os.homedir(), { machine = 'host', codexHomes = recordedCodexHomes({ home, file: codexHomesFile(home) }) } = {}) {
+export function sources(home = os.homedir(), { machine = 'host', codexHomes = recordedCodexHomes({ home, file: codexHomesFile(home) }), agyDir = path.join(home, '.gemini', 'antigravity-cli') } = {}) {
   const out = [];
   const seen = new Set();
   const dirs = [baseDir(home)];
@@ -54,6 +63,11 @@ export function sources(home = os.homedir(), { machine = 'host', codexHomes = re
       // The verified rollout schema has no authoritative account field: keep it unknown.
       account: () => codexAccountKey(null, `${machine}/home-${codexHomeKey(codexHome)}`) });
   }
+  // Antigravity: only each conversation's compact transcript.jsonl (transcript_full.jsonl repeats it untruncated).
+  out.push({ agent: 'agy', root: path.join(agyDir, 'brain'), depth: 3, only: 'transcript.jsonl', seat: null,
+    account: () => agyAccountKey(readAgyEmail(agyDir), `${machine}/agy`),
+    // agy records no cwd: the bridge's agy adapter notes each conversation's workspace (agy-adapter.mjs AGY_CWD_FILE).
+    cwdOf: (session) => readAgyCwds()[session] ?? null });
   return out;
 }
 
@@ -90,7 +104,7 @@ export class UsageScanner {
     const present = new Set();
     let full = false;
     for (const src of this.sources()) {
-      for await (const file of walk(src.root, src.depth)) {
+      for await (const file of walk(src.root, src.depth, src.only ?? null)) {
         present.add(file);
         if (full) continue;
         let st;
@@ -99,8 +113,7 @@ export class UsageScanner {
         if (was && was.size === st.size && was.mtimeMs === st.mtimeMs) continue;
         let text;
         try { text = await fs.promises.readFile(file, 'utf8'); } catch { continue; }
-        const subagent = src.agent === 'claude' && path.basename(path.dirname(file)) === 'subagents';
-        const t = src.agent === 'claude' ? claudeTranscript(text, { subagent }) : codexTranscript(text);
+        const t = PARSERS[src.agent](text, file);
         await yieldNow();   // a large file must not hold the daemon's event loop
         // A price goes with its session's last turn end: the report's range test (usage-store.mjs report).
         const lastAt = t.turns.reduce((m, r) => Math.max(m, r.ended_at), 0) || null;
@@ -108,7 +121,8 @@ export class UsageScanner {
         if (!t.session) { pending[file] = mark; continue; }
         const account = src.account();
         for (const r of t.turns.slice(Math.max(0, (was?.sent ?? 0) - 1))) {
-          const { cwd, ...row } = r;
+          const { cwd: rowCwd, ...row } = r;
+          const cwd = rowCwd ?? src.cwdOf?.(t.session) ?? null;
           turns.push({ ...row, agent: src.agent, session: t.session, account, seat: src.seat, project: this.projectOf(cwd, t.repositoryUrl) });
         }
         if (mark.costs !== was?.costs) for (const c of t.costs) costs.push({ agent: src.agent, session: t.session, ...c, last_at: lastAt });

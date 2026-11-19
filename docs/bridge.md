@@ -308,6 +308,28 @@ channels are not on the research-preview allowlist. A plain `claude` still start
 server, so a Topic appears, but Claude Code drops channel messages without the flag.
 Requires Anthropic auth: on a third-party provider (`ccds`) Claude Code drops channel messages even with the flag (verified live), and Remote Control is unavailable. Such a session (or one started without the flag) still mirrors out, and its Telegram messages are queued: the Stop hook hands them to the session when its current turn ends, as a continuation. An idle session receives nothing until a local prompt starts a turn; the Topic says so when a message is queued.
 
+### Antigravity (agy)
+
+agy has no shared daemon and no channel: its hooks are the only signal
+(`scripts/hooks/agy-hook.mjs` -> `forwardAgyHook` in `scripts/bridge/agy-adapter.mjs`). Each of
+SessionStart, PreInvocation, PreToolUse, PostToolUse and Stop makes one call, method `agy`, on the
+Claude adapter's 127.0.0.1 IPC (same `runtime.json` token); the daemon routes it to `AgyAdapter`,
+which emits the standard events. A call fails open and silent within ~1.2 s when no daemon runs.
+
+- **Topic**: on the first hook of a conversation (`conversationId`), cwd from `workspacePaths[0]`.
+  Its icon colour is Antigravity's (`TOPIC_ICON_COLORS` in `vocab.mjs`; Claude and Codex have theirs).
+- **Prompt**: PreInvocation with `invocationNum` 1, text from `lastUserInput` without agy's
+  `<USER_REQUEST>` envelope. A Stop continuation (`continuationActive`) is not re-posted.
+- **Tasks**: `run_command` (shell) and `invoke_subagent` (agent) from PreToolUse to PostToolUse;
+  a turn end settles them.
+- **Final**: at Stop, the turn's PLANNER_RESPONSE texts from the transcript tail; a repeat sends nothing new.
+- **Telegram -> agy**: always queued (on disk, `inbound/agy-*.json`) and handed to the next Stop,
+  which continues the session with `{decision: "continue", reason}`. An idle session waits for a local prompt.
+- **Down**: agy has no SessionEnd; a session silent for 3 h (12 h while a turn runs) is reported
+  down. Its next hook brings it back under the same id and Topic.
+- Not bridged: agy's permission prompts and `ask_question` dialogs reach no hook, so there are no
+  approval or question buttons; no `/interrupt`.
+
 ## Setup (per machine)
 
 1. **Machine name**: `node scripts/setup/setup.js --machine <NAME>` (writes

@@ -9,6 +9,8 @@ import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 import { LOGOS } from './logos.mjs';
+/** Each agent's maker, whose mark its avatar shows (logos.mjs). */
+const AGENT_BRANDS = { claude: 'claude', codex: 'openai', agy: 'agy' };
 
 const POLL_MS = 8000;
 const REPO = 'https://github.com/DawnEver/claude-code-config';
@@ -247,7 +249,7 @@ function sessionRow(s, opts = {}) {
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
   row.dataset.session = s.id;   // the unread badge finds its target by this
   // The platform the session spends: a provider's own mark (ccds, cods), else the agent's maker.
-  const brand = LOGOS[s.provider] ? s.provider : s.agent === 'claude' ? 'claude' : 'openai';
+  const brand = LOGOS[s.provider] ? s.provider : AGENT_BRANDS[s.agent] ?? 'openai';
   const avatar = el('span', `avatar ${s.agent} b-${brand}`);
   avatar.append(logo(brand));
   avatar.append(el('span', 'dot'));
