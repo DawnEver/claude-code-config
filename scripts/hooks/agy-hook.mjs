@@ -96,12 +96,12 @@ export async function runAgyHook(input, deps = {}) {
   const runProject = () => attempt(async () => {
     if (deps.projectHooks !== undefined) return deps.projectHooks ? await deps.projectHooks(event, input) : null;
     if (deps.agyHome !== undefined) return null; // isolated unit tests unless projectHooks explicitly supplied
-    const [{ runProjectClaudeHooks }, { isAgyMainSession }] = await Promise.all([
-      import('./project-claude-hooks.mjs'),
+    const [{ runProjectGuards }, { isAgyMainSession }] = await Promise.all([
+      import('./project-guard-bridge.mjs'),
       import('../bridge/agy-adapter.mjs'),
     ]);
     const isSubagent = Boolean(input.conversationId) && !isAgyMainSession(input, { env, ancestry: false });
-    return runProjectClaudeHooks(event, input, { env, isSubagent });
+    return runProjectGuards(event, input, { host: 'agy', env, isSubagent });
   });
   // PreToolUse forwards after the loop guard and project guard: a denied call never reaches Telegram.
   const bridged = BRIDGE_EVENTS.has(event) && event !== 'PreToolUse' ? await forwardBridge() : null;
@@ -172,7 +172,7 @@ async function backgroundStart() {
 }
 
 async function remind() {
-  const { boundedRepoReminder } = await import('./codex-hook.mjs');
+  const { boundedRepoReminder } = await import('./sync-hook.js');
   const notice = await boundedRepoReminder({ budgetMs: 5000 });
   if (!notice) return;
   const file = path.join(hooksDir(AGY_HOME), 'last-reminder.json');

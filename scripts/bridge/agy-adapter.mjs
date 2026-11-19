@@ -24,6 +24,9 @@ import { EventEmitter } from 'events';
 import { ActivityBoard } from './activity-board.mjs';
 import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './runtime-paths.mjs';
 import { tokens, base, isClaudeProcess, readProcessTable, ancestorsOf } from '../shared/process-tree.mjs';
+import { stripAgyPromptEnvelope as agyPromptText } from '../shared/agy-payload.mjs';
+
+export { agyPromptText };
 
 /** Each agy conversation's workspace, as its hooks named it: the usage store's project (agy's transcripts carry no cwd). */
 export const AGY_CWD_FILE = path.join(BRIDGE_RUNTIME_DIR, 'agy-cwd.json');
@@ -513,13 +516,6 @@ export function agyTurnTexts(file) {
     else if (e?.type === 'PLANNER_RESPONSE' && typeof e.content === 'string' && e.content.trim()) texts.push(e.content.trim());
   }
   return texts;
-}
-
-/** The prompt a person typed, without agy's envelope (`<USER_REQUEST>` and its metadata blocks). */
-export function agyPromptText(text) {
-  const t = String(text ?? '');
-  const m = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(t);
-  return (m ? m[1] : t).trim();
 }
 
 const TELEGRAM_MESSAGE = 'Message from Telegram';

@@ -834,7 +834,7 @@ export function setup(options = {}) {
     processLinks(getAgyLinks(), agyDir, counters, syncDir);
     try {
       const agy = installAgyConfig({ agyDir, scriptsDir: path.join(claudeDir, 'scripts'), repoRoot: sourceDir });
-      console.log(`OK    agy hooks.json / mcp_config.json / plugins.json ${agy.changed ? 'updated' : 'unchanged'} (user entries preserved)`);
+      console.log(`OK    agy hooks.json / plugins.json ${agy.changed ? 'updated' : 'unchanged'} (user entries preserved)`);
     } catch (err) { console.log(`ERR   agy config: ${err.message}`); counters.errors++; }
     try {
       const line = installAgyStatusLine({ scriptsDir: path.join(claudeDir, 'scripts') });

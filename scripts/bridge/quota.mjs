@@ -20,6 +20,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execFile } from 'child_process';
 import { createHash } from 'crypto';
 import { BRIDGE_RUNTIME_DIR } from './runtime-paths.mjs';
 import { readBridgeConfig } from './context.mjs';
@@ -274,18 +275,27 @@ export function accountFor(session, accounts, balanceEntries = []) {
  */
 export class AccountReader {
   constructor({ machine, codex = () => [], codexSeriesFile = null, codexFallback = () => machine, log = () => {}, now = Date.now,
-    extraResets = () => fetchExtraResets({ log }), extraEveryMs = 30 * 60000,
-    sources = { seats: () => readSeats(), claude: readClaudeDirs, agy: () => readAgy(), agyEmail: () => readAgyEmail() } }) {
-    Object.assign(this, { machine, codex, codexSeriesFile, codexFallback, now, extraResets, extraEveryMs, sources });
+    extraResets = () => fetchExtraResets({ log }), extraEveryMs = 30 * 60000, agyEveryMs = 10 * 60000,
+    agyRefresh = undefined,
+    sources }) {
+    const defaultSources = !sources;
+    sources ??= { seats: () => readSeats(), claude: readClaudeDirs, agy: () => readAgy(), agyEmail: () => readAgyEmail() };
+    Object.assign(this, { machine, codex, codexSeriesFile, codexFallback, now, extraResets, extraEveryMs, agyEveryMs, sources });
+    this.agyRefresh = agyRefresh !== undefined ? agyRefresh : (defaultSources ? () => refreshAgyQuota({ now: this.now }) : null);
     this.extra = { at: -Infinity, value: null, pending: null };
+    this.agyPoll = { at: -Infinity, pending: null };
   }
 
-  /** Synchronous for the push: the extra-reset fetch refreshes in the background. */
+  /** Synchronous for the push: the extra-reset and agy `/quota` fetches refresh in the background. */
   read() {
     const now = this.now();
     if (now - this.extra.at >= this.extraEveryMs && !this.extra.pending) {
       this.extra.pending = this.extraResets().then((v) => { this.extra.value = v; }, () => {})
         .finally(() => { this.extra.at = this.now(); this.extra.pending = null; });
+    }
+    if (this.agyRefresh && now - this.agyPoll.at >= this.agyEveryMs && !this.agyPoll.pending) {
+      this.agyPoll.pending = this.agyRefresh().catch(() => {})
+        .finally(() => { this.agyPoll.at = this.now(); this.agyPoll.pending = null; });
     }
     const codex = this.codex().map(({ home, label, quota: cx, account }) => {
       const seriesFile = this.codexSeriesFile?.(home, account) ?? null;
@@ -304,63 +314,68 @@ export class AccountReader {
 
 /** agy's own state dir (cli.log, brain/, settings.json). */
 export const AGY_DIR = path.join(os.homedir(), '.gemini', 'antigravity-cli');
+const AGY_STATUSLINE_LAST = 'agy-statusline-last.json';
 const AGY_POOL = /^[a-z0-9][a-z0-9._-]{0,39}$/i;
 const AGY_SPANS = { daily: 24 * H, day: 24 * H, weekly: 168 * H, week: 168 * H };
+// Map agy's internal 3p pool slug (`3p-weekly`, `3p-5h`: "Claude and GPT models") to a clear label.
+const AGY_POOL_LABELS = { '3p': 'claude-gpt' };
 
-/** A quota tier's name -> {pool, windowMs}: `gemini-5h` -> gemini 5h, `claude_weekly` -> claude 7d; null when it names no span. */
-export function agyTier(name) {
-  const m = /^(.*?)[-_ ]?(?:(\d{1,3})\s*([hd])|(daily|day|weekly|week))$/i.exec(String(name ?? '').trim());
+/** A quota bucket id -> {pool, windowMs}: `gemini-5h` -> gemini 5h, `3p-weekly` -> claude-gpt 7d; null when it names no span. */
+export function agyTier(name, explicitWindow = null) {
+  const raw = String(name ?? '').trim();
+  if (explicitWindow) {
+    const w = /^(?:(\d{1,3})\s*([hd])|(daily|day|weekly|week))$/i.exec(String(explicitWindow).trim());
+    if (w) {
+      const windowMs = w[1] ? Number(w[1]) * (w[2].toLowerCase() === 'h' ? H : 24 * H) : AGY_SPANS[w[3].toLowerCase()];
+      const base = raw.replace(/[-_ ](?:\d{1,3}\s*[hd]|daily|day|weekly|week)$/i, '') || 'agy';
+      const pool = AGY_POOL_LABELS[base.toLowerCase()] ?? base.toLowerCase();
+      if (windowMs > 0 && AGY_POOL.test(pool)) return { pool, windowMs };
+    }
+  }
+  const m = /^(.*?)[-_ ]?(?:(\d{1,3})\s*([hd])|(daily|day|weekly|week))$/i.exec(raw);
   if (!m) return null;
   const windowMs = m[2] ? Number(m[2]) * (m[3].toLowerCase() === 'h' ? H : 24 * H) : AGY_SPANS[m[4].toLowerCase()];
-  const pool = (m[1] || 'agy').toLowerCase();
+  const rawPool = (m[1] || 'agy').toLowerCase();
+  const pool = AGY_POOL_LABELS[rawPool] ?? rawPool;
   return windowMs > 0 && AGY_POOL.test(pool) ? { pool, windowMs } : null;
 }
 
 function parseResetMs(q, now) {
-  for (const raw of [q?.reset_time, q?.resets_at]) {
-    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw < 1e12 ? raw * 1000 : raw;
-    if (typeof raw === 'string' && raw.trim()) {
-      const n = Number(raw);
-      if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n;
-      const ms = Date.parse(raw);
-      if (Number.isFinite(ms) && ms > 0) return ms;
-    }
+  if (typeof q?.reset_time === 'string' && q.reset_time.trim()) {
+    const ms = Date.parse(q.reset_time);
+    if (Number.isFinite(ms) && ms > 0) return ms;
+  }
+  if (typeof q?.reset_time === 'number' && Number.isFinite(q.reset_time) && q.reset_time > 0) {
+    return q.reset_time < 1e12 ? q.reset_time * 1000 : q.reset_time;
   }
   if (Number.isFinite(q?.reset_in_seconds) && q.reset_in_seconds >= 0) return now + q.reset_in_seconds * 1000;
   return null;
 }
 
 /**
- * statusLine payload or its quota block -> windows per pool: {<pool>: {<span>: {used, resetsAt, windowMs}}}.
- * Accepts object maps or bucket arrays (`quota`, `quotas`, `quota_buckets`, `quota_info`), fractions
- * (`remaining_fraction`, `quota_remaining`) or `used_percentage`, and `reset_time` (ISO/epoch), `resets_at`,
- * or `reset_in_seconds`. Buckets without a span suffix infer their rolling window from `resetsAt - now`.
+ * Parse Antigravity's two measured quota contracts into `{<pool>: {<span>: {used, resetsAt, windowMs}}}`:
+ *   1. `agy -p /quota --output-format json` -> `payload.command.data.groups[*].buckets[*]`
+ *      (`{id, window, remaining_fraction, reset_time}`)
+ *   2. `statusLine` (`telemetry: true`) -> `payload.quota` (`map[string]StatusLineQuotaBucket`
+ *      with `remaining_fraction` or `used_percentage`, and `reset_time` or `reset_in_seconds`).
  */
-export function agyPools(quota, now = Date.now()) {
+export function agyPools(input, now = Date.now()) {
   const pools = {};
-  if (!quota || typeof quota !== 'object') return pools;
-  const raw = !Array.isArray(quota) && (quota.quota ?? quota.quotas ?? quota.quota_buckets ?? quota.quota_info)
-    ? (quota.quota ?? quota.quotas ?? quota.quota_buckets ?? quota.quota_info)
-    : quota;
-  const entries = Array.isArray(raw)
-    ? raw.map((b) => [b?.quota_bucket_name ?? b?.quota_bucket ?? b?.bucket ?? b?.name ?? b?.id ?? b?.model ?? '', b])
-    : Object.entries(raw && typeof raw === 'object' ? raw : {});
-  for (const [name, q] of entries) {
+  if (!input || typeof input !== 'object') return pools;
+  const groups = input?.command?.data?.groups;
+  const entries = Array.isArray(groups)
+    ? groups.flatMap((g) => (Array.isArray(g?.buckets) ? g.buckets : []).map((b) => [b?.id ?? '', b, b?.window ?? null]))
+    : Object.entries((!Array.isArray(input) && input.quota && typeof input.quota === 'object' ? input.quota : input))
+      .map(([k, v]) => [k, v, v?.window ?? null]);
+  for (const [id, q, explicitWindow] of entries) {
     if (!q || typeof q !== 'object') continue;
     const resetsAt = parseResetMs(q, now);
     if (!resetsAt) continue;
-    const frac = typeof q.remaining_fraction === 'number' ? q.remaining_fraction
-      : typeof q.quota_remaining === 'number' ? q.quota_remaining : null;
-    const used = frac !== null && Number.isFinite(frac) ? pct((1 - frac) * 100)
+    const used = typeof q.remaining_fraction === 'number' && Number.isFinite(q.remaining_fraction)
+      ? pct((1 - q.remaining_fraction) * 100)
       : pct(q.used_percentage);
     if (used === null) continue;
-    let tier = agyTier(name);
-    if (!tier && resetsAt > now) {
-      const slug = String(name ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'agy';
-      const rem = resetsAt - now;
-      const windowMs = rem <= 6 * H ? 5 * H : rem <= 25 * H ? 24 * H : 168 * H;
-      if (AGY_POOL.test(slug)) tier = { pool: slug, windowMs };
-    }
+    const tier = agyTier(id, explicitWindow);
     if (!tier) continue;
     (pools[tier.pool] ??= {})[span(tier.windowMs)] = { used, resetsAt, windowMs: tier.windowMs };
   }
@@ -385,8 +400,18 @@ function readLogTailEmail(file) {
   return email;
 }
 
-/** The login agy last applied (`cli.log` or newest `log/cli-*.log` when `cli.log` is empty on Windows). */
-export function readAgyEmail(dir = AGY_DIR) {
+/**
+ * The authenticated Antigravity email: structured `email` from the latest statusLine snapshot
+ * first (`~/.claude/bridge/agy-statusline-last.json`), falling back to `cli.log` / `log/cli-*.log`
+ * before the first statusLine render.
+ */
+export function readAgyEmail(dir = AGY_DIR, { runtimeDir = BRIDGE_RUNTIME_DIR } = {}) {
+  if (dir === AGY_DIR && runtimeDir) {
+    try {
+      const snap = JSON.parse(fs.readFileSync(path.join(runtimeDir, AGY_STATUSLINE_LAST), 'utf8'));
+      if (typeof snap?.email === 'string' && snap.email.includes('@')) return snap.email.trim();
+    } catch { /* fall back to log */ }
+  }
   const direct = readLogTailEmail(path.join(dir, 'cli.log'));
   if (direct) return direct;
   let logs = [];
@@ -407,11 +432,41 @@ const agyAccountHash = (email) => createHash('sha256').update((email ?? 'unknown
 /** One pool's series file, scoped by the login (as codex-usage-<home>-<account>.jsonl). */
 export const agySeriesFile = (email, pool, dir = BRIDGE_RUNTIME_DIR) => path.join(dir, `agy-usage-${agyAccountHash(email)}-${pool}.jsonl`);
 
-/** agy-statusline.mjs side: record each pool of the statusLine's quota into its series. Fail-silent; returns the pools. */
-export function teeAgyUsage(statusLine, { email = readAgyEmail(), dir = BRIDGE_RUNTIME_DIR, now = Date.now() } = {}) {
-  const pools = agyPools(statusLine, now);
-  for (const [pool, windows] of Object.entries(pools)) recordSample(agySeriesFile(email, pool, dir), windows, now);
+/** Record each pool's windows into its series (used by both `agy-statusline.mjs` and `refreshAgyQuota`). */
+export function teeAgyUsage(payload, { email = null, dir = BRIDGE_RUNTIME_DIR, now = Date.now() } = {}) {
+  const resolvedEmail = email ?? (typeof payload?.email === 'string' && payload.email.includes('@') ? payload.email.trim() : readAgyEmail(AGY_DIR, { runtimeDir: dir }));
+  const pools = agyPools(payload, now);
+  for (const [pool, windows] of Object.entries(pools)) recordSample(agySeriesFile(resolvedEmail, pool, dir), windows, now);
   return pools;
+}
+
+/**
+ * Authoritative zero-token quota probe (`agy -p /quota --output-format json`): `num_turns: 0`,
+ * `total_tokens: 0`, returns `command.data.groups[*].buckets[*]`. Refreshes the dashboard series
+ * in the background so `gemini` and `claude-gpt` windows are populated even while no TUI renders.
+ */
+export function refreshAgyQuota({
+  agyBin = 'agy',
+  agyDir = AGY_DIR,
+  dir = BRIDGE_RUNTIME_DIR,
+  now = Date.now,
+  exec = execFile,
+} = {}) {
+  if (!fs.existsSync(agyDir)) return Promise.resolve({});
+  const email = readAgyEmail(agyDir, { runtimeDir: dir });
+  if (!email) return Promise.resolve({});
+  return new Promise((resolve) => {
+    const [cmd, args] = process.platform === 'win32' && /\.cmd$/i.test(agyBin)
+      ? ['cmd.exe', ['/d', '/s', '/c', `${agyBin} -p /quota --output-format json`]]
+      : [agyBin, ['-p', '/quota', '--output-format', 'json']];
+    exec(cmd, args, { timeout: 20000, windowsHide: true, env: { ...process.env, CC_CONFIG_AGY_SMOKE: '1', CC_CONFIG_AGY_QUOTA_POLL: '1' } }, (err, stdout) => {
+      if (err || !stdout) return resolve({});
+      try {
+        const parsed = JSON.parse(String(stdout).trim());
+        resolve(teeAgyUsage(parsed, { email, dir, now: now() }));
+      } catch { resolve({}); }
+    });
+  });
 }
 
 /** This machine's agy pools as [{pool, account: {email}, quota}]: the current login's series, freshest pool first. */

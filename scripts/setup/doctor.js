@@ -442,6 +442,26 @@ export function scanPublicHygiene(text, markers = []) {
  * code-shaped names count — `name()`, `ALL_CAPS_WITH_UNDERSCORE`, `camelCase` — matched as whole
  * words in the tracked JS. Words, file names and config keys are left alone.
  */
+const AGY_RULE_MAX_BYTES = 24000;
+
+/**
+ * Antigravity truncates any rule file (`AGENTS.md`, `GLOBAL-AGENTS.md`, `.claude/rules/*.md`)
+ * exceeding 24,000 bytes, silently dropping standards at the tail (incident 2026-11-19).
+ */
+export function checkRuleFileSize(root = sourceDir, maxBytes = AGY_RULE_MAX_BYTES) {
+  const out = [];
+  for (const rel of ['AGENTS.md', 'GLOBAL-AGENTS.md']) {
+    const p = path.join(root, rel);
+    let size;
+    try { size = fs.statSync(p).size; } catch { continue; }
+    if (size > maxBytes) {
+      out.push(finding('FAIL', 'rule-file-size', `${rel} is ${size} bytes (exceeds Antigravity's ${maxBytes}-byte rule limit; tail is truncated)`,
+        `move detailed subsystem prose to docs/*.md so ${rel} stays under ${maxBytes} bytes`));
+    }
+  }
+  return out;
+}
+
 export function checkRuleSymbols(root = sourceDir, files = trackedFiles(root)) {
   const code = files.filter((f) => /\.(mjs|js|cjs)$/.test(f)).map((f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch { return ''; } }).join('\n');
   const known = new Set(code.match(/[A-Za-z_$][\w$]*/g) ?? []);
@@ -707,7 +727,8 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
   const contentChecks = () => {
     const files = trackedFiles(repoRoot);
     return [
-        ...checkRuleSymbols(repoRoot, files),
+      ...checkRuleFileSize(repoRoot),
+      ...checkRuleSymbols(repoRoot, files),
       ...checkPublicHygiene({ root: repoRoot, files, markersFile, requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
     ];
   };
@@ -743,15 +764,15 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
   ];
 }
 
-// agy's hooks.json / mcp_config.json / plugins.json are merged, not linked, so the link table
-// cannot see a lost managed part; like Codex, an installed hook that never ran is a silent gap.
+// agy's hooks.json / plugins.json are merged, not linked, so the link table cannot see a lost
+// managed part; like Codex, an installed hook that never ran is a silent gap.
 export function checkAgyConfig({ agyHome = agyDir, scriptsDir = path.join(claudeDir, 'scripts'), repoRoot = sourceDir } = {}) {
   if (!agyInstalled(agyHome)) return [];
   const state = inspectAgyConfig({ agyDir: agyHome, scriptsDir, repoRoot, home: path.dirname(path.dirname(agyHome)) });
   const fix = 'run setup (it merges the managed parts and preserves user entries)';
   const out = [];
   if (!state.installed) out.push(finding('FAIL', 'agy-native-hooks', 'agy hooks.json lacks the current cc-config hook', fix));
-  if (!state.mcp) out.push(finding('FAIL', 'agy-mcp', 'agy mcp_config.json lacks the session-bridge server', fix));
+  if (!state.mcpClean) out.push(finding('FAIL', 'agy-mcp', 'agy mcp_config.json still carries the legacy session-bridge server', fix));
   if (!state.plugins) out.push(finding('FAIL', 'agy-plugins', 'agy plugins.json lacks the current cc-market entry', fix));
   if (state.installed && !state.executed) out.push(finding('WARN', 'agy-native-hooks', 'agy hooks are installed but their execution has not been observed',
     `not observed: ${Object.entries(state.events).filter(([, v]) => !v.executed).map(([name]) => name).join(', ')}; start an agy session`));

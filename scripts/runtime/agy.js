@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 // agy.js - Antigravity CLI launcher (`agyc`).
 //
-// Thin spawn wrapper around `agy-launcher.mjs`, like codex.js: pull the checkout before any
-// repo module loads, heal setup links, ensure the session bridge, then run agy with this
-// host's provenance env. The managed agy hooks (scripts/hooks/agy-hook.mjs) do the same at
-// SessionStart for a bare `agy`; CC_CONFIG_STARTUP_SYNCED=1 tells them it already happened.
+// Thin spawn wrapper around `agy-launcher.mjs`, matching `codex.js`: pull the checkout before any
+// repo module loads, heal setup links, ensure the session bridge, then run `agy` through ai-lab's
+// `ai_lab.session` launcher with this host's provenance env.
 
 import { spawn } from 'child_process';
 import { join } from 'path';
@@ -15,10 +14,11 @@ const sync = syncBeforeLaunch({ env: { ...process.env, CC_CONFIG_STARTUP_SYNCED:
   stampFile: join(homedir(), '.claude', '.harness-startup-sync') });
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
-const [{ buildAgyInvocation, resolveAgySpawn }, { prepareSpawn }, { checkLinks, SETUP_FIX_CMD }] = await Promise.all([
+const [{ buildAgyInvocation }, { prepareSpawn }, { checkLinks, SETUP_FIX_CMD }, { sessionSpawn }] = await Promise.all([
   import('./agy-launcher.mjs'),
   import('./win-spawn.mjs'),
   import('../setup/check-links.js'),
+  import('../shared/session-launcher.mjs'),
 ]);
 
 if (sync.pulled > 0) {
@@ -34,8 +34,12 @@ try {
 } catch { /* the bridge must never block a launch */ }
 
 const { env: launchEnv, args } = buildAgyInvocation({ extraArgs: process.argv.slice(2) });
-const run = resolveAgySpawn(args, launchEnv, { log: (m) => console.error(`[agy] ${m}`) });
-if (run.notice) console.error(`[agy] ${run.notice}`);
-const launch = prepareSpawn(run.command, run.args, { env: run.env });
-const child = spawn(launch.command, launch.args, { ...launch.options, env: run.env, stdio: 'inherit' });
+const session = sessionSpawn('agy', args, { log: (m) => console.error(`[agy] ${m}`) });
+if (session.error) {
+  console.error(session.error);
+  process.exit(1);
+}
+if (session.notice) console.error(`[agy] ${session.notice}`);
+const launch = prepareSpawn(session.command, session.args, { env: launchEnv });
+const child = spawn(launch.command, launch.args, { ...launch.options, env: launchEnv, stdio: 'inherit' });
 child.on('exit', code => process.exit(code ?? 0));

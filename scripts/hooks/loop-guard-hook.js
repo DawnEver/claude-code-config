@@ -25,6 +25,7 @@ import crypto from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { ENV_SETTINGS_PATH, readMergedEnvSettings } from '../shared/config.mjs';
 import { sessionIdentity } from '../shared/session-identity.mjs';
+import { AGY_POLLING_TOOLS, normalizeAgyGuardPayload as agyPayload } from '../shared/agy-payload.mjs';
 
 /** Every knob, with its env override. Counts read as "this call is the Nth such call". */
 const DEFAULTS = {
@@ -60,23 +61,8 @@ const BASE_EXEMPT = [
   'sleep',
   'request_user_input',
   'request_user_input_async',
-  // agy (Antigravity CLI): task polling, timers, messaging and questions.
-  'manage_task',
-  'manage_subagents',
-  'schedule',
-  'send_message',
-  'ask_question',
+  ...AGY_POLLING_TOOLS,
 ];
-
-/** agy's PreToolUse payload (camelCase `toolCall`) in the shape every other host already uses.
- * Presentation-only args (a fresh summary per call, a wait budget) are dropped: they would hide
- * a repeated `run_command` CommandLine behind cosmetic differences. */
-const AGY_COSMETIC_ARGS = new Set(['toolSummary', 'toolAction', 'WaitMsBeforeAsync']);
-function agyPayload(payload) {
-  if (!payload?.toolCall) return payload;
-  const args = Object.fromEntries(Object.entries(payload.toolCall.args ?? {}).filter(([k]) => !AGY_COSMETIC_ARGS.has(k)));
-  return { ...payload, tool_name: payload.toolCall.name, tool_input: args, session_id: payload.conversationId };
-}
 
 const num = (raw, fallback) => {
   const n = Number(raw);

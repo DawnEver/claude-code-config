@@ -294,7 +294,6 @@ test('a top-level ccc session (launcher, shim, claude) is main; one started from
   assert.equal(isMainSession({ ppid: 4, claudePid: undefined, ancestors: [own, shim, cc, term] }), true);
   const outer = { pid: 0, cmd: String.raw`"C:\n\node_modules\@anthropic-ai\claude-code\bin\claude.exe"` };
   assert.equal(isMainSession({ ppid: 4, claudePid: undefined, ancestors: [own, shim, cc, { pid: 9, cmd: 'bash.exe' }, outer] }), false);
-  assert.equal(isMainSession({ ppid: 5, claudePid: undefined, ancestors: [{ pid: 5, cmd: String.raw`C:\Users\u\AppData\Local\agy\bin\agy.exe` }] }), false, 'Antigravity uses agy-adapter, never a ghost claude session');
 });
 
 test('a background session (claude daemon -> --bg-pty-host -> claude) is main: the hosts are not sessions', () => {

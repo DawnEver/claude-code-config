@@ -55,24 +55,6 @@ function reminderSink(message, env) {
   notifyDetached({ title: 'Codex — Config reminder', message, cwd: '' });
 }
 
-export async function boundedRepoReminder({ budgetMs = 1200, now = Date.now, run = execFileSync } = {}) {
-  const { REPO, formatReminder } = await import('./sync-hook.js');
-  const until = now() + budgetMs;
-  const git = args => {
-    const timeout = until - now();
-    if (timeout <= 0) throw new Error('reminder budget exhausted');
-    return run('git', args, { cwd: REPO, timeout, encoding: 'utf8', windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  };
-  try {
-    const dirty = git(['status', '--porcelain']).split('\n').filter(Boolean).length;
-    let upstream = false, ahead = 0;
-    try { upstream = !!git(['rev-parse', '--verify', '--quiet', '@{u}']); } catch { /* new branch */ }
-    if (upstream) ahead = Number(git(['rev-list', '--count', '@{u}..HEAD'])) || 0;
-    return formatReminder({ dirty, ahead, noUpstream: !upstream });
-  } catch { return null; } // Never hold shutdown open or perform network work.
-}
-
 export async function runCodexHook(input, deps = {}) {
   const event = input.hook_event_name;
   const env = deps.env ?? process.env;
@@ -80,6 +62,16 @@ export async function runCodexHook(input, deps = {}) {
   const attempt = async fn => {
     try { return await fn(); } catch (e) { messages.push(`[cc-config] ${e.message}`); return null; }
   };
+  const runProject = () => attempt(async () => {
+    if (deps.projectHooks !== undefined) return deps.projectHooks ? await deps.projectHooks(event, input) : null;
+    if (deps.sync || deps.heal || deps.guard || deps.remind || deps.notify) return null; // isolated unit tests unless projectHooks supplied
+    const { runProjectGuards } = await import('./project-guard-bridge.mjs');
+    const isSubagent = Boolean(
+      input.agent_id
+      || (env.CODEX_THREAD_ID && env.CODEX_SESSION_ID && env.CODEX_THREAD_ID !== env.CODEX_SESSION_ID),
+    );
+    return runProjectGuards(event, input, { host: 'codex', env, isSubagent });
+  });
   const repair = async (quick = false) => {
     const result = await attempt(() => (deps.repair ?? (async options =>
       (await import('../setup/update-codex-plugins.mjs')).repairProtectedPluginCaches(options)))({ codexHome: homeOf(env), quick }));
@@ -113,6 +105,8 @@ export async function runCodexHook(input, deps = {}) {
     await attempt(deps.ensure ?? (deps.sync ? async () => {} : async () => {
       await (await import('../bridge/ensure.mjs')).ensureDaemon();
     }));
+    const proj = await runProject();
+    if (proj?.contexts?.length) messages.push(...proj.contexts);
   } else if (event === 'PreToolUse') {
     await repair(true);
     // A daemon that died mid-session would otherwise stay down until some session starts:
@@ -123,13 +117,21 @@ export async function runCodexHook(input, deps = {}) {
     }));
     const result = await attempt(deps.guard ?? (async () => (await import('./loop-guard-hook.js')).guardCall(input, { env, host: 'codex' })));
     if (result?.verdict === 'deny') return { hookSpecificOutput: { hookEventName: event, permissionDecision: 'deny', permissionDecisionReason: result.reason } };
-    if (result?.verdict === 'warn') return { hookSpecificOutput: { hookEventName: event, additionalContext: result.reason } };
+    const proj = await runProject();
+    if (proj?.denyReason) return { hookSpecificOutput: { hookEventName: event, permissionDecision: 'deny', permissionDecisionReason: proj.denyReason } };
+    const contexts = [
+      ...(result?.verdict === 'warn' ? [result.reason] : []),
+      ...(proj?.contexts ?? []),
+    ];
     if (['request_user_input', 'request_user_input_async', 'AskUserQuestion'].includes(String(input.tool_name).split('.').at(-1)))
       await attempt(() => (deps.notify ?? notifyDetached)(codexNotification(input, 'UserInputRequest')));
+    if (contexts.length) return { hookSpecificOutput: { hookEventName: event, additionalContext: contexts.join('\n') } };
   } else if (event === 'PermissionRequest') {
     await attempt(() => (deps.notify ?? notifyDetached)(codexNotification(input, event)));
   } else if (event === 'SessionEnd') {
-    const notice = await attempt(deps.remind ?? boundedRepoReminder);
+    const proj = await runProject();
+    if (proj?.contexts?.length) messages.push(...proj.contexts);
+    const notice = await attempt(deps.remind ?? (async () => (await import('./sync-hook.js')).boundedRepoReminder()));
     if (notice) {
       messages.push(notice);
       await attempt(() => (deps.reminderSink ?? (deps.remind ? () => {} : reminderSink))(notice, env));

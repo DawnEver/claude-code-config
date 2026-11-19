@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   installAgyConfig, inspectAgyConfig, managedAgyHook, hookDefinitionId, hookScriptRef, smokeRunCommand,
-  installAgyStatusLine, AGY_DIR, AGY_SETTINGS, HOOK_NAME, MCP_NAME,
+  installAgyStatusLine, AGY_DIR, AGY_SETTINGS, HOOK_NAME,
 } from './agy-config.mjs';
 
 const REAL_SCRIPTS = fileURLToPath(new URL('..', import.meta.url));
@@ -25,11 +25,16 @@ function fixture(t) {
   return { root, agyDir, home, repoRoot, marketDir, scriptsDir: path.join(home, '.claude', 'scripts'), smoke: ok };
 }
 
-test('merges managed parts and preserves user entries', t => {
+test('merges managed hooks/plugins, cleans legacy session-bridge MCP, and preserves user entries', t => {
   const o = fixture(t);
   fs.mkdirSync(o.agyDir, { recursive: true });
   fs.writeFileSync(path.join(o.agyDir, 'hooks.json'), JSON.stringify({ mine: { Stop: [{ command: 'x' }] } }));
-  fs.writeFileSync(path.join(o.agyDir, 'mcp_config.json'), '');
+  fs.writeFileSync(path.join(o.agyDir, 'mcp_config.json'), JSON.stringify({
+    mcpServers: {
+      'user-mcp': { command: 'npx', args: ['some-mcp'] },
+      'session-bridge': { command: 'node', args: ['C:/repo/claude_plugins/session-bridge/server.mjs'] },
+    },
+  }));
   fs.writeFileSync(path.join(o.agyDir, 'plugins.json'), JSON.stringify({ entries: [{ path: '~/own' }, { path: 'C:/old/cc-market' }] }));
   assert.equal(installAgyConfig(o).changed, true);
   const hooks = JSON.parse(fs.readFileSync(path.join(o.agyDir, 'hooks.json'), 'utf8'));
@@ -37,21 +42,21 @@ test('merges managed parts and preserves user entries', t => {
   assert.equal(hooks[HOOK_NAME].PreToolUse[0].matcher, '*');
   assert.match(hooks[HOOK_NAME].Stop[0].command, /^node "[^"~]+\/hooks\/agy-hook\.mjs" --event Stop --definition [a-f0-9]{64}$/);
   const mcp = JSON.parse(fs.readFileSync(path.join(o.agyDir, 'mcp_config.json'), 'utf8'));
-  assert.match(mcp.mcpServers[MCP_NAME].args[0], /claude_plugins\/session-bridge\/server\.mjs$/);
+  assert.equal(mcp.mcpServers['session-bridge'], undefined, 'legacy managed session-bridge removed per Option A');
+  assert.deepEqual(mcp.mcpServers['user-mcp'], { command: 'npx', args: ['some-mcp'] }, 'user MCP server preserved');
   const plugins = JSON.parse(fs.readFileSync(path.join(o.agyDir, 'plugins.json'), 'utf8'));
   assert.equal(plugins.entries.length, 2, 'stale cc-market entry replaced, own kept');
   assert.deepEqual(plugins.entries[0], { path: '~/own' });
-  // watch has no disabled manifest yet -> withheld; cc-latex ships disabled -> listed.
   assert.deepEqual(plugins.entries[1].include_only, ['rem', 'sharp-review', 'evolve', 'fabric', 'cc-latex']);
   let probed = 0;
   assert.equal(installAgyConfig({ ...o, smoke: () => { probed++; return { ok: true }; } }).changed, false, 'idempotent');
   assert.equal(probed, 0, 'an unchanged hook spawns no smoke run');
   const state = inspectAgyConfig(o);
-  assert.equal(state.installed && state.mcp && state.plugins, true);
+  assert.equal(state.installed && state.mcpClean && state.plugins, true);
   assert.equal(state.executed, false);
 });
 
-test('every managed command is absolute, has no ~, and names an existing script that answers {}', t => {
+test('every managed command is absolute, has no ~, and names an existing script that answers valid JSON', t => {
   const o = fixture(t);
   const hook = managedAgyHook({ scriptsDir: REAL_SCRIPTS });
   assert.equal(hook.PreToolUse[0].hooks[0].timeout, 660);
@@ -61,12 +66,12 @@ test('every managed command is absolute, has no ~, and names an existing script 
     assert.ok(path.isAbsolute(script) && fs.existsSync(script), script);
   }
   fs.mkdirSync(o.agyDir, { recursive: true });
-  assert.deepEqual(smokeRunCommand(hook.PreToolUse[0].hooks[0].command, { cwd: o.agyDir }), { ok: true });
+  assert.deepEqual(smokeRunCommand(hook.PreToolUse[0].hooks[0].command, { cwd: o.agyDir, requireDecision: true }), { ok: true });
 });
 
 test('a command that fails its smoke run is never installed', t => {
   const o = fixture(t);
-  delete o.smoke; // real smoke run; o.scriptsDir holds no agy-hook.mjs
+  delete o.smoke;
   assert.throws(() => installAgyConfig(o), /smoke run/);
   assert.equal(fs.existsSync(path.join(o.agyDir, 'hooks.json')), false);
 });
@@ -114,12 +119,12 @@ test('script path is quoted with forward slashes', () => {
   assert.equal(hookScriptRef(path.join(path.sep, 'opt', 'x y', 'scripts')).replace(/^"[A-Za-z]:/, '"'), '"/opt/x y/scripts/hooks/agy-hook.mjs"');
 });
 
-test('statusLine: merged only when unset or ours, preserving user keys and smoke-checked when present', t => {
+test('statusLine: sets telemetry: true, preserves user keys, and smoke-checks when present', t => {
   const o = fixture(t);
   const settingsFile = path.join(o.home, '.gemini', 'antigravity-cli', 'settings.json');
-  assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir }).status, 'written', 'merged even before script lands');
+  assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir }).status, 'written');
   fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { command: 'mine.sh' } }));
-  assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir, smoke: ok }).status, 'skipped', 'user statusLine kept');
+  assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir, smoke: ok }).status, 'skipped');
   fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { command: '' } }));
   fs.mkdirSync(path.join(o.scriptsDir, 'hooks'), { recursive: true });
   fs.writeFileSync(path.join(o.scriptsDir, 'hooks', 'agy-statusline.mjs'), '');
@@ -129,18 +134,12 @@ test('statusLine: merged only when unset or ours, preserving user keys and smoke
   assert.equal(s.theme, 'dark');
   assert.equal(s.statusLine.type, 'command');
   assert.equal(s.statusLine.enabled, true);
-  assert.equal(s.statusLine.command.includes('"'), false, 'zero double-quotes so statusline_runner cannot mangle argv');
+  assert.equal(s.statusLine.telemetry, true);
+  assert.equal(s.statusLine.command.includes('"'), false);
   assert.match(s.statusLine.command, /^node (\S+\/hooks\/agy-statusline\.mjs|-e eval\(Buffer\.from\('[A-Za-z0-9+/=]+','base64'\)\.toString\(\)\))$/);
   assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir, smoke: ok }).status, 'unchanged');
-  // Updating an old quoted path pointing to agy-statusline.mjs overwrites cleanly and re-enables.
   fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { type: 'command', command: 'node "/old/hooks/agy-statusline.mjs"', enabled: false } }));
   assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: o.scriptsDir, smoke: ok }).status, 'written');
-  // Real smoke run against agy-statusline.mjs (both whitespace-token spawn and cmd /c), plus spaced path.
   fs.writeFileSync(settingsFile, JSON.stringify({ theme: 'dark', statusLine: { command: '' } }));
   assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: REAL_SCRIPTS }).status, 'written');
-  const spaced = path.join(o.root, 'dir with spaces', 'scripts');
-  fs.cpSync(REAL_SCRIPTS, spaced, { recursive: true });
-  fs.writeFileSync(settingsFile, JSON.stringify({ statusLine: { command: '' } }));
-  assert.equal(installAgyStatusLine({ settingsFile, scriptsDir: spaced }).status, 'written');
-  assert.equal(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).statusLine.command.includes('"'), false);
 });

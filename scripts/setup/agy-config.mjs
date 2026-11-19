@@ -1,8 +1,9 @@
-// Antigravity CLI (agy) global config: ~/.gemini/config/{hooks,mcp_config,plugins}.json.
+// Antigravity CLI (agy) global config: ~/.gemini/config/{hooks,plugins}.json (+ mcp_config.json cleanup).
 // agy and the user write these files too, so they are MERGED in place, never linked:
-// setup owns exactly one named hook (`cc-config`), one MCP server (`session-bridge`) and
-// one plugins.json entry (the cc-market checkout); every other key is preserved verbatim.
-// A file that is itself a symlink is refused: writing through it would edit someone else's file.
+// setup owns one named hook (`cc-config`) and one plugins.json entry (the cc-market checkout);
+// every other key is preserved verbatim. Like Codex, agy has no channel protocol so setup
+// registers no `session-bridge` MCP server (and removes any stale managed one); attachments go
+// through `scripts/bridge/send-attachment.mjs`. A file that is itself a symlink is refused.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -13,7 +14,7 @@ import { writeFileAtomic } from './codex-config-file.mjs';
 
 export const AGY_DIR = path.join(os.homedir(), '.gemini', 'config');
 export const HOOK_NAME = 'cc-config';
-export const MCP_NAME = 'session-bridge';
+const LEGACY_MCP_NAME = 'session-bridge';
 /** Events the managed hook serves. Tool events are grouped (matcher), the rest flat. */
 export const AGY_EVENTS = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PreInvocation', 'Stop'];
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
@@ -70,10 +71,6 @@ export function smokeRunCommand(command, { cwd, json = true, requireDecision = f
   return { ok: true };
 }
 
-export function managedMcpServer({ repoRoot }) {
-  return { command: 'node', args: [slash(path.join(repoRoot, 'claude_plugins', 'session-bridge', 'server.mjs'))], env: {} };
-}
-
 const manifestDisabled = dir => {
   for (const rel of ['.antigravity-plugin/plugin.json', 'plugin.json']) {
     try { return JSON.parse(fs.readFileSync(path.join(dir, rel), 'utf8')).disabled === true; } catch { /* next */ }
@@ -107,20 +104,33 @@ function writeMerged(dir, name, merge) {
   return { file, changed };
 }
 
-const samePath = (a, b) => typeof a === 'string' &&
-  (process.platform === 'win32' ? slash(a).toLowerCase() === slash(b).toLowerCase() : slash(a) === slash(b));
+const isLegacyBridgeMcp = (entry) =>
+  typeof entry?.args?.[0] === 'string' && /claude_plugins\/session-bridge\/server\.mjs$/i.test(slash(entry.args[0]));
+
+function stripLegacyBridgeMcp(agyDir) {
+  const file = path.join(agyDir, 'mcp_config.json');
+  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!stat || stat.isSymbolicLink()) return { file, changed: false };
+  const { before, value } = readObject(file);
+  if (!isLegacyBridgeMcp(value.mcpServers?.[LEGACY_MCP_NAME])) return { file, changed: false };
+  const { [LEGACY_MCP_NAME]: _removed, ...rest } = value.mcpServers;
+  const nextObj = Object.keys(rest).length ? { ...value, mcpServers: rest } : (() => {
+    const { mcpServers: _empty, ...top } = value;
+    return Object.keys(top).length ? top : { mcpServers: {} };
+  })();
+  const next = JSON.stringify(nextObj, null, 2) + '\n';
+  if (next === before) return { file, changed: false };
+  writeFileAtomic(file, next);
+  return { file, changed: true };
+}
 
 /**
- * Merge the managed hook, MCP server and plugin entry. `marketDir` absent -> no plugin entry
- * (a stale one is removed); `bridge: false` -> the MCP server is left alone.
+ * Merge the managed hook and plugin entry, and clean up any stale managed session-bridge MCP entry.
+ * `marketDir` absent -> no plugin entry (a stale one is removed).
  */
-export function installAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marketDir = repoRoot && path.join(repoRoot, 'cc-market'), bridge = true, smoke } = {}) {
-  // Tripwire: under `node --test` (inherited by spawned children) the live agy home is off limits.
-  // A test that reached it once installed a broken hook that blocked every tool call in every session.
+export function installAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marketDir = repoRoot && path.join(repoRoot, 'cc-market'), smoke } = {}) {
   if (process.env.NODE_TEST_CONTEXT && path.resolve(agyDir) === path.resolve(AGY_DIR))
     throw new Error('refusing to write the live ~/.gemini/config from a test: give the test a temp HOME / agyDir');
-  // Nothing is written unless the hook command really runs: a failing hook blocks every tool call.
-  // Probed only when the managed hook would change, so the per-session re-merge spawns nothing.
   const hook = managedAgyHook({ scriptsDir });
   if (JSON.stringify(readObject(path.join(agyDir, 'hooks.json')).value[HOOK_NAME]) !== JSON.stringify(hook)) {
     fs.mkdirSync(agyDir, { recursive: true });
@@ -129,16 +139,9 @@ export function installAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marke
   }
   const results = {};
   results.hooks = writeMerged(agyDir, 'hooks.json', config => ({ ...config, [HOOK_NAME]: managedAgyHook({ scriptsDir }) }));
-  if (bridge && repoRoot) {
-    results.mcp = writeMerged(agyDir, 'mcp_config.json', config => {
-      if (config.mcpServers !== undefined && (typeof config.mcpServers !== 'object' || Array.isArray(config.mcpServers)))
-        throw new Error('mcp_config.json mcpServers must be an object');
-      return { ...config, mcpServers: { ...config.mcpServers, [MCP_NAME]: managedMcpServer({ repoRoot }) } };
-    });
-  }
+  results.mcp = stripLegacyBridgeMcp(agyDir);
   results.plugins = writeMerged(agyDir, 'plugins.json', config => {
     if (config.entries !== undefined && !Array.isArray(config.entries)) throw new Error('plugins.json entries must be an array');
-    // Ours is the entry naming a cc-market checkout; a moved checkout replaces it, never duplicates it.
     const others = (config.entries ?? []).filter(e => !(typeof e?.path === 'string' && /(^|\/)cc-market\/?$/.test(slash(e.path))));
     const usable = marketDir && fs.existsSync(marketDir);
     return { ...config, entries: usable ? [...others, managedPluginEntry({ marketDir })] : others };
@@ -148,12 +151,12 @@ export function installAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marke
 
 const readJson = file => { try { const t = fs.readFileSync(file, 'utf8'); return t.trim() ? JSON.parse(t) : {}; } catch { return null; } };
 
-/** What doctor reports: managed parts present and current, and which hook events have run this definition. */
-export function inspectAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marketDir = repoRoot && path.join(repoRoot, 'cc-market'), bridge = true } = {}) {
+/** What doctor reports: managed parts present and current, no stale session-bridge MCP, and hook receipts. */
+export function inspectAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marketDir = repoRoot && path.join(repoRoot, 'cc-market') } = {}) {
   const hooks = readJson(path.join(agyDir, 'hooks.json'));
   const installed = !!hooks && JSON.stringify(hooks[HOOK_NAME]) === JSON.stringify(managedAgyHook({ scriptsDir }));
   const mcp = readJson(path.join(agyDir, 'mcp_config.json'));
-  const mcpOk = !bridge || !repoRoot || samePath(mcp?.mcpServers?.[MCP_NAME]?.args?.[0], managedMcpServer({ repoRoot }).args[0]);
+  const mcpClean = !isLegacyBridgeMcp(mcp?.mcpServers?.[LEGACY_MCP_NAME]);
   const plugins = readJson(path.join(agyDir, 'plugins.json'));
   const pluginsOk = !marketDir || !fs.existsSync(marketDir) ||
     (plugins?.entries ?? []).some(e => JSON.stringify(e) === JSON.stringify(managedPluginEntry({ marketDir })));
@@ -162,7 +165,7 @@ export function inspectAgyConfig({ agyDir = AGY_DIR, scriptsDir, repoRoot, marke
     const receipt = readJson(path.join(agyDir, 'harness-hooks', `${event}.json`));
     events[event] = { executed: installed && receipt?.definition === hookDefinitionId({ scriptsDir }, event), at: receipt?.at ?? null };
   }
-  return { installed, mcp: mcpOk, plugins: pluginsOk, events,
+  return { installed, mcpClean, plugins: pluginsOk, events,
     executed: installed && ['SessionStart', 'PreToolUse', 'Stop'].every(e => events[e].executed) };
 }
 
@@ -178,7 +181,8 @@ export function managedStatusLine({ scriptsDir }) {
   const command = !/[\s"&|<>^()%!']/u.test(file)
     ? `node ${file}`
     : `node -e eval(Buffer.from('${Buffer.from(`process.argv[1]=${JSON.stringify(file)};import(${JSON.stringify(pathToFileURL(file).href)})`).toString('base64')}','base64').toString())`;
-  return { type: 'command', command, enabled: true };
+  // `telemetry: true` makes agy include `quota` (`map[string]StatusLineQuotaBucket`) on stdin JSON.
+  return { type: 'command', command, enabled: true, telemetry: true };
 }
 
 /**
@@ -203,8 +207,6 @@ export function installAgyStatusLine({ settingsFile = AGY_SETTINGS, scriptsDir, 
   const line = managedStatusLine({ scriptsDir });
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   if (smoke || fs.existsSync(path.join(scriptsDir, 'hooks', STATUSLINE_SCRIPT))) {
-    // Probe both non-verbatim cmd /c (EscapeArg) and direct whitespace-token spawn (no shell),
-    // the two ways agy's statusline_runner invokes `command`.
     const probe = (smoke ?? ((cmd, opts) => {
       const tokens = cmd.trim().split(/\s+/);
       const direct = spawnSync(tokens[0], tokens.slice(1), { cwd: opts.cwd, input: '{}', encoding: 'utf8', timeout: 20000, windowsHide: true });

@@ -352,6 +352,30 @@ function runRemind() {
   });
 }
 
+/**
+ * Local-only dirty/unpushed reminder under one wall-clock budget (used by Codex SessionEnd and
+ * Antigravity Stop; never performs network work or holds shutdown open).
+ */
+export async function boundedRepoReminder({ budgetMs = 1200, now = Date.now, run = execFileSync } = {}) {
+  const until = now() + budgetMs;
+  const localGit = (args) => {
+    const timeout = until - now();
+    if (timeout <= 0) throw new Error('reminder budget exhausted');
+    return run('git', args, {
+      cwd: REPO, timeout, encoding: 'utf8', windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  };
+  try {
+    const dirty = localGit(['status', '--porcelain']).split('\n').filter(Boolean).length;
+    let upstream = false, ahead = 0;
+    try { upstream = !!localGit(['rev-parse', '--verify', '--quiet', '@{u}']); } catch { /* new branch */ }
+    if (upstream) ahead = Number(localGit(['rev-list', '--count', '@{u}..HEAD'])) || 0;
+    return formatReminder({ dirty, ahead, noUpstream: !upstream });
+  } catch { return null; }
+}
+
 // ── hook plumbing ──
 
 // Hooks receive their payload on stdin. Absent stdin (manual run) or a stalled

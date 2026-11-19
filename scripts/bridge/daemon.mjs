@@ -958,7 +958,7 @@ export async function main() {
   const claude = new ClaudeAdapter({ queueDir: path.join(BRIDGE_RUNTIME_DIR, 'inbound') });
   // Antigravity has no IPC of its own: its hooks call the method `agy` on Claude's (agy-adapter.mjs).
   const agy = new AgyAdapter({ queueDir: path.join(BRIDGE_RUNTIME_DIR, 'inbound'), cwdFile: AGY_CWD_FILE }).start();
-  claude.local.agy = (p) => agy.handle(p);
+  claude.registerLocal('agy', (p) => agy.handle(p));
   const port = await claude.listen(0);
   // The config fingerprint is the SETTINGS' (bridgeConfigRevision()), the one the change check below
   // and ensure.mjs compute -- never the merged `config`, whose allowlist the settings do not carry:

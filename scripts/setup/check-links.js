@@ -170,7 +170,7 @@ export function checkLinks() {
     check(getAgyLinks(), agyDir, 'agy: ');
     try {
       if (installAgyConfig({ agyDir, scriptsDir: path.join(claudeDir, 'scripts'), repoRoot: sourceDir }).changed)
-        repaired.push('agy hooks/mcp/plugins config (re-merged)');
+        repaired.push('agy hooks/plugins config (re-merged)');
     } catch (error) { warnings.push(`agy config: ${error.message}`); }
   }
 

@@ -166,16 +166,30 @@ export function codexTranscript(text) {
  * subagent's message or a timer: system); every PLANNER_RESPONSE is one model call with its own
  * usage: `input_tokens` uncached, `cache_read_tokens`, `output_tokens`. agy records no cwd and no branch.
  */
-export function agyTranscript(text, { session = null } = {}) {
+export function agyTranscript(text, { session = null, subagent = false } = {}) {
   const turns = [];
   let cur = null;
+  let subagentParent = null;
+  const subagents = {};
   const open = (e, at, origin) => {
-    cur = { id: `${session ?? 'agy'}:${e.step_index ?? turns.length}`, start: at, end: at, origin, client: 'agy', branch: null, cwd: null, calls: [], tools: {} };
+    cur = { id: `${session ?? 'agy'}:${e.step_index ?? turns.length}`, start: at, end: at,
+      origin: subagent ? 'subagent' : origin, client: 'agy', branch: null, cwd: null, calls: [], tools: {} };
     turns.push(cur);
   };
   for (const e of lines(text)) {
     const at = ms(e.created_at);
     if (at === null) continue;
+    if (e.type === 'GENERIC' && typeof e.content === 'string') {
+      if (e.content.includes('"conversationId"') && e.content.includes('"workspaceUris"')) {
+        const cid = /"conversationId"\s*:\s*"([0-9a-f-]{36})"/i.exec(e.content)?.[1];
+        const uri = /"workspaceUris"\s*:\s*\[\s*"([^"]+)"/.exec(e.content)?.[1];
+        if (cid && uri) subagents[cid] = uri;
+      }
+      if (!subagentParent) {
+        const m = /[\\/]\.gemini[\\/]antigravity[^\\/]*[\\/]worktrees[\\/]([0-9a-f-]{36})(?:[\\/]|"|'|\s|$)/i.exec(e.content);
+        if (m) subagentParent = m[1];
+      }
+    }
     if (e.type === 'USER_INPUT') { open(e, at, 'human'); continue; }
     if (e.type === 'SYSTEM_MESSAGE') { open(e, at, 'system'); continue; }
     if (e.type === 'PLANNER_RESPONSE' && e.model) {
@@ -185,5 +199,5 @@ export function agyTranscript(text, { session = null } = {}) {
     }
     if (cur) cur.end = Math.max(cur.end, at);
   }
-  return { session, turns: turns.filter((t) => t.calls.length).flatMap(rowsOf), costs: [] };
+  return { session, subagents, subagentParent, turns: turns.filter((t) => t.calls.length).flatMap(rowsOf), costs: [] };
 }
