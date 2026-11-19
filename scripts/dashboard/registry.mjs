@@ -27,12 +27,18 @@ const FORGE_SKIP_MS = 30 * 60000;
 /** A source no host has declared for this long left every config: it is forgotten. */
 export const FORGE_FORGET_MS = 24 * 3600000;
 
+/** How often an unchanged host heartbeat refreshes its persisted `receivedAt` in DO storage. */
+const HOST_PERSIST_MS = 60000;
+const hostSig = (p) => JSON.stringify([p.sessions, p.accounts, p.config]);
+
 export class Registry {
   constructor({ hosts = [], ttlMs = 60000, offlineAlertMs = 300000, offlineAlertExclude = [], now = Date.now, store = null, notify = () => {} } = {}) {
     Object.assign(this, { ttlMs, offlineAlertMs, now, store, notify });
     this.offlineAlertExclude = new Set(offlineAlertExclude);   // hosts never alerted offline
     this.startedAt = now();   // a host not heard from since this start is counted silent from it
-    this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
+    this.hosts = new Map(hosts.map((id) => [id, store?.get(`host:${id}`) ?? null]));   // configured host id -> last push | null (persisted across DO eviction)
+    this.hostStored = new Map();
+    for (const [id, p] of this.hosts) if (p) this.hostStored.set(id, { at: p.receivedAt ?? 0, sig: hostSig(p) });
     this.alerted = new Map(Object.entries(store?.get('alerted') ?? {}));   // account key -> what was last alerted (quota-model.mjs quotaAlertsFor)
     this.down = new Map(Object.entries(store?.get('down') ?? {}));   // host id alerted offline -> when (ISO, or null) it was last seen
     this.seenAlerts = [];   // ids of host alerts already sent, newest first (MAX_SEEN_ALERTS)
@@ -59,7 +65,15 @@ export class Registry {
     // A boot dated ahead of this clock would outrank every later boot: refused (5 min skew).
     if (push.bootAt > this.now() + 300000) return { accepted: false };
     if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false };
-    this.hosts.set(hostId, { ...push, receivedAt: this.now() });
+    const now = this.now();
+    const record = { ...push, receivedAt: now };
+    this.hosts.set(hostId, record);
+    const sig = hostSig(record);
+    const saved = this.hostStored.get(hostId);
+    if (!saved || saved.sig !== sig || now - saved.at >= HOST_PERSIST_MS) {
+      this.store?.put(`host:${hostId}`, record);
+      this.hostStored.set(hostId, { at: now, sig });
+    }
     // Back: watched again, silently (only going offline is alerted).
     if (this.down.has(hostId)) {
       this.down.delete(hostId);

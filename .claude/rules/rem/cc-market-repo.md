@@ -1,20 +1,17 @@
-# cc-market is a Separate Git Repo
+# cc-market is a separate family repo
 
-`cc-market/` is gitignored by this repo and is its own standalone git repository
-(`DawnEver/cc-market`). When making changes to plugins (watch, rem, sharp-review, fabric,
-evolve), commit them inside `cc-market/`:
+cc-market (`DawnEver/cc-market`) is its own repository, checked out beside the other family repos,
+never inside this one. Its one location is the machine file's `[repos] cc-market`
+(`python -m dev_lab.dev.devhost local set repos.cc-market <path>`); `scripts/shared/market-dir.mjs`
+reads it for setup, doctor, agy, migrate and the plugin launcher. Commit plugin changes there:
 
 ```bash
-git -C cc-market add <files>
-git -C cc-market commit -m "..."
+git -C <declared cc-market checkout> add <files>
+git -C <declared cc-market checkout> commit -m "..."
 ```
 
-**Why:** `cc-market/` is cloned by setup as a community marketplace and is gitignored from
-this config-sync repo (`.gitignore` line: `cc-market/`). Changes to plugins live in the
-cc-market repo, not here.
+**Why:** two clones of one repo drift (user, 2026-11-19: keep one). An undeclared location is refused by
+name with its door, never guessed.
 
-**How to apply:** Always use `git -C cc-market` when committing plugin changes. This repo
-has no visibility into cc-market files. Note also that `~/.claude/plugins/cache/cc-market/`
-and `~/.claude/plugins/marketplaces/cc-market` are SEPARATE clones that lag behind this dev
-clone — a bug already fixed here may still reproduce from the cached/installed copy until
-that clone pulls the new commit.
+**How to apply:** `~/.claude/plugins/marketplaces/cc-market` and `~/.claude/plugins/cache/cc-market/` are
+the installed copies Claude pulls from GitHub; they lag the checkout until it lands and they update.

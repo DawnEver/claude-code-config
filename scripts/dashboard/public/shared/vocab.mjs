@@ -4,9 +4,11 @@
 // the Worker serves; everything here is plain data and pure functions, no imports.
 
 /** The agents a session or an account belongs to, and how they are named. */
-const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', agy: 'Antigravity' };
 export const AGENTS = Object.keys(AGENT_NAMES);
 export const agentName = (agent) => AGENT_NAMES[agent] ?? agent;
+/** Each agent's Telegram Topic icon colour (createForumTopic icon_color: one of the six Telegram allows). */
+export const TOPIC_ICON_COLORS = { claude: 16478047, codex: 9367192, agy: 7322096 };
 
 /**
  * A session's status, as its host reports it (the bridge maps each adapter's native state onto

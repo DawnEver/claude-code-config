@@ -10,7 +10,9 @@ import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 import { refreshProviderCache } from './provider-setup.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { installCodexHooks } from './codex-hooks.mjs';
+import { installAgyConfig, installAgyStatusLine, agyInstalled } from './agy-config.mjs';
 import { isMain } from '../shared/is-main.mjs';
+import { readMarketDir } from '../shared/market-dir.mjs';
 import { resolveCodexHome } from '../shared/codex-home.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 import { planService, runAction, SERVICE_NAME } from '../bridge/install-service.mjs';
@@ -29,6 +31,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const sourceDir = path.resolve(__dirname, '../..');
 export const claudeDir = path.join(os.homedir(), '.claude');
 export const codexDir = resolveCodexHome();
+// Antigravity CLI's global customization root (rules GEMINI.md, skills/, hooks.json, ...).
+export const agyDir = path.join(os.homedir(), '.gemini', 'config');
 
 // Directory holding the cloud-synced config payload. Defaults to the repo itself, so a
 // single-machine install needs no configuration and behaves exactly as it did before
@@ -106,7 +110,8 @@ export const CODEX_LINKS = [
 
 const isWindows = process.platform === 'win32';
 
-export function discoverCodexSkillLinks(baseSourceDir = sourceDir) {
+// Codex and agy keep their own built-in skills beside ours, so each skill is linked one by one.
+export function discoverSkillLinks(baseSourceDir = sourceDir) {
   const skillsDir = path.join(baseSourceDir, 'skills');
   if (!fs.existsSync(skillsDir)) return [];
 
@@ -130,7 +135,17 @@ export function discoverCodexSkillLinks(baseSourceDir = sourceDir) {
 }
 
 export function getCodexLinks(baseSourceDir = sourceDir) {
-  return [...CODEX_LINKS, ...discoverCodexSkillLinks(baseSourceDir)];
+  return [...CODEX_LINKS, ...discoverSkillLinks(baseSourceDir)];
+}
+
+// agy: hooks.json / mcp_config.json / plugins.json are merged by agy-config.mjs, never linked.
+export const AGY_LINKS = [
+  // agy's global rules file; same single source as ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md.
+  { src: 'GLOBAL-AGENTS.md', dest: 'GEMINI.md', type: 'file' },
+];
+
+export function getAgyLinks(baseSourceDir = sourceDir) {
+  return [...AGY_LINKS, ...discoverSkillLinks(baseSourceDir)];
 }
 
 // claude-hud's config is machine-tuned (lineLayout, language, maxWidth) and is hard-linked
@@ -767,27 +782,12 @@ export function setup(options = {}) {
   fs.mkdirSync(path.join(codexDir, 'skills'), { recursive: true });
   processLinks(getCodexLinks(), codexDir, counters, syncDir);
 
-  // Clone or update cc-market (community plugin marketplace)
+  // cc-market: Claude installs it from GitHub into ~/.claude/plugins/marketplaces; the development
+  // checkout is the family repo the machine file declares ([repos] cc-market), never a clone here.
   console.log('\n--- Plugins (cc-market) ---');
-  const ccMarketDir = path.join(sourceDir, 'cc-market');
-  if (fs.existsSync(path.join(ccMarketDir, '.git'))) {
-    try {
-      execFileSync('git', ['pull', '--ff-only'], { cwd: ccMarketDir, stdio: 'pipe' });
-      console.log('OK    cc-market - pulled latest');
-    } catch {
-      console.log('OK    cc-market - already exists (could not pull)');
-    }
-  } else if (fs.existsSync(ccMarketDir)) {
-    console.log('SKIP  cc-market - directory exists but is not a git repo');
-  } else {
-    try {
-      execFileSync('git', ['clone', 'https://github.com/DawnEver/cc-market'], { cwd: sourceDir, stdio: 'pipe' });
-      console.log('OK    cc-market - cloned from https://github.com/DawnEver/cc-market');
-    } catch (err) {
-      console.log(`ERR   cc-market - ${err.stderr?.toString().trim() || err.message}`);
-      counters.errors++;
-    }
-  }
+  const market = readMarketDir();
+  if (market.dir) console.log(`OK    cc-market checkout - ${market.dir}`);
+  else console.log(`NOTE  ${market.why}`);
   // Note: plugin enablement + the cc-market marketplace live in claude_settings.template.json,
   // which setup copies to claude_settings.json on a fresh install. setup does not mutate
   // enabledPlugins — flipping a plugin on or off is a deliberate edit to the shared payload
@@ -811,6 +811,22 @@ export function setup(options = {}) {
     const hooks = installCodexHooks({ codexDir, scriptsDir: path.join(claudeDir, 'scripts') });
     console.log(`OK    Codex hooks ${hooks.changed ? 'updated' : 'unchanged'}; review/trust new definitions with /hooks (never auto-trusted)`);
   } catch (err) { console.log(`ERR   Codex hooks: ${err.message}`); counters.errors++; }
+
+  // plugins.json names the plugins inside the declared cc-market checkout. Only where agy is
+  // installed (~/.gemini exists): setup never creates another host's home.
+  if (agyInstalled(agyDir)) {
+    console.log('\n--- Antigravity (agy) ---');
+    fs.mkdirSync(path.join(agyDir, 'skills'), { recursive: true });
+    processLinks(getAgyLinks(), agyDir, counters, syncDir);
+    try {
+      const agy = installAgyConfig({ agyDir, scriptsDir: path.join(claudeDir, 'scripts'), marketDir: market.dir });
+      console.log(`OK    agy hooks.json / plugins.json ${agy.changed ? 'updated' : 'unchanged'} (user entries preserved)`);
+    } catch (err) { console.log(`ERR   agy config: ${err.message}`); counters.errors++; }
+    try {
+      const line = installAgyStatusLine({ scriptsDir: path.join(claudeDir, 'scripts') });
+      console.log(line.status === 'skipped' ? `SKIP  agy statusLine - ${line.why}` : `OK    agy statusLine ${line.status}`);
+    } catch (err) { console.log(`ERR   agy statusLine: ${err.message}`); counters.errors++; }
+  }
 
   console.log('\n--- CLI Wrappers ---');
   installCliWrappers(claudeDir);

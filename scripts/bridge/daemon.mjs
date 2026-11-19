@@ -36,6 +36,7 @@ import { CodexAdapter, CodexHomes } from './codex-adapter.mjs';
 import { CodexLocalObserver } from './codex-local.mjs';
 import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
+import { AgyAdapter, AGY_CWD_FILE } from './agy-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
 import { BalanceReader } from './balances.mjs';
@@ -46,7 +47,7 @@ import { DashboardPush } from './dashboard-push.mjs';
 import { ResourceReader } from './resources.mjs';
 import { UsageScanner, sources as usageSources } from '../usage/scan.mjs';
 import { UsagePush } from '../usage/push.mjs';
-import { STATUS } from '../dashboard/public/shared/vocab.mjs';
+import { STATUS, TOPIC_ICON_COLORS } from '../dashboard/public/shared/vocab.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
 import { readBridgeConfig, bridgeAllowlist, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange } from './context.mjs';
 import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './runtime-paths.mjs';
@@ -495,7 +496,7 @@ export class Bridge {
       s.creating = true;
       s.statusMessageId = null; s.statusText = null;
       try {
-        s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title)).message_thread_id;
+        s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title, { iconColor: TOPIC_ICON_COLORS[s.agent] })).message_thread_id;
         this.#save(s);
       } catch (e) {
         if (e.code >= 400 && e.code < 500) s.state = 'none'; // confirmed rejection: later activity may retry
@@ -693,6 +694,7 @@ export class Bridge {
   async approval(key, { ref, summary, answerable }) {
     const s = this.sessions.get(key);
     if (!s) return;
+    const host = this.hosts.get(s.agent);
     const offer = answerable && this.config.approvalsFromTelegram && this.allowed.size > 0;
     const id = randomBytes(16).toString('hex');
     const pending = { key, agent: s.agent, ref, session: s, origin: null };
@@ -702,10 +704,17 @@ export class Bridge {
       { text: 'Accept', callback_data: `ap:${id}:y` }, { text: 'Decline', callback_data: `ap:${id}:n` },
     ]] } : undefined;
     const messages = await this.#send(s, `${head}\n${summary}`, { replyMarkup, alert: [...this.allowed] });
+    if (!offer) {
+      if (answerable) host?.releaseApproval?.(ref, s.id);
+      return;
+    }
     const message = messages.at(-1);   // Telegram puts the buttons on the final chunk
     if (this.approvals.get(id) === pending) {
       if (message && this.sessions.get(key) === s) pending.origin = { chatId: s.chatId, topicId: s.topicId, messageId: message.message_id };
-      else this.approvals.delete(id);
+      else {
+        this.approvals.delete(id);
+        host?.releaseApproval?.(ref, s.id);
+      }
     }
   }
 
@@ -947,6 +956,9 @@ export async function main() {
   const telegram = config.botToken ? new TelegramClient({ token: config.botToken, offsetFile: path.join(BRIDGE_RUNTIME_DIR, 'offset.json') }) : null;
   // Queued inbound messages live on disk: a handover or a crash loses none.
   const claude = new ClaudeAdapter({ queueDir: path.join(BRIDGE_RUNTIME_DIR, 'inbound') });
+  // Antigravity has no IPC of its own: its hooks call the method `agy` on Claude's (agy-adapter.mjs).
+  const agy = new AgyAdapter({ queueDir: path.join(BRIDGE_RUNTIME_DIR, 'inbound'), cwdFile: AGY_CWD_FILE }).start();
+  claude.registerLocal('agy', (p) => agy.handle(p));
   const port = await claude.listen(0);
   // The config fingerprint is the SETTINGS' (bridgeConfigRevision()), the one the change check below
   // and ensure.mjs compute -- never the merged `config`, whose allowlist the settings do not carry:
@@ -959,7 +971,7 @@ export async function main() {
   const resources = new ResourceReader();
   let lastAccounts = [], lastResources = null;
   const cardFacts = () => ({ accounts: lastAccounts, balanceEntries: config.balances, resources: config.dashboard ? lastResources : resources.read() });
-  const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, telegramEnabled: !!telegram, cardFacts,
+  const bridge = new Bridge({ telegram, adapters: [codex, claude, agy], config, machine, log, telegramEnabled: !!telegram, cardFacts,
     topicCacheFile: telegram ? path.join(BRIDGE_RUNTIME_DIR, 'topics.json') : null });
 
   const ac = new AbortController();
@@ -967,6 +979,7 @@ export async function main() {
     ac.abort();
     try { if (JSON.parse(fs.readFileSync(RUNTIME_FILE, 'utf8')).pid === process.pid) fs.rmSync(RUNTIME_FILE); } catch { /* gone */ }
     codex.stop();
+    agy.close();
     claude.close().finally(() => process.exit(0));
   };
   process.on('SIGINT', stop);

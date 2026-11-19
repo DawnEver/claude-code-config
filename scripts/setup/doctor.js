@@ -27,6 +27,8 @@ import { execFileSync, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { inspectCodexHooks } from './codex-hooks.mjs';
+import { inspectAgyConfig, agyInstalled } from './agy-config.mjs';
+import { readMarketDir } from '../shared/market-dir.mjs';
 import { inspectProtectedPluginCaches, inspectPluginCacheLock } from './update-codex-plugins.mjs';
 import { withoutRetiredCodexRootKey } from './codex-config-compose.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
@@ -36,8 +38,8 @@ import { readBridgeConfig, bridgeSourceRevision } from '../bridge/context.mjs';
 import { RUNTIME_FILE, BRIDGE_RUNTIME_DIR, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
 import { acquireOwnerLock, ownerLockLive } from '../shared/owner-lock.mjs';
 import {
-  sourceDir, claudeDir, codexDir, getSyncDir,
-  CLAUDE_LINKS, getCodexLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
+  sourceDir, claudeDir, codexDir, agyDir, getSyncDir,
+  CLAUDE_LINKS, getCodexLinks, getAgyLinks, repoMirrorLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
 } from './setup.js';
 import { accountFile } from '../shared/seats.mjs';
 import { channelServerPath, channelServerState } from '../shared/channel-server.mjs';
@@ -233,11 +235,16 @@ export function linkedTo(src, dest) {
 // a cloud client that replaces the synced file breaks that link, and from then on this host
 // reads and writes a private copy — every edit made here or synced in from another host is
 // silently lost to the other side.
-export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir(), sameVolume: volume = sameVolume } = {}) {
+export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir(), home = HOME, sameVolume: volume = sameVolume } = {}) {
+  const hostClaude = home === HOME ? claudeDir : path.join(home, '.claude');
+  const hostCodex = home === HOME ? codexDir : path.join(home, '.codex');
+  const hostAgy = home === HOME ? agyDir : path.join(home, '.gemini', 'config');
   const out = [];
   const tables = [
-    { label: 'claude', base: claudeDir, links: CLAUDE_LINKS },
-    { label: 'codex', base: codexDir, links: getCodexLinks(repoRoot) },
+    { label: 'claude', base: hostClaude, links: CLAUDE_LINKS },
+    { label: 'codex', base: hostCodex, links: getCodexLinks(repoRoot) },
+    // agy only where it is installed: setup never creates ~/.gemini.
+    ...(agyInstalled(hostAgy) ? [{ label: 'agy', base: hostAgy, links: getAgyLinks(repoRoot) }] : []),
     // The repo-root mirror: the checkout's own hard link to each payload file.
     { label: 'repo', base: repoRoot, links: repoMirrorLinks({ syncDir, repoRoot }) },
   ];
@@ -306,9 +313,10 @@ export function checkPlugins(settings, home = HOME) {
 // observable install inventory, so compare it with the configured marketplace clone.
 // This catches retired plugins (a plugin removed from its marketplace)
 // without treating disabled-but-still-available plugins as orphans.
-export function checkCodexPluginCache(repoRoot = sourceDir, home = HOME) {
+export function checkCodexPluginCache(marketDir, home = HOME) {
+  if (!marketDir) return [];
   const cache = path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'plugins', 'cache', 'cc-market');
-  const manifest = path.join(repoRoot, 'cc-market', '.agents', 'plugins', 'marketplace.json');
+  const manifest = path.join(marketDir, '.agents', 'plugins', 'marketplace.json');
   if (!fs.existsSync(cache) || !fs.existsSync(manifest)) return [];
   let known;
   try {
@@ -436,6 +444,26 @@ export function scanPublicHygiene(text, markers = []) {
  * code-shaped names count — `name()`, `ALL_CAPS_WITH_UNDERSCORE`, `camelCase` — matched as whole
  * words in the tracked JS. Words, file names and config keys are left alone.
  */
+const AGY_RULE_MAX_BYTES = 24000;
+
+/**
+ * Antigravity truncates any rule file (`AGENTS.md`, `GLOBAL-AGENTS.md`, `.claude/rules/*.md`)
+ * exceeding 24,000 bytes, silently dropping standards at the tail (incident 2026-11-19).
+ */
+export function checkRuleFileSize(root = sourceDir, maxBytes = AGY_RULE_MAX_BYTES) {
+  const out = [];
+  for (const rel of ['AGENTS.md', 'GLOBAL-AGENTS.md']) {
+    const p = path.join(root, rel);
+    let size;
+    try { size = fs.statSync(p).size; } catch { continue; }
+    if (size > maxBytes) {
+      out.push(finding('FAIL', 'rule-file-size', `${rel} is ${size} bytes (exceeds Antigravity's ${maxBytes}-byte rule limit; tail is truncated)`,
+        `move detailed subsystem prose to docs/*.md so ${rel} stays under ${maxBytes} bytes`));
+    }
+  }
+  return out;
+}
+
 export function checkRuleSymbols(root = sourceDir, files = trackedFiles(root)) {
   const code = files.filter((f) => /\.(mjs|js|cjs)$/.test(f)).map((f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch { return ''; } }).join('\n');
   const known = new Set(code.match(/[A-Za-z_$][\w$]*/g) ?? []);
@@ -693,7 +721,9 @@ export function cachedContentChecks({ cacheFile = CONTENT_CACHE_FILE, fingerprin
   return findings;
 }
 
-export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME, contentCache = null } = {}) {
+// `market` is this machine's declared cc-market checkout (shared/market-dir.mjs); a test home has none.
+export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME, contentCache = null,
+  market = home === HOME ? readMarketDir() : { dir: null, why: null } } = {}) {
   const settingsPath = path.join(syncDir, 'claude_settings.json');
   let settings = null;
   try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { /* reported by checkPayloadShape */ }
@@ -701,7 +731,8 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
   const contentChecks = () => {
     const files = trackedFiles(repoRoot);
     return [
-        ...checkRuleSymbols(repoRoot, files),
+      ...checkRuleFileSize(repoRoot),
+      ...checkRuleSymbols(repoRoot, files),
       ...checkPublicHygiene({ root: repoRoot, files, markersFile, requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
     ];
   };
@@ -714,13 +745,15 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkHooks(settings, home),
     ...checkPayloadPaths(syncDir),
     ...checkPayloadShape(syncDir, repoRoot),
-    ...checkLinks({ repoRoot, syncDir }),
+    ...checkLinks({ repoRoot, syncDir, home }),
     ...checkPlugins(settings, home),
-    ...checkCodexPluginCache(repoRoot, home),
+    ...(market.why ? [finding('FAIL', 'cc-market-location', 'the cc-market checkout is not declared', market.why)] : []),
+    ...checkCodexPluginCache(market.dir, home),
     ...checkHygiene(repoRoot),
     ...checkNativeCodexHooks({ codexHome: home === HOME ? codexDir : path.join(home, '.codex'), scriptsDir: path.join(home, '.claude', 'scripts') }),
     ...checkProtectedCodexCaches({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
     ...checkPluginCacheLock({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
+    ...checkAgyConfig({ agyHome: path.join(home, '.gemini', 'config'), scriptsDir: path.join(home, '.claude', 'scripts'), marketDir: market.dir }),
     ...content,
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
     ...checkBridgeRevision({ runtimeFile: path.join(home, '.claude', 'bridge', 'runtime.json'), repoRoot }),
@@ -734,6 +767,21 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
       configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
     ...checkRetiredCodexRootKey({ configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
   ];
+}
+
+// agy's hooks.json / plugins.json are merged, not linked, so the link table cannot see a lost
+// managed part; like Codex, an installed hook that never ran is a silent gap.
+export function checkAgyConfig({ agyHome = agyDir, scriptsDir = path.join(claudeDir, 'scripts'), marketDir = null } = {}) {
+  if (!agyInstalled(agyHome)) return [];
+  const state = inspectAgyConfig({ agyDir: agyHome, scriptsDir, marketDir });
+  const fix = 'run setup (it merges the managed parts and preserves user entries)';
+  const out = [];
+  if (!state.installed) out.push(finding('FAIL', 'agy-native-hooks', 'agy hooks.json lacks the current cc-config hook', fix));
+  if (!state.mcpClean) out.push(finding('FAIL', 'agy-mcp', 'agy mcp_config.json still carries the legacy session-bridge server', fix));
+  if (!state.plugins) out.push(finding('FAIL', 'agy-plugins', 'agy plugins.json lacks the current cc-market entry', fix));
+  if (state.installed && !state.executed) out.push(finding('WARN', 'agy-native-hooks', 'agy hooks are installed but their execution has not been observed',
+    `not observed: ${Object.entries(state.events).filter(([, v]) => !v.executed).map(([name]) => name).join(', ')}; start an agy session`));
+  return out;
 }
 
 function checkNativeCodexHooks({ codexHome = codexDir, scriptsDir = path.join(claudeDir, 'scripts') } = {}) {

@@ -10,7 +10,7 @@
   whose name is no longer in `WRAPPER_NAMES` (install-cli-wrappers.js, the one list). This is why `cogmi` was removed without
   leaving `cogmi.cmd` behind. It sweeps the claude bin dir, so on a Codex-only host it is a
   no-op — the wrappers there live in codex's bin dir.
-- `migrateProject(cwd)` — scans `<repo>/cc-market/*/migrations/migrate.mjs` and calls each
+- `migrateProject(cwd)` — scans `<declared cc-market checkout>/*/migrations/migrate.mjs` (machine file `[repos] cc-market`) and calls each
   one with `cwd` as the project root. It does **not** consult
   `~/.claude/plugins/installed_plugins.json`; discovery is by directory, so a plugin's
   migration runs for every project regardless of whether it is installed there.

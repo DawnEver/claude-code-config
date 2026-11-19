@@ -114,6 +114,29 @@ test('registry: ordering per boot, offline after TTL, configured hosts listed be
   assert.equal(r.accept('host-b', parseHostPush(push({ bootAt: t + 3600000 }))).accepted, false, 'a boot dated ahead of the gateway clock');
 });
 
+test('registry: persisted host snapshots and accounts survive Durable Object eviction without blanking', () => {
+  let t = NOW;
+  const kv = new Map();
+  const store = { get: (k) => kv.get(k), put: (k, v) => kv.set(k, structuredClone(v)) };
+  const acct = { key: 'claude:u@example.com', kind: 'quota', agent: 'claude', label: null, email: 'u@example.com', detail: 'Max', problems: [], at: NOW, windows: [], resetCredits: null, extraReset: null };
+  const r1 = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, store, now: () => t });
+  assert.equal(r1.accept('host-a', parseHostPush(push({ seq: 3, accounts: [acct] }))).accepted, true);
+  // Simulate DO eviction / Worker redeploy 20s later: cold constructor restores sessions + accounts at once.
+  t += 20000;
+  const r2 = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, store, now: () => t });
+  assert.equal(r2.host('host-a').online, true);
+  assert.equal(r2.host('host-a').sessions.length, 1);
+  assert.equal(r2.accounts().length, 1);
+  assert.equal(r2.accounts()[0].email, 'u@example.com');
+  assert.equal(r2.accept('host-a', parseHostPush(push({ seq: 2 }))).accepted, false, 'persisted seq still rejects delayed older push');
+  // Even after host-a goes offline, its last account observation remains cached rather than zeroing out.
+  t += 60000;
+  const r3 = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, store, now: () => t });
+  assert.equal(r3.host('host-a').online, false);
+  assert.equal(r3.host('host-a').sessions[0].stale, true);
+  assert.equal(r3.accounts().length, 1);
+});
+
 async function gateway(over = {}, { db = null } = {}) {
   const { token, hash } = await newHostToken();
   let now = NOW;
