@@ -36,9 +36,9 @@ test('the scanner reads each conversation transcript.jsonl (not transcript_full)
   fs.writeFileSync(path.join(logs, 'transcript.jsonl'), TRANSCRIPT);
   fs.writeFileSync(path.join(logs, 'transcript_full.jsonl'), TRANSCRIPT);
   assert.equal(PARSERS.agy(TRANSCRIPT, path.join(logs, 'transcript.jsonl')).session, 'conv-1');
-  const src = { agent: 'agy', root: path.join(home, 'brain'), depth: 3, only: 'transcript.jsonl', seat: null, account: () => 'agy:a@x.io', cwdOf: (s) => (s === 'conv-1' ? '/repo' : null) };
+  const src = { agent: 'agy', root: path.join(home, 'brain'), depth: 3, only: 'transcript.jsonl', seat: null, account: () => 'agy:a@example.com', cwdOf: (s) => (s === 'conv-1' ? '/repo' : null) };
   const sc = new UsageScanner({ cursorFile: path.join(home, 'cursor.json'), sources: () => [src], project: (cwd) => `p:${cwd}` });
   const r = await sc.collect();
   assert.equal(r.turns.length, 2);
-  assert.ok(r.turns.every((t) => t.agent === 'agy' && t.session === 'conv-1' && t.account === 'agy:a@x.io' && t.project === 'p:/repo'));
+  assert.ok(r.turns.every((t) => t.agent === 'agy' && t.session === 'conv-1' && t.account === 'agy:a@example.com' && t.project === 'p:/repo'));
 });

@@ -31,18 +31,18 @@ test('statusLine quota -> windows per pool (remaining fraction, reset in seconds
 test('teed series become one dashboard account per pool, keyed by the login; a session spends the freshest', () => {
   const dir = tmp();
   const now = Date.now();
-  teeAgyUsage({ quota: { 'gemini-5h': { remaining_fraction: 0.8, reset_in_seconds: 3 * 3600 } } }, { email: 'A@x.io', dir, now: now - 1000 });
-  teeAgyUsage({ quota: { 'claude-5h': { remaining_fraction: 0.4, reset_in_seconds: 3 * 3600 } } }, { email: 'A@x.io', dir, now });
-  const pools = readAgy({ email: 'A@x.io', dir });
+  teeAgyUsage({ quota: { 'gemini-5h': { remaining_fraction: 0.8, reset_in_seconds: 3 * 3600 } } }, { email: 'A@example.com', dir, now: now - 1000 });
+  teeAgyUsage({ quota: { 'claude-5h': { remaining_fraction: 0.4, reset_in_seconds: 3 * 3600 } } }, { email: 'A@example.com', dir, now });
+  const pools = readAgy({ email: 'A@example.com', dir });
   assert.deepEqual(pools.map((p) => p.pool), ['claude', 'gemini']);
-  assert.deepEqual(readAgy({ email: 'other@x.io', dir }), []);
+  assert.deepEqual(readAgy({ email: 'other@example.com', dir }), []);
   const reader = new AccountReader({ machine: 'm', now: () => now, extraResets: async () => null,
     sources: { seats: () => [], claude: () => [], agy: () => pools } });
   const accounts = reader.read().filter((a) => a.agent === 'agy');
-  assert.deepEqual(accounts.map((a) => a.key), ['agy:a@x.io|claude', 'agy:a@x.io|gemini']);
+  assert.deepEqual(accounts.map((a) => a.key), ['agy:a@example.com|claude', 'agy:a@example.com|gemini']);
   assert.equal(accounts[0].windows[0].k, '5h');
   assert.equal(Math.round(accounts[0].windows[0].used), 60);
-  assert.equal(accountFor({ agent: 'agy', seat: null }, accounts), 'agy:a@x.io|claude');
+  assert.equal(accountFor({ agent: 'agy', seat: null }, accounts), 'agy:a@example.com|claude');
   // The wire format takes them: agent `agy` is in the vocabulary.
   const push = parseHostPush({ schemaVersion: SCHEMA_VERSION, bootAt: 1, seq: 1, sessions: [{ id: 's', agent: 'agy', status: 'idle', lastActivityAt: now }], accounts });
   assert.equal(push.accounts.filter((a) => a.agent === 'agy').length, 2);
@@ -51,8 +51,8 @@ test('teed series become one dashboard account per pool, keyed by the login; a s
 
 test('the agy login is the last applyAuthResult in cli.log', () => {
   const dir = tmp();
-  fs.writeFileSync(path.join(dir, 'cli.log'), 'x applyAuthResult: email=old@x.io, authMethod=consumer\ny applyAuthResult: email=new@x.io, authMethod=consumer\n');
-  assert.equal(readAgyEmail(dir), 'new@x.io');
+  fs.writeFileSync(path.join(dir, 'cli.log'), 'x applyAuthResult: email=old@example.com, authMethod=consumer\ny applyAuthResult: email=new@example.com, authMethod=consumer\n');
+  assert.equal(readAgyEmail(dir), 'new@example.com');
   assert.equal(readAgyEmail(tmp()), null);
 });
 

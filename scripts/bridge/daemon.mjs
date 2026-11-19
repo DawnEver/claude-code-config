@@ -694,6 +694,7 @@ export class Bridge {
   async approval(key, { ref, summary, answerable }) {
     const s = this.sessions.get(key);
     if (!s) return;
+    const host = this.hosts.get(s.agent);
     const offer = answerable && this.config.approvalsFromTelegram && this.allowed.size > 0;
     const id = randomBytes(16).toString('hex');
     const pending = { key, agent: s.agent, ref, session: s, origin: null };
@@ -703,10 +704,17 @@ export class Bridge {
       { text: 'Accept', callback_data: `ap:${id}:y` }, { text: 'Decline', callback_data: `ap:${id}:n` },
     ]] } : undefined;
     const messages = await this.#send(s, `${head}\n${summary}`, { replyMarkup, alert: [...this.allowed] });
+    if (!offer) {
+      if (answerable) host?.releaseApproval?.(ref, s.id);
+      return;
+    }
     const message = messages.at(-1);   // Telegram puts the buttons on the final chunk
     if (this.approvals.get(id) === pending) {
       if (message && this.sessions.get(key) === s) pending.origin = { chatId: s.chatId, topicId: s.topicId, messageId: message.message_id };
-      else this.approvals.delete(id);
+      else {
+        this.approvals.delete(id);
+        host?.releaseApproval?.(ref, s.id);
+      }
     }
   }
 

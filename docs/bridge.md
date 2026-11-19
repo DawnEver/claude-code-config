@@ -19,9 +19,9 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs  (one per machine, o
 Each host adapter turns its host's protocol into the same events — `up {id, cwd, branch?,
 backlog[]}`, `prompt {id, text, turnId?}`, `message {id, text, turnId?, itemId?}`, `progress {id, text}`,
 `final {id, text, turnId?, status?}`, `approval {id, ref, summary, answerable}`, `down {id}`
-— and offers the same interface: `inject`, `status`, `answerApproval`, and `interrupt` where
-the host has one (Codex only). `daemon.mjs` has no host-specific branch; everything below
-holds for Claude and Codex alike.
+— and offers the same interface: `inject`, `status`, `answerApproval`, `answerQuestion`, and `interrupt` where
+the host has one (Codex and Antigravity). `daemon.mjs` has no host-specific branch; everything below
+holds for Claude, Codex and Antigravity alike.
 
 **Only main sessions are bridged.** Each adapter decides with one predicate,
 `isMainSession`, before it emits `up`; anything else never registers, never gets a Topic,
@@ -326,9 +326,21 @@ which emits the standard events. A call fails open and silent within ~1.2 s when
 - **Telegram -> agy**: always queued (on disk, `inbound/agy-*.json`) and handed to the next Stop,
   which continues the session with `{decision: "continue", reason}`. An idle session waits for a local prompt.
 - **Down**: agy has no SessionEnd; a session silent for 3 h (12 h while a turn runs) is reported
-  down. Its next hook brings it back under the same id and Topic.
-- Not bridged: agy's permission prompts and `ask_question` dialogs reach no hook, so there are no
-  approval or question buttons; no `/interrupt`.
+  down (withdrawing any pending question/approval controls). Its next hook brings it back under the same id and Topic.
+- **Questions (`ask_question`)**: `PreToolUse` relays questions and option buttons to Telegram. In a
+  Telegram-started turn, the hook waits up to 10 minutes (hook timeout 660 s) for the answer and
+  returns `{decision: "deny", reason: "User answered via Telegram:\\n..."}` so the model reads the
+  answer directly without blocking on a local TUI prompt. In a local turn it posts read-only
+  (`answerable: false`), returns `{}` at once for the terminal dialog, and emits `question-resolved`
+  on `PostToolUse`.
+- **Approvals**: in a Telegram-started turn when `settings.json` `toolPermission` is not
+  `"always-proceed"` (with `bridge.approvalsFromTelegram: true`), `PreToolUse` for `run_command`,
+  `write_file` and `edit_file` posts Accept/Decline buttons, waits up to 10 minutes, and returns
+  `{decision: "allow"}` or `{decision: "deny", reason}`. Local turns and `"always-proceed"` never block.
+- **`/interrupt`**: arms a pending interrupt on the session (and settles any waiting question or
+  approval immediately); the next `PreToolUse` returns `{decision: "deny", reason: "Interrupted from Telegram."}`
+  and the next `PreInvocation` returns `{terminate: true, reason: "Interrupted from Telegram."}`
+  (`terminationBehavior: "terminate"` + `errorMessage`), clearing the flag once delivered.
 
 ## Setup (per machine)
 
