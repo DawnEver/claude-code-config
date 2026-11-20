@@ -42,6 +42,7 @@ function parseSession(s) {
   const t = s.topic;
   const url = t && topicUrl(t.chatId, t.topicId);
   return {
+    // name: its rename / native title, else its Topic title (Bridge.dashboardSessions).
     id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
     // The API platform the session spends instead of a subscription; null = a subscription.
     provider: isProvider(s.provider) ? s.provider : null,
@@ -50,18 +51,19 @@ function parseSession(s) {
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
     // What it waits for (the permission it asks, its question), only while it waits for the human.
     ...(['needs_approval', 'needs_input'].includes(s.status) && text(s.waiting, WAITING_MAX) ? { waiting: text(s.waiting, WAITING_MAX) } : {}),
-    // The shells and subagents it runs now (scripts/bridge/tasks.mjs).
+    // The shells and subagents it runs now (scripts/bridge/activity-board.mjs).
     ...(Array.isArray(s.tasks) && s.tasks.length ? { tasks: s.tasks.slice(0, MAX_TASKS).map(parseTask).filter(Boolean) } : {}),
     unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,
     // Posts to the Topic ever (a running count: a page keeps what it has seen) and when the last one came.
     posted: num(s.posted, 0, Number.MAX_SAFE_INTEGER) ?? 0, lastPostAt: iso(s.lastPostAt),
     lastActivityAt: iso(s.lastActivityAt),
-    // The Topic, and the same Topic opened at its first unread post and at its latest post.
+    // The Topic, and the same Topic opened at its first unread post and at its latest post. The daemon
+    // exports only sessions that have one (Bridge.dashboardSessions); null here is a malformed Topic.
     topic: url ? { url, closed: t.closed === true, ...atMessage(t, 'firstUnread', 'firstUnreadUrl'), ...atMessage(t, 'lastPost', 'latestUrl') } : null,
   };
 }
 
-/** One running task of a session (scripts/bridge/tasks.mjs TaskBoard.list): a kind, a one-line label, when it started. */
+/** One running task of a session (scripts/bridge/activity-board.mjs ActivityBoard.list): a kind, a one-line label, when it started. */
 function parseTask(t) {
   const id = text(t?.id, 128);
   if (!id || !TASK_KINDS.includes(t.kind) || !epoch(t.startedAt)) return null;
@@ -175,13 +177,24 @@ function parseConfigSummary(c) {
       dashboardError: text(f.dashboardError, 200) } };
 }
 
+const hours = (v) => (Number.isFinite(v) && v >= 0 && v <= 1e10 ? Math.round(v) : null);
+
 /**
- * An alert the host raised itself (scripts/bridge/daemon.mjs): a failed turn. The gateway sends
- * it as the dashboard bot (registry.mjs). `id` makes a push re-sent after a lost reply alert once;
- * the link is built here from the Topic, like a session's, never taken from the host as a URL.
+ * An alert the host raised itself (scripts/bridge/daemon.mjs): a failed turn, or an HPC budget
+ * running out (scripts/bridge/hpc.mjs budgetAlert). The gateway sends it as the dashboard bot
+ * (registry.mjs). `id` makes a push re-sent after a lost reply alert once; a link is built here
+ * from the Topic, like a session's, never taken from the host as a URL.
  */
 function parseAlert(a) {
   const id = typeof a?.id === 'string' && /^[\w-]{1,64}$/.test(a.id) ? a.id : null;
+  if (id && a.kind === 'hpc-budget') {
+    const grant = typeof a.grant === 'string' && /^[\w.@-]{1,64}\/[\w.@-]{1,64}$/.test(a.grant) ? a.grant : null;
+    const [spent, committed, total, projected] = [a.spent, a.committed, a.total, a.projected].map(hours);
+    const window = Number.isFinite(a.window) && a.window >= 0 && a.window <= 1 ? a.window : null;
+    const until = typeof a.until === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.until) ? a.until : null;
+    return grant && spent !== null && committed !== null && total > 0 && window !== null
+      ? { id, kind: a.kind, grant, spent, committed, total, window, until, projected } : null;
+  }
   if (!id || a.kind !== 'turn-failed' || !AGENTS.includes(a.agent)) return null;
   const t = a.topic;
   return { id, kind: a.kind, agent: a.agent, project: text(a.project), session: text(a.session, 200), error: text(a.error, 1000) ?? 'unknown',

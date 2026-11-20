@@ -19,6 +19,7 @@ test('the agent runs as `<recorded python> -m ai_lab.session <agent> ...`', () =
     { command: python, args: ['-m', SESSION_MODULE, 'claude', '-c', 'x'] });
   assert.equal(SESSION_MODULE, 'ai_lab.session');
   assert.deepEqual(sessionSpawn('codex', [], { python, ensure: has }).args, ['-m', 'ai_lab.session', 'codex']);
+  assert.deepEqual(sessionSpawn('agy', ['-c'], { python, ensure: has }).args, ['-m', 'ai_lab.session', 'agy', '-c']);
 });
 
 test('planted: an ai-lab without ai_lab.session, or no recorded interpreter, still launches the agent, saying why', () => {

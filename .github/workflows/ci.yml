@@ -26,6 +26,16 @@
           "description": "the pull request this run is, for a PR the job token opened (continue.yml)",
           "type": "string",
           "default": ""
+        },
+        "measurement_paths": {
+          "description": "MEASUREMENT only: JSON array of repository-relative test file or node selectors",
+          "type": "string",
+          "default": ""
+        },
+        "measurement_sha": {
+          "description": "MEASUREMENT only: exact 40-hex SHA that the dispatched ref must check out",
+          "type": "string",
+          "default": ""
         }
       }
     },
@@ -36,8 +46,8 @@
     ]
   },
   "concurrency": {
-    "group": "ci-${{ (github.event_name == 'pull_request' || inputs.pr != '') && format('pr-{0}', github.event.pull_request.number || inputs.pr) || github.run_id }}",
-    "cancel-in-progress": "${{ (github.event_name == 'pull_request' || inputs.pr != '') }}"
+    "group": "ci-${{ inputs.measurement_paths == '' && inputs.measurement_sha == '' && (github.event_name == 'pull_request' || inputs.pr != '') && format('pr-{0}', github.event.pull_request.number || inputs.pr) || github.run_id }}",
+    "cancel-in-progress": "${{ inputs.measurement_paths == '' && inputs.measurement_sha == '' && (github.event_name == 'pull_request' || inputs.pr != '') }}"
   },
   "permissions": {
     "contents": "read"
@@ -46,9 +56,70 @@
     "HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}",
     "FAMILY_SOURCE": "${{ github.server_url }}/${{ github.repository_owner }}/",
     "PARTS_EVENT": "${{ (github.event_name == 'push' || inputs.smoke || inputs.pr != '') && 'pull_request' || github.event_name }}",
-    "PR_NUMBER": "${{ github.event.pull_request.number || inputs.pr }}"
+    "PR_NUMBER": "${{ github.event.pull_request.number || inputs.pr }}",
+    "DEV_LAB_ROLES": "{\"merge\": \"ci\", \"promote\": \"ci\", \"prune\": \"ci\", \"review\": \"host\", \"tests\": \"ci\"}"
   },
   "jobs": {
+    "measurement": {
+      "name": "MEASUREMENT (selected tests, not a part)",
+      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && (github.event_name == 'workflow_dispatch' && (inputs.measurement_paths != '' || inputs.measurement_sha != '')) }}",
+      "runs-on": "ubuntu-latest",
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {
+        "MEASUREMENT_PATHS": "${{ inputs.measurement_paths }}",
+        "MEASUREMENT_SHA": "${{ inputs.measurement_sha }}",
+        "MEASUREMENT_PR": "${{ inputs.pr }}",
+        "MEASUREMENT_SMOKE": "${{ inputs.smoke }}"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v4",
+          "with": {
+            "ref": "${{ env.HEAD_SHA }}",
+            "fetch-depth": 0,
+            "persist-credentials": false
+          }
+        },
+        {
+          "uses": "actions/setup-node@v4",
+          "with": {
+            "node-version": 22
+          }
+        },
+        {
+          "name": "Install uv",
+          "uses": "astral-sh/setup-uv@v5",
+          "with": {
+            "enable-cache": true
+          }
+        },
+        {
+          "name": "Sync the environment",
+          "run": "uv sync --frozen --all-groups"
+        },
+        {
+          "name": "Install the normal measurement hooks",
+          "run": "uv run --no-sync python -m dev_lab.dev.hook_install --repo . --install"
+        },
+        {
+          "id": "measurement",
+          "name": "Measure the exact requested selection",
+          "run": "uv run --no-sync python -m dev_lab.dev.jobmeasure"
+        },
+        {
+          "name": "Retain measurement evidence, including incomplete output",
+          "if": "${{ always() && steps.measurement.outputs.artifacts != '' }}",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "measurement-${{ github.run_id }}-${{ github.run_attempt }}",
+            "path": "${{ steps.measurement.outputs.artifacts }}/receipt.json\n${{ steps.measurement.outputs.artifacts }}/stdout.log\n${{ steps.measurement.outputs.artifacts }}/verify.log",
+            "if-no-files-found": "warn"
+          }
+        }
+      ]
+    },
     "parts": {
       "env": {
         "GITHUB_TOKEN": "${{ github.token }}"
@@ -89,7 +160,7 @@
           "id": "matrix",
           "name": "The parts and their runners",
           "if": "${{ steps.pending.outputs.pending != 'false' }}",
-          "run": "echo \"matrix=$(uv run --no-sync python -m dev_lab.dev.jobparts matrix --runners hosted --event \"$PARTS_EVENT\")\" >> \"$GITHUB_OUTPUT\""
+          "run": "matrix=\"$(uv run --no-sync python -m dev_lab.dev.jobparts matrix --runners hosted --event \"$PARTS_EVENT\")\"; echo \"matrix=$matrix\" >> \"$GITHUB_OUTPUT\""
         }
       ],
       "outputs": {
@@ -97,14 +168,14 @@
         "event": "${{ env.PARTS_EVENT }}",
         "pending": "${{ steps.pending.outputs.pending }}"
       },
-      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) }}"
+      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '')) }}"
     },
     "part": {
       "env": {
         "GITHUB_TOKEN": "${{ github.token }}"
       },
       "needs": "parts",
-      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && (needs.parts.outputs.matrix != '') }}",
+      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '') && (needs.parts.outputs.matrix != '')) }}",
       "name": "tests/${{ matrix.part }}",
       "runs-on": "${{ matrix.runs-on }}",
       "steps": [
@@ -135,6 +206,16 @@
         {
           "name": "Produce and post the part",
           "run": "uv run --no-sync python -m dev_lab.dev.jobparts produce ${{ matrix.part }}"
+        },
+        {
+          "name": "Keep the part's verify log",
+          "if": "${{ always() }}",
+          "uses": "actions/upload-artifact@v4",
+          "with": {
+            "name": "verify-log-${{ matrix.part }}-${{ github.run_attempt }}",
+            "path": "**/verify/verify-*.log",
+            "if-no-files-found": "warn"
+          }
         }
       ],
       "permissions": {
@@ -154,7 +235,7 @@
         "parts",
         "part"
       ],
-      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && (always() && needs.parts.result == 'success' && needs.parts.outputs.matrix != '') }}",
+      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '') && (always() && needs.parts.result == 'success' && needs.parts.outputs.matrix != '')) }}",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
@@ -196,7 +277,7 @@
       "env": {
         "GITHUB_TOKEN": "${{ github.token }}"
       },
-      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((github.event_name == 'pull_request' || inputs.pr != '')) }}",
+      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '') && ((github.event_name == 'pull_request' || inputs.pr != ''))) }}",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
@@ -238,7 +319,7 @@
       "env": {
         "GITHUB_TOKEN": "${{ github.token }}"
       },
-      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((github.event_name == 'pull_request' || inputs.pr != '')) }}",
+      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '') && ((github.event_name == 'pull_request' || inputs.pr != ''))) }}",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
@@ -286,7 +367,7 @@
         "part",
         "absent-parts"
       ],
-      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && (always() && (github.event_name == 'pull_request' || inputs.pr != '')) }}",
+      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '') && (always() && (github.event_name == 'pull_request' || inputs.pr != ''))) }}",
       "runs-on": "ubuntu-latest",
       "outputs": {
         "due": "${{ steps.ready.outputs.due }}"
@@ -345,7 +426,7 @@
         "parts",
         "absent-parts"
       ],
-      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && (needs.parts.outputs.pending == 'true') }}",
+      "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '') && (needs.parts.outputs.pending == 'true')) }}",
       "runs-on": "ubuntu-latest",
       "steps": [
         {
@@ -374,7 +455,7 @@
         },
         {
           "name": "Promote main",
-          "run": "uv run --no-sync python -m dev_lab.dev.integrate promote \"$HEAD_SHA\" && git push origin main"
+          "run": "uv run --no-sync python -m dev_lab.dev.integrate promote --newest \"$HEAD_SHA\""
         },
         {
           "name": "Delete the branches integration now contains",

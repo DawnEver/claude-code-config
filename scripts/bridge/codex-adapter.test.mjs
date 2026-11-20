@@ -673,8 +673,8 @@ test('waitingOnUserInput reads as waiting-input; a pending question does before 
 });
 
 test('trackItem: a command runs from its inProgress item to its end; each subagent by its thread, as agentsStates says', async () => {
-  const { TaskBoard } = await import('./tasks.mjs');
-  const b = new TaskBoard();
+  const { ActivityBoard } = await import('./activity-board.mjs');
+  const b = new ActivityBoard();
   trackItem(b, { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'inProgress' }, 1000);
   trackItem(b, { type: 'commandExecution', id: 'c2', command: 'ls', status: 'completed', durationMs: 50 }, 1200);
   trackItem(b, { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'failed', exitCode: 1 }, 3000);
@@ -689,8 +689,8 @@ test('trackItem: a command runs from its inProgress item to its end; each subage
 });
 
 test('trackItem: a command run by PowerShell is a PowerShell, labelled by its script; an exec session kept open is in the background', async () => {
-  const { TaskBoard } = await import('./tasks.mjs');
-  const b = new TaskBoard();
+  const { ActivityBoard } = await import('./activity-board.mjs');
+  const b = new ActivityBoard();
   trackItem(b, { type: 'commandExecution', id: 'p1', status: 'inProgress',
     command: '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "Get-ChildItem -Recurse"' }, 1);
   trackItem(b, { type: 'commandExecution', id: 'p2', status: 'inProgress', command: "pwsh -c 'npm test'" }, 2);

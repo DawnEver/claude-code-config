@@ -10,8 +10,10 @@
 // with commits its upstream lacks, is left exactly as it is and the notice names the command.
 //
 // Two modes, wired to two hook events in claude_settings.json:
-//   --pull    SessionStart: fast-forward the repo onto its upstream, so a
-//             session starts from the freshest tree. Never blocks the session.
+//   --pull             Fast-forward the repo onto its upstream (bounded fetch and merge).
+//                      The provider launchers run it before loading repo modules.
+//   --pull-background  SessionStart: start --pull detached and return at once with a
+//                      one-line notice, so a session never waits on the network.
 //   --remind  SessionEnd:   report uncommitted files / unpushed commits. The
 //             outbound direction stays an explicit user action by design — see
 //             .claude/memory/2026/06/06/feedback-no-auto-push.md.
@@ -350,6 +352,30 @@ function runRemind() {
   });
 }
 
+/**
+ * Local-only dirty/unpushed reminder under one wall-clock budget (used by Codex SessionEnd and
+ * Antigravity Stop; never performs network work or holds shutdown open).
+ */
+export async function boundedRepoReminder({ budgetMs = 1200, now = Date.now, run = execFileSync } = {}) {
+  const until = now() + budgetMs;
+  const localGit = (args) => {
+    const timeout = until - now();
+    if (timeout <= 0) throw new Error('reminder budget exhausted');
+    return run('git', args, {
+      cwd: REPO, timeout, encoding: 'utf8', windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  };
+  try {
+    const dirty = localGit(['status', '--porcelain']).split('\n').filter(Boolean).length;
+    let upstream = false, ahead = 0;
+    try { upstream = !!localGit(['rev-parse', '--verify', '--quiet', '@{u}']); } catch { /* new branch */ }
+    if (upstream) ahead = Number(localGit(['rev-list', '--count', '@{u}..HEAD'])) || 0;
+    return formatReminder({ dirty, ahead, noUpstream: !upstream });
+  } catch { return null; }
+}
+
 // ── hook plumbing ──
 
 // Hooks receive their payload on stdin. Absent stdin (manual run) or a stalled
@@ -382,9 +408,27 @@ export function isStartup(payload) {
   return !source || source === 'startup';
 }
 
+/** Where a detached --pull leaves its JSON result: what the last background sync did. */
+export const backgroundLog = () => path.join(os.tmpdir(), 'cc-config-sync-hook.json');
+
+/**
+ * Start --pull as a detached process writing to backgroundLog(), and return the one-line notice.
+ * The session never waits on the fetch; the pulled tree serves the NEXT session.
+ */
+export function startBackgroundPull({ log = backgroundLog(), run = spawn, env = process.env } = {}) {
+  try {
+    const out = fs.openSync(log, 'w');
+    const child = run(process.execPath, [fileURLToPath(import.meta.url), '--pull'],
+      { detached: true, stdio: ['ignore', out, out], windowsHide: true, env });
+    child.unref();
+    fs.closeSync(out);
+    return `cc-config sync started in the background (result: ${log})`;
+  } catch (err) { return `cc-config background sync did not start: ${err.message}`; }
+}
+
 async function main() {
   const mode = process.argv[2];
-  const payload = mode === '--pull' ? await readPayload() : {};
+  const payload = mode === '--pull' || mode === '--pull-background' ? await readPayload() : {};
   let notice = null;
   let syncResult = null;
   let aiLabResult = null;
@@ -403,10 +447,14 @@ async function main() {
       notice = [formatPull(syncResult), formatPull(aiLabResult, 'ai-lab')].filter(Boolean).join('\n') || null;
       // SessionStart hooks run in parallel, so ensure.mjs may already have (re)started the
       // bridge from the pre-pull tree; ensure again so the pulled code serves this session.
-      if (syncResult?.pulled > 0) {
+      // Only for this hook's own checkout: a pull of another tree (CLAUDE_SYNC_REPO, as the tests
+      // set) must never replace the machine's daemon with one served from this file's tree.
+      if (syncResult?.pulled > 0 && REPO === repoRootFrom(fileURLToPath(import.meta.url))) {
         try { await (await import('../bridge/ensure.mjs')).ensureDaemon({ replace: true }); } catch { /* bridge is optional */ }
       }
     }
+  } else if (mode === '--pull-background') {
+    if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') notice = startBackgroundPull();
   } else if (mode === '--ai-lab-deps') {
     const error = await updateAiLabDeps(process.argv[3]);
     if (error) process.stderr.write(`[sync-hook] ${error}\n`);
@@ -414,7 +462,7 @@ async function main() {
   } else if (mode === '--remind') {
     notice = runRemind();
   } else {
-    process.stderr.write('[sync-hook] usage: sync-hook.js --pull|--remind\n');
+    process.stderr.write('[sync-hook] usage: sync-hook.js --pull|--pull-background|--remind\n');
     return;
   }
 

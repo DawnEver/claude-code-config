@@ -49,14 +49,13 @@ output/
 !**/.claude/output-styles/**
 !**/.claude/docs/
 !**/.claude/docs/**
-**/.claude/rules/MEMORY.md
 **/_meta.json
 !**/attic/**
 **/.claude/**/__pycache__/
 **/.claude/**/*.py[cod]
 **/.claude/automode.json
 
-# --- claude-code-config delta, 23 of 23 allowed ---
+# --- claude-code-config delta, 22 of 22 allowed ---
 node_modules/
 package-lock.json
 dist/
@@ -69,7 +68,6 @@ private-markers
 trusted-origins
 models.json
 /*.setup-bak
-cc-market/
 **/.claude/memo/
 **/.claude/watch/**
 !**/.claude/watch/

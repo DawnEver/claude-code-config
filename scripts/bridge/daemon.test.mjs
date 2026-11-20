@@ -21,10 +21,7 @@ test('telemetry-only registry keeps sessions and activity without any Telegram c
   at = 2000;
   await bridge.prompt('codex:local', 'do work');
   await bridge.notice('codex:local', 'working');
-  const [session] = bridge.dashboardSessions();
-  assert.equal(session.topic, null);
-  assert.equal(session.status, 'working');
-  assert.equal(Date.parse(session.lastActivityAt), at);
+  assert.deepEqual(bridge.dashboardSessions(), [], 'no Topic, no dashboard row');
 });
 
 test('standalone session cards clearly distinguish observation from remote control', async () => {
@@ -748,21 +745,29 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
 });
 
 
-test('dashboardSessions lists every registered session with its status', async () => {
+test('dashboardSessions lists only sessions with a Topic, by their name', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'running' });
   await up(r, 'codex', 'quiet');
-  await live(r, 'codex', 'busy');
-  assert.equal(r.bridge.dashboardSessions().length, 2, 'a session without a Topic is still running here');
-  assert.ok(r.bridge.dashboardSessions().every((x) => x.status === 'working'));
+  await live(r, 'codex', 'busy', { name: 'G-integrator' });
+  await live(r, 'codex', 'unnamed');
+  const rows = Object.fromEntries(r.bridge.dashboardSessions().map((s) => [s.id, s]));
+  assert.deepEqual(Object.keys(rows).sort(), ['busy', 'unnamed'], 'a session without a Topic is not listed');
+  assert.ok(Object.values(rows).every((x) => x.status === 'working'));
+  assert.equal(rows.busy.name, 'G-integrator', 'the session name');
+  const unnamed = r.bridge.sessions.get('codex:unnamed');
+  assert.equal(rows.unnamed.name, unnamed.title, 'no name: the Topic title, never null');
+  assert.notEqual(rows.unnamed.name, 'proj');
+  await r.bridge.rename('codex:busy', 'G-renamed');
+  assert.equal(r.bridge.dashboardSessions().find((s) => s.id === 'busy').name, 'G-renamed', 'a rename shows');
 });
 
 test('a Claude session seat names its Topic and its dashboard entry', async () => {
   const r = make();
-  const s = await up(r, 'claude', 'seated', { seat: 'team-b' });
-  assert.match(s.title, / \| claude:team-b$/);
+  await live(r, 'claude', 'seated', { seat: 'team-b' });
+  assert.match(r.bridge.sessions.get('claude:seated').title, / \| claude:team-b$/);
   assert.equal(r.bridge.dashboardSessions()[0].seat, 'team-b');
-  await up(r, 'claude', 'base');
+  await live(r, 'claude', 'base');
   assert.equal(r.bridge.dashboardSessions()[1].seat, null);
 });
 
@@ -865,7 +870,7 @@ test('a question answered locally first withdraws its controls; an undeliverable
 test('waiting-input reads Needs input', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-input' });
-  await up(r, 'codex', 'q');
+  await live(r, 'codex', 'q');
   assert.equal(r.bridge.dashboardSessions()[0].status, 'needs_input');
 });
 
@@ -909,14 +914,15 @@ test('sweep: an idle-closed Topic of a still-registered session is deleted too; 
 test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended sessions gone', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-approval' });
-  await up(r, 'codex', 'quiet');
+  await up(r, 'codex', 'lazy');
+  await live(r, 'codex', 'quiet');
   await live(r, 'claude', 'busy', { seat: 'team-a' });
   const snap = Object.fromEntries(r.bridge.dashboardSessions().map((s) => [s.id, s]));
+  assert.equal(snap.lazy, undefined, 'lazy Topic: not listed before activity');
   assert.equal(snap.quiet.status, 'needs_approval');
-  assert.equal(snap.quiet.topic, null, 'lazy Topic: none before activity');
   assert.equal(snap.busy.seat, 'team-a');
   assert.equal(snap.busy.status, 'unknown', 'a host without a snapshot is not guessed');
-  assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.telegram.sent[0].threadId, closed: false, lastPost: r.telegram.sent.at(-1).message_id });
+  assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.bridge.sessions.get('claude:busy').topicId, closed: false, lastPost: r.telegram.sent.at(-1).message_id });
   assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
   r.hosts.codex.statusSnapshot = () => null;
   assert.equal(r.bridge.dashboardSessions().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
@@ -1041,4 +1047,17 @@ test('the dashboard hears what a waiting session waits for', async () => {
   const [s] = r.bridge.dashboardSessions();
   assert.equal(s.status, 'needs_approval');
   assert.equal(s.waiting, '$ rm -rf build');
+});
+
+// The daemon's change check compares bridgeConfigRevision() -- the SETTINGS -- against the
+// fingerprint it started with; ensure.mjs compares the same against runtime.json. Fingerprinting
+// the merged config (which also carries the allowlist from the channel declaration) at start read
+// as a change every minute: the live daemon handed itself over every minute (2026-11-17), losing
+// whatever it held in memory each time.
+test('the daemon fingerprints its config exactly as its change check and ensure.mjs do', () => {
+  const src = fs.readFileSync(new URL('./daemon.mjs', import.meta.url), 'utf8');
+  const fingerprints = [...src.matchAll(/bridgeConfigRevision\(([^)]*)\)/g)].map((m) => m[1].trim());
+  assert.ok(fingerprints.length >= 2, 'PLANTED CONTROL: the scan sees the start fingerprint and the check');
+  assert.deepEqual(fingerprints.filter(Boolean), [], `every fingerprint is bridgeConfigRevision() of the settings, never of a merged config: ${fingerprints.join(' | ')}`);
+  assert.match(src, /configRevision: startConfig/, 'runtime.json carries the same fingerprint the check compares');
 });

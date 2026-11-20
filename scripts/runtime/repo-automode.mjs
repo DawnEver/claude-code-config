@@ -61,6 +61,20 @@ function git(cwd, args) {
 }
 
 /**
+ * Whether `repoRoot`'s `origin` remote matches `~/.claude/trusted-origins`.
+ * Returns `{ trusted: boolean, originKey: string|null, why?: string }`.
+ */
+export function isTrustedRepo(repoRoot, { home = os.homedir(), runGit = git, trust = readTrustList(home) } = {}) {
+  if (!repoRoot) return { trusted: false, originKey: null, why: 'not a git repo' };
+  const key = originKey(runGit(repoRoot, ['remote', 'get-url', 'origin']));
+  if (!key) return { trusted: false, originKey: null, why: 'repo has no origin' };
+  if (!trust.some((p) => globMatch(p, key))) {
+    return { trusted: false, originKey: key, why: `origin ${key} is not in ~/.claude/${TRUST_FILE}` };
+  }
+  return { trusted: true, originKey: key };
+}
+
+/**
  * The `--settings` args for the launch directory's repo, and one line saying what was decided.
  * @returns {{ args: string[], notice: string }}
  */
@@ -72,12 +86,11 @@ export function repoAutoModeArgs({ cwd = process.cwd(), home = os.homedir(), ext
   if (!root) return none('not a git repo');
   const fragment = path.join(root, FRAGMENT);
   if (!existsSync(fragment)) return none(`no ${FRAGMENT.replace(/\\/g, '/')}`);
-  const key = originKey(runGit(root, ['remote', 'get-url', 'origin']));
-  if (!key) return none('repo has no origin');
-  if (!trust.some((p) => globMatch(p, key))) return none(`origin ${key} is not in ~/.claude/${TRUST_FILE}`);
+  const check = isTrustedRepo(root, { home, runGit, trust });
+  if (!check.trusted) return none(check.why);
   let parsed;
   try { parsed = JSON.parse(readFileSync(fragment, 'utf8')); } catch (e) { return none(`${fragment} is not JSON: ${e.message}`); }
   const keys = Object.keys(parsed ?? {});
   if (keys.length !== 1 || keys[0] !== 'autoMode') return none(`${fragment} must hold only "autoMode", found: ${keys.join(', ') || 'nothing'}`);
-  return { args: ['--settings', fragment], notice: `[cc] repo autoMode: loaded ${fragment} (origin ${key})` };
+  return { args: ['--settings', fragment], notice: `[cc] repo autoMode: loaded ${fragment} (origin ${check.originKey})` };
 }

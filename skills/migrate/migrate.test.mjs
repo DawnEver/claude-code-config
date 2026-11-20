@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { CLAUDE_LINKS, CODEX_LINKS, discoverCodexSkillLinks, getCodexLinks } from '../../scripts/setup/setup.js';
+import { CLAUDE_LINKS, CODEX_LINKS, discoverSkillLinks, getCodexLinks } from '../../scripts/setup/setup.js';
 import { findOrphanedLinks, discoverProjectMigrators } from './migrate.js';
 import { ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './gitignore-hygiene.js';
 import { locateBinDir, resolveWrapperBinDirs } from '../../scripts/setup/install-cli-wrappers.js';
@@ -205,7 +205,7 @@ describe('setup link tables', () => {
       fs.symlinkSync(path.join(tmpDir, 'linked-skill'), path.join(tmpDir, 'skills', 'linked'));
       fs.writeFileSync(path.join(tmpDir, 'skills', 'note.md'), 'not a skill');
 
-      assert.deepEqual(discoverCodexSkillLinks(tmpDir).sort((a, b) => a.dest.localeCompare(b.dest)), [
+      assert.deepEqual(discoverSkillLinks(tmpDir).sort((a, b) => a.dest.localeCompare(b.dest)), [
         { src: path.join('skills', 'alpha'), dest: path.join('skills', 'alpha'), type: 'dir' },
         { src: path.join('skills', 'linked'), dest: path.join('skills', 'linked'), type: 'dir' },
       ]);
@@ -338,17 +338,17 @@ describe('resolveWrapperBinDirs', () => {
   const all = () => true;
 
   test('one bin dir for every wrapper: the claude dir when writable', () => {
-    assert.deepEqual(resolveWrapperBinDirs(both, all), { hasClaude: true, hasCodex: true, binDir: C });
+    assert.deepEqual(resolveWrapperBinDirs(both, all), { hasClaude: true, hasCodex: true, hasAgy: true, binDir: C });
   });
 
   test('skips a root-owned host dir rather than requiring sudo', () => {
-    assert.deepEqual(resolveWrapperBinDirs(both, (d) => d === X), { hasClaude: true, hasCodex: true, binDir: X });
+    assert.deepEqual(resolveWrapperBinDirs(both, (d) => d === X), { hasClaude: true, hasCodex: true, hasAgy: true, binDir: X });
     assert.equal(resolveWrapperBinDirs(both, () => false).binDir, null);
   });
 
   test('codex-only and no-host installs', () => {
-    assert.deepEqual(resolveWrapperBinDirs((cmd) => (cmd === 'codex' ? X : null), all), { hasClaude: false, hasCodex: true, binDir: X });
-    assert.deepEqual(resolveWrapperBinDirs(() => null, all), { hasClaude: false, hasCodex: false, binDir: null });
+    assert.deepEqual(resolveWrapperBinDirs((cmd) => (cmd === 'codex' ? X : null), all), { hasClaude: false, hasCodex: true, hasAgy: false, binDir: X });
+    assert.deepEqual(resolveWrapperBinDirs(() => null, all), { hasClaude: false, hasCodex: false, hasAgy: false, binDir: null });
   });
 });
 

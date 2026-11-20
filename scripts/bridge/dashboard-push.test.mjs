@@ -55,6 +55,21 @@ test('config: dashboard needs url + hostToken, https unless loopback', () => {
   assert.equal(read({ dashboard: { url: 'http://127.0.0.1:8787', everySeconds: 30 } }, local).everySeconds, 30);
 });
 
+test('config: the HPC collector runs a command, so only the machine-local layer declares it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-'));
+  const read = (shared, local = {}) => {
+    fs.writeFileSync(path.join(dir, 's.json'), JSON.stringify({ bridge: shared }));
+    fs.writeFileSync(path.join(dir, 'l.json'), JSON.stringify({ bridge: local }));
+    const c = readBridgeConfig({ sharedPath: path.join(dir, 's.json'), localPath: path.join(dir, 'l.json') });
+    return c.hpc ?? c.hpcError;
+  };
+  const door = ['py', '-m', 'door', 'report', '--json'];
+  assert.equal(read({}), null, 'undeclared: off');
+  assert.equal(read({ hpc: { command: door } }), null, 'a command in the synced layer never runs');
+  assert.deepEqual(read({}, { hpc: { command: door, everyHours: 12 } }), { command: door, everyMs: 12 * 3600000 });
+  assert.match(read({}, { hpc: { command: 'py -m door' } }), /argv/, 'a malformed block is off, with its reason');
+});
+
 test('push: the gateway reply carries no alerts and the host posts nothing', async () => {
   const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', heartbeatSeconds: 0, machine: 'host-a', sessions: () => [],
     fetch: async () => ({ ok: true, status: 200, json: async () => ({ accepted: true, alerts: ['ignored'] }) }) });

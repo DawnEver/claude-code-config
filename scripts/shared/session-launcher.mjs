@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { recordedPython, SETUP_REMEDY } from './provider-cache.mjs';
 
 export const SESSION_MODULE = 'ai_lab.session';
-const AGENTS = new Set(['claude', 'codex']);
+const AGENTS = new Set(['claude', 'codex', 'agy']);
 
 /** Import the session module for real: `{ok: true}`, or `{ok: false, why}` with Python's last stderr line. */
 function importProbe(python, run = spawnSync) {

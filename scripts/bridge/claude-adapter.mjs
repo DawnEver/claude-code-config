@@ -7,7 +7,7 @@
 //       <- inbound {text, user, userId}, permission {request_id, behavior}
 //   - bridge-hook.js makes one-shot calls: mirror {token, sessionId, kind, text|state}
 //     (kind prompt | final | answer | activity; a final may answer {deliver: [{text, user}]}), and question {token, sessionId, questions, wait},
-//     held open for a Telegram-started turn until the answer arrives
+//     answered at once: {posted: true} for a Telegram-started turn (its answer comes as the next message), else {answers: null}
 // and it emits the host-neutral events every adapter emits (see daemon.mjs):
 //   up {id, cwd, backlog}, prompt {id, text}, final {id, text},
 //   approval {id, ref, summary, answerable}, question {id, ref, questions, answerable},
@@ -17,15 +17,21 @@
 // on in-process /clear and /resume, so it proves nothing). Session state is driven by hook
 // edges: prompt / activity -> running, final -> idle, Notification -> waiting-approval |
 // waiting-input | idle.
-// A hook names the conversation id current in its process. /clear and /resume change it; the
-// hook's retry then names its claude process, and the session learns the new id, so later
-// calls (activity, questions) route by id again. A hook call is held briefly when it beats the
-// channel's registration. CLAUDE_PID is not usable: a nested `claude` inherits its parent's.
-// A session Claude Code gives no channel (no flag, or a third-party provider such as ccds)
-// cannot receive inbound: its Telegram messages are queued and handed to the Stop hook at the
-// end of its next turn, which continues the session with them.
+// A hook names the conversation id current in its process and its claude process (the hook's
+// CLAUDE_PID, which Claude Code sets per process). /clear, /resume and a fork change the id; the
+// claude process routes it to the channel registered under it, and the session learns the new
+// id. NOTHING IS HELD OR DROPPED HERE: a call no channel can take yet (it beat the channel's
+// registration) is answered `routed: false`, and the hook's lossless spool delivers it once the
+// channel is up. A nested `claude` (a plugin's `claude -p`) registers as nested: its calls are
+// answered `nested` and deliberately not mirrored.
+// A session Claude Code gives no channel (an agent-view or background session, no flag, or a
+// third-party provider such as ccds) cannot receive inbound: its Telegram messages are queued
+// (on disk when `queueDir` is set, so a daemon restart loses none) and handed to the Stop hook at
+// the end of its next turn, which continues the session with them. A message for a session that
+// is not running is queued the same way and delivered when it is resumed under its id.
 
 import fs from 'fs';
+import path from 'path';
 import net from 'net';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
@@ -33,7 +39,7 @@ import { JsonRpcPeer, lineSplitter } from './jsonrpc.mjs';
 import { isValidAlias } from '../shared/seats.mjs';
 import { isProvider } from '../shared/dashboard-schema.mjs';
 import { AGENTS, TASK_KINDS, TASK_STATUSES } from '../dashboard/public/shared/vocab.mjs';
-import { TaskBoard } from './tasks.mjs';
+import { ActivityBoard } from './activity-board.mjs';
 
 /** One background task a turn end still sees open (bridge-hook.js backgroundTasks); null when malformed. */
 function parseOpen(t) {
@@ -53,12 +59,14 @@ function parseTask(t) {
 }
 
 const AUTH_TIMEOUT_MS = 5000;
-const heldKey = (m) => JSON.stringify([m.kind, m.text, m.texts ?? null]);
+const NESTED = 'nested';   // #mirror's answer for a nested session's call
 // A task the transcript dates this long before the channel started may still be this process's (a turn begun before the MCP server came up).
 const BORN_SLACK_MS = 60000;
 const WAITING = new Set(['waiting-approval', 'waiting-input']);
 const STATES = new Set(['running', 'idle', 'waiting-approval', 'waiting-input']);
-const HOLD_MS = 30000;
+// The messages a posted question sends the session: its answer from Telegram, or why there is none.
+const QUESTION_ANSWERED = 'Answer from Telegram to the question you asked:';
+const QUESTION_UNSHOWN = 'The question you asked could not be shown on Telegram. Ask it again in plain text.';
 
 const CONTINUED_TAIL_BYTES = 64 * 1024;   // the record is appended when the conversation moves on
 
@@ -136,7 +144,7 @@ export function isEnvelope(text) {
 }
 
 export class ClaudeAdapter extends EventEmitter {
-  constructor({ token = crypto.randomBytes(24).toString('hex'), now = Date.now } = {}) {
+  constructor({ token = crypto.randomBytes(24).toString('hex'), now = Date.now, queueDir = null } = {}) {
     super();
     this.agent = 'claude';
     this.token = token;
@@ -145,8 +153,35 @@ export class ClaudeAdapter extends EventEmitter {
     // ids: every conversation id seen in this process; each id belongs to at most one session.
     // transcript: its JSONL path (from the channel, then the hooks), read for `continued-in`.
     this.sessions = new Map();
-    this.held = [];              // hook calls that arrived before their session registered
+    this.nested = new Set();     // the claude processes of nested sessions: their calls are not mirrored
+    this.queueDir = queueDir;    // where queued inbound messages wait, one file per session id
     this.sockets = new Set();
+    this.local = {};             // method -> handler: local IPC methods registered via registerLocal()
+  }
+
+  /** Register a token-authenticated local IPC method (e.g. `agy` for `agy-adapter.mjs`). */
+  registerLocal(method, handler) {
+    this.local[method] = handler;
+    return this;
+  }
+
+  // ── The inbound queue, per session id: in memory on the session, on disk in queueDir ──
+  #queueFile(id) { return this.queueDir && path.join(this.queueDir, `${crypto.createHash('sha1').update(String(id)).digest('hex').slice(0, 16)}.json`); }
+
+  #loadQueue(id) {
+    const file = this.#queueFile(id);
+    if (!file) return [];
+    try { const q = JSON.parse(fs.readFileSync(file, 'utf8')); return Array.isArray(q?.messages) ? q.messages : []; } catch { return []; }
+  }
+
+  #saveQueue(id, messages) {
+    const file = this.#queueFile(id);
+    if (!file) return;
+    if (!messages.length) { fs.rmSync(file, { force: true }); return; }
+    fs.mkdirSync(this.queueDir, { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ sessionId: id, messages }));
+    fs.renameSync(tmp, file);
   }
 
   listen(port = 0) {
@@ -171,8 +206,8 @@ export class ClaudeAdapter extends EventEmitter {
   #onSocket(socket) {
     this.sockets.add(socket);
     socket.once('close', () => this.sockets.delete(socket));
-    let sessionId = null;
-    const authTimer = setTimeout(() => { if (!sessionId) socket.destroy(); }, AUTH_TIMEOUT_MS);
+    let sessionId = null, nestedPid = null;
+    const authTimer = setTimeout(() => { if (!sessionId && !nestedPid) socket.destroy(); }, AUTH_TIMEOUT_MS);
     authTimer.unref();
     const unauthorized = () => { setImmediate(() => socket.destroy()); return Object.assign(new Error('unauthorized'), { code: 401 }); };
     const ids = (p) => ({ sessionId: typeof p.sessionId === 'string' ? p.sessionId : '', claudePid: Number(p.claudePid) || null,
@@ -182,6 +217,13 @@ export class ClaudeAdapter extends EventEmitter {
         if (method === 'register') {
           if (!this.#tokenOk(p.token) || !p.sessionId) throw unauthorized();
           clearTimeout(authTimer);
+          if (p.nested === true) {
+            // A nested session (session-bridge server.mjs isMainSession): never a Topic; its hook
+            // calls are answered `nested` while its claude process lives.
+            nestedPid = Number(p.claudePid) || null;
+            if (nestedPid) this.nested.add(nestedPid);
+            return { ok: true, nested: true };
+          }
           sessionId = String(p.sessionId);
           const transcript = typeof p.transcriptPath === 'string' && p.transcriptPath ? p.transcriptPath : null;
           // A channel of a conversation already continued in a live session is stale: never a session.
@@ -197,8 +239,9 @@ export class ClaudeAdapter extends EventEmitter {
           this.#claim(sessionId, null);
           this.sessions.set(sessionId, { peer, socket, ids: new Set([...(previous?.ids ?? []), sessionId]), sent: previous?.sent ?? new Set(), approvals: new Set(), questions: new Map(),
             claudePid: Number(p.claudePid) || null, inbound: p.inbound !== false, thirdParty: p.thirdParty === true,
-            queued: previous?.queued ?? [], localQuestion: previous?.localQuestion ?? false,
-            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null, tasks: previous?.tasks ?? new TaskBoard(),
+            // Messages queued for this id survive a daemon restart and the process's own exit (queueDir).
+            queued: previous?.queued ?? this.#loadQueue(sessionId), localQuestion: previous?.localQuestion ?? false,
+            remoteTurn: previous?.remoteTurn ?? false, activity: previous?.activity, transcript: transcript ?? previous?.transcript ?? null, tasks: previous?.tasks ?? new ActivityBoard(),
             // When this claude process started (its channel starts with it): no task of an earlier one runs.
             bornAt: Number.isFinite(p.startedAt) ? p.startedAt : previous?.bornAt ?? null,
             named: previous?.named ?? NO_NAME });
@@ -207,7 +250,13 @@ export class ClaudeAdapter extends EventEmitter {
           this.emit('up', { id: sessionId, cwd: p.cwd, seat: isValidAlias(p.seat) ? p.seat : null, provider: isProvider(p.provider) ? p.provider : null, name: s.named.name, backlog: [] });
           this.#emitStatus(sessionId);
           this.#takeOver(sessionId);
-          this.#release();
+          // A channel that takes inbound gets what waited for it at once; one without waits for its Stop.
+          if (s.inbound && s.queued.length) {
+            for (const q of s.queued) s.peer.notify('inbound', q);
+            s.queued = [];
+            this.#saveQueue(sessionId, []);
+            s.remoteTurn = true;
+          }
           return { ok: true };
         }
         if (method === 'mirror') {
@@ -215,17 +264,17 @@ export class ClaudeAdapter extends EventEmitter {
           const bad = () => Object.assign(new Error('bad kind'), { code: -32602 });
           if (!['prompt', 'final', 'answer', 'activity'].includes(p.kind)) throw bad();
           if (p.kind === 'activity' && !STATES.has(p.state)) throw bad();
-          const r = this.#mirror({ ...ids(p), retry: p.retry === true, ...(Number.isFinite(p.at) ? { at: p.at } : {}), ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
+          const r = this.#mirror({ ...ids(p), ...(Number.isFinite(p.at) ? { at: p.at } : {}), ...(p.replay === true ? { replay: true } : {}), kind: p.kind,
             ...(p.status === 'failed' ? { status: 'failed' } : {}), ...(p.kind === 'activity' ? { state: p.state } : {}), text: String(p.text ?? ''),
             ...(Array.isArray(p.texts) ? { texts: p.texts.map(String) } : {}),
             ...(Array.isArray(p.background) ? { background: p.background.map(parseOpen).filter(Boolean).slice(0, 200) } : {}),
             ...(parseTask(p.task) ? { task: parseTask(p.task) } : {}) });
-          return { ok: true, routed: r !== false, ...(Array.isArray(r) ? { deliver: r } : {}) };
+          // routed: false -- no channel can take it yet: the hook's spool delivers it once one can.
+          return { ok: true, routed: r !== false && r !== NESTED, ...(r === NESTED ? { nested: true } : {}), ...(Array.isArray(r) ? { deliver: r } : {}) };
         }
         if (method === 'question') {
           if (!this.#tokenOk(p.token)) throw unauthorized();
-          clearTimeout(authTimer);   // a waiting question outlives the auth window
-          return this.#question(socket, ids(p), p);
+          return this.#question(ids(p), p);
         }
         // An attachment for any agent's session. With the runtime token it names its session
         // (`agent`, `sessionId`: a CLI such as send-attachment.mjs); without, it is this
@@ -239,6 +288,11 @@ export class ClaudeAdapter extends EventEmitter {
           }
           if (!sessionId || this.sessions.get(sessionId)?.socket !== socket) throw unauthorized();
           return this.sendAttachment('claude', sessionId, p);
+        }
+        // Another host's one-shot hook calls on this IPC (daemon.mjs: `agy` -> agy-adapter.mjs), with the runtime token.
+        if (Object.hasOwn(this.local, method)) {
+          if (!this.#tokenOk(p.token)) throw unauthorized();
+          return this.local[method](p);
         }
         if (!sessionId || this.sessions.get(sessionId)?.socket !== socket) throw unauthorized();
         if (method === 'reply') {
@@ -270,14 +324,7 @@ export class ClaudeAdapter extends EventEmitter {
     socket.on('error', () => {});
     socket.on('close', () => {
       clearTimeout(authTimer);
-      // A hook that stopped waiting (timeout, killed): its question goes back to the terminal.
-      for (const [id, s] of this.sessions) {
-        for (const [ref, q] of s.questions) {
-          if (q.socket !== socket) continue;
-          s.questions.delete(ref);
-          this.emit('question-resolved', { id, ref });
-        }
-      }
+      if (nestedPid) this.nested.delete(nestedPid);
       if (sessionId && this.sessions.get(sessionId)?.socket === socket) this.#end(sessionId);
     });
   }
@@ -296,7 +343,7 @@ export class ClaudeAdapter extends EventEmitter {
     // This invalidates bridge controls; it does not claim Claude accepted a verdict.
     for (const ref of session.approvals) this.emit('approval-resolved', { id, ref, reason: 'correlation-withdrawn' });
     session.approvals.clear();
-    for (const [ref, q] of session.questions) { q.resolve({ answers: null }); this.emit('question-resolved', { id, ref }); }
+    for (const ref of session.questions.keys()) this.emit('question-resolved', { id, ref });
     session.questions.clear();
     this.#emitStatus(id);
   }
@@ -307,7 +354,10 @@ export class ClaudeAdapter extends EventEmitter {
     // After /clear or /resume no id matches; the claude process that owns the channel does.
     for (const [id, s] of this.sessions) {
       if (s.claudePid !== claudePid) continue;
-      if (sessionId) { this.#claim(sessionId, id); s.ids.add(sessionId); }
+      if (sessionId) {
+        this.#claim(sessionId, id);
+        s.ids.add(sessionId);
+      }
       return id;
     }
     return null;
@@ -356,7 +406,8 @@ export class ClaudeAdapter extends EventEmitter {
     this.emit('superseded', { id: next, from: old });
     const queued = o.queued;
     if (!queued.length) return;
-    if (!n.inbound) { n.queued.push(...queued); return; }
+    this.#saveQueue(old, []);
+    if (!n.inbound) { n.queued.push(...queued); this.#saveQueue(next, n.queued); return; }
     for (const q of queued) n.peer.notify('inbound', q);
     n.remoteTurn = true;
     n.activity = 'running'; n.stateAt = this.now();
@@ -369,11 +420,13 @@ export class ClaudeAdapter extends EventEmitter {
   }
 
   /**
-   * An AskUserQuestion the PreToolUse hook reports. In a turn started from Telegram the hook
-   * waits for the Telegram answer (the terminal dialog is not shown meanwhile); in a turn
-   * typed locally the question is posted as information and the hook returns at once.
+   * An AskUserQuestion the PreToolUse hook reports, answered at once (every hook < 5 s). In a
+   * turn started from Telegram it is posted there to be answered (`posted`: the hook denies the
+   * terminal dialog and the model ends its turn); the tapped answer reaches the session as its
+   * next message (answerQuestion). In a turn typed locally it is posted as information and the
+   * terminal dialog shows.
    */
-  #question(socket, route, p) {
+  #question(route, p) {
     const id = this.#route(route);
     const s = id && this.sessions.get(id);
     if (!s) return { answers: null };
@@ -392,29 +445,19 @@ export class ClaudeAdapter extends EventEmitter {
       this.emit('question', { id, ref, questions, answerable: false });
       return { answers: null };
     }
-    return new Promise((resolve) => {
-      s.questions.set(ref, { socket, questions, resolve });
-      this.emit('question', { id, ref, questions, answerable: true });
-    });
+    s.questions.set(ref, { questions });
+    this.emit('question', { id, ref, questions, answerable: true });
+    return { posted: true };
   }
 
   #mirror(m) {
     const id = this.#route(m);
-    if (!id) {
-      // Only prompts and finals are held for a channel that has not registered yet (a retry's
-      // first copy already is); a later hook carries fresher state than a held activity.
-      if (m.kind !== 'prompt' && m.kind !== 'final' && m.kind !== 'answer') return false;
-      const now = this.now();
-      const expired = this.held.filter((h) => now - h.at >= HOLD_MS);
-      for (const h of expired) this.emit('warn', `claude: dropped unroutable ${h.m.kind} for ${h.m.sessionId} (no registered channel)`);
-      this.held = [...this.held.filter((h) => now - h.at < HOLD_MS), ...(m.retry ? [] : [{ m, at: now }])];
-      return false;
-    }
-    // A retry routed by process: its unroutable first copy must not be released later.
-    if (m.retry) this.held = this.held.filter((h) => heldKey(h.m) !== heldKey(m));
+    // No channel takes it: a nested session's (not mirrored), or one not registered yet -- the
+    // caller keeps it (the hook's spool) until one does. Nothing is held or dropped here.
+    if (!id) return m.claudePid && this.nested.has(m.claudePid) ? NESTED : false;
     this.#learnTranscript(id, m.transcriptPath);
     const s = this.sessions.get(id);
-    // Tasks: each start and end is its own fact, applied in any order (TaskBoard keeps the first end).
+    // Tasks: each start and end is its own fact, applied in any order (ActivityBoard keeps the first end).
     const at = Number.isFinite(m.at) ? m.at : this.now();
     if (m.task?.op === 'start') s.tasks.start(m.task.id, { ...m.task, at, until: m.task.timeoutMs ? at + m.task.timeoutMs : null });
     if (m.task?.op === 'end') s.tasks.end(m.task.id, { status: m.task.status, at });
@@ -466,6 +509,7 @@ export class ClaudeAdapter extends EventEmitter {
     if (!s.queued.length || m.status === 'failed' || m.replay) return true;
     const deliver = s.queued;
     s.queued = [];
+    this.#saveQueue(id, []);
     s.sent = new Set();
     s.remoteTurn = true;
     s.activity = 'running'; s.stateAt = this.now();
@@ -473,28 +517,28 @@ export class ClaudeAdapter extends EventEmitter {
     return deliver;
   }
 
-  #release() {
-    const held = this.held;
-    this.held = [];
-    for (const { m, at } of held) {
-      if (this.#route(m)) this.#mirror(m); else this.held.push({ m, at });
-    }
-  }
-
   // ── host interface used by the daemon ──
 
   async inject(id, text, user, { userId = '' } = {}) {
     const s = this.sessions.get(id);
-    if (!s) throw new Error('channel disconnected');
+    if (!s) {
+      // Not running now (its process exited, or it was relaunched): kept on disk for this id and
+      // delivered when a channel registers it again (`claude --resume <id>`, agent view).
+      if (!this.queueDir) throw new Error('channel disconnected');
+      this.#saveQueue(id, [...this.#loadQueue(id), { text, user: user ?? '', userId }]);
+      return { queued: true, note: `queued: this session is not running now; the message is delivered when it is resumed (claude --resume ${id}).` };
+    }
     // Agent view moved the conversation on: deliver to the live session, or hold for it.
     const next = s.transcript && continuedIn(s.transcript);
     if (next && next !== id) {
       if (this.sessions.has(next)) { this.#supersede(id, next); return this.inject(next, text, user, { userId }); }
       s.queued.push({ text, user: user ?? '', userId });
+      this.#saveQueue(id, s.queued);
       return { queued: true, note: `queued: this conversation continued in session ${next} (agent view relaunched it), which has not connected yet; the message is delivered when it does.` };
     }
     if (!s.inbound) {
       s.queued.push({ text, user: user ?? '', userId });
+      this.#saveQueue(id, s.queued);
       const why = s.thirdParty
         ? 'this session runs a third-party provider, which Claude Code gives no channel'
         : 'this session has no channel (not started with ccc, or relaunched by agent view / in the background, which drops ccc\'s channel flag), so Claude Code drops channel messages';
@@ -524,25 +568,22 @@ export class ClaudeAdapter extends EventEmitter {
 
   #emitStatus(id) { this.emit('status', { id, ...this.statusSnapshot(id) }); }
 
-  /** Answer a waiting question: `answers` maps question id -> chosen strings. */
+  /** Answer a posted question: `answers` maps question id -> chosen strings; the session gets them as its next message. */
   answerQuestion(ref, answers, id) {
     const s = this.sessions.get(id);
     const q = s?.questions.get(ref);
     if (!q || !answers || q.questions.some((x) => !answers[x.id]?.length)) return false;
     s.questions.delete(ref);
-    q.resolve({ answers: Object.fromEntries(q.questions.map((x) => [x.question, [].concat(answers[x.id]).map(String).join(', ')])) });
-    s.activity = 'running'; s.stateAt = this.now();
-    this.#emitStatus(id);
+    const lines = q.questions.map((x) => `${x.question} -> ${[].concat(answers[x.id]).map(String).join(', ')}`);
+    this.inject(id, `${QUESTION_ANSWERED}\n${lines.join('\n')}`, '').catch(() => {});
     return true;
   }
 
-  /** The question could not be offered on Telegram: let the terminal dialog show it. */
+  /** The question could not be offered on Telegram: the session is told to ask it in the terminal. */
   releaseQuestion(ref, id) {
     const s = this.sessions.get(id);
-    const q = s?.questions.get(ref);
-    if (!q) return false;
-    s.questions.delete(ref);
-    q.resolve({ answers: null });
+    if (!s?.questions.delete(ref)) return false;
+    this.inject(id, QUESTION_UNSHOWN, '').catch(() => {});
     return true;
   }
 

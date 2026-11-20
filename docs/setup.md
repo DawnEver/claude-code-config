@@ -144,7 +144,7 @@ Everything below is per user account; nothing needs admin rights.
    This links the payload (including `private-markers`), the seat dirs, and the
    public-hygiene pre-commit hook. If it WARNs that a repo copy is "detached and newer",
    compare it with the template: equal means an earlier run without `--sync-dir` seeded it —
-   delete it and re-run. Plain files in `~/.claude` are re-linked with `--replace` (it keeps a
+   delete it and re-run. Plain files in `~/.claude` are re-linked with `--replace` (it keeps a secret-redacted
    `*.setup-bak`).
 4. **Plugins.** If doctor reports `plugin-enabled-not-installed`:
    `claude plugin install <name>@cc-market` for each.
@@ -272,7 +272,7 @@ an elevated shell); directory entries use junctions and never need it. Without t
 setup falls back to **hard links** for files and logs `(hard link)`. A hard link breaks silently
 when a writer *replaces* the file (`git checkout`, an atomic save, a cloud sync-down); setup then
 reports `plain file, not linked` — re-run `npm run setup -- -r`. A drifted unlinked copy is kept
-as `<name>.setup-bak`.
+as `<name>.setup-bak`, with every secret-named value (token, key, password) redacted.
 
 **The `claude-hud` config is always hard-linked.** `claude-hud` >= 0.8.0 refuses a symlinked
 `config.json`. Hard links need source and target on the same volume; otherwise setup falls back

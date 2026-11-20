@@ -3,12 +3,14 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, hpcView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
 import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 import { LOGOS } from './logos.mjs';
+/** Each agent's maker, whose mark its avatar shows (logos.mjs). */
+const AGENT_BRANDS = { claude: 'claude', codex: 'openai', agy: 'agy' };
 
 const POLL_MS = 8000;
 const REPO = 'https://github.com/DawnEver/claude-code-config';
@@ -247,7 +249,7 @@ function sessionRow(s, opts = {}) {
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
   row.dataset.session = s.id;   // the unread badge finds its target by this
   // The platform the session spends: a provider's own mark (ccds, cods), else the agent's maker.
-  const brand = LOGOS[s.provider] ? s.provider : s.agent === 'claude' ? 'claude' : 'openai';
+  const brand = LOGOS[s.provider] ? s.provider : AGENT_BRANDS[s.agent] ?? 'openai';
   const avatar = el('span', `avatar ${s.agent} b-${brand}`);
   avatar.append(logo(brand));
   avatar.append(el('span', 'dot'));
@@ -381,6 +383,8 @@ const BANKED_NAMES = ['Full reset', 'Fable reset'];
 // Editing resets is rare and "Used" deletes: the controls show only in edit mode, toggled from
 // the Accounts heading (this page's life only). Never in example data or demo mode.
 let resetEdit = false;
+// The Claude accounts the bulk card edits (empty: all of them), this page's life only.
+const bulkPick = new Set();
 const canEditResets = () => !mock && !demoOn && Boolean(tg?.initData);
 const editingResets = () => resetEdit && canEditResets();
 const bankedForm = { key: null, name: BANKED_NAMES[0], when: '', note: '' };
@@ -688,11 +692,24 @@ function renderQuota() {
 function bankedBulk() {
   const claude = (snapshot.accounts ?? []).filter((a) => a.agent === 'claude' && a.banked);
   if (!claude.length) return null;
-  const keys = claude.map((a) => a.key);
+  const all = claude.map((a) => a.key);
+  for (const k of bulkPick) if (!all.includes(k)) bulkPick.delete(k);
+  // No pick means every account; a tap on an account narrows the edits to the picked ones.
+  const keys = bulkPick.size ? all.filter((k) => bulkPick.has(k)) : all;
+  const picked = claude.filter((a) => keys.includes(a.key));
   const box = el('div', 'banked banked-bulk');
-  box.append(el('div', 'section-h', tr('banked.bulk', { n: keys.length })));
+  box.append(el('div', 'section-h', tr(bulkPick.size ? 'banked.bulkPicked' : 'banked.bulk', { n: keys.length, of: all.length })));
+  const pickRow = el('div', 'bulk-pick');
+  for (const a of claude) {
+    const chip = el('button', `chip${bulkPick.has(a.key) ? ' on' : ''}`, accountTag(a));
+    chip.setAttribute('aria-pressed', String(bulkPick.has(a.key)));
+    chip.title = tr('banked.pickHint');
+    chip.addEventListener('click', () => { if (!bulkPick.delete(a.key)) bulkPick.add(a.key); bankedForm.key = null; tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    pickRow.append(chip);
+  }
+  box.append(pickRow);
   const seen = new Map();
-  for (const a of claude) for (const b of a.banked) {
+  for (const a of picked) for (const b of a.banked) {
     const id = `${b.name}|${b.expiresAt}`;
     seen.set(id, { ...b, n: (seen.get(id)?.n ?? 0) + 1 });
   }
@@ -901,7 +918,7 @@ function columns(blocks) {
 
 function displaySection() {
   const sample = Date.parse('2026-10-21T12:00:00');
-  const languages = displayRow('cfg.language', 'cfg.lang.autoHint', segmented([['auto', tr('cfg.lang.auto')], ['en', 'English'], ['zh', '中文']], langChoice, tr('cfg.language'), (v) => {
+  const languages = displayRow('cfg.language', 'cfg.lang.autoHint', segmented([['auto', tr('cfg.lang.auto')], ...LANGS.map((l) => [l, t('lang.name', l)])], langChoice, tr('cfg.language'), (v) => {
     langChoice = v;
     store.set('dashboard.lang', v);
     lang = v === 'auto' ? autoLang : v;
@@ -1118,6 +1135,35 @@ function usageList(titleKey, rows, dim) {
   return block;
 }
 
+/**
+ * HPC (docs/dashboard.md "HPC"): core-hours per bucket with the one barChart, then a line per
+ * cluster login — its newest reading (jobs, CPU efficiency, failures, quota, a billed budget) or
+ * why it was not read. Not narrowed by the token filters. Nothing when no login was read in range.
+ */
+function hpcBlock(v) {
+  const block = el('div', 'block');
+  const pct = (x) => (x == null ? '–' : `${Math.round(x * 100)}%`);
+  const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.hpc.day', { day: d.day, h: Math.round(d.coreHours) }), segs: [{ cls: 'hpc', pct: d.pct }] })),
+    [tick(v.days[0]), tr('usage.hpc.axis'), tick(v.days.at(-1))]);
+  const list = el('div', 'usage-list');
+  for (const g of v.grants) {
+    const row = el('div', 'u');
+    const meta = g.why != null ? tr('usage.hpc.unread', { why: g.why }) : [
+      tr('usage.hpc.jobs', { n: g.jobs ?? 0 }), tr('usage.hpc.eff', { pct: pct(g.cpuEfficiency) }),
+      ...(g.failures ? [tr('usage.hpc.failures', { n: g.failures, oom: g.oom })] : []),
+      tr('usage.hpc.quota', { storage: pct(g.storage), files: pct(g.files) }),
+      ...(g.budget ? [tr('usage.hpc.budget', { used: pct(g.budget.used), total: Math.round(g.budget.total), window: pct(g.budget.window), until: g.budget.until ?? '' })
+        + (g.budget.ahead ? ` ${tr('usage.hpc.ahead')}` : '')] : []),
+    ].join(' · ');
+    row.append(el('span', 'n', g.role ? `${g.name} · ${g.role}` : g.name), el('span', 'm', meta), el('b', null, g.why != null ? '–' : `${Math.round(g.coreHours ?? 0)}`));
+    row.title = tr('usage.hpc.read', { at: formatTime(g.at, timeFormat()) });
+    list.append(row);
+  }
+  block.append(el('div', 'section-h', tr('usage.hpc.title', { h: Math.round(v.totals.coreHours) })), chart, axis, list);
+  return block;
+}
+
 function renderUsage() {
   const box = $('usage-view');
   box.replaceChildren();
@@ -1150,6 +1196,8 @@ function renderUsage() {
   const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) }),
     segs: ['claude', 'codex'].map((a) => ({ cls: a, pct: d[`${a}Pct`] })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
   box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
+  const hpc = hpcView(demoOn ? masker.usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
+  if (hpc) box.append(hpcBlock(hpc));
   restoreScroll();
 }
 

@@ -29,7 +29,7 @@ import { isMain } from '../shared/is-main.mjs';
 import { prepareSpawn } from '../runtime/win-spawn.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
-import { writePrivateFile } from '../bridge/context.mjs';
+import { writePrivateFile, bridgeAllowlist } from '../bridge/context.mjs';
 import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { newHostToken } from './auth.mjs';
 import { parseDashboardConfig } from './api.mjs';
@@ -37,15 +37,18 @@ import { telegramNotifier } from './notify.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** The Worker's DASHBOARD_CONFIG from the merged bridge config; throws on anything it cannot serve. */
-export function dashboardConfigFrom(bridge) {
+/**
+ * The Worker's DASHBOARD_CONFIG from the merged bridge config and the bridge's derived allowlist
+ * (context.mjs bridgeAllowlist: the machine's channel declaration); throws on anything it cannot serve.
+ */
+export function dashboardConfigFrom(bridge, allowlist) {
   const g = bridge.dashboard ?? {};
   const url = new URL(g.url ?? 'missing:');
   if (url.protocol !== 'https:' || url.pathname !== '/') throw new Error('bridge.dashboard.url must be an https origin');
-  const config = { botId: g.botId, allowedUserIds: bridge.allowedUserIds ?? [], hosts: g.hosts ?? {},
+  if (!allowlist.allowedUserIds.length) throw new Error(`no allowed user, nobody could open the dashboard: ${allowlist.why}`);
+  const config = { botId: g.botId, allowedUserIds: allowlist.allowedUserIds, hosts: g.hosts ?? {},
     ...(g.offlineAlertSeconds ? { offlineAlertSeconds: g.offlineAlertSeconds } : {}), ...(g.offlineAlertExclude ? { offlineAlertExclude: g.offlineAlertExclude } : {}), ...(g.alertLang ? { alertLang: g.alertLang } : {}) };
   parseDashboardConfig(config);
-  if (!config.allowedUserIds.length) throw new Error('bridge.allowedUserIds is empty: nobody could open the dashboard');
   return { domain: url.hostname, config };
 }
 
@@ -96,7 +99,7 @@ function usageDb() {
 
 function deploy() {
   const bridge = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {};
-  const { domain, config } = dashboardConfigFrom(bridge);
+  const { domain, config } = dashboardConfigFrom(bridge, bridgeAllowlist());
   // The Worker sends every alert as the dashboard bot. A machine holding its token uploads it (a
   // rotated token reaches the Worker this way); any other deploys without it and the Worker keeps
   // the one uploaded before, since a deploy leaves secrets it does not name in place.
@@ -121,7 +124,7 @@ function commitTag() {
 /** One `test` alert through notify.mjs, the code the Worker sends every alert with. */
 async function testAlert() {
   const bridge = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {};
-  const { config } = dashboardConfigFrom(bridge);
+  const { config } = dashboardConfigFrom(bridge, bridgeAllowlist());
   const token = localBotToken();
   menuRequest(bridge.dashboard, token);   // throws without this machine's token for botId
   const { alertLang } = parseDashboardConfig(config);

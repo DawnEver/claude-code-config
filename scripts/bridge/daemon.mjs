@@ -36,18 +36,21 @@ import { CodexAdapter, CodexHomes } from './codex-adapter.mjs';
 import { CodexLocalObserver } from './codex-local.mjs';
 import { resolveCodexHome, codexHomeKey } from '../shared/codex-home.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
+import { AgyAdapter, AGY_CWD_FILE } from './agy-adapter.mjs';
 import { TopicCache } from './topic-cache.mjs';
 import { AccountReader, accountFor } from './quota.mjs';
 import { BalanceReader } from './balances.mjs';
 import { ForgeReader } from './forges.mjs';
+import { HpcReader } from './hpc.mjs';
 import { healSyncLinks } from '../setup/check-links.js';
 import { DashboardPush } from './dashboard-push.mjs';
 import { ResourceReader } from './resources.mjs';
 import { UsageScanner, sources as usageSources } from '../usage/scan.mjs';
 import { UsagePush } from '../usage/push.mjs';
-import { STATUS } from '../dashboard/public/shared/vocab.mjs';
+import { STATUS, TOPIC_ICON_COLORS } from '../dashboard/public/shared/vocab.mjs';
 import { newSession, onActivity, onIdleTick, onDown, onTopicGone, onTopicFoundClosed, cacheEntry } from './lifecycle.mjs';
-import { readBridgeConfig, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange, BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './context.mjs';
+import { readBridgeConfig, bridgeAllowlist, gitContext, writePrivateFile, bridgeSourceRevision, bridgeConfigRevision, configSummary, applyConfigChange } from './context.mjs';
+import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './runtime-paths.mjs';
 
 /** How long a request for the human may be handled at the machine before anyone is mentioned. */
 const ALERT_GRACE_MS = 30000;
@@ -248,17 +251,22 @@ export class Bridge {
    * A session whose state is unknown (connected, no hook reported since, e.g. after a daemon
    * restart) is reported as such: it is live, and the page lists it as Connected.
    */
+  /**
+   * The dashboard's rows: a live session that has a Topic, and only that one (a session never
+   * given a Topic -- lazy, a side or background session, telemetry-only -- is not listed). Its
+   * name is the session's own (its rename, else the native title), else its Topic title: never null.
+   */
   dashboardSessions() {
-    return [...this.sessions.values()].filter((s) => s.state !== 'ended')
+    return [...this.sessions.values()].filter((s) => s.state !== 'ended' && s.topicId && s.chatId !== null)
       .map((s) => ({ s, snap: this.hosts.get(s.agent)?.statusSnapshot?.(s.id) })).map(({ s, snap }) => ({
-      id: s.id, agent: s.agent, name: s.name ?? null, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null, provider: s.provider ?? null, repo: s.repo ?? null,
+      id: s.id, agent: s.agent, name: s.name ?? s.title, project: s.project ?? null, branch: s.branch ?? null, seat: s.seat ?? null, provider: s.provider ?? null, repo: s.repo ?? null,
       unread: s.unread ?? 0, mention: !!s.mention, posted: s.posted ?? 0,
       lastPostAt: s.lastPostAt != null ? new Date(s.lastPostAt).toISOString() : null,
       ...(snap?.observationOnly ? { observationOnly: true } : {}),
       status: statusCode(snap?.state), ...(snap?.waiting ? { waiting: snap.waiting } : {}), ...(snap?.tasks?.length ? { tasks: snap.tasks } : {}),
       lastActivityAt: new Date(s.lastActivity).toISOString(),
-      topic: s.topicId && s.chatId !== null ? { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed',
-        ...(s.unread && s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}) } : null,
+      topic: { chatId: s.chatId, topicId: s.topicId, closed: s.state === 'closed',
+        ...(s.unread && s.firstUnread ? { firstUnread: s.firstUnread } : {}), ...(s.lastPost ? { lastPost: s.lastPost } : {}) },
     }));
   }
 
@@ -488,7 +496,7 @@ export class Bridge {
       s.creating = true;
       s.statusMessageId = null; s.statusText = null;
       try {
-        s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title)).message_thread_id;
+        s.topicId = (await this.telegram.createForumTopic(s.chatId, s.title, { iconColor: TOPIC_ICON_COLORS[s.agent] })).message_thread_id;
         this.#save(s);
       } catch (e) {
         if (e.code >= 400 && e.code < 500) s.state = 'none'; // confirmed rejection: later activity may retry
@@ -686,6 +694,7 @@ export class Bridge {
   async approval(key, { ref, summary, answerable }) {
     const s = this.sessions.get(key);
     if (!s) return;
+    const host = this.hosts.get(s.agent);
     const offer = answerable && this.config.approvalsFromTelegram && this.allowed.size > 0;
     const id = randomBytes(16).toString('hex');
     const pending = { key, agent: s.agent, ref, session: s, origin: null };
@@ -695,10 +704,17 @@ export class Bridge {
       { text: 'Accept', callback_data: `ap:${id}:y` }, { text: 'Decline', callback_data: `ap:${id}:n` },
     ]] } : undefined;
     const messages = await this.#send(s, `${head}\n${summary}`, { replyMarkup, alert: [...this.allowed] });
+    if (!offer) {
+      if (answerable) host?.releaseApproval?.(ref, s.id);
+      return;
+    }
     const message = messages.at(-1);   // Telegram puts the buttons on the final chunk
     if (this.approvals.get(id) === pending) {
       if (message && this.sessions.get(key) === s) pending.origin = { chatId: s.chatId, topicId: s.topicId, messageId: message.message_id };
-      else this.approvals.delete(id);
+      else {
+        this.approvals.delete(id);
+        host?.releaseApproval?.(ref, s.id);
+      }
     }
   }
 
@@ -733,7 +749,7 @@ export class Bridge {
       const message = (await this.#send(s, `${head}\n${render(q)}${hint}`, { replyMarkup, alert: [...this.allowed] })).at(-1);
       if (this.questions.get(id) !== pending) return;   // withdrawn while it was being delivered
       if (!message || this.sessions.get(key) !== s) {
-        // Not offered on Telegram after all: the whole request goes back to the terminal.
+        // Not offered on Telegram after all: the host takes it back (Codex: its TUI; Claude: the session is told to ask again).
         for (const [other, x] of this.questions) if (x.group === group) this.questions.delete(other);
         host?.releaseQuestion?.(ref, s.id);
         return;
@@ -926,25 +942,36 @@ export async function main() {
   const releaseLock = acquireDaemonLock();
   if (!releaseLock) { log('already running; one getUpdates consumer per bot token'); process.exit(0); }
   process.on('exit', releaseLock);
-  const config = readBridgeConfig();
+  // Resolved once: a declaration edited later takes effect when the daemon restarts.
+  const allowlist = bridgeAllowlist();
+  const config = { ...readBridgeConfig(), allowedUserIds: allowlist.allowedUserIds };
   const machine = readMachineName();
   if (!machine) { log('no machine name (~/.claude/machine.json); run setup.js --machine <NAME>'); process.exit(1); }
   if (!config.botToken && !config.dashboard) { log('no Telegram or dashboard transport configured; see docs/bridge.md'); process.exit(1); }
-  if (config.botToken && !config.allowedUserIds.length) log('bridge.allowedUserIds is empty: inbound Telegram messages will all be dropped');
+  if (allowlist.stale) log(allowlist.stale);
+  if (config.botToken && allowlist.why) log(`bridge allowlist empty, no inbound Telegram message or button is accepted: ${allowlist.why}`);
 
   // The base Codex home scopes this daemon's own cursors; each Codex home has its adapter (CodexHomes).
   const homeKey = codexHomeKey(resolveCodexHome({ env: {} }));
   const telegram = config.botToken ? new TelegramClient({ token: config.botToken, offsetFile: path.join(BRIDGE_RUNTIME_DIR, 'offset.json') }) : null;
-  const claude = new ClaudeAdapter();
+  // Queued inbound messages live on disk: a handover or a crash loses none.
+  const claude = new ClaudeAdapter({ queueDir: path.join(BRIDGE_RUNTIME_DIR, 'inbound') });
+  // Antigravity has no IPC of its own: its hooks call the method `agy` on Claude's (agy-adapter.mjs).
+  const agy = new AgyAdapter({ queueDir: path.join(BRIDGE_RUNTIME_DIR, 'inbound'), cwdFile: AGY_CWD_FILE }).start();
+  claude.registerLocal('agy', (p) => agy.handle(p));
   const port = await claude.listen(0);
-  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, sourceRevision, configRevision: bridgeConfigRevision(config) }, null, 2));
+  // The config fingerprint is the SETTINGS' (bridgeConfigRevision()), the one the change check below
+  // and ensure.mjs compute -- never the merged `config`, whose allowlist the settings do not carry:
+  // that mismatch read as a change every minute and handed the daemon over every minute.
+  const startConfig = bridgeConfigRevision();
+  writePrivateFile(RUNTIME_FILE, JSON.stringify({ port, token: claude.token, pid: process.pid, sourceRevision, configRevision: startConfig }, null, 2));
   const codex = new CodexHomes({ create: (home, refPrefix) => new CodexAdapter({ home, refPrefix, sources: config.codexSources,
     localObserver: new CodexLocalObserver({ root: path.join(home, 'sessions'), sources: config.codexSources }) }) });
   // The pinned card's account and load: the dashboard push's last reading, else a sample of its own.
   const resources = new ResourceReader();
   let lastAccounts = [], lastResources = null;
   const cardFacts = () => ({ accounts: lastAccounts, balanceEntries: config.balances, resources: config.dashboard ? lastResources : resources.read() });
-  const bridge = new Bridge({ telegram, adapters: [codex, claude], config, machine, log, telegramEnabled: !!telegram, cardFacts,
+  const bridge = new Bridge({ telegram, adapters: [codex, claude, agy], config, machine, log, telegramEnabled: !!telegram, cardFacts,
     topicCacheFile: telegram ? path.join(BRIDGE_RUNTIME_DIR, 'topics.json') : null });
 
   const ac = new AbortController();
@@ -952,6 +979,7 @@ export async function main() {
     ac.abort();
     try { if (JSON.parse(fs.readFileSync(RUNTIME_FILE, 'utf8')).pid === process.pid) fs.rmSync(RUNTIME_FILE); } catch { /* gone */ }
     codex.stop();
+    agy.close();
     claude.close().finally(() => process.exit(0));
   };
   process.on('SIGINT', stop);
@@ -961,7 +989,6 @@ export async function main() {
   // One rule for every change: this daemon read its config and code once, so a change to either
   // (a cloud sync, a pull, a dashboard edit) hands over to a fresh daemon — the same check
   // ensure.mjs makes at session start, so a host never waits for a session to apply it.
-  const startConfig = bridgeConfigRevision(config);
   let handedOver = false;
   // One minute timer for both minute-grained duties: idle-closing Topics, then the change check.
   setInterval(() => {
@@ -977,6 +1004,7 @@ export async function main() {
     } catch (e) { log(`change check: ${e.message}`); }
   }, 60000).unref();
   if (config.dashboardError) log(`dashboard: off (${config.dashboardError})`);
+  if (config.hpcError) log(`hpc: off (${config.hpcError})`);
   if (config.dashboard) {
     const accounts = new AccountReader({ machine, log, codex: () => codex.accounts(),
       codexFallback: (home) => `${machine}/home-${codexHomeKey(home)}`,
@@ -990,11 +1018,15 @@ export async function main() {
       for (const r of results) log(`dashboard: config ${changes.find((c) => c.id === r.id).key} ${r.ok ? 'applied' : `refused (${r.error})`}`);
       return results;
     };
+    // HPC usage, on a host whose local settings declare the read door (docs/dashboard.md "HPC"); its alerts ride the push.
+    let push = null;
+    const hpc = config.hpc ? new HpcReader({ ...config.hpc, log, stateFile: path.join(BRIDGE_RUNTIME_DIR, `hpc-state-${homeKey}.json`), raise: (a) => push?.raise(a) }) : null;
     // The usage store (docs/usage.md): the transcripts' turns, each quota window, hourly load.
     const usage = new UsagePush({ url: config.dashboard.url, hostToken: config.dashboard.hostToken, machine, log, accounts: () => lastAccounts, history: () => forges.takeHistory(),
+      hpc: () => hpc?.take() ?? null,
       scanner: new UsageScanner({ cursorFile: path.join(BRIDGE_RUNTIME_DIR, `usage-cursor-${homeKey}.json`),
         sources: () => usageSources(os.homedir(), { machine }) }) });
-    const push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
+    push = new DashboardPush({ ...config.dashboard, machine, log, config: () => configSummary(config),
       sessions: (list) => bridge.dashboardSessions().map(({ observationOnly, ...s }) => ({ ...s, account: observationOnly ? null : accountFor(s, list, config.balances) })),
       // Subscriptions and API balances alike: one list of the accounts this host can read.
       accounts: () => (lastAccounts = [...accounts.read(), ...balances.read()]), forges,
@@ -1003,6 +1035,7 @@ export async function main() {
     bridge.onAlert = (a) => push.raise(a);
     push.start();
     usage.start();
+    hpc?.start();
   }
   const sweep = (orphans) => (config.deleteClosedAfterHours > 0 ? bridge.sweepClosedTopics({ orphans }).catch((e) => log(`sweep: ${e.message}`)) : null);
   if (telegram) {

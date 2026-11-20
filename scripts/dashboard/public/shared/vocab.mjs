@@ -4,9 +4,11 @@
 // the Worker serves; everything here is plain data and pure functions, no imports.
 
 /** The agents a session or an account belongs to, and how they are named. */
-const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
+const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', agy: 'Antigravity' };
 export const AGENTS = Object.keys(AGENT_NAMES);
 export const agentName = (agent) => AGENT_NAMES[agent] ?? agent;
+/** Each agent's Telegram Topic icon colour (createForumTopic icon_color: one of the six Telegram allows). */
+export const TOPIC_ICON_COLORS = { claude: 16478047, codex: 9367192, agy: 7322096 };
 
 /**
  * A session's status, as its host reports it (the bridge maps each adapter's native state onto
@@ -29,7 +31,7 @@ export const QUOTA_STALE_MS = 15 * 60000;
 /** The Usage tab's filter: at most this many selected values per dimension (the page stops there, the API refuses more). */
 export const USAGE_FILTER_MAX = 20;
 
-// A session's tasks (scripts/bridge/tasks.mjs), by kind: a shell (Bash, a Codex command), a
+// A session's tasks (scripts/bridge/activity-board.mjs), by kind: a shell (Bash, a Codex command), a
 // PowerShell, a monitor (watches until it expires), a subagent. This order is the order a session
 // lists them in: subagents, monitors, shells, PowerShell.
 export const TASK_KINDS = ['agent', 'monitor', 'shell', 'powershell'];

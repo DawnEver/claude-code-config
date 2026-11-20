@@ -133,6 +133,11 @@ function fixture() {
 }
 
 /** Run the hook as a separate process, as the harness would. */
+// A successful pull re-runs checkLinks(), which writes into ~/.claude, ~/.codex and ~/.gemini:
+// the child gets a throwaway HOME so a test never edits the live hosts (it once broke agy's hooks.json).
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-home-'));
+process.on('exit', () => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
+
 function runHook(repo, mode, payload = {}, aiLab = '', extraEnv = {}) {
   // A session started by a provider launcher exports the already-synced marker;
   // inherited here it would make every --pull a no-op.
@@ -140,7 +145,8 @@ function runHook(repo, mode, payload = {}, aiLab = '', extraEnv = {}) {
   const raw = execFileSync(process.execPath, [path.join(HERE, 'sync-hook.js'), mode], {
     cwd: repo, encoding: 'utf8', input: JSON.stringify(payload),
     stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-    env: { ...env, ...IDENT, CLAUDE_SYNC_REPO: repo, CLAUDE_SYNC_AI_LAB: aiLab, ...extraEnv },
+    env: { ...env, HOME: TEST_HOME, USERPROFILE: TEST_HOME, CODEX_HOME: path.join(TEST_HOME, '.codex'), CLAUDE_SYNC_DIR: '',
+      ...IDENT, CLAUDE_SYNC_REPO: repo, CLAUDE_SYNC_AI_LAB: aiLab, ...extraEnv },
   }).trim();
   return raw ? JSON.parse(raw).systemMessage : null;
 }
@@ -400,4 +406,34 @@ test('parseBranchStatus reads dirty count, upstream and ahead from one porcelain
   const out = '# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +5 -2\n1 .M N... 100644 100644 100644 a b f.js\n? output/\n';
   assert.deepEqual(parseBranchStatus(out), { dirty: 2, upstream: true, ahead: 5 });
   assert.deepEqual(parseBranchStatus('# branch.oid abc\n# branch.head main\n'), { dirty: 0, upstream: false, ahead: 0 });
+});
+
+test('integration: the SessionStart mode returns at once and the detached pull still lands', async () => {
+  const { a, b } = fixture();
+  fs.writeFileSync(path.join(a, 'from-a.txt'), 'bg\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '--quiet', '-m', 'from a');
+  git(a, 'push', '--quiet');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-bg-'));
+  const t0 = Date.now();
+  const notice = runHook(b, '--pull-background', { source: 'startup' }, '', { TMP: tmp, TEMP: tmp, TMPDIR: tmp });
+  assert.ok(Date.now() - t0 < 10_000, 'the hook returned without waiting on the network');
+  assert.match(notice, /^cc-config sync started in the background \(result: .+\)$/);
+  assert.doesNotMatch(notice, /\n/, 'one line');
+  const deadline = Date.now() + 60_000;
+  while (!fs.existsSync(path.join(b, 'from-a.txt')) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+  assert.equal(readText(path.join(b, 'from-a.txt')), 'bg\n', 'the detached pull fast-forwarded');
+});
+
+test('the SessionStart mode is silent off startup (resume, clear, compact)', () => {
+  const { b } = fixture();
+  assert.equal(runHook(b, '--pull-background', { source: 'resume' }), null);
+});
+
+test('SessionStart runs the sync hook in the background mode with a short bound', async () => {
+  const { STEPS } = await import('./claude-hook.mjs');
+  const steps = STEPS.SessionStart.filter((s) => s.script === 'hooks/sync-hook.js');
+  assert.equal(steps.length, 1);
+  assert.deepEqual(steps[0].args, ['--pull-background']);
+  assert.ok(steps[0].budgetMs <= 10000, 'a session never waits long on the sync hook');
 });

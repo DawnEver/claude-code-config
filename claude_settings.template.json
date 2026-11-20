@@ -5,6 +5,7 @@
         "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
         "CLAUDE_CODE_ENABLE_AUTO_MODE": "1",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+        "CLAUDE_CODE_DISABLE_BG_SHELL_PRESSURE_REAP": "1",
         "CLAUDE_CODE_FORK_SUBAGENT": "1",
         "CLAUDE_AUTO_BACKGROUND_TASKS": "1",
         "DISABLE_ERROR_REPORTING": "1",
@@ -57,30 +58,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/sync-hook.js --pull",
-                        "timeout": 90
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/prune-cache-hook.js",
-                        "timeout": 10,
-                        "async": true
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/setup-check-hook.js",
+                        "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || { node ~/.claude/scripts/hooks/sync-hook.js --pull </dev/null >/dev/null 2>&1; [ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || { if git -C ~/.claude/scripts cat-file -e '@{u}:scripts/hooks/claude-hook.mjs' 2>/dev/null; then w='the pull did not fast-forward this checkout'; else w='its upstream does not carry it yet (offline, or main not yet promoted)'; fi; printf '{\"systemMessage\":\"[claude-hook] SessionStart hooks skipped: claude-hook.mjs is absent and %s. Launch via ccc, or run: node ~/.claude/scripts/hooks/sync-hook.js --pull\"}\\n' \"$w\"; exit 0; }; }; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart",
                         "timeout": 5
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/setup/doctor.js --hook",
-                        "timeout": 10
-                    },
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/bridge/ensure.mjs",
-                        "timeout": 10,
-                        "async": true
                     }
                 ]
             }
@@ -90,18 +69,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/notify-hook.js",
-                        "async": true
-                    }
-                ]
-            },
-            {
-                "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || exit 0; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event Notification",
+                        "timeout": 5,
                         "async": true
                     }
                 ]
@@ -113,7 +82,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/sync-hook.js --remind",
-                        "timeout": 10
+                        "timeout": 5
                     }
                 ]
             }
@@ -124,29 +93,8 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/loop-guard-hook.js",
+                        "command": "[ -f ~/.claude/scripts/hooks/claude-hook.mjs ] || exit 0; exec node ~/.claude/scripts/hooks/claude-hook.mjs --event PreToolUse",
                         "timeout": 5
-                    }
-                ]
-            },
-            {
-                "matcher": "AskUserQuestion",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js --question",
-                        "timeout": 660
-                    }
-                ]
-            },
-            {
-                "matcher": "*",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
-                        "async": true
                     }
                 ]
             }
@@ -157,7 +105,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 5
                     }
                 ]
             }
@@ -168,7 +116,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10
+                        "timeout": 5
                     }
                 ]
             }
@@ -179,7 +127,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "timeout": 5,
                         "async": true
                     }
                 ]
@@ -192,7 +140,7 @@
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "timeout": 5,
                         "async": true
                     }
                 ]
@@ -200,12 +148,12 @@
         ],
         "PostToolUseFailure": [
             {
-                "matcher": "Bash|Agent|Task",
+                "matcher": "*",
                 "hooks": [
                     {
                         "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
-                        "timeout": 10,
+                        "timeout": 5,
                         "async": true
                     }
                 ]
