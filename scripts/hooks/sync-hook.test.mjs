@@ -133,6 +133,11 @@ function fixture() {
 }
 
 /** Run the hook as a separate process, as the harness would. */
+// A successful pull re-runs checkLinks(), which writes into ~/.claude, ~/.codex and ~/.gemini:
+// the child gets a throwaway HOME so a test never edits the live hosts (it once broke agy's hooks.json).
+const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-home-'));
+process.on('exit', () => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
+
 function runHook(repo, mode, payload = {}, aiLab = '', extraEnv = {}) {
   // A session started by a provider launcher exports the already-synced marker;
   // inherited here it would make every --pull a no-op.
@@ -140,7 +145,8 @@ function runHook(repo, mode, payload = {}, aiLab = '', extraEnv = {}) {
   const raw = execFileSync(process.execPath, [path.join(HERE, 'sync-hook.js'), mode], {
     cwd: repo, encoding: 'utf8', input: JSON.stringify(payload),
     stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-    env: { ...env, ...IDENT, CLAUDE_SYNC_REPO: repo, CLAUDE_SYNC_AI_LAB: aiLab, ...extraEnv },
+    env: { ...env, HOME: TEST_HOME, USERPROFILE: TEST_HOME, CODEX_HOME: path.join(TEST_HOME, '.codex'), CLAUDE_SYNC_DIR: '',
+      ...IDENT, CLAUDE_SYNC_REPO: repo, CLAUDE_SYNC_AI_LAB: aiLab, ...extraEnv },
   }).trim();
   return raw ? JSON.parse(raw).systemMessage : null;
 }

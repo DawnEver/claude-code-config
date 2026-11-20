@@ -25,6 +25,7 @@ import crypto from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { ENV_SETTINGS_PATH, readMergedEnvSettings } from '../shared/config.mjs';
 import { sessionIdentity } from '../shared/session-identity.mjs';
+import { AGY_POLLING_TOOLS, normalizeAgyGuardPayload as agyPayload } from '../shared/agy-payload.mjs';
 
 /** Every knob, with its env override. Counts read as "this call is the Nth such call". */
 const DEFAULTS = {
@@ -60,6 +61,7 @@ const BASE_EXEMPT = [
   'sleep',
   'request_user_input',
   'request_user_input_async',
+  ...AGY_POLLING_TOOLS,
 ];
 
 const num = (raw, fallback) => {
@@ -173,6 +175,7 @@ function guardCall(payload, { env = process.env, host, settings, stateDir, now =
   try {
     if (settings === undefined) settings = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.harness?.loopGuard ?? {};
     const cfg = loadConfig(env, settings);
+    if (host === 'agy') payload = agyPayload(payload);
     const tool = payload.tool_name;
     const identity = sessionIdentity(env, payload, { host });
     const nativeTool = host === 'codex' ? tool?.replace(/^(?:functions|collaboration|clock)\./, '') : tool;

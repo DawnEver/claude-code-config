@@ -225,6 +225,10 @@ another host, is ignored. Declare it on the one host whose logins reach the clus
 
 ## Quota
 
+Antigravity's quota is its statusLine payload's `quota` (`{<pool>-<span>: {remaining_fraction, reset_in_seconds}}`),
+teed by `scripts/hooks/agy-statusline.mjs` (agy `settings.json` `statusLine.command`) into one series per pool
+(`agy-usage-<login>-<pool>.jsonl`). Each pool is its own account, `agy:<email>|<pool>`; a session spends the freshest.
+
 Each host's `AccountReader` (`scripts/bridge/quota.mjs`) groups its Claude config dirs by
 seat, checks each login against `seats`, and computes every window's use, trend and forecast
 (`accountModels()`); the push carries the result as `accounts[]` — numbers only, no rendering. One algorithm, on the host, where the inputs live (statusLine series, the Codex

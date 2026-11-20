@@ -12,10 +12,13 @@
 import fs from 'fs';
 import path from 'path';
 import { installCodexHooks } from './codex-hooks.mjs';
+import { installAgyConfig, agyInstalled } from './agy-config.mjs';
 import {
   sourceDir,
   claudeDir,
   codexDir,
+  agyDir,
+  getAgyLinks,
   CLAUDE_LINKS,
   SEAT_LINKS,
   localSeats,
@@ -161,6 +164,15 @@ export function checkLinks() {
       warnings.push('Codex hook definitions changed; review/trust them with /hooks');
     }
   } catch (error) { warnings.push(`Codex hooks: ${error.message}`); }
+
+  if (agyInstalled(agyDir)) {
+    fs.mkdirSync(path.join(agyDir, 'skills'), { recursive: true });
+    check(getAgyLinks(), agyDir, 'agy: ');
+    try {
+      if (installAgyConfig({ agyDir, scriptsDir: path.join(claudeDir, 'scripts') }).changed)
+        repaired.push('agy hooks/plugins config (re-merged)');
+    } catch (error) { warnings.push(`agy config: ${error.message}`); }
+  }
 
   return { repaired, warnings };
 }

@@ -15,161 +15,44 @@ checkout: `.venv/Scripts/python -m dev_lab.dev.hook_install --install` (`.venv/b
 rendered (`python -m dev_lab.dev.ciworkflows render`) and `.gitignore`/`.gitattributes`/`.rgignore` too
 (`python -m dev_lab.dev.famfiles --deltas scripts/_famconfig.py`): edit the TOML or the delta, never the output.
 
-## Setup
-- `npm run setup` - Initial setup
-- `node scripts/setup/setup.js` - Manual setup
-- Re-run setup to verify (checks existing symlinks)
-- `npm run doctor` - Read-only invariant check. Every check maps to an incident that
-  actually happened here (a hook wired but silently dead, payload/template shape drift,
-  absolute machine paths in shared files, orphaned plugin installs, NUL bytes making a
-  file binary to git). Exits 1 on failure; at SessionStart `--hook` reports the FAILs of the last
-  run (`~/.claude/doctor-last.json`) and starts the next one detached (`--hook-refresh`, one at a time by
-  `~/.claude/doctor-refresh.lock`, which names its owner pid: a run killed with its tree is replaced at once), since every
-  hook finishes under 5 s (D24) and a cold run takes ~10 s; it
-  is silent when healthy, and the run reuses the whole-tree
-  content scans (`~/.claude/doctor-cache.json`) while the work tree's fingerprint is unchanged. Add a check here whenever a
-  new silent-divergence incident is found — that is the point of the file.
-- Public repo: doctor's `public-hygiene` check FAILs on personal data in any tracked file
-  (home paths, real emails, Telegram chat ids, org cloud folders, plus the machine-local
-  denylist `~/.claude/private-markers` — one literal or `/regex/` per line, never tracked;
-  it lives in the sync dir so every fleet host shares it, linked by setup as an optional
-  payload file, and doctor WARNs when a sync-dir host lacks it). The family pre-commit row `public-hygiene` (`pyproject.toml`
-  `[tool.dev_lab.hooks]`) runs it (`doctor.js --public-hygiene`). Exception: inline `public-hygiene: allow (<reason>)`.
-- **Multi-machine only:** `node scripts/setup/setup.js --sync-dir "<path>"` points this
-  host at the shared config payload and records `~/.claude/sync-dir`. Add
-  `--init-sync-dir` on the FIRST machine to seed an empty payload dir from the templates;
-  on later machines wait for the cloud client to finish downloading instead — setup
-  refuses to seed a configured-but-empty dir, which would manufacture conflict copies.
-  With no sync dir configured everything resolves inside the repo, exactly as before.
-- `node scripts/setup/setup.js --machine <NAME>` writes the machine-local
-  `~/.claude/machine.json` (one unique name per host).
-  Read only via `scripts/shared/machine.mjs`;
-  the Claude launchers and, for Codex, setup's composed `~/.codex/config.toml`
-  `[shell_environment_policy.set]` turn it into committer provenance + `HARNESS_*` env
-  (harness-architecture §8b; Codex commands may run in a shared daemon no launcher env reaches).
-  Setup without the flag never overwrites it; doctor WARNs when it is missing.
-- The working tree must NOT live inside a cloud-synced folder. See `docs/sync-architecture.md`.
-- `npm run migrate` - Bring `~/.claude`/`~/.codex` symlinks, orphaned CLI wrappers, and the
-  current project's `.claude/` (cc-market plugin files) up to the latest format.
-  `npm run migrate -- --dry-run` previews link changes without writing. See `/migrate` skill.
+## Setup & Invariants
+- `npm run setup` / `node scripts/setup/setup.js` — Initial and idempotent setup across `~/.claude`, `~/.codex`, and `~/.gemini/config` (where `~/.gemini` exists).
+- `npm run doctor` — Read-only invariant checker (`scripts/setup/doctor.js`). Every check maps to a real silent-divergence incident (dead entry-point guards, payload/template drift, machine paths in synced files, rule-file truncation >24 KB, stale/unexecuted native hooks). At SessionStart `--hook` reports the last run's FAILs (`~/.claude/doctor-last.json`) and refreshes detached (`--hook-refresh` under `~/.claude/doctor-refresh.lock`, keeping every hook <5 s per D24). Add a check whenever a new silent-divergence class is found.
+- **Public hygiene:** `doctor.js --public-hygiene` (also wired as the `public-hygiene` pre-commit row) FAILs on personal data in tracked files (home paths, real emails, Telegram chat ids, org cloud folders, plus the synced denylist `~/.claude/private-markers`). Exception: inline `public-hygiene: allow (<reason>)`.
+- **Multi-machine sync:** `node scripts/setup/setup.js --sync-dir "<path>"` records `~/.claude/sync-dir` (`--init-sync-dir` seeds templates on the FIRST machine only; later machines wait for cloud download). Working tree MUST live outside any cloud-synced folder (`docs/sync-architecture.md`).
+- **Provenance:** `node scripts/setup/setup.js --machine <NAME>` writes `~/.claude/machine.json` (read via `scripts/shared/machine.mjs`), projected into committer provenance + `HARNESS_*` env by launchers and Codex's composed `[shell_environment_policy.set]`.
+- `npm run migrate` (`-- --dry-run`) — Cleans orphaned links/wrappers and migrates `.claude/` plugin files (`skills/migrate/`).
 
 ## Architecture
-Cross-platform Claude Code & Codex config sync. The working tree lives OUTSIDE any
-cloud-synced folder and travels via git; only a three-file config payload rides cloud
-storage. Both are linked into `~/.claude/` and `~/.codex/`. See `docs/sync-architecture.md`
-— read it before touching anything path-related.
-The multi-workstation / multi-task collaboration harness (lane = branch + worktree + main session, family process owned by lab-commons,
-Telegram + remote control on the same live session, per-machine bridge in
-`scripts/bridge/`) is designed in `docs/harness-architecture.md`.
+Cross-platform config sync & multi-host harness for **Claude Code**, **Codex**, and **Antigravity CLI (`agy`)**.
+- Sync & path tenancy: `docs/sync-architecture.md` (read before touching anything path-related).
+- Fleet collaboration harness, identity & bridge: `docs/harness-architecture.md` and `docs/bridge.md`.
+- Providers & secrets: `docs/providers.md` (catalogue from `ai-lab` in `~/.claude/provider-cache.json`; keys in git credential store, never plaintext).
+- Host integrations & telemetry: `docs/agy.md` (Antigravity), `docs/codex-harness-audit.md` + `docs/operations.md` (Codex), `docs/dashboard.md` (Cloudflare Worker + Mini App), `docs/usage.md` (D1 usage store).
 
 ### Structure
-- `scripts/setup/`: `setup.js` (OS detection, symlinks), `install-cli-wrappers.js` (standalone cross-platform wrappers beside each host binary; no shell-profile dependency), `check-links.js` (shared self-heal for setup links — invoked by `scripts/hooks/setup-check-hook.js` on Claude's SessionStart and by `codex.js`; Claude's user hooks are not projected into Codex), `doctor.js` (the invariant checker — `npm run doctor`), `check-mac-notify.js` (macOS notification helper), `setup-vscode.js` (VS Code provider switching)
-- `scripts/bridge/`: the per-machine session bridge (Telegram <-> live Claude/Codex sessions) — `daemon.mjs` (owns the bot token and the single `getUpdates` loop, maps session -> project group + Topic), `telegram.mjs` (Bot API client), `lifecycle.mjs` (the one session lifecycle for both hosts: open → idle-closed → reopened → ended → deleted), `activity-board.mjs` (`ActivityBoard`: the shells and subagents a session runs now and lately, fed by both adapters, pushed to the dashboard), `topic-cache.mjs` (`topics.json`), `context.mjs` (machine and session context: bridge config, git context, the dashboard config summary and the one config write), `jsonrpc.mjs` (the line-delimited JSON-RPC peer of the local IPC), `send-attachment.mjs` (CLI: a file to a session's Topic, used by Codex), `quota.mjs` (each local account's quota as data for the dashboard: seat grouping and login checks, window use, trend, forecast — `AccountReader` feeds the push), `resources.mjs` (this machine's CPU / memory / GPU load for the dashboard), `forges.mjs` (the code forges this machine can reach — GitHub, Gitea — read for the dashboard's Code tab), `quota-series.mjs` (each account's quota samples while their windows are current — the last is the quota now — and where in a window it was spent: the dashboard's trend), `extra-resets.mjs` (announced Codex/Claude extra resets from community APIs, shown on the dashboard), host adapters emitting the same events — `codex-adapter.mjs` (client of the shared Codex app-server via `codex app-server proxy`, which carries **WebSocket** frames — `ws-stream.mjs`) and `claude-adapter.mjs` (127.0.0.1 IPC for the Claude channel and `bridge-hook.js`), `install-service.mjs` (`npm run bridge:install`: HKCU Run key / launchd / systemd --user), `ensure.mjs` (idempotent start run on every session start — Claude SessionStart hook and `codex.js`; it replaces a running daemon only with `--replace`: the daemon's own handover within a minute of a config or source change, and a SessionStart pull; the daemon's exclusive `daemon.lock` makes concurrent starts safe). Its Claude half is the channel plugin `claude_plugins/session-bridge/`. Setup and config: `docs/bridge.md`. `dashboard-push.mjs` pushes `Bridge.dashboardSessions()` (read-only) to the dashboard
-- `scripts/usage/`: the usage store's host side (`docs/usage.md`) — `transcripts.mjs` (a Claude transcript or Codex rollout -> turn rows: tokens, model, times, tools, branch; metadata only), `scan.mjs` (what is new since the cursor `~/.claude/bridge/usage-cursor.json`), `push.mjs` (turns, session costs, quota windows and hourly load -> the Worker every 5 min, run by the bridge daemon), `query.mjs` (`npm run usage`: read-only SQL for a human or an AI). The store is D1 `agents-usage` behind the dashboard Worker (`scripts/dashboard/usage-store.mjs`, schema with column comments in `scripts/dashboard/migrations/*.sql`)
-- `scripts/dashboard/`: the read-only dashboard, a Cloudflare Worker + Telegram Mini App (`worker.mjs` entry + `DashboardHub` Durable Object, `api.mjs` the HTTP API on Web-standard Request/Response, `auth.mjs` Ed25519 `initData` + host tokens, `registry.mjs` last push per host in memory, alert state in Durable Object storage, `notify.mjs` every alert (quota, host offline, failed turn, refused config) as a dashboard bot message to the private chat, woken by a Durable Object alarm only when a host would turn silent, `deploy.mjs` host-token / deploy / set-menu, `wrangler.jsonc`, `public/` the app with `public/view.mjs` its pure logic, and `public/shared/` the pure modules the bridge, the Worker and the page all import — `vocab.mjs`: agents, statuses with label and rank, the quota stale threshold). Own dashboard bot; membership in shared `bridge.dashboard`. Edits only `CONFIG_KEYS` (dashboard-schema.mjs), applied by a host. Wire format: `scripts/shared/dashboard-schema.mjs`. `docs/dashboard.md`
-- `skills/migrate/`: `/migrate` skill — `migrate.js` (orphaned symlink cleanup + cc-market plugin `.claude/` migrations) and tests
-- `scripts/runtime/`: `cc.js` / `codex.js` (provider launchers; both run `startup-sync.mjs` before loading repo code and spawn the agent as `<recorded python> -m ai_lab.session`, which owns `LAB_SESSION` — `scripts/shared/session-launcher.mjs`), `cc-launcher.mjs` / `codex-launcher.mjs` (pure env+args projection helpers — reused by `setup-vscode.js` so the two hosts cannot drift), `repo-automode.mjs` (the launch repo's `.claude/automode.json` -> `--settings`, only for an origin in `~/.claude/trusted-origins`; `docs/setup.md` "Auto-mode rules"), `plugin-launcher.mjs` (resolves a plugin script inside the installed cache, used by the `todo` launcher), `win-spawn.mjs` (the Windows spawn shim), `todo-launcher.mjs`
-- `scripts/shared/`: cross-host config helpers — `config.mjs` (`readMergedEnvSettings`, two-layer shared+local merge), `provider-keys.js` (single source of truth for the `ANTHROPIC_*` env-var strip list), `sync-dir.mjs` (resolves the payload dir: `$CLAUDE_SYNC_DIR` → `~/.claude/sync-dir` → repo root, and defines `SYNC_PAYLOAD_FILES`), `is-main.mjs` (the entry-point guard every script that is also a module must use — see Standard), `seats.mjs` (Claude seats: the only alias -> `~/.claude-<alias>` mapping), `dashboard-schema.mjs` (the dashboard wire format shared by the bridge push and the Worker), `claude-defaults.mjs` (UI prefs that live in each config dir's `.claude.json` and so cannot sync — e.g. `diffSidebarOpen: false`; re-applied by `cc.js` per launch and by setup)
-- `scripts/hooks/`: `claude-hook.mjs` (ONE entry for an event several scripts serve —
-  `--event SessionStart|Notification|PreToolUse`: its `STEPS` table runs each script in a worker
-  thread of one node process, in order, each isolated and within its budget (an event fits 5 s, D24); a
-  deny or an exit-2 block is the entry's; `async` steps run beside the others (`concurrent`) or in
-  one detached background lane), `loop-guard-hook.js` (PreToolUse anti-spin guard — see Workflows),
-  `sync-hook.js` (`--pull-background` on SessionStart, `--remind` on SessionEnd — see Workflows),
-  `prune-cache-hook.js` (SessionStart: reports stale plugin-cache candidates without automatic deletion),
-  `notify-hook.js` (cross-platform notifications), `hud-hook.js` (statusLine),
-  `bridge-hook.js` (UserPromptSubmit + Stop + StopFailure: mirrors Claude prompts/final answers to the
-  session bridge's Telegram Topic; Notification drives the bridge's Claude state machine;
-  PreToolUse (a step of the `claude-hook.mjs` entry, beside the loop guard), PostToolUse and
-  PostToolUseFailure (matcher `*`) give every tool call its activity edge and every shell, monitor
-  and agent its task on the activity board — the mirror loses nothing, and an ordinary tool call
-  costs two node processes (pre + post), down from three; PreToolUse(AskUserQuestion) relays the question and, in a
-  Telegram-started turn, waits up to 10 min for the answer; silent no-op unless the bridge
-  daemon runs — `docs/bridge.md`). Every entry runs `async` except Stop (it injects queued
-  Telegram messages), PreToolUse(AskUserQuestion) (it returns the answer) and UserPromptSubmit
-  (a prompt must open its turn before that turn's answer lands); each call
-  carries an `at` stamp so the daemon never lets an older state overwrite a newer one;
-  `setup-check-hook.js` (SessionStart: verifies/heals setup links — recreates missing links,
-  converts claude-hud config symlink→hard link, warns on drifted plain files with the
-  `--replace` fix command; shared logic in `scripts/setup/check-links.js`, also run by
-  `codex.js`; Codex plugin hooks exist but do not inherit Claude's user-hook wiring)
-- `system-prompt/`: per-host platform prompts (`claude-base.md`, `codex-base.md`). Linked to `~/.claude/system-prompt` and `~/.codex/system-prompt` so `fabric.systemPromptFile` / `codex_config.toml model_instructions_file` resolve through a per-host junction, not a hardcoded OneDrive path. See `.claude/memory/2026/08/11/system-prompt-paths-symlink.md`.
-- `cc-market/`: the plugin marketplace (gitignored, its own repo — `DawnEver/cc-market`, cloned by setup). Four of its plugins are enabled and load-bearing here: `rem` (memory lifecycle, task engine `task-engine.js`, `/rem` + `/todo`), `sharp-review` (post-task review: hook, skill, workflow, findings sync via `post-review.js`), `evolve` (iterative review→fix loop), `fabric` (single-machine multi-provider calls — `call`/`fan_out` — and handoff; its cross-machine node feature is retired — see `docs/harness-architecture.md`). Three more are dormant — `watch`, `cc-latex`, `cc-academia` — present but not enabled. Usage statistics are not a plugin: they are the usage store (`docs/usage.md`). See `cc-market/AGENTS.md`
-- `skills/`: Custom skills (`migrate`) — the whole dir is symlinked to
-  `~/.claude/skills`. Codex needs each skill linked **individually**
-  (`discoverCodexSkillLinks()` in setup.js, because `~/.codex/skills` also holds Codex's own
-  built-in `.system` skills and cannot be replaced wholesale). Add new skills here as
-  `skills/<name>/SKILL.md`; they are picked up automatically on both hosts.
-  Account-level synced skills (`anthropic-skills:*`) are OFF — `syncClaudeAiSkills: false`
-  in `claude_settings.json` — otherwise the CLI downloads them into `~/.claude/skills/synced`,
-  i.e. straight into this repo. `.gitignore` carries `skills/synced/` as a backstop.
-- `output-styles/`: Output styles (`<name>.md`, `keep-coding-instructions: false`) — symlinked to `~/.claude/output-styles`. Non-coding personas (e.g. `academic`) for terminal use; toggle via `/config` → Output style. Strips coding guidance, keeps the harness/tools. A full system-prompt replacement was rejected (degrades CC to a chatbox) — see `.claude/memory/2026/06/20/persona-vs-output-style.md`.
-- `claude_plugins/`: Custom plugins (e.g., `claude-hud` config; `session-bridge` — the bridge's Claude channel MCP server, plain Node, registered as user-scope MCP server `session-bridge` by setup and re-ensured on every `ccc` launch (`scripts/shared/channel-server.mjs`), and loaded by `ccc` via `--dangerously-load-development-channels server:session-bridge`, see `docs/bridge.md`)
-- `claude_settings.json`: Env vars, permissions, hooks (gitignored). **Sync payload** — lives in the sync dir, not the repo
-- `claude_settings.template.json`: Template for new clones -> auto-copied to `claude_settings.json` by setup. Its `hooks` stay its own: doctor FAILs `payload-hooks-drift` when the payload's differ, and `node ~/.claude/scripts/setup/settings-hooks.mjs --apply` writes them into the sync dir's payload in place (every workstation links that one file; a workstation that has not pulled yet is bootstrapped by the SessionStart command, which pulls first when the entry is absent)
-- `claude_env_settings.json`: Non-secret provider config (base URLs, model pins) — **sync payload**, gitignored. NO API keys
-- `claude_env_settings.template.json`: Desensitized template -> auto-copied to `claude_env_settings.json` by setup. Its `providers.<name>` holds ONLY host projection rules (`claudeApiKeyEnv`, `codexApiKeyEnv`); the provider catalogue (urls, paths, model maps) is ai-lab's, copied by setup into `~/.claude/provider-cache.json` -- see `docs/providers.md`
-- `claude_env_settings.local.template.json`: Desensitized per-machine secrets template -> copied by setup to `~/.claude/claude_env_settings.local.json` (a REAL machine-local dir, never cloud-synced). It holds NO API key: keys live in the git credential store (setup migrates a plaintext `apiKey` there once); all readers deep-merge local over shared
-- `codex_config.toml`: **sync payload, hand-edited HEAD ONLY** (model, sandbox, TUI, plugins). Codex writes `[projects.*]` trust blocks / `[hooks.state.*]` / `[notice]` into its own config, so those are machine-local and must never sync. The active home's `config.toml` is a REAL FILE composed per host by setup = shared head + generated providers/notifications + this host's own state — NOT a symlink. Native machine handlers are merged separately into `hooks.json`. See `scripts/setup/codex-config-compose.mjs` and `docs/sync-architecture.md` § 3
-- `models.json`: Codex model catalog (context window, reasoning levels, image input) — generated from the provider cache's model maps on every setup run, linked to `~/.codex/models.json`. A build artifact: machine-local, gitignored, NEVER synced
-- `codex_config.template.toml`: Desensitized Codex template -> auto-copied to `codex_config.toml` by setup
-- `keybindings.json`: Claude Code keybindings -> synced to `~/.claude/keybindings.json`
-- `GLOBAL-AGENTS.md`: Global guidelines, NEVER WRITE IN this repo's memory. Single source linked to both `~/.claude/CLAUDE.md` (Claude) and `~/.codex/AGENTS.md` (Codex global instructions)
-- `.claude/rules/rem/`: All rules loaded every session (git-tracked), managed by REM plugin lifecycle. `.claude/rules/MEMORY.md` is the device-local generated index (gitignored).
-- `.claude/memory/`: Historical reference — content git-tracked; access metadata in gitignored `_meta.json` per date directory. `MEMORY.md` index is device-local generated (gitignored). Findings stored as `sharp-review.md` per session — sole source of truth for tasks.
+- `scripts/setup/`: `setup.js` (links for `~/.claude`, `~/.codex`, `~/.gemini/config`), `check-links.js` (link + config self-heal), `doctor.js` (invariants), `codex-config-compose.mjs` & `codex-hooks.mjs` (composed `~/.codex/config.toml` + merged `hooks.json`), `agy-config.mjs` (merges `cc-config` hook into `~/.gemini/config/hooks.json`, `cc-market` into `plugins.json`, and `agy-statusline.mjs` with `telemetry: true` into `~/.gemini/antigravity-cli/settings.json`; cleans legacy `session-bridge` MCP), `install-cli-wrappers.js`, `settings-hooks.mjs`, `setup-vscode.js`.
+- `scripts/bridge/`: per-machine Telegram & dashboard daemon (`daemon.mjs`, `telegram.mjs`, `lifecycle.mjs`, `activity-board.mjs`, `context.mjs`, `jsonrpc.mjs`, `ensure.mjs`, `install-service.mjs`), host adapters (`claude-adapter.mjs` with `registerLocal`, `codex-adapter.mjs` over WebSocket `ws-stream.mjs`, `agy-adapter.mjs`), `send-attachment.mjs` (CLI attachment sender for Codex/agy/Claude), and collectors (`quota.mjs` + `quota-series.mjs` + `extra-resets.mjs`, `balances.mjs`, `resources.mjs`, `forges.mjs`, `hpc.mjs`, `dashboard-push.mjs`). Details: `docs/bridge.md`.
+- `scripts/dashboard/`: Cloudflare Worker + Durable Object (`worker.mjs`, `api.mjs`, `auth.mjs`, `registry.mjs` persisted in DO KV, `notify.mjs`, `usage-store.mjs`, `deploy.mjs`) and Telegram Mini App (`public/`, shared `public/shared/vocab.mjs`). Wire schema: `scripts/shared/dashboard-schema.mjs`. Details: `docs/dashboard.md`.
+- `scripts/usage/`: transcript parsers & incremental scanner (`transcripts.mjs`, `scan.mjs`, `push.mjs`, `query.mjs` via `npm run usage`). Details: `docs/usage.md`.
+- `scripts/runtime/`: `cc.js` (`ccc`/`ccds`), `codex.js` (`codc`/`cods`), `agy.js` (`agyc`) + pure `*-launcher.mjs` helpers, `repo-automode.mjs` (`isTrustedRepo` + `.claude/automode.json` for `~/.claude/trusted-origins`), `win-spawn.mjs`, `todo-launcher.mjs`. All three host launchers spawn via `<recorded python> -m ai_lab.session` (`scripts/shared/session-launcher.mjs`).
+- `scripts/hooks/`: `claude-hook.mjs` (single worker-thread entry per Claude event, <5 s D24), `codex-hook.mjs` (Codex native entry), `agy-hook.mjs` (Antigravity entry; `PreToolUse` always emits non-empty `decision`), `project-guard-bridge.mjs` (projects `agy` and `codex` events onto a `trusted-origins` repo's canonical `.claude/settings*.json` `deny-commands.js`, `hookdispatch`, and `permissions.allow` doors), `loop-guard-hook.js` (exact + trigram-Jaccard anti-spin guard), `sync-hook.js` (`--pull`, `--pull-background`, `--remind`, `boundedRepoReminder`), `bridge-hook.js`, `setup-check-hook.js`, `prune-cache-hook.js`, `notify-hook.js`, `hud-hook.js`, `agy-statusline.mjs`.
+- `scripts/shared/`: `is-main.mjs`, `config.mjs`, `sync-dir.mjs`, `machine.mjs`, `seats.mjs`, `codex-home.mjs`, `agy-payload.mjs` (SSOT for agy prompt envelope & tool normalization), `provider-cache.mjs`, `session-launcher.mjs`, `session-identity.mjs`, `dashboard-schema.mjs`, `claude-defaults.mjs`, `channel-server.mjs`.
+- **Configs & Assets:**
+  - Sync payloads (gitignored, live in sync dir): `claude_settings.json`, `claude_env_settings.json`, `codex_config.toml` (hand-edited head only), seeded from `*.template.*`. Machine-local secrets: `~/.claude/claude_env_settings.local.json` (bridge/dashboard tokens only; API keys in git credential store).
+  - `GLOBAL-AGENTS.md`: single global rules source linked to `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.gemini/config/GEMINI.md`. Never write repo-specific memory there.
+  - cc-market (`DawnEver/cc-market`; `rem`, `sharp-review`, `evolve`, `fabric` enabled; `watch`, `cc-latex`, `cc-academia` dormant) is a family repo checked out beside the others, declared in the machine file `[repos] cc-market` and read by `scripts/shared/market-dir.mjs`; never a clone inside this repo. See its own `AGENTS.md`.
+  - `claude_plugins/`: `claude-hud` config; `session-bridge` (Claude channel MCP server).
+  - `skills/`, `system-prompt/`, `output-styles/`, `keybindings.json`, `.claude/rules/rem/`, `.claude/memory/`.
 
 ### CLI Tools
-- `ccc` / `ccds` — Claude Code launchers (official / DeepSeek). `ccc --seat <alias>` (`-s`) runs as one Claude seat
-  (an account in one Team) from `~/.claude-<alias>`; seats are the top-level `seats` of the shared
-  `claude_env_settings.json`, mapped to dirs only by `scripts/shared/seats.mjs` — see `docs/bridge.md` "Claude seats".
-- `codc` / `cods` — Codex launchers (official / DeepSeek). Both read the provider cache (ai-lab's catalogue) and the key from the git credential store; a stale cache refuses to launch -- see `docs/providers.md`.
-- `todo` — Task management: `todo` (list), `todo <text>` (add), `todo rm <id>` (remove), `todo help`
-- `install-cli-wrappers.js` installs `.cmd` plus Git Bash wrappers on Windows and executable shell wrappers on macOS/Linux. They live beside the matching host binary and never depend on PowerShell profiles, `.zshrc`, `.bashrc`, or `.ps1` scripts.
-
-### Workflows
-- Hooks wired in `claude_settings.json`: `SessionStart` runs `sync-hook.js --pull-background` (a detached `--pull`, so the session never waits)
-  (fast-forwards this checkout onto its upstream so a session starts from the
-  freshest tree — startup only, silent when current, refuses rather than merging when
-  the host has its own unpushed commits; a successful pull also re-runs `checkLinks()`
-  because a pull replaces the `claude-hud` hard link, §10 of `docs/sync-architecture.md`),
-  then `prune-cache-hook.js`, `setup-check-hook.js`
-  (verifies/heals `~/.claude` symlinks via `scripts/setup/check-links.js` — recreates
-  missing links, converts the `claude-hud` config symlink to a hard link, warns on
-  drifted plain files). `SessionEnd` runs `sync-hook.js --remind` (uncommitted /
-  unpushed report; the outbound half stays a deliberate user action — no auto-push).
-  `Notification` runs `notify-hook.js`. `PreToolUse` (matcher `*`, through `claude-hook.mjs`) runs
-  `loop-guard-hook.js`: per-session anti-spin guard — it hashes each
-  `(tool, normalized input)` inside a sliding window, and escalates on both exact
-  repeats and near-duplicates (trigram-Jaccard). Defaults: identical calls warn on
-  the 3rd via `additionalContext` and are denied from the 4th; near-duplicates warn
-  on the 4th and are denied from the 5th. Polling-by-design tools (`Monitor`,
-  `TaskOutput`, `ReadNotifications`, ...) are exempt and the hook fails open.
-  Every knob is a `harness.loopGuard` key in `claude_env_settings[.local].json` or an env var
-  `HARNESS_LOOP_GUARD_{WARN_AT,DENY_AT,SIMILAR_WARN_AT,SIMILAR_DENY_AT,
-  SIMILAR_THRESHOLD,WINDOW_MINUTES,MAX_ENTRIES,EXEMPT,DISABLE}` — see `DEFAULTS`
-  in the hook. The `Stop` hook runs the `sharp-review`
-  plugin (post-task code review, 3 parallel reviewers).
-- `~/.claude/` links to repo for sync
-- `~/.codex/` links to repo for sync
-
-### Codex native harness
-
-Setup merges the machine hooks in `scripts/setup/codex-hooks.mjs` into the active
-`CODEX_HOME`'s `hooks.json`; `scripts/hooks/codex-hook.mjs` owns the native machine
-entry point. User handlers and Codex trust remain user-owned. Startup, guard,
-notifications, execution observations, protected-cache recovery and conservative cache audits are documented
-in `docs/operations.md`; the current source/deployment support matrix is
-`docs/codex-harness-audit.md`. Plugin lifecycle logic remains in cc-market.
+- `ccc` / `ccds` (`ccc --seat <alias>`) — Claude Code launchers.
+- `codc` / `cods` — Codex launchers.
+- `agyc` — Antigravity CLI launcher (installed where `agy` is on PATH).
+- `todo` — Task list CLI (`todo`, `todo <text>`, `todo rm <id>`).
 
 ### Standard
-- **A script that is also a module must gate its entry point with `isMain(import.meta.url)`
-  from `scripts/shared/is-main.mjs` — never `process.argv[1] === fileURLToPath(import.meta.url)`.**
-  Node realpaths a module but not `argv[1]`, and every hook here is launched through the
-  `~/.claude/scripts` link, so the naive comparison is always false in production: the body
-  never runs and the process exits 0 in silence. That bug shipped twice — it disabled
-  `loop-guard-hook.js` for two days and made `SETUP_FIX_CMD` a no-op. `npm run doctor` fails
-  on any recurrence.
-- After changes, update README and `setup.js` if needed
-- **A skill's execution knowledge goes in its `SKILL.md` / `reference/*.md`, never in `rules/*` or `AGENTS.md`/`CLAUDE.md`.** At runtime a skill sees only its own files and the host project's config — never this repo's rules/`AGENTS.md`.
-- Plugin development, tests, and marketplace conventions → see `cc-market/AGENTS.md`
-- This repo is publicly available, but it is primarily intended for personal use and rapid iteration — backward compatibility is not a concern. Rename, restructure, or remove anything outdated rather than adding shims or compat layers.
+- **Every script that is also a module MUST gate its entry point with `isMain(import.meta.url)` from `scripts/shared/is-main.mjs` — never `process.argv[1] === fileURLToPath(import.meta.url)`.** Node realpaths a module but not `argv[1]`, so raw comparison through `~/.claude/scripts` links silently exits 0 without running. `npm run doctor` FAILs on any recurrence.
+- **Rule files (`AGENTS.md`, `GLOBAL-AGENTS.md`) must stay well below 24,000 bytes** (`doctor` `rule-file-size` FAILs at 24,000 B, where Antigravity truncates rule files). Keep `AGENTS.md` concise and place subsystem details in `docs/*.md`.
+- **A skill's execution knowledge goes in its `SKILL.md` / `references/*.md`, never in `rules/*` or `AGENTS.md`/`GLOBAL-AGENTS.md`.**
+- No backward compatibility: rename, restructure, or remove outdated code directly rather than adding shims or aliases.

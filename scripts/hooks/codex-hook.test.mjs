@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runCodexHook as dispatchCodexHook, codexNotification, boundedRepoReminder } from './codex-hook.mjs';
+import { runCodexHook as dispatchCodexHook, codexNotification } from './codex-hook.mjs';
+import { boundedRepoReminder } from './sync-hook.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

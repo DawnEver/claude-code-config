@@ -30,8 +30,6 @@ _GITIGNORE: Final = (
     'models.json',
     # setup keeps a replaced private copy beside the name it re-linked
     '/*.setup-bak',
-    # The cc-market checkout linked beside the config, never this repo's content.
-    'cc-market/',
     '**/.claude/memo/',
     '**/.claude/watch/**',
     '!**/.claude/watch/',
@@ -52,7 +50,7 @@ _GITATTRIBUTES: Final = (
     '.claude/rules/**/*.md text eol=lf',
 )
 
-_RGIGNORE: Final = ('.submodules/', '.git/', '!cc-market/')
+_RGIGNORE: Final = ('.submodules/', '.git/')
 
 # The Makefile is a REQUIRED base: its target headers are the family's, its recipes this repo's. Every line the
 # base does not name -- the phony set, the default goal and the node recipes.

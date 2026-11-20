@@ -316,7 +316,7 @@ test('a retired Codex plugin cache is reported without flagging current plugins'
   fs.writeFileSync(path.join(marketDir, 'marketplace.json'), JSON.stringify({
     plugins: [{ name: 'fabric' }],
   }));
-  const out = checkCodexPluginCache(root, home);
+  const out = checkCodexPluginCache(path.join(root, 'cc-market'), home);
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 'codex-plugin-orphan-cache');
   assert.match(out[0].title, /takeover/);

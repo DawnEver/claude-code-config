@@ -6,6 +6,11 @@ const id = value => typeof value === 'string' && value.trim() ? value.trim() : n
  * Codex subagent hook session_id may name the parent, so never use it as a thread key. */
 export function sessionIdentity(env = process.env, payload = {}, { host } = {}) {
   host ??= env.CODEX_THREAD_ID || env.CODEX_SESSION_ID || env.HARNESS_AGENT === 'codex' ? 'codex' : 'claude';
+  if (host === 'agy') {
+    // agy names one conversation per session; its subagents run in their own conversations.
+    const threadId = id(payload.conversationId) || id(payload.session_id);
+    return { host, sessionId: threadId || id(env.LAB_SESSION), threadId };
+  }
   if (host === 'codex') {
     const threadId = id(payload.thread_id) || id(payload.agent_id) || codexRolloutId(payload.transcript_path) || id(env.CODEX_THREAD_ID);
     return { host, sessionId: id(payload.session_id) || id(env.CODEX_SESSION_ID) || threadId || id(env.LAB_SESSION), threadId };

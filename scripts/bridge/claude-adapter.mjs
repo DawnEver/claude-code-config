@@ -156,6 +156,13 @@ export class ClaudeAdapter extends EventEmitter {
     this.nested = new Set();     // the claude processes of nested sessions: their calls are not mirrored
     this.queueDir = queueDir;    // where queued inbound messages wait, one file per session id
     this.sockets = new Set();
+    this.local = {};             // method -> handler: local IPC methods registered via registerLocal()
+  }
+
+  /** Register a token-authenticated local IPC method (e.g. `agy` for `agy-adapter.mjs`). */
+  registerLocal(method, handler) {
+    this.local[method] = handler;
+    return this;
   }
 
   // ── The inbound queue, per session id: in memory on the session, on disk in queueDir ──
@@ -281,6 +288,11 @@ export class ClaudeAdapter extends EventEmitter {
           }
           if (!sessionId || this.sessions.get(sessionId)?.socket !== socket) throw unauthorized();
           return this.sendAttachment('claude', sessionId, p);
+        }
+        // Another host's one-shot hook calls on this IPC (daemon.mjs: `agy` -> agy-adapter.mjs), with the runtime token.
+        if (Object.hasOwn(this.local, method)) {
+          if (!this.#tokenOk(p.token)) throw unauthorized();
+          return this.local[method](p);
         }
         if (!sessionId || this.sessions.get(sessionId)?.socket !== socket) throw unauthorized();
         if (method === 'reply') {
