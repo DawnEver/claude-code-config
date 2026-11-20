@@ -4,7 +4,6 @@
 
 attic/
 
-# --- claude-code-config delta, 3 of 3 allowed ---
+# --- claude-code-config delta, 2 of 2 allowed ---
 .submodules/
 .git/
-!cc-market/
