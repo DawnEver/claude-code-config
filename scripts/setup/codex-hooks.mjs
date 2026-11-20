@@ -7,8 +7,9 @@ import { writeFileAtomic } from './codex-config-file.mjs';
 
 const PREFIX = 'cc-config:';
 const own = h => h?.statusMessage?.startsWith(PREFIX) && /codex-hook\.mjs/.test(h.command ?? '');
-const events = ['SessionStart', 'PreToolUse', 'PermissionRequest', 'SessionEnd'];
-const timeoutFor = event => event === 'SessionEnd' ? 3 : event === 'SessionStart' ? 120 : 5;
+// Every turn-level event the project's hooks need (task binding, recall, walls, the Stop pass).
+const events = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'SessionEnd'];
+const timeoutFor = event => event === 'SessionEnd' ? 3 : event === 'SessionStart' ? 120 : event === 'Stop' ? 60 : event === 'UserPromptSubmit' ? 30 : 5;
 const commandFor = argv => {
   const data = Buffer.from(JSON.stringify(argv)).toString('base64');
   return `node -e "/* codex-hook.mjs */const a=JSON.parse(Buffer.from('${data}','base64').toString());const r=require('node:child_process').spawnSync(a[0],a.slice(1),{stdio:'inherit'});process.exit(r.error?1:(r.status??1))"`;

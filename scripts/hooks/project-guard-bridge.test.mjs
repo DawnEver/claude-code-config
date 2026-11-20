@@ -165,3 +165,28 @@ test('findProjectRootWithClaudeSettings stops at git root', t => {
   fs.mkdirSync(sub, { recursive: true });
   assert.equal(findProjectRootWithClaudeSettings(sub), root);
 });
+
+// Parity: every project-hook event Claude runs reaches the project on codex and agy alike.
+// Planted control: an event no host maps (PreCompact) must be reported missing, so the check can say no.
+import { canonicalEventsFor } from './project-guard-bridge.mjs';
+import { managedCodexHooks } from '../setup/codex-hooks.mjs';
+test('codex and agy reach every turn-level project event Claude runs (task binding, recall, walls, Stop pass)', () => {
+  const claude = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop'];
+  const installed = Object.keys(managedCodexHooks({ scriptsDir: '/s', node: '/n' }));
+  const codex = canonicalEventsFor('codex', installed);
+  const agy = canonicalEventsFor('agy', ['SessionStart', 'PreInvocation', 'PreToolUse', 'PostToolUse', 'Stop']);
+  const missing = (host, have) => claude.filter(e => !have.has(e)).map(e => `${host}:${e}`);
+  assert.deepEqual([...missing('codex', codex), ...missing('agy', agy)], []);
+  assert.deepEqual(missing('control', canonicalEventsFor('codex', ['SessionStart'])).length > 0, true);
+  assert.ok(!canonicalEventsFor('codex', ['PreCompact']).size);
+});
+
+test('codex UserPromptSubmit carries project context and a Stop block continues the turn', async () => {
+  const ctx = await runCodexHook({ hook_event_name: 'UserPromptSubmit', prompt: 'task: x' },
+    { repair: () => {}, projectHooks: () => ({ contexts: ['[task] bound x'] }) });
+  assert.equal(ctx.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.match(ctx.hookSpecificOutput.additionalContext, /bound x/);
+  const stop = await runCodexHook({ hook_event_name: 'Stop' },
+    { repair: () => {}, projectHooks: () => ({ blockReason: 'STRAYS: commit first', contexts: [] }) });
+  assert.deepEqual(stop, { decision: 'block', reason: 'STRAYS: commit first' });
+});

@@ -166,6 +166,16 @@ function runOneHandler(handler, { repoRoot, cwd, payload, payloadJson, childEnv,
   return { code: r.status ?? 1, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
+/** The canonical (Claude) events a host's installed events reach, as a parent and as a subagent. */
+export function canonicalEventsFor(host, hostEvents) {
+  const out = new Set();
+  for (const e of hostEvents) for (const sub of [false, true]) {
+    const c = resolveCanonicalEvent(host, e, { invocationNum: 0 }, sub);
+    if (c) out.add(c);
+  }
+  return out;
+}
+
 function resolveCanonicalEvent(host, hostEvent, input, isSubagent) {
   if (host === 'agy') {
     if (hostEvent === 'SessionStart') return 'SessionStart';
@@ -180,8 +190,10 @@ function resolveCanonicalEvent(host, hostEvent, input, isSubagent) {
   if (host === 'codex') {
     if (hostEvent === 'SessionStart') return 'SessionStart';
     if (hostEvent === 'PreToolUse') return 'PreToolUse';
+    if (hostEvent === 'UserPromptSubmit') return 'UserPromptSubmit';
     if (hostEvent === 'PostToolUse') return 'PostToolUse';
-    if (hostEvent === 'SessionEnd') return isSubagent ? 'SubagentStop' : 'Stop';
+    if (hostEvent === 'Stop') return isSubagent ? 'SubagentStop' : 'Stop';
+    if (hostEvent === 'SessionEnd') return 'SessionEnd';
     return null;
   }
   return hostEvent;

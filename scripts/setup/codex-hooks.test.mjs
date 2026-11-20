@@ -32,9 +32,9 @@ test('native hook installation preserves user handlers, is idempotent, and never
 test('foreign empty handler groups are preserved', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-hooks-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(dir, 'hooks.json'), JSON.stringify({ hooks: { Stop: [{ matcher: 'user-reserved', hooks: [] }] } }));
+  fs.writeFileSync(path.join(dir, 'hooks.json'), JSON.stringify({ hooks: { PreCompact: [{ matcher: 'user-reserved', hooks: [] }] } }));
   installCodexHooks({ codexDir: dir, scriptsDir: '/scripts' });
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'hooks.json'))).hooks.Stop, [{ matcher: 'user-reserved', hooks: [] }]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'hooks.json'))).hooks.PreCompact, [{ matcher: 'user-reserved', hooks: [] }]);
 });
 
 test('inspection rejects altered managed group execution constraints', t => {
@@ -96,5 +96,5 @@ test('all commands pass dangerous local paths only as encoded argv data', () => 
   assert.doesNotMatch(command, /\$\(|`literal`/);
   const encoded = /Buffer.from\('([^']+)'/.exec(command)[1];
   assert.equal(JSON.parse(Buffer.from(encoded, 'base64').toString())[1], path.join(script, 'hooks', 'codex-hook.mjs'));
-  assert.deepEqual(Object.keys(hooks), ['SessionStart', 'PreToolUse', 'PermissionRequest', 'SessionEnd']);
+  assert.deepEqual(Object.keys(hooks), ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop', 'SessionEnd']);
 });
