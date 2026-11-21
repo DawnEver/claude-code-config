@@ -32,3 +32,16 @@ test('a leftover bridge.allowedUserIds is never read, only named', () => {
   // Fail closed even with a stale key present: it never becomes a fallback.
   assert.deepEqual(declaredAllowlist({ declaration: { channels: {}, why: 'x' }, bridge: { allowedUserIds: [666] } }).allowedUserIds, []);
 });
+
+// 2026-11-21: the declaration ran under ai-lab's interpreter (the provider cache's), which carries no dev_lab,
+// so the door always failed and every Telegram message was undeclared. It runs where dev_lab lives.
+test('the declaration door runs under the dev-lab checkout environment, never another repo\'s', async () => {
+  const { readChannelDeclaration, DECLARATION_DOOR } = await import('./channel-declaration.mjs');
+  let ran;
+  const run = (python, argv) => { ran = [python, ...argv]; return { status: 0, stdout: JSON.stringify({ [CHANNEL_SOURCE]: '1001' }) }; };
+  const got = readChannelDeclaration({ interpreter: () => ({ python: 'C:/w/dev-lab/.venv/Scripts/python.exe', why: null }), run });
+  assert.deepEqual(got, { channels: { [CHANNEL_SOURCE]: '1001' }, why: null });
+  assert.deepEqual(ran, ['C:/w/dev-lab/.venv/Scripts/python.exe', ...DECLARATION_DOOR]);
+  const none = readChannelDeclaration({ interpreter: () => ({ python: null, why: 'dev-lab is not declared in the machine file [repos]' }), run });
+  assert.deepEqual(none, { channels: {}, why: 'dev-lab is not declared in the machine file [repos]' });
+});
