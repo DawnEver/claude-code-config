@@ -5,7 +5,7 @@
 
 import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, hpcView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
-import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
+import { USAGE_FILTER_MAX, platformName } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 import { LOGOS } from './logos.mjs';
@@ -1193,8 +1193,8 @@ function renderUsage() {
   if (v.totals.cacheHit != null) total(`${Math.round(v.totals.cacheHit * 100)}%`, 'usage.cacheHit', 'usage.cacheHitTitle');
   if (v.totals.costUsd != null) total(`$${Math.round(v.totals.costUsd)}`, 'usage.apiValue', 'usage.apiValueTitle');
   const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
-  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) }),
-    segs: ['claude', 'codex'].map((a) => ({ cls: a, pct: d[`${a}Pct`] })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, agents: d.segs.filter((s) => s.tokens).map((s) => `${platformName(s.platform)} ${tokenText(s.tokens)}`).join(', ') || '0', active: hoursText(d.active) }),
+    segs: d.segs.map((s) => ({ cls: s.platform, pct: s.pct })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
   box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
   const hpc = hpcView(demoOn ? masker.usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
   if (hpc) box.append(hpcBlock(hpc));

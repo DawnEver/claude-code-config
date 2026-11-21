@@ -221,7 +221,7 @@
   "usage.cacheHitTitle": "从提示缓存读取的输入 token",
   "usage.apiValue": "API 价值",
   "usage.apiValueTitle": "Claude Code 按标价估算的会话价值，并非订阅账单",
-  "usage.day": "{day}：Claude {claude}，Codex {codex}，智能体时长 {active}",
+  "usage.day": "{day}：{agents}，智能体时长 {active}",
   "usage.hpc.title": "HPC · 近 24 小时 {h} 核时",
   "usage.hpc.day": "{day}：最后一次读取前 24 小时 {h} 核时",
   "usage.hpc.axis": "核时 · 每段最后一次读取的 24 小时",

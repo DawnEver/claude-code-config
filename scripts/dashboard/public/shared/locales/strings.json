@@ -215,7 +215,7 @@
   "usage.cacheHitTitle": "input tokens read from the prompt cache",
   "usage.apiValue": "API value",
   "usage.apiValueTitle": "what Claude Code priced its sessions at: list price, not a subscription bill",
-  "usage.day": "{day}: Claude {claude}, Codex {codex}, {active} agent time",
+  "usage.day": "{day}: {agents}, {active} agent time",
   "usage.hpc.title": "HPC · {h} core-h, last 24 h",
   "usage.hpc.day": "{day}: {h} core-h in the 24 h before the last reading",
   "usage.hpc.axis": "core-h, 24 h at each last reading",
