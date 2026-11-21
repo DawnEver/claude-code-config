@@ -178,6 +178,7 @@
       "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '') && (needs.parts.outputs.matrix != '')) }}",
       "name": "tests/${{ matrix.part }}",
       "runs-on": "${{ matrix.runs-on }}",
+      "timeout-minutes": 90,
       "steps": [
         {
           "uses": "actions/checkout@v4",
@@ -202,6 +203,11 @@
         {
           "name": "Sync the environment",
           "run": "uv sync --frozen --all-groups"
+        },
+        {
+          "name": "Sync the part's extras",
+          "shell": "bash",
+          "run": "uv sync --frozen $(uv run --no-sync python -m dev_lab.dev.depneeds flags --part \"${{ matrix.part }}\")"
         },
         {
           "name": "Produce and post the part",
