@@ -272,11 +272,11 @@ test('store: report by the viewer\'s day; query is read-only and capped', async 
   await ingest(db, 'host-a', { ...empty, turns: [turnRow({ started_at: Date.parse('2026-10-20T23:30:00Z'), ended_at: Date.parse('2026-10-20T23:40:00Z') }),
     turnRow({ turn: 'c', agent: 'codex', session: 'C1', model: 'gpt-6', project: 'other', output: 1, started_at: Date.parse('2026-10-21T12:00:00Z'), ended_at: Date.parse('2026-10-21T12:01:00Z') })] });
   const r = await report(db, { days: 7, tzOffsetMin: 60, now: Date.parse('2026-10-21T13:00:00Z') });
-  assert.deepEqual(r.daily.map((d) => [d.day, d.agent, d.active_ms]), [['2026-10-21', 'claude', 600000], ['2026-10-21', 'codex', 60000]], '23:30 UTC is the 21st at UTC+1');
+  assert.deepEqual(r.daily.map((d) => [d.day, d.platform, d.active_ms]), [['2026-10-21', 'claude', 600000], ['2026-10-21', 'codex', 60000]], '23:30 UTC is the 21st at UTC+1');
   assert.deepEqual(r.projects.map((p) => p.k), ['proj', 'other']);
   const h = await report(db, { days: 1, tzOffsetMin: 60, now: Date.parse('2026-10-21T13:00:00Z') });
   assert.equal(h.unit, 'hour');
-  assert.deepEqual(h.daily.map((d) => [d.day, d.agent]), [['2026-10-21T00', 'claude'], ['2026-10-21T13', 'codex']], '24 h by the viewer hour');
+  assert.deepEqual(h.daily.map((d) => [d.day, d.platform]), [['2026-10-21T00', 'claude'], ['2026-10-21T13', 'codex']], '24 h by the viewer hour');
   const old = await report(db, { days: 1, now: Date.parse('2026-10-22T13:00:00Z') });
   assert.deepEqual(old.daily, [], 'older than 24 h is out');
   assert.equal(r.machines[0].k, 'host-a');
@@ -430,15 +430,15 @@ test('query CLI table and the wrangler binding', () => {
   assert.match(bindUsageDb(once, 'id-2'), /"id-2"/);
 });
 
-test('usage view: every day of the range, split by agent; ranked lists with shares; demo masks names', async () => {
+test('usage view: every day of the range, split by platform; ranked lists with shares; demo masks names', async () => {
   const { usageView, tokenText, hoursText } = await import('../dashboard/public/view.mjs');
   const { demoMasker } = await import('../dashboard/public/demo.mjs');
-  const report = { days: 3, daily: [{ day: '2026-10-21', agent: 'claude', input: 10, cache_read: 80, cache_write: 10, output: 0, active_ms: 3600000, turns: 2 },
-    { day: '2026-10-21', agent: 'codex', input: 50, cache_read: 0, cache_write: 0, output: 50, active_ms: 0, turns: 1 }],
+  const report = { days: 3, daily: [{ day: '2026-10-21', platform: 'claude', input: 10, cache_read: 80, cache_write: 10, output: 0, active_ms: 3600000, turns: 2 },
+    { day: '2026-10-21', platform: 'codex', input: 50, cache_read: 0, cache_write: 0, output: 50, active_ms: 0, turns: 1 }],
   projects: [{ k: 'secret-proj', input: 200, cache_read: 0, cache_write: 0, output: 0, active_ms: 5, turns: 3, sessions: 1 }], models: [], machines: [{ k: 'host-a', input: 1 }], costUsd: 4.2 };
   const v = usageView(report, Date.parse('2026-10-21T12:00:00Z'));
   assert.deepEqual(v.days.map((d) => [d.day, d.claude, d.codex]), [['2026-10-19', 0, 0], ['2026-10-20', 0, 0], ['2026-10-21', 100, 100]]);
-  assert.equal(v.days[2].segs.find((x) => x.agent === 'claude').pct, 50);
+  assert.equal(v.days[2].segs.find((x) => x.platform === 'claude').pct, 50);
   assert.deepEqual(v.totals, { tokens: 200, active: 3600000, turns: 3, costUsd: 4.2, cacheHit: 80 / 150 });
   assert.equal(v.projects[0].share, 1);
   assert.deepEqual([v.projects[0].value, v.projects[0].selected], ['secret-proj', false]);
@@ -446,7 +446,7 @@ test('usage view: every day of the range, split by agent; ranked lists with shar
   assert.deepEqual(picked.projects.map((p) => [p.value, p.selected, p.share]), [['', true, 0.25], ['p', false, 0.75]], 'shares of its own list; no project is the value ""');
   assert.deepEqual([tokenText(950), tokenText(12345), tokenText(3.45e6), tokenText(0)], ['950', '12k', '3.5M', '0']);
   assert.deepEqual([hoursText(45 * 60000), hoursText(3.5 * 3600000), hoursText(0)], ['45m', '3.5h', '0']);
-  const hv = usageView({ days: 1, unit: 'hour', daily: [{ day: '2026-10-21T11', agent: 'claude', input: 5, cache_read: 0, cache_write: 0, output: 0, turns: 1 }] },
+  const hv = usageView({ days: 1, unit: 'hour', daily: [{ day: '2026-10-21T11', platform: 'claude', input: 5, cache_read: 0, cache_write: 0, output: 0, turns: 1 }] },
     Date.parse('2026-10-21T12:30:00Z'));
   assert.equal(hv.unit, 'hour');
   assert.equal(hv.days.length, 24);
@@ -549,8 +549,25 @@ test('hpc view: a bar per bucket of the range, each login\'s latest line; demo m
 // lists but never a bar, nor the scale. Every agent of vocab.mjs AGENTS gets its segment.
 test('usageView: every agent has its bar segment, agy included, and the scale counts it', async () => {
   const { usageView } = await import('../dashboard/public/view.mjs');
-  const day = (agent, input) => ({ day: '2026-10-21', agent, input, cache_read: 0, cache_write: 0, output: 0, turns: 1 });
+  const day = (platform, input) => ({ day: '2026-10-21', platform, input, cache_read: 0, cache_write: 0, output: 0, turns: 1 });
   const v = usageView({ days: 1, daily: [day('claude', 10), day('codex', 10), day('agy', 20)] }, Date.parse('2026-10-21T12:00:00Z'));
   const d = v.days.at(-1);
-  assert.deepEqual(d.segs.map((s) => [s.agent, s.tokens, s.pct]), [['claude', 10, 25], ['codex', 10, 25], ['agy', 20, 50]]);
+  assert.deepEqual(d.segs.map((s) => [s.platform, s.tokens, s.pct]), [['claude', 10, 25], ['codex', 10, 25], ['agy', 20, 50], ['deepseek', 0, 0]]);
+});
+
+// 2026-11-21: DeepSeek served through Claude Code (ccds) or Codex (cods) hid inside those bars.
+test('platformOf: a turn spends its agent platform unless its model belongs to another provider', async () => {
+  const { platformOf, PLATFORMS } = await import('../dashboard/public/shared/vocab.mjs');
+  assert.deepEqual([platformOf('claude', 'claude-opus-5-5'), platformOf('claude', 'deepseek-v4-flash'), platformOf('codex', 'deepseek-v4-pro'), platformOf('agy', 'gemini-4-carbon-low'), platformOf('codex', 'gpt-6.1-sol')],
+    ['claude', 'deepseek', 'deepseek', 'agy', 'codex']);
+  assert.deepEqual(PLATFORMS, ['claude', 'codex', 'agy', 'deepseek']);
+});
+
+test('store: the daily series splits by platform, so a DeepSeek turn under Claude Code is its own segment', async () => {
+  const db = fakeD1();
+  const at = Date.parse('2026-10-21T12:00:00Z');
+  await ingest(db, 'host-a', { costs: [], quota: [], resources: [], turns: [turnRow({ started_at: at, ended_at: at + 60000 }),
+    turnRow({ turn: 'd', session: 'D1', model: 'deepseek-v4-flash', started_at: at, ended_at: at + 60000 })] });
+  const r = await report(db, { days: 7, now: at + 3600000 });
+  assert.deepEqual(r.daily.map((d) => [d.day, d.platform]), [['2026-10-21', 'claude'], ['2026-10-21', 'deepseek']]);
 });
