@@ -43,7 +43,7 @@ test('merges managed hooks/plugins, cleans legacy session-bridge MCP, and preser
   // The home is expanded, never `~/...`; a `~` inside a Windows 8.3 short name (RUNNER~1) is a real path.
   const expanded = /^node "(?!~)[^"]+\/hooks\/agy-hook\.mjs" --event Stop --definition [a-f0-9]{64}$/;
   assert.match(hooks[HOOK_NAME].Stop[0].command, expanded);
-  assert.match(`node "C:/Users/RUNNER~1/x/hooks/agy-hook.mjs" --event Stop --definition ${'a'.repeat(64)}`, expanded);
+  assert.match(`node "D:/a/RUNNER~1/x/hooks/agy-hook.mjs" --event Stop --definition ${'a'.repeat(64)}`, expanded);
   assert.doesNotMatch(`node "~/.claude/scripts/hooks/agy-hook.mjs" --event Stop --definition ${'a'.repeat(64)}`, expanded, 'planted: an unexpanded home fails');
   const mcp = JSON.parse(fs.readFileSync(path.join(o.agyDir, 'mcp_config.json'), 'utf8'));
   assert.equal(mcp.mcpServers['session-bridge'], undefined, 'legacy managed session-bridge removed per Option A');
