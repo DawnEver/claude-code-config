@@ -438,7 +438,7 @@ test('usage view: every day of the range, split by agent; ranked lists with shar
   projects: [{ k: 'secret-proj', input: 200, cache_read: 0, cache_write: 0, output: 0, active_ms: 5, turns: 3, sessions: 1 }], models: [], machines: [{ k: 'host-a', input: 1 }], costUsd: 4.2 };
   const v = usageView(report, Date.parse('2026-10-21T12:00:00Z'));
   assert.deepEqual(v.days.map((d) => [d.day, d.claude, d.codex]), [['2026-10-19', 0, 0], ['2026-10-20', 0, 0], ['2026-10-21', 100, 100]]);
-  assert.equal(v.days[2].claudePct, 50);
+  assert.equal(v.days[2].segs.find((x) => x.agent === 'claude').pct, 50);
   assert.deepEqual(v.totals, { tokens: 200, active: 3600000, turns: 3, costUsd: 4.2, cacheHit: 80 / 150 });
   assert.equal(v.projects[0].share, 1);
   assert.deepEqual([v.projects[0].value, v.projects[0].selected], ['secret-proj', false]);
@@ -543,4 +543,14 @@ test('hpc view: a bar per bucket of the range, each login\'s latest line; demo m
   assert.equal(hpcView({ days: 3, unit: 'day', hpc: { latest: [], series: [] } }, now), null, 'no login read: no section');
   const masked = demoMasker().usage({ days: 3, daily: [], projects: [], models: [], machines: [], hpc });
   assert.doesNotMatch(JSON.stringify(masked.hpc), /"svc"|"gone"|"c\/|no login host/);
+});
+
+// 2026-11-21: the bars knew only claude and codex, so Antigravity tokens reached the totals and the
+// lists but never a bar, nor the scale. Every agent of vocab.mjs AGENTS gets its segment.
+test('usageView: every agent has its bar segment, agy included, and the scale counts it', async () => {
+  const { usageView } = await import('../dashboard/public/view.mjs');
+  const day = (agent, input) => ({ day: '2026-10-21', agent, input, cache_read: 0, cache_write: 0, output: 0, turns: 1 });
+  const v = usageView({ days: 1, daily: [day('claude', 10), day('codex', 10), day('agy', 20)] }, Date.parse('2026-10-21T12:00:00Z'));
+  const d = v.days.at(-1);
+  assert.deepEqual(d.segs.map((s) => [s.agent, s.tokens, s.pct]), [['claude', 10, 25], ['codex', 10, 25], ['agy', 20, 50]]);
 });

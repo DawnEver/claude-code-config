@@ -1193,8 +1193,8 @@ function renderUsage() {
   if (v.totals.cacheHit != null) total(`${Math.round(v.totals.cacheHit * 100)}%`, 'usage.cacheHit', 'usage.cacheHitTitle');
   if (v.totals.costUsd != null) total(`$${Math.round(v.totals.costUsd)}`, 'usage.apiValue', 'usage.apiValueTitle');
   const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
-  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) }),
-    segs: ['claude', 'codex'].map((a) => ({ cls: a, pct: d[`${a}Pct`] })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, agents: d.segs.filter((s) => s.tokens).map((s) => `${agentName(s.agent)} ${tokenText(s.tokens)}`).join(', ') || '0', active: hoursText(d.active) }),
+    segs: d.segs.map((s) => ({ cls: s.agent, pct: s.pct })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
   box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
   const hpc = hpcView(demoOn ? masker.usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
   if (hpc) box.append(hpcBlock(hpc));

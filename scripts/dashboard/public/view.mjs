@@ -3,7 +3,7 @@
 // the view adds is freshness: a session of an offline host reads `Stale`, never its last state.
 // The page answers, in order: does anything need me, what is running, where.
 
-import { STATUS, QUOTA_STALE_MS, TASK_KINDS, agentName } from './shared/vocab.mjs';
+import { AGENTS, STATUS, QUOTA_STALE_MS, TASK_KINDS, agentName } from './shared/vocab.mjs';
 import { quotaView, alertKey } from './shared/quota-model.mjs';
 import { t } from './shared/i18n.mjs';
 
@@ -405,12 +405,15 @@ export const hoursText = (ms) => (!(ms > 0) ? '0' : ms < 3600000 ? `${Math.round
  * bar per day of the range (every day, empty ones too) split by agent, and the ranked lists.
  * `active` is agent time: turns' durations summed, so parallel sessions add up.
  */
+/** One bucket of the bar chart: no tokens yet for any agent of vocab.mjs AGENTS. */
+const emptyBucket = (day) => ({ day, ...Object.fromEntries(AGENTS.map((a) => [a, 0])), active: 0 });
+
 export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
   if (!report) return null;
   const byDay = new Map();
   let tokens = 0, active = 0, turns = 0, input = 0, cacheRead = 0, cacheWrite = 0;
   for (const d of report.daily ?? []) {
-    const row = byDay.get(d.day) ?? { day: d.day, claude: 0, codex: 0, active: 0 };
+    const row = byDay.get(d.day) ?? emptyBucket(d.day);
     row[d.agent] = (row[d.agent] ?? 0) + tokensOf(d);
     row.active += d.active_ms ?? 0;
     byDay.set(d.day, row);
@@ -418,8 +421,8 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
     input += d.input ?? 0; cacheRead += d.cache_read ?? 0; cacheWrite += d.cache_write ?? 0;
   }
   const hourly = report.unit === 'hour';
-  const days = rangeBuckets(report, now, tzOffsetMin).map((day) => byDay.get(day) ?? { day, claude: 0, codex: 0, active: 0 });
-  const max = Math.max(1, ...days.map((d) => d.claude + d.codex));
+  const days = rangeBuckets(report, now, tzOffsetMin).map((day) => byDay.get(day) ?? emptyBucket(day));
+  const max = Math.max(1, ...days.map((d) => AGENTS.reduce((n, a) => n + d[a], 0)));
   // `value` is what a filter sends back: '' for the no-project bucket.
   // A share is of its own list: under a filter, a list spans more than the filtered totals.
   const list = (rows) => {
@@ -430,7 +433,7 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
   return {
     unit: hourly ? 'hour' : 'day',
     totals: { tokens, active, turns, costUsd: report.costUsd ?? null, cacheHit: input + cacheRead + cacheWrite ? cacheRead / (input + cacheRead + cacheWrite) : null },
-    days: days.map((d) => ({ ...d, claudePct: (d.claude / max) * 100, codexPct: (d.codex / max) * 100 })),
+    days: days.map((d) => ({ ...d, segs: AGENTS.map((agent) => ({ agent, tokens: d[agent], pct: (d[agent] / max) * 100 })) })),
     projects: list(report.projects ?? []), models: list(report.models ?? []), machines: list(report.machines ?? []),
   };
 }
