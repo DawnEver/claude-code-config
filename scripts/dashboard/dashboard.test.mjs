@@ -6,7 +6,7 @@ import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schem
 import { WAITING_MAX } from './public/shared/vocab.mjs';
 import { Registry, FORGE_EVERY_MS, FORGE_FORGET_MS, FORGE_LEASE_MS } from './registry.mjs';
 import { createApi, parseDashboardConfig, REPORT_TTL_MS } from './api.mjs';
-import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
+import { dashboardConfigFrom, deployCalls, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
@@ -1181,3 +1181,12 @@ test('banked resets: kept per account in storage, edited by an allowlisted viewe
   assert.deepEqual(await all(), { [KEY]: [], [KEY2]: [] });
 });
 
+
+// 2026-11-20: a hand deploy shipped code reading `hpc_usage` while migration 0006 was never applied
+// (CI applies migrations, but runs only on main), and the Usage tab answered 500 for every viewer.
+test('a deploy applies the usage store migrations before it uploads the Worker', () => {
+  const calls = deployCalls({ domain: 'dash.example', secrets: '/tmp/s.json', tag: 'abc1234' });
+  assert.deepEqual(calls.map((c) => c.slice(0, 3)), [['d1', 'migrations', 'apply'], ['deploy', '--config', calls[1][2]]]);
+  assert.ok(calls[0].includes('agents-usage') && calls[0].includes('--remote'));
+  assert.ok(calls[1].includes('dash.example') && calls[1].includes('abc1234'));
+});

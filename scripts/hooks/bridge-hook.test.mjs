@@ -435,7 +435,10 @@ test('an unreachable bridge: the hook spools the prompt and returns at once; the
     const r = await runHook(home, prompt);
     assert.equal(r.code, 0);
     assert.ok(r.ms < CALL_MS + 2500, `the hook took ${r.ms} ms`);
-    assert.ok(fs.existsSync(path.join(bridge, 'spool.jsonl')) || fs.existsSync(path.join(bridge, 'spool.inflight.jsonl')), 'the prompt is spooled, never dropped');
+    // The detached sender may already hold it: claimSpool renames spool.jsonl to spool.jsonl.<pid> for its
+    // grace period before merging it into spool.inflight.jsonl, so a claim file is spooled too.
+    const spooled = () => fs.readdirSync(bridge).some((n) => n === 'spool.inflight.jsonl' || /^spool\.jsonl(\.\d+)?$/.test(n));
+    assert.ok(spooled(), 'the prompt is spooled, never dropped');
     const daemon = await plantedDaemon('ok', port);   // the bridge comes back on its port
     try {
       assert.ok(await until(() => daemon.got.some((p) => p.text === 'mirror me')), 'the detached sender delivered the spooled prompt');
