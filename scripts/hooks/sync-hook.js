@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-// sync-hook.js — keep the cc-config and ai-lab working trees current across hosts.
+// sync-hook.js — keep the cc-config working tree, and its own environment, current across hosts.
 //
-// ai-lab rides the same fast-forward as cc-config: its checkout is the git tree around the
-// interpreter the provider cache records (an editable install, so the pull is the update). A
-// pull that moved it re-syncs the venv when the lock changed and refreshes the provider cache,
-// which is otherwise stale against the new ai-lab.
+// cc-config's .venv is the one interpreter its Python doors run under (scripts/shared/own-python.mjs), and
+// uv.lock pins what it holds -- ai-lab among it. A pull that changes pyproject.toml or uv.lock is handed to a
+// detached run that fills the venv first, moves the tree, settles the venv and refreshes the provider cache.
 //
 // Local work is never mixed with upstream: a tree with uncommitted edits to tracked files, or
 // with commits its upstream lacks, is left exactly as it is and the notice names the command.
@@ -61,18 +60,6 @@ export function repoRootFrom(modulePath) {
 // escape hatch for a repo laid out differently (and for the integration tests).
 export const REPO = process.env.CLAUDE_SYNC_REPO || repoRootFrom(fileURLToPath(import.meta.url));
 
-/** The ai-lab checkout to keep current, or null: `$CLAUDE_SYNC_AI_LAB` ('' disables), else the
- * work tree around the provider cache's recorded interpreter (`<ai-lab>/.venv/...`). */
-async function aiLabRepo(env = process.env) {
-  if (env.CLAUDE_SYNC_AI_LAB !== undefined) return env.CLAUDE_SYNC_AI_LAB || null;
-  try {
-    const { recordedPython } = await import('../shared/provider-cache.mjs');
-    const python = recordedPython();
-    if (!python || !fs.existsSync(python)) return null;
-    const top = git(['rev-parse', '--show-toplevel'], { cwd: path.dirname(python), allowFail: true });
-    return top && path.resolve(top) !== path.resolve(REPO) ? path.resolve(top) : null;
-  } catch { return null; }
-}
 
 function git(args, { cwd = REPO, timeout = LOCAL_TIMEOUT_MS, allowFail = false } = {}) {
   try {
@@ -239,10 +226,7 @@ export async function pullRepo(repo, { beforeMerge = null, afterPull = null, fet
 // A pull replaces inodes, which breaks the hard link claude-hud requires
 // (docs/sync-architecture.md §10). SessionStart also runs setup-check-hook,
 // but hook order within an event is not guaranteed, so repair here too.
-export const runPull = (fetched = null) => pullRepo(REPO, {
-  fetched,
-  afterPull: async () => { (await import('../setup/check-links.js')).checkLinks(); return null; },
-});
+const relink = async () => { (await import('../setup/check-links.js')).checkLinks(); return null; };
 
 /** `git fetch` without blocking the event loop: true once fetched, false offline/no remote/timeout. */
 export const fetchRepo = (repo) => new Promise((resolve) => {
@@ -253,19 +237,19 @@ export const fetchRepo = (repo) => new Promise((resolve) => {
   }, (err) => resolve(!err));
 });
 
-/** Regenerate the provider cache against the ai-lab now on disk: an error string, or null. */
+/** Regenerate the provider cache against the environment now synced: an error string, or null. */
 async function refreshCache() {
   const cache = (await import('../setup/provider-setup.mjs')).refreshProviderCache();
   return cache.error ? `provider cache refresh failed: ${cache.error} — run: node scripts/setup/setup.js` : null;
 }
 
-/** Whether `range` touches ai-lab's dependencies, i.e. the update must re-sync the venv. */
+/** Whether `range` touches the dependencies, i.e. the update must re-sync the venv. */
 export const depsChanged = (repo, range) =>
   Boolean(git(['diff', '--name-only', range, '--', 'pyproject.toml', 'uv.lock'], { cwd: repo, allowFail: true }));
 
 // The detached dependency update's record: {pid, at} while it runs, {error, at} when it failed;
 // absent once it succeeded. The next launch reports a failure and retries it.
-export const venvStateFile = () => path.join(os.homedir(), '.claude', 'ai-lab-update.json');
+export const venvStateFile = () => path.join(os.homedir(), '.claude', 'own-env-update.json');
 const readState = () => { try { return JSON.parse(fs.readFileSync(venvStateFile(), 'utf8')); } catch { return null; } };
 const writeState = (s) => { try { fs.mkdirSync(path.dirname(venvStateFile()), { recursive: true }); fs.writeFileSync(venvStateFile(), JSON.stringify(s)); } catch { /* best effort */ } };
 const STALE_RUN_MS = 15 * 60000;
@@ -279,7 +263,7 @@ const runUv = (args, { cwd, env }) =>
  * `--inexact` keeps what the current tree still imports. An error string, or null.
  */
 function syncDepsAt(repo, rev, { uv = runUv } = {}) {
-  const wt = path.join(os.tmpdir(), `ai-lab-deps-${process.pid}-${Date.now()}`);
+  const wt = path.join(os.tmpdir(), `cc-config-deps-${process.pid}-${Date.now()}`);
   try {
     git(['worktree', 'add', '--detach', '--quiet', wt, rev], { cwd: repo, timeout: MERGE_TIMEOUT_MS });
     uv(['sync', '--frozen', '--quiet', '--inexact', '--no-install-project'],
@@ -298,13 +282,14 @@ function syncDepsAt(repo, rev, { uv = runUv } = {}) {
  * moment of it. Hence the order: the new dependencies go into the venv first (old code runs on a
  * superset), only then does the tree move, then a plain sync settles the project, then the cache.
  */
-export async function updateAiLabDeps(repo, { uv = runUv, refresh = refreshCache } = {}) {
+export async function updateOwnDeps(repo, { uv = runUv, refresh = refreshCache } = {}) {
   writeState({ pid: process.pid, at: Date.now() });
   const pulled = await pullRepo(repo, {
     beforeMerge: (range) => {
       const error = syncDepsAt(repo, range.split('..')[1], { uv });
       return error ? { pulled: 0, note: error } : null;
     },
+    afterPull: relink,
   });
   // A retry may find the tree already moved (the venv sync failed after the merge): sync regardless.
   let error = pulled?.note || null;
@@ -318,14 +303,14 @@ export async function updateAiLabDeps(repo, { uv = runUv, refresh = refreshCache
   return error;
 }
 
-const detachedUpdate = (repo) => spawn(process.execPath, [fileURLToPath(import.meta.url), '--ai-lab-deps', repo],
+const detachedUpdate = (repo) => spawn(process.execPath, [fileURLToPath(import.meta.url), '--deps', repo],
   { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 
 /**
- * Fast-forward ai-lab. A code-only update moves the tree and refreshes the provider cache here; one
- * that changes the dependencies, or retries a failed one, goes to the detached run instead.
+ * Fast-forward cc-config. A code-only update moves the tree here; one that changes the dependencies, or retries
+ * a failed one, goes to the detached run instead.
  */
-async function runAiLabPull(repo, { background = detachedUpdate, fetched = null } = {}) {
+export async function runPull(fetched = null, { repo = REPO, background = detachedUpdate } = {}) {
   const state = readState();
   if (state?.pid && Date.now() - state.at < STALE_RUN_MS) return { pulled: 0, note: 'dependency update still running in the background' };
   const handOff = (why) => { background(repo); return { pulled: 0, note: `${why}; updating in the background (merge, uv sync, provider cache)` }; };
@@ -333,7 +318,7 @@ async function runAiLabPull(repo, { background = detachedUpdate, fetched = null 
   return pullRepo(repo, {
     fetched,
     beforeMerge: (range) => (depsChanged(repo, range) ? handOff('the update changes its dependencies') : null),
-    afterPull: () => refreshCache(),
+    afterPull: relink,
   });
 }
 
@@ -431,7 +416,6 @@ async function main() {
   const payload = mode === '--pull' || mode === '--pull-background' ? await readPayload() : {};
   let notice = null;
   let syncResult = null;
-  let aiLabResult = null;
 
   if (mode === '--pull') {
     // Provider launchers already run this hook before loading any repo-owned
@@ -439,12 +423,8 @@ async function main() {
     // fetch when Claude subsequently emits SessionStart. Direct `claude`
     // launches have no marker and still update here.
     if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') {
-      // The two fetches are the network cost of a launch: run them at once, then merge each in turn.
-      const aiLab = await aiLabRepo();
-      const [cfgFetched, labFetched] = await Promise.all([fetchRepo(REPO), aiLab ? fetchRepo(aiLab) : false]);
-      syncResult = await runPull(cfgFetched);
-      aiLabResult = aiLab ? await runAiLabPull(aiLab, { fetched: labFetched }) : null;
-      notice = [formatPull(syncResult), formatPull(aiLabResult, 'ai-lab')].filter(Boolean).join('\n') || null;
+      syncResult = await runPull(await fetchRepo(REPO));
+      notice = formatPull(syncResult) || null;
       // SessionStart hooks run in parallel, so ensure.mjs may already have (re)started the
       // bridge from the pre-pull tree; ensure again so the pulled code serves this session.
       // Only for this hook's own checkout: a pull of another tree (CLAUDE_SYNC_REPO, as the tests
@@ -455,8 +435,8 @@ async function main() {
     }
   } else if (mode === '--pull-background') {
     if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') notice = startBackgroundPull();
-  } else if (mode === '--ai-lab-deps') {
-    const error = await updateAiLabDeps(process.argv[3]);
+  } else if (mode === '--deps') {
+    const error = await updateOwnDeps(process.argv[3]);
     if (error) process.stderr.write(`[sync-hook] ${error}\n`);
     return;
   } else if (mode === '--remind') {
@@ -467,10 +447,9 @@ async function main() {
   }
 
   // Silent when there is nothing to report.
-  if (notice || syncResult?.pulled > 0 || aiLabResult?.pulled > 0) process.stdout.write(JSON.stringify({
+  if (notice || syncResult?.pulled > 0) process.stdout.write(JSON.stringify({
     ...(notice ? { systemMessage: notice } : {}),
     ccConfigSync: syncResult,
-    ...(aiLabResult ? { aiLabSync: aiLabResult } : {}),
   }));
 }
 

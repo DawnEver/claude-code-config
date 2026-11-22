@@ -32,17 +32,13 @@ const fakeHome = () => {
 test('parseSetupArgs: reads the flags setup understands', () => {
   assert.deepEqual(parseSetupArgs(['--replace']), {
     replace: true, initSyncDir: false, syncDir: undefined, syncDirFlagPresent: false,
-    machine: undefined, machineFlagPresent: false, aiLabPython: undefined,
+    machine: undefined, machineFlagPresent: false,
   });
   assert.deepEqual(parseSetupArgs(['--sync-dir', '/x', '--init-sync-dir']), {
     replace: false, initSyncDir: true, syncDir: '/x', syncDirFlagPresent: true,
-    machine: undefined, machineFlagPresent: false, aiLabPython: undefined,
+    machine: undefined, machineFlagPresent: false,
   });
   assert.equal(parseSetupArgs(['-r']).replace, true);
-});
-
-test('parseSetupArgs: --ai-lab-python <PATH>', () => {
-  assert.equal(parseSetupArgs(['--ai-lab-python', '/venv/bin/python']).aiLabPython, '/venv/bin/python');
 });
 
 test('parseSetupArgs: --machine <NAME>', () => {

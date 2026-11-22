@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  aiLabVersionOnDisk, readProviderCache, recordedPython, writeProviderCache, SETUP_REMEDY,
+  aiLabVersionOnDisk, readProviderCache, writeProviderCache, SETUP_REMEDY,
 } from './provider-cache.mjs';
 import { catalogueDoc, documentFor, fakeAiLab, writeCache } from './provider-cache-fixture.mjs';
 
@@ -59,7 +59,7 @@ test('the installed version is read from the venv dist-info', () => {
   assert.equal(aiLabVersionOnDisk(join(lab.dir, 'other', 'bin', 'python')), null);
 });
 
-test('setup writes the cache from ai_lab.providers --json and records the interpreter', () => {
+test('setup writes the cache from ai_lab.providers --json under the given interpreter', () => {
   const lab = fakeAiLab();
   const path = join(lab.dir, 'out', 'provider-cache.json');
   const doc = documentFor(lab);
@@ -69,15 +69,13 @@ test('setup writes the cache from ai_lab.providers --json and records the interp
   assert.equal(res.ok, true);
   assert.deepEqual(called, [lab.python, '-m', 'ai_lab.providers', '--json']);
   assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), doc);
-  assert.equal(recordedPython(path), lab.python);
 });
 
 test('planted refusal: no Python refuses by name and writes nothing', () => {
   const lab = fakeAiLab();
   const path = join(lab.dir, 'provider-cache.json');
   const run = () => ({ error: Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }) });
-  assert.match(writeProviderCache({ python: lab.python, path, run }).error, /^no Python: /);
-  assert.match(writeProviderCache({ python: null, path, run }).error, /^no Python for ai-lab: pass --ai-lab-python/);
+  assert.match(writeProviderCache({ python: lab.python, path, run }).error, /^no Python: .*setup.js builds it/);
   assert.equal(existsSync(path), false);
 });
 

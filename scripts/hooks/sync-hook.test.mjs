@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { depsChanged, updateAiLabDeps, venvStateFile, repoRootFrom, REPO, formatPull, formatReminder, parseBranchStatus, formatMergeFailure, isStartup } from './sync-hook.js';
+import { depsChanged, updateOwnDeps, venvStateFile, repoRootFrom, REPO, formatPull, formatReminder, parseBranchStatus, formatMergeFailure, isStartup } from './sync-hook.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -138,7 +138,7 @@ function fixture() {
 const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-home-'));
 process.on('exit', () => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
-function runHook(repo, mode, payload = {}, aiLab = '', extraEnv = {}) {
+function runHook(repo, mode, payload = {}, extraEnv = {}) {
   // A session started by a provider launcher exports the already-synced marker;
   // inherited here it would make every --pull a no-op.
   const { CC_CONFIG_STARTUP_SYNCED: _launcherMarker, ...env } = process.env;
@@ -146,7 +146,7 @@ function runHook(repo, mode, payload = {}, aiLab = '', extraEnv = {}) {
     cwd: repo, encoding: 'utf8', input: JSON.stringify(payload),
     stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
     env: { ...env, HOME: TEST_HOME, USERPROFILE: TEST_HOME, CODEX_HOME: path.join(TEST_HOME, '.codex'), CLAUDE_SYNC_DIR: '',
-      ...IDENT, CLAUDE_SYNC_REPO: repo, CLAUDE_SYNC_AI_LAB: aiLab, ...extraEnv },
+      ...IDENT, CLAUDE_SYNC_REPO: repo, ...extraEnv },
   }).trim();
   return raw ? JSON.parse(raw).systemMessage : null;
 }
@@ -270,32 +270,7 @@ test('integration: an untracked file alone does not block the update', () => {
   assert.match(runHook(b, '--pull', { source: 'startup' }), /fast-forwarded 1 commit/);
 });
 
-test('integration: ai-lab is fast-forwarded by the same pull, labelled as itself', () => {
-  const cfg = fixture();
-  const lab = fixture();
-  fs.writeFileSync(path.join(lab.a, 'lab.txt'), 'new\n');
-  git(lab.a, 'add', '.');
-  git(lab.a, 'commit', '--quiet', '-m', 'lab change');
-  git(lab.a, 'push', '--quiet');
 
-  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, tempHome());
-  assert.match(notice, /\[ai-lab\] fast-forwarded 1 commit/);
-  assert.equal(readText(path.join(lab.b, 'lab.txt')), 'new\n');
-});
-
-test('integration: ai-lab with local edits is reported, not touched', () => {
-  const cfg = fixture();
-  const lab = fixture();
-  fs.writeFileSync(path.join(lab.a, 'f.txt'), 'base\n');
-  git(lab.a, 'add', '.'); git(lab.a, 'commit', '--quiet', '-m', 'base'); git(lab.a, 'push', '--quiet');
-  runHook(lab.b, '--pull', { source: 'startup' });
-  fs.writeFileSync(path.join(lab.b, 'f.txt'), 'wip\n');
-  git(lab.a, 'commit', '--allow-empty', '--quiet', '-m', 'more'); git(lab.a, 'push', '--quiet');
-
-  const before = git(lab.b, 'rev-parse', 'HEAD');
-  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, tempHome()), /\[ai-lab\] not updated: 1 local change/);
-  assert.equal(git(lab.b, 'rev-parse', 'HEAD'), before);
-});
 
 // A home with no provider cache: the post-pull refresh must fail loudly there, never touch the real one.
 function tempHome() {
@@ -303,13 +278,6 @@ function tempHome() {
   return { HOME: home, USERPROFILE: home };
 }
 
-test('integration: a failed provider-cache refresh after an ai-lab pull is reported', () => {
-  const cfg = fixture();
-  const lab = fixture();
-  git(lab.a, 'commit', '--allow-empty', '--quiet', '-m', 'lab change'); git(lab.a, 'push', '--quiet');
-  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, tempHome()),
-    /\[ai-lab\] fast-forwarded 1 commit\(s\), but setup repair failed: provider cache refresh failed/);
-});
 
 test('integration: only a dependency change asks for a venv sync', () => {
   const { a, b } = fixture();
@@ -325,28 +293,7 @@ test('integration: only a dependency change asks for a venv sync', () => {
   assert.equal(depsChanged(b, `${code}..${lock}`), true);
 });
 
-test('integration: a dependency change leaves ai-lab where it is and hands the update off', () => {
-  const cfg = fixture();
-  const lab = fixture();
-  fs.writeFileSync(path.join(lab.a, 'uv.lock'), 'lock\n');
-  git(lab.a, 'add', '.'); git(lab.a, 'commit', '--quiet', '-m', 'relock'); git(lab.a, 'push', '--quiet');
-  const before = git(lab.b, 'rev-parse', 'HEAD');
-  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, tempHome());
-  assert.match(notice, /\[ai-lab\] not updated: the update changes its dependencies; updating in the background/);
-  assert.equal(git(lab.b, 'rev-parse', 'HEAD'), before, 'tree, venv and cache stay consistent until the detached run');
-});
 
-test('integration: a failed background update is reported and retried, a running one is not doubled', () => {
-  const cfg = fixture();
-  const lab = fixture();
-  const home = tempHome();
-  const state = path.join(home.HOME, '.claude', 'ai-lab-update.json');
-  fs.mkdirSync(path.dirname(state), { recursive: true });
-  fs.writeFileSync(state, JSON.stringify({ pid: 1, at: Date.now() }));
-  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, home), /still running in the background/);
-  fs.writeFileSync(state, JSON.stringify({ error: 'uv sync failed (ENOENT)', at: Date.now() }));
-  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, lab.b, home), /last dependency update failed: uv sync failed \(ENOENT\); updating in the background/);
-});
 
 // The race this order exists for: a launch starts Python from the tree while the detached update
 // runs. The venv must already hold the new dependencies by the time the tree carries new code.
@@ -364,7 +311,7 @@ test('integration: a dependency update fills the venv before it moves the tree',
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   Object.assign(process.env, tempHome());
   try {
-    assert.equal(await updateAiLabDeps(lab.b, { uv, refresh: async () => null }), null);
+    assert.equal(await updateOwnDeps(lab.b, { uv, refresh: async () => null }), null);
     assert.equal(fs.existsSync(venvStateFile()), false, 'a success clears the state record');
   } finally { Object.assign(process.env, saved); }
   assert.equal(calls.length, 2);
@@ -387,7 +334,7 @@ test('integration: a failed dependency install leaves the tree where it was', as
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   Object.assign(process.env, tempHome());
   try {
-    assert.match(await updateAiLabDeps(lab.b, { uv, refresh: async () => null }), /uv sync of \w+ failed \(ENOENT\)/);
+    assert.match(await updateOwnDeps(lab.b, { uv, refresh: async () => null }), /uv sync of \w+ failed \(ENOENT\)/);
     assert.match(JSON.parse(fs.readFileSync(venvStateFile(), 'utf8')).error, /ENOENT/, 'recorded for the retry');
   } finally { Object.assign(process.env, saved); }
   assert.equal(git(lab.b, 'rev-parse', 'HEAD'), before);
@@ -436,4 +383,27 @@ test('SessionStart runs the sync hook in the background mode with a short bound'
   assert.equal(steps.length, 1);
   assert.deepEqual(steps[0].args, ['--pull-background']);
   assert.ok(steps[0].budgetMs <= 10000, 'a session never waits long on the sync hook');
+});
+
+// 2026-11-22: ai-lab was a second checkout this hook pulled, because cc-config borrowed its environment. cc-config
+// now owns its environment (scripts/shared/own-python.mjs), so a lock change in cc-config itself is the update.
+test('integration: a dependency change leaves cc-config where it is and hands the update off', () => {
+  const cfg = fixture();
+  fs.writeFileSync(path.join(cfg.a, 'uv.lock'), 'lock\n');
+  git(cfg.a, 'add', '.'); git(cfg.a, 'commit', '--quiet', '-m', 'relock'); git(cfg.a, 'push', '--quiet');
+  const before = git(cfg.b, 'rev-parse', 'HEAD');
+  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, tempHome());
+  assert.match(notice, /not updated: the update changes its dependencies; updating in the background/);
+  assert.equal(git(cfg.b, 'rev-parse', 'HEAD'), before, 'tree, venv and cache stay consistent until the detached run');
+});
+
+test('integration: a failed background update is reported and retried, a running one is not doubled', () => {
+  const cfg = fixture();
+  const home = tempHome();
+  const state = path.join(home.HOME, '.claude', 'own-env-update.json');
+  fs.mkdirSync(path.dirname(state), { recursive: true });
+  fs.writeFileSync(state, JSON.stringify({ pid: 1, at: Date.now() }));
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, home), /still running in the background/);
+  fs.writeFileSync(state, JSON.stringify({ error: 'uv sync failed (ENOENT)', at: Date.now() }));
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, home), /last dependency update failed: uv sync failed \(ENOENT\); updating in the background/);
 });
