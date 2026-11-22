@@ -227,6 +227,6 @@ test('an untrusted repo is guarded by the installed family rows; its own permiss
   const none = runProjectGuards('PreToolUse', {
     conversationId: 'c1', workspacePaths: [root],
     toolCall: { name: 'run_command', args: { CommandLine: 'git status' } },
-  }, { host: 'agy', trust: ['github.com/org/*'], runGit, family: () => ({ error: 'no recorded python' }) });
-  assert.match(none.denyReason, /family deny rows unavailable: no recorded python.*setup\.js/);
+  }, { host: 'agy', trust: ['github.com/org/*'], runGit, family: () => ({ error: 'no cc-config interpreter' }) });
+  assert.match(none.denyReason, /family deny rows unavailable: no cc-config interpreter.*setup\.js/);
 });

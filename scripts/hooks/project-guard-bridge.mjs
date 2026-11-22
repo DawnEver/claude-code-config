@@ -15,7 +15,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isTrustedRepo } from '../runtime/repo-automode.mjs';
 import { agyToCanonicalPayload, stripAgyPromptEnvelope } from '../shared/agy-payload.mjs';
-import { recordedPython } from '../shared/provider-cache.mjs';
+import { ownPython } from '../shared/own-python.mjs';
 
 export { stripAgyPromptEnvelope };
 
@@ -177,16 +177,16 @@ export function canonicalEventsFor(host, hostEvents) {
   return out;
 }
 
-const FAMILY_REMEDY = 'run node scripts/setup/setup.js in cc-config (records the dev-lab python), or install dev-lab';
+const FAMILY_REMEDY = 'run node scripts/setup/setup.js in cc-config (builds its own environment, whose lock carries dev-lab)';
 
 /**
- * The family deny engine and rows from this MACHINE's dev-lab install (D99): one source,
+ * The family deny engine and rows from the dev-lab cc-config's own environment pins (D99; own-python.mjs): one source,
  * `python -m dev_lab.dev.agenthooks --path / --family-rules`, cached by engine path + mtime.
  * Never a repository's copy. Returns {engine, rules} or {error}.
  */
-export function installedFamilyGuard({ python = recordedPython(), run = spawnSync,
+export function installedFamilyGuard({ python = ownPython(), run = spawnSync,
   cacheDir = path.join(os.homedir(), '.claude', 'cache') } = {}) {
-  if (!python) return { error: 'no recorded python' };
+  if (!python || !fs.existsSync(python)) return { error: `no cc-config interpreter at ${python}` };
   const door = args => run(python, ['-m', 'dev_lab.dev.agenthooks', ...args], { encoding: 'utf8', timeout: 30000, windowsHide: true });
   const where = door(['--path']);
   if (where.error || where.status !== 0) return { error: `dev_lab.dev.agenthooks --path exited ${where.status ?? where.error?.code}` };
