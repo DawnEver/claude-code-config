@@ -367,7 +367,7 @@ test('a declaration for another source grants this channel nothing', () => {
   assert.equal(out[0].params.meta.declared, 'false');
 });
 
-test('the declaration is read through the dev-lab door with the recorded python', () => {
+test('the declaration is read through the dev-lab door under cc-config own interpreter', () => {
   const calls = [];
   const run = (...a) => { calls.push(a); return { status: 0, stdout: '{"session-bridge": "1001"}\n', stderr: '' }; };
   assert.deepEqual(readChannelDeclaration({ python: '/py', run }), { channels: { 'session-bridge': '1001' }, why: null });
@@ -377,7 +377,6 @@ test('the declaration is read through the dev-lab door with the recorded python'
 
 test('the declaration fails closed: every door failure declares nothing', () => {
   const cases = {
-    'no python': [null, () => assert.fail('no door without a python')],
     'spawn error': ['/py', () => ({ error: new Error('ENOENT') })],
     'non-zero exit': ['/py', () => ({ status: 2, stdout: '{"session-bridge": "1001"}', stderr: 'refused: channels' })],
     'not JSON': ['/py', () => ({ status: 0, stdout: 'session-bridge=1001', stderr: '' })],
