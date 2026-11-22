@@ -17,7 +17,8 @@ import { t } from './public/shared/i18n.mjs';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 const NOW = Date.parse('2026-11-07T12:00:00Z');
 const POLL_MS = 8000;
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript' };
+// .json: the page imports its locale strings as JSON modules, which a browser refuses under any other type.
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json' };
 const PHONE = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true };
 const DESKTOP = { viewport: { width: 1280, height: 800 } };
 
@@ -366,7 +367,7 @@ test('accounts: banked resets show as pills; editing them takes edit mode', asyn
   resetPosts.length = 0;
   await page.locator('.banked-row button', { hasText: t('banked.spent', 'en') }).first().click();
   await page.waitForTimeout(100);
-  assert.deepEqual(Object.keys(resetPosts[0] ?? {}).sort(), ['account', 'remove'], 'Used removes that reset after a confirm');
+  assert.deepEqual(Object.keys(resetPosts[0] ?? {}).sort(), ['accounts', 'drop'], 'Used removes that reset after a confirm');
   await page.locator('.banked-bulk button', { hasText: t('banked.add', 'en') }).click();
   await page.fill('.banked-form input[type=datetime-local]', '2026-12-01T10:00');
   await page.locator('.banked-form button', { hasText: t('banked.save', 'en') }).click();

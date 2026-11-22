@@ -32,3 +32,17 @@ test('a leftover bridge.allowedUserIds is never read, only named', () => {
   // Fail closed even with a stale key present: it never becomes a fallback.
   assert.deepEqual(declaredAllowlist({ declaration: { channels: {}, why: 'x' }, bridge: { allowedUserIds: [666] } }).allowedUserIds, []);
 });
+
+// 2026-11-21: the declaration ran under ai-lab's interpreter (the provider cache's), which carries no dev_lab,
+// so the door always failed and every Telegram message was undeclared. It runs under cc-config's own interpreter.
+test('the declaration door runs under cc-config\'s own interpreter, never another repo\'s', async () => {
+  const { readChannelDeclaration, DECLARATION_DOOR } = await import('./channel-declaration.mjs');
+  const { ownPython } = await import('./own-python.mjs');
+  let ran;
+  const run = (python, argv) => { ran = [python, ...argv]; return { status: 0, stdout: JSON.stringify({ [CHANNEL_SOURCE]: '1001' }) }; };
+  assert.deepEqual(readChannelDeclaration({ run }), { channels: { [CHANNEL_SOURCE]: '1001' }, why: null });
+  assert.deepEqual(ran, [ownPython(), ...DECLARATION_DOOR]);
+  const missing = readChannelDeclaration({ run: () => ({ error: new Error('ENOENT') }) });
+  assert.deepEqual(missing.channels, {});
+  assert.match(missing.why, /setup\.js/);
+});

@@ -8,6 +8,7 @@ import { checkMacNotify } from './check-mac-notify.js';
 import { installCliWrappers } from './install-cli-wrappers.js';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 import { refreshProviderCache } from './provider-setup.mjs';
+import { buildOwnEnv } from './own-env.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { installCodexHooks } from './codex-hooks.mjs';
 import { installAgyConfig, installAgyStatusLine, agyInstalled } from './agy-config.mjs';
@@ -536,7 +537,6 @@ function expandHome(p, home) {
 export function parseSetupArgs(argv = []) {
   const idx = argv.indexOf('--sync-dir');
   const mIdx = argv.indexOf('--machine');
-  const pIdx = argv.indexOf('--ai-lab-python');
   return {
     replace: argv.includes('--replace') || argv.includes('-r'),
     initSyncDir: argv.includes('--init-sync-dir'),
@@ -544,7 +544,6 @@ export function parseSetupArgs(argv = []) {
     syncDirFlagPresent: idx !== -1,
     machine: mIdx !== -1 ? argv[mIdx + 1] : undefined,
     machineFlagPresent: mIdx !== -1,
-    aiLabPython: pIdx !== -1 ? argv[pIdx + 1] : undefined,
   };
 }
 
@@ -666,10 +665,20 @@ export function setup(options = {}) {
 
   const counters = { created: 0, skipped: 0, errors: earlyErrors, replace };
 
+  // cc-config's own environment is the one interpreter every Python door runs under
+  // (scripts/shared/own-python.mjs); build it from the lock before anything asks a door.
+  const env = buildOwnEnv();
+  if (env.error) {
+    console.log(`ERR   .venv - ${env.error}`);
+    counters.errors++;
+  } else {
+    console.log('SYNC  .venv - cc-config own environment matches uv.lock');
+  }
+
   // The provider catalogue is ai-lab's: copy it into ~/.claude/provider-cache.json, the only
   // thing a launcher reads (scripts/shared/provider-cache.mjs). Before the codex artifacts,
   // which derive from it.
-  const cache = refreshProviderCache({ aiLabPython: options.aiLabPython });
+  const cache = refreshProviderCache();
   if (cache.error) {
     console.log(`ERR   provider-cache.json - ${cache.error}`);
     counters.errors++;

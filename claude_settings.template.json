@@ -115,6 +115,11 @@
                 "hooks": [
                     {
                         "type": "command",
+                        "command": "node ~/.claude/scripts/hooks/code-ask-hook.js",
+                        "timeout": 5
+                    },
+                    {
+                        "type": "command",
                         "command": "node ~/.claude/scripts/hooks/bridge-hook.js",
                         "timeout": 5
                     }
