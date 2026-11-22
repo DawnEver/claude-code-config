@@ -5,7 +5,7 @@
 // their sender allowlist from it.
 
 import { spawnSync } from 'child_process';
-import { recordedPython } from './provider-cache.mjs';
+import { devLabPython } from './machine-repos.mjs';
 
 /** The session bridge's channel source, as the machine declaration names it. */
 export const CHANNEL_SOURCE = 'session-bridge';
@@ -18,12 +18,14 @@ export const STALE_ALLOWLIST_KEY = 'bridge.allowedUserIds is no longer read: dec
 
 /**
  * This machine's session-channel declaration, read once through dev-lab.
+ * The door is dev-lab's, so it runs under the dev-lab checkout's environment (machine-repos.mjs devLabPython).
  * Fails closed: any failure is an empty declaration plus why, so every message is undeclared.
  * @returns {{channels: Record<string, string>, why: string | null}}
  */
-export function readChannelDeclaration({ python = recordedPython(), run = spawnSync } = {}) {
+export function readChannelDeclaration({ interpreter = devLabPython, run = spawnSync } = {}) {
   const none = (why) => ({ channels: {}, why });
-  if (!python) return none('no recorded python (run node scripts/setup/setup.js)');
+  const { python, why } = interpreter();
+  if (!python) return none(why);
   const res = run(python, DECLARATION_DOOR, { encoding: 'utf8', timeout: 30000, windowsHide: true });
   if (res.error) return none(`door failed: ${res.error.message}`);
   if (res.status !== 0) return none(`door failed: ${String(res.stderr || '').trim().split('\n').pop() || `exit ${res.status}`}`);
