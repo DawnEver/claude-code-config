@@ -27,6 +27,7 @@
   "app.signInExpiredKeep": "Sign-in expired · close and reopen the app to refresh (data from {ago})",
   "app.notAllowed": "This Telegram account is not allowed",
   "app.unreachable": "Gateway unreachable",
+  "app.viewFailed": "This view could not be drawn: {why}",
   "app.unreachableKeep": "Gateway unreachable · showing data from {ago}",
   "tab.sessions": "Sessions",
   "tab.quota": "Accounts",
