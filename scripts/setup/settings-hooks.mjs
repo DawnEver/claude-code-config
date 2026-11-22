@@ -11,8 +11,8 @@
 // the template is their one source, doctor reports a payload whose hooks differ
 // (payload-hooks-drift) and this door applies them. Every other key of the payload is kept.
 //
-// The write is IN PLACE (no temp-and-rename): the payload is hard-linked into each checkout's
-// root (setup.js repoMirrorLinks), and a rename would detach every one of those links. One
+// The write is IN PLACE (no temp-and-rename): on a host without symlink rights
+// ~/.claude holds the payload as a hard link (setup.js healSyncLink), and a rename would detach it. One
 // apply serves every workstation, since they all link the same synced file, and it may land
 // before a workstation has pulled: the SessionStart command pulls first when the entry it names
 // is absent (claude-hook.mjs hookCommand).

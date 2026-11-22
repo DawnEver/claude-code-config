@@ -29,7 +29,7 @@ test('hooksDrift names each event whose wiring differs; key order is not drift',
 test('applyTemplateHooks: the template hooks land, every personal key stays, the hard link survives', () => {
   const f = fixture({ env: { MINE: '1' }, model: 'opus', hooks: OLD });
   const mirror = path.join(f.dir, 'mirror.json');
-  fs.linkSync(f.settingsPath, mirror);   // as repoMirrorLinks hard-links the payload into a checkout
+  fs.linkSync(f.settingsPath, mirror);   // as setup hard-links the payload into ~/.claude without symlink rights
   try {
     assert.deepEqual(applyTemplateHooks(f), { changed: true, events: ['PostToolUse', 'SessionStart'] });
     const live = JSON.parse(fs.readFileSync(f.settingsPath, 'utf8'));

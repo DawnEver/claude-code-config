@@ -69,19 +69,15 @@ These are small, hand-edited, rarely written concurrently, and contain no `.git`
 locks, and no atomic-rename storms. This is a workload a file-sync daemon actually
 handles correctly. **This is the only thing the cloud folder is responsible for.**
 
-**The checkout mirrors the payload.** With a sync dir outside the repo, setup hard-links
-every payload file (`SYNC_PAYLOAD_FILES` plus every `base: 'sync'` link source — one rule,
-`repoMirrorLinks()`, no per-file cases) to the same name at the repo root, gitignored, so the
-checkout shows the live personal payload. The cloud file stays the single source and the repo
-name is the same file record (same inode), never a copy. `~/.claude` links keep pointing at
-the cloud file, not at the repo name: the cloud file is what a sync-down replaces, so every
-name is healed from it by one rule (`healSyncLink`), and a symlink host's `~/.claude` must not
-depend on where the checkout (or a worktree of it) sits. Across volumes no hard link is
-possible and a copy would be the detached state itself, so setup only reports it. doctor
-  FAILs a same-volume repo name that is missing (`link-dest-missing`) or an existing
-  detached copy (`link-detached`). An absent cross-volume mirror is intentionally
-  unsupported, not a failure; the host's actual config links are still checked;
-`check-links` re-links it at SessionStart, including the 2026-10-18 cloud-detached case.
+**The payload has one name on disk: the sync-dir file.** Nothing is hard-linked into the
+checkout. Setup used to hard-link every payload file to the repo root (10-23, `25f104f`), and on
+2026-11-08 that mirror cost both OneDrive names of `claude_settings.json` and
+`claude_env_settings.json`: OneDrive does not support hard links, a write through the repo name
+changes the file without its watcher seeing it, and its reconciliation removed the cloud names,
+leaving only the repo halves. `~/.claude/settings.json` then pointed at nothing, so every
+session ran with no settings and no HUD. `~/.claude` links still point at the cloud file, healed
+from it by one rule (`healSyncLink`) on a host without symlink rights; doctor FAILs a managed
+link whose target is gone (`link-broken`) and names the target.
 
 The template `claude_settings.template.json` is public and generic; the payload
 `claude_settings.json` is the owner's personal file. They are decoupled: doctor requires the
