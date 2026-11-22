@@ -172,7 +172,8 @@
     },
     "part": {
       "env": {
-        "GITHUB_TOKEN": "${{ github.token }}"
+        "GITHUB_TOKEN": "${{ github.token }}",
+        "LAB_COMMONS_BOX": "${{ github.workspace }}/../lab-commons/box.sqlite"
       },
       "needs": "parts",
       "if": "${{ (!(github.event.pull_request.draft || startsWith(github.event.pull_request.title, 'WIP:') || startsWith(github.event.pull_request.title, '[WIP]'))) && ((inputs.measurement_paths == '' && inputs.measurement_sha == '') && (needs.parts.outputs.matrix != '')) }}",
