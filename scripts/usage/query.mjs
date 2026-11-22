@@ -10,7 +10,7 @@ import { isMain } from '../shared/is-main.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 
-export const SCHEMA_SQL = "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE '\_%' ESCAPE '\' AND name NOT LIKE 'sqlite%' AND name NOT LIKE 'd1_%' ORDER BY type, name";
+const SCHEMA_SQL = "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE '\_%' ESCAPE '\' AND name NOT LIKE 'sqlite%' AND name NOT LIKE 'd1_%' ORDER BY type, name";
 
 /** {columns, rows} -> an aligned text table. */
 export function table({ columns, rows }) {

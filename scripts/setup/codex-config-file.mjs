@@ -23,7 +23,7 @@ import { readProviderCache } from '../shared/provider-cache.mjs';
 import { codexShellEnv } from '../shared/machine.mjs';
 
 /** Project only this repo's known prompt link; arbitrary user paths remain untouched. */
-export function withCodexHome(head, codexDir) {
+function withCodexHome(head, codexDir) {
   return head.replace(/^(\s*model_instructions_file\s*=\s*)["']~\/\.codex\/system-prompt\/codex-base\.md["'](\s*(?:#.*)?)$/m,
     (_, key, comment) => `${key}${JSON.stringify(path.join(codexDir, 'system-prompt', 'codex-base.md'))}${comment}`);
 }

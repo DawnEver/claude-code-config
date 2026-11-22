@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { readBridgeConfig, repoNameFromUrl, gitContext, bridgeSourceRevision } from './context.mjs';
+import { readBridgeConfig, bridgeAllowlist, repoNameFromUrl, gitContext, bridgeSourceRevision } from './context.mjs';
 
 test('bridgeSourceRevision follows source edits, ignores tests and config, and exposes only a digest', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-revision-'));
@@ -37,7 +37,7 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
   fs.writeFileSync(localPath, JSON.stringify({ bridge: { botToken: '1:abc', allowedUserIds: ['42', 'x'], approvalsFromTelegram: true } }));
   try {
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }), {
-      botToken: '1:abc', allowedUserIds: [42], approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli', 'vscode'], dashboard: null, dashboardError: null, balances: [], forges: [], projects: { a: { chatId: -100, projectInTitle: 'always' } },
+      botToken: '1:abc', approvalsFromTelegram: true, fallbackChatId: -1, idleCloseMinutes: 30, deleteClosedAfterHours: 24, codexSources: ['cli', 'vscode'], dashboard: null, dashboardError: null, hpc: null, hpcError: null, balances: [], forges: [], projects: { a: { chatId: -100, projectInTitle: 'always' } },
     });
     fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { codexSources: ['cli', 'vscode', 7] } }));
     assert.deepEqual(readBridgeConfig({ sharedPath, localPath }).codexSources, ['cli', 'vscode']);
@@ -45,6 +45,26 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
     const c = readBridgeConfig({ sharedPath, localPath });
     assert.equal(c.botToken, null, 'template placeholder is not a token');
     assert.equal(c.approvalsFromTelegram, false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('bridgeAllowlist: the declared user, never the local allowedUserIds key, which is named', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ballow-'));
+  const sharedPath = path.join(dir, 's.json');
+  const localPath = path.join(dir, 'l.json');
+  fs.writeFileSync(sharedPath, JSON.stringify({ bridge: {} }));
+  fs.writeFileSync(localPath, JSON.stringify({ bridge: { allowedUserIds: [666] } }));
+  const declaration = { channels: { 'session-bridge': '42' }, why: null };
+  try {
+    const got = bridgeAllowlist({ sharedPath, localPath, declaration });
+    assert.deepEqual(got.allowedUserIds, [42]);
+    assert.match(got.stale, /bridge\.allowedUserIds is no longer read/);
+    assert.equal('allowedUserIds' in readBridgeConfig({ sharedPath, localPath }), false, 'the settings key is not read');
+    const closed = bridgeAllowlist({ sharedPath, localPath, declaration: { channels: {}, why: 'door failed: exit 1' } });
+    assert.deepEqual(closed.allowedUserIds, [], 'unreadable declaration: nobody, never the local key');
+    assert.match(closed.why, /door failed.*hosts-config/);
+    fs.writeFileSync(localPath, JSON.stringify({ bridge: {} }));
+    assert.equal(bridgeAllowlist({ sharedPath, localPath, declaration }).stale, null);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

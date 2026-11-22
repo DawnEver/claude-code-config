@@ -43,12 +43,19 @@ test('claude status follows the turn edges the hooks report', async () => {
     assert.equal(r.a.statusSnapshot('s').state, 'idle');
     assert.equal(r.a.answerApproval('p', true, 's'), true);
     assert.equal(r.a.statusSnapshot('s').state, 'idle');
-    await r.hook({ sessionId: 's', kind: 'final', texts: [], background: 2 });
-    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'idle', background: 2 }, 'idle with tasks still running');
-    await r.a.inject('s', 'new task', 'user');
-    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'running' }, 'a running turn shows no background count');
-    await r.hook({ sessionId: 's', kind: 'final', text: 'all done' });
-    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'idle' }, 'a turn end recounts');
+    const T = Date.now();
+    // Tasks: a shell and a background agent start; the shell ends; the agent runs past the turn.
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: T + 100, task: { op: 'start', id: 'u1', kind: 'shell', label: 'npm test', background: false } });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: T + 200, task: { op: 'start', id: 'u2', kind: 'agent', label: 'Explore: x', background: true } });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: T + 300, task: { op: 'end', id: 'u1', status: 'failed' } });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', task: { op: 'start', id: 'u3', kind: 'rm -rf', label: 'x' } });
+    await r.hook({ sessionId: 's', kind: 'final', texts: [], background: [{ id: 'u2', kind: 'agent', label: 'Explore: x', startedAt: T + 200 }, { id: 'bad', kind: 'daemon', startedAt: 1 }], at: T + 400 });
+    const snap = r.a.statusSnapshot('s');
+    assert.equal(snap.state, 'idle');
+    assert.deepEqual(snap.tasks.map((t) => [t.id, t.kind, t.startedAt]), [['u2', 'agent', T + 200]],
+      'idle with the background agent still running; the ended shell is gone; a malformed task is dropped at the boundary');
+    await r.hook({ sessionId: 's', kind: 'final', text: 'all done', background: [], at: T + 500 });
+    assert.equal(r.a.statusSnapshot('s').tasks, undefined, 'a turn end with no background task open ends the agent: nothing runs');
     await r.a.inject('s', 'new task', 'user');
     ch.destroy();
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -105,8 +112,8 @@ test('replacement and disconnect withdraw old approval correlations before nativ
 });
 
 /** Drive the adapter over real TCP like the channel and the hook do. */
-async function rig() {
-  const a = new ClaudeAdapter();
+async function rig(opts = {}) {
+  const a = new ClaudeAdapter(opts);
   const port = await a.listen(0);
   const events = [];
   for (const k of ['up', 'prompt', 'final', 'notice', 'down']) a.on(k, (e) => events.push([k, e]));
@@ -131,20 +138,19 @@ test('unwrapChannel returns the text of a channel prompt, anything else unchange
   assert.equal(unwrapChannel('plain'), 'plain');
 });
 
-test('after /clear or /resume the id is new: the claude process routes it, and the session learns the id', async () => {
+test('after /clear or /resume the id is new: the claude process the hook names routes it, and the session learns the id', async () => {
   const r = await rig();
   try {
     const ch = await r.open();
     await r.rpc(ch, 'register', { sessionId: 'boot', cwd: '/repo', claudePid: 77 });
-    // The hook's first call names only ids and misses; its retry names its own claude process.
-    await r.hook({ sessionId: 'cleared', kind: 'prompt', text: 'after clear' });
-    await r.hook({ sessionId: 'cleared', claudePid: 77, retry: true, kind: 'prompt', text: 'after clear' });
-    // A nested claude's retry names ITS process, so it never lands in the parent's Topic.
-    await r.hook({ sessionId: 'nested', kind: 'prompt', text: 'nested' });
-    await r.hook({ sessionId: 'nested', claudePid: 78, retry: true, kind: 'prompt', text: 'nested' });
+    // Every hook names its claude process (CLAUDE_PID): the new id routes on its first call.
+    const routed = await r.hook({ sessionId: 'cleared', claudePid: 77, kind: 'prompt', text: 'after clear' });
+    assert.deepEqual(routed.result, { ok: true, routed: true });
+    // A process no channel registered under routes nothing: answered, never held here.
+    const stray = await r.hook({ sessionId: 'nested', claudePid: 78, kind: 'prompt', text: 'nested' });
+    assert.deepEqual(stray.result, { ok: true, routed: false }, 'PLANTED CONTROL: an unknown process routes nothing');
     assert.deepEqual(r.events.filter(([k]) => k === 'prompt').map(([, e]) => [e.id, e.text]), [['boot', 'after clear']]);
-    assert.deepEqual(r.a.held.map((h) => h.m.text), ['nested'], 'the routed retry dropped its held first copy');
-    // Learned: later calls name only the id — activity is never retried, nor is a question.
+    // Learned: later calls route by the id alone (a question too).
     await r.hook({ sessionId: 'cleared', kind: 'activity', state: 'waiting-approval' });
     assert.equal(r.a.statusSnapshot('boot').state, 'waiting-approval');
     const asked = [];
@@ -156,12 +162,105 @@ test('after /clear or /resume the id is new: the claude process routes it, and t
     // The conversation later resumed in another process belongs to that process alone.
     const other = await r.open();
     await r.rpc(other, 'register', { sessionId: 'cleared', cwd: '/repo', claudePid: 79 });
-    await r.hook({ sessionId: 'cleared', kind: 'prompt', text: 'resumed elsewhere' });
+    await r.hook({ sessionId: 'cleared', claudePid: 79, kind: 'prompt', text: 'resumed elsewhere' });
     assert.deepEqual(r.events.filter(([k]) => k === 'prompt').at(-1)[1], { id: 'cleared', text: 'resumed elsewhere' });
     other.destroy();
     ch.destroy();
     await new Promise((res) => setTimeout(res, 50));
   } finally { await r.a.close(); }
+});
+
+test('nothing is held or dropped here: an unroutable call is answered routed:false, again and again, never with a drop', async () => {
+  let clock = 0;
+  const r = await rig({ now: () => clock });
+  const warned = [];
+  r.a.on('warn', (w) => warned.push(w));
+  try {
+    for (const t of [0, 31_000, 120_000]) {
+      clock = t;
+      assert.deepEqual((await r.hook({ sessionId: 'early', claudePid: 90, kind: 'prompt', text: 'before its channel' })).result, { ok: true, routed: false });
+    }
+    assert.deepEqual(warned, [], 'no timed drop, no "dropped unroutable" warning');
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 'early', cwd: '/repo', claudePid: 90 });
+    assert.deepEqual((await r.hook({ sessionId: 'early', claudePid: 90, kind: 'prompt', text: 'before its channel' })).result, { ok: true, routed: true },
+      'PLANTED CONTROL: once its channel is up the same call routes -- the hook spool re-sends it until then');
+    ch.destroy();
+    await new Promise((res) => setTimeout(res, 50));
+  } finally { await r.a.close(); }
+});
+
+test('a nested session registers as nested: its calls are answered `nested` (not mirrored) while it lives, never a Topic', async () => {
+  const r = await rig();
+  try {
+    const nested = await r.open();
+    assert.deepEqual((await r.rpc(nested, 'register', { sessionId: 'n-1', cwd: '/repo', claudePid: 55, nested: true })).result, { ok: true, nested: true });
+    assert.deepEqual((await r.hook({ sessionId: 'n-1', claudePid: 55, kind: 'final', text: 'inner' })).result, { ok: true, routed: false, nested: true });
+    assert.deepEqual(r.events, [], 'no up, no final: a nested session is not bridged');
+    nested.destroy();
+    await new Promise((res) => setTimeout(res, 50));
+    assert.deepEqual((await r.hook({ sessionId: 'n-1', claudePid: 55, kind: 'final', text: 'inner' })).result, { ok: true, routed: false },
+      'PLANTED CONTROL: once its process is gone it is no longer known as nested');
+  } finally { await r.a.close(); }
+});
+
+test('a resumed session with a new id receives an inbound message, and so does an agent-view (no-channel) session, across a daemon restart', async () => {
+  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-queue-'));
+  try {
+    // A resumed session (`claude --resume`/`--fork-session`, a new id) with the channel flag: inbound goes straight in.
+    let r = await rig({ queueDir });
+    const resumed = await r.open();
+    const inbox = [];
+    resumed.on('data', (d) => { for (const l of String(d).split('\n').filter(Boolean)) { const m = JSON.parse(l); if (m.method === 'inbound') inbox.push(m.params.text); } });
+    await r.rpc(resumed, 'register', { sessionId: 'forked-new-id', cwd: '/repo', claudePid: 61 });
+    await r.a.inject('forked-new-id', 'hello resumed', 'u');
+    await new Promise((res) => setTimeout(res, 50));
+    assert.deepEqual(inbox, ['hello resumed']);
+    // An agent-view session: the channel flag is dropped, so inbound waits for its Stop -- on disk.
+    const bg = await r.open();
+    await r.rpc(bg, 'register', { sessionId: 'bg-1', cwd: '/repo', claudePid: 62, inbound: false });
+    assert.equal((await r.a.inject('bg-1', 'hello background', 'u')).queued, true);
+    resumed.destroy(); bg.destroy();
+    await r.a.close();
+    // The daemon restarts (a handover): the queued message survives it.
+    r = await rig({ queueDir });
+    const bg2 = await r.open();
+    await r.rpc(bg2, 'register', { sessionId: 'bg-1', cwd: '/repo', claudePid: 62, inbound: false });
+    const stop = await r.hook({ sessionId: 'bg-1', claudePid: 62, kind: 'final', text: 'turn done' });
+    assert.deepEqual(stop.result.deliver?.map((d) => d.text), ['hello background'], 'the next Stop gets it');
+    assert.deepEqual(fs.readdirSync(queueDir), [], 'and the queue is empty once handed over');
+    // PLANTED CONTROL: without a queue dir, the same restart forgets it.
+    const bare = await rig();
+    const b1 = await bare.open();
+    await bare.rpc(b1, 'register', { sessionId: 'bg-2', cwd: '/repo', claudePid: 63, inbound: false });
+    await bare.a.inject('bg-2', 'lost without a queue dir', 'u');
+    b1.destroy(); await bare.a.close();
+    const bare2 = await rig();
+    const b2 = await bare2.open();
+    await bare2.rpc(b2, 'register', { sessionId: 'bg-2', cwd: '/repo', claudePid: 63, inbound: false });
+    assert.equal((await bare2.hook({ sessionId: 'bg-2', claudePid: 63, kind: 'final', text: 'x' })).result.deliver, undefined);
+    b2.destroy(); await bare2.a.close();
+    bg2.destroy();
+    await r.a.close();
+  } finally { fs.rmSync(queueDir, { recursive: true, force: true }); }
+});
+
+test('a message for a session that is not running waits on disk and is delivered when it is resumed', async () => {
+  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-queue-'));
+  const r = await rig({ queueDir });
+  try {
+    const note = await r.a.inject('closed-1', 'while you were away', 'u');
+    assert.equal(note.queued, true);
+    assert.match(note.note, /delivered when it is resumed/);
+    const ch = await r.open();
+    const inbox = [];
+    ch.on('data', (d) => { for (const l of String(d).split('\n').filter(Boolean)) { const m = JSON.parse(l); if (m.method === 'inbound') inbox.push(m.params.text); } });
+    await r.rpc(ch, 'register', { sessionId: 'closed-1', cwd: '/repo', claudePid: 64 });
+    await new Promise((res) => setTimeout(res, 50));
+    assert.deepEqual(inbox, ['while you were away'], 'a channel that takes inbound gets it on register');
+    ch.destroy();
+    await new Promise((res) => setTimeout(res, 50));
+  } finally { await r.a.close(); fs.rmSync(queueDir, { recursive: true, force: true }); }
 });
 
 test('a failed final carries its status to the daemon', async () => {
@@ -177,13 +276,14 @@ test('a failed final carries its status to the daemon', async () => {
   } finally { await r.a.close(); }
 });
 
-test('mirror calls route by session id, are held before register, never cross sessions, and dedupe against reply', async () => {
+test('mirror calls route by session id, wait (in the hook spool) for their channel, never cross sessions, and dedupe against reply', async () => {
   const r = await rig();
   try {
-    await r.hook({ sessionId: 'uuid-1', kind: 'prompt', text: 'early' });
-    assert.deepEqual(r.events, [], 'held until the channel registers');
+    assert.deepEqual((await r.hook({ sessionId: 'uuid-1', kind: 'prompt', text: 'early' })).result, { ok: true, routed: false });
+    assert.deepEqual(r.events, [], 'nothing routed before the channel registers');
     const ch = await r.open();
     await r.rpc(ch, 'register', { sessionId: 'uuid-1', cwd: '/repo' });
+    await r.hook({ sessionId: 'uuid-1', kind: 'prompt', text: 'early' });   // the spool's re-send
     // A nested session (e.g. `claude -p` run from inside another session) is its own session.
     const parent = await r.open();
     await r.rpc(parent, 'register', { sessionId: 'parent', cwd: '/repo' });
@@ -336,7 +436,6 @@ test('hook activity drives the state machine; only the channel closing takes the
     assert.equal(state(), 'idle');
     assert.ok((await r.hook({ sessionId: 's', kind: 'activity', state: 'bogus' })).error);
     assert.deepEqual(await r.hook({ sessionId: 'ghost', kind: 'activity', state: 'running' }), { jsonrpc: '2.0', id: 1, result: { ok: true, routed: false } });
-    assert.deepEqual(r.a.held, [], 'activity is never held: the next hook carries fresher state');
     assert.ok((await r.hook({ sessionId: 's', kind: 'end' })).error, 'SessionEnd also fires on /clear and /resume: not an end signal');
     assert.equal(state(), 'idle');
     ch.destroy();
@@ -349,29 +448,34 @@ test('hook activity drives the state machine; only the channel closing takes the
 const ASK = [{ question: 'Which colour?', header: 'Colour', multiSelect: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }];
 const ask = async (r, params) => { const s = await r.open(); const res = r.rpc(s, 'question', params); return { s, res }; };
 
-test('a question in a Telegram-started turn waits for the Telegram answer', async () => {
+// A question never holds its hook (every hook < 5 s, user ruling D24): in a Telegram-started
+// turn it is posted there at once and the hook denies the terminal dialog; the tapped answer
+// reaches the session as its next message.
+test('a question in a Telegram-started turn is posted there at once; its answer arrives as the next message', async () => {
   const r = await rig();
-  const questions = [];
+  const questions = [], inbound = [];
   r.a.on('question', (e) => questions.push(e));
   try {
     const ch = await r.open();
+    ch.on('data', lineSplitter((l) => { const m = JSON.parse(l); if (m.method === 'inbound') inbound.push(m.params); }));
     await r.rpc(ch, 'register', { sessionId: 's' });
     await r.a.inject('s', 'from phone', 'u');
     await r.hook({ sessionId: 's', kind: 'prompt', text: '<channel source="session-bridge" user="u">from phone</channel>' });
+    const t0 = Date.now();
     const { s, res } = await ask(r, { sessionId: 's', questions: ASK, wait: true });
-    await new Promise((res2) => setTimeout(res2, 30));
+    assert.deepEqual((await res).result, { posted: true }, 'answered at once, never held open');
+    assert.ok(Date.now() - t0 < 1000);
+    s.destroy();
     assert.equal(questions.length, 1);
     assert.deepEqual(questions[0].questions, [{ id: '0', header: 'Colour', question: 'Which colour?', isOther: true, isSecret: false, multiSelect: false,
       options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }]);
     assert.equal(questions[0].answerable, true);
-    assert.equal(r.a.statusSnapshot('s').state, 'waiting-input');
-    await r.hook({ sessionId: 's', kind: 'activity', state: 'running', at: Date.now() - 1000 });
-    assert.equal(r.a.statusSnapshot('s').state, 'waiting-input', 'a late async PostToolUse does not end the wait');
+    await new Promise((res2) => setTimeout(res2, 30));
+    assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 's'), true, 'the hook closing its socket does not withdraw a posted question');
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 'other'), false, 'wrong session');
-    assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 's'), true);
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false, 'answered once');
-    assert.deepEqual((await res).result, { answers: { 'Which colour?': 'Blue' } });
-    s.destroy();
+    await until(() => inbound.some((m) => /Which colour\? -> Blue/.test(m.text)));
+    assert.equal(r.a.statusSnapshot('s').state, 'running', 'the answer starts the next turn');
   } finally { await r.a.close(); }
 });
 
@@ -395,26 +499,28 @@ test('a question in a locally typed turn is information only and never waits', a
   } finally { await r.a.close(); }
 });
 
-test('a waiting question is withdrawn when its hook gives up, and released when undeliverable', async () => {
+test('a posted question that cannot be shown on Telegram tells the session to ask it in the terminal; its end withdraws it', async () => {
   const r = await rig();
-  const questions = [], resolved = [];
+  const questions = [], resolved = [], inbound = [];
   r.a.on('question', (e) => questions.push(e));
   r.a.on('question-resolved', (e) => resolved.push(e));
   try {
     const ch = await r.open();
+    ch.on('data', lineSplitter((l) => { const m = JSON.parse(l); if (m.method === 'inbound') inbound.push(m.params); }));
     await r.rpc(ch, 'register', { sessionId: 's' });
     await r.a.inject('s', 'from phone', 'u');
     const first = await ask(r, { sessionId: 's', questions: ASK, wait: true });
-    await new Promise((res) => setTimeout(res, 30));
+    assert.deepEqual((await first.res).result, { posted: true });
     first.s.destroy();
-    await new Promise((res) => setTimeout(res, 30));
-    assert.deepEqual(resolved, [{ id: 's', ref: questions[0].ref }]);
-    assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false);
+    assert.equal(r.a.releaseQuestion(questions[0].ref, 's'), true);
+    await until(() => inbound.some((m) => /could not be shown on Telegram/.test(m.text)));
+    assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false, 'released: no longer answerable');
     const second = await ask(r, { sessionId: 's', questions: ASK, wait: true });
-    await new Promise((res) => setTimeout(res, 30));
-    r.a.releaseQuestion(questions[1].ref, 's');
-    assert.deepEqual((await second.res).result, { answers: null });
+    await second.res;
     second.s.destroy();
+    ch.destroy();
+    await until(() => resolved.some((e) => e.ref === questions[1].ref));
+    assert.equal(r.a.answerQuestion(questions[1].ref, { 0: ['Red'] }, 's'), false, 'the session ended: its question is withdrawn');
   } finally { await r.a.close(); }
 });
 
@@ -431,7 +537,7 @@ test('a session without inbound queues Telegram messages and hands them to the n
     const replayed = await r.hook({ sessionId: ids, kind: 'final', text: 'spooled earlier answer', replay: true });
     assert.equal(replayed.result.deliver, undefined, 'a spool replay cannot continue the session');
     const res = await r.hook({ sessionId: ids, kind: 'final', text: 'local answer' });
-    assert.deepEqual(res.result.deliver, [{ text: 'idle msg', user: 'u' }, { text: 'second', user: 'v' }]);
+    assert.deepEqual(res.result.deliver, [{ text: 'idle msg', user: 'u', userId: '' }, { text: 'second', user: 'v', userId: '' }]);
     assert.equal(r.a.statusSnapshot('s').state, 'running');
     assert.equal((await r.hook({ sessionId: ids, kind: 'final', text: 'phone answer' })).result.deliver, undefined, 'delivered once');
     assert.deepEqual(r.events.filter(([k]) => k === 'final').map(([, e]) => e.text), ['spooled earlier answer', 'local answer', 'phone answer'], 'the continuation is a Telegram turn');
@@ -446,21 +552,6 @@ test('a session missing only the flag says to resume with ccc', async () => {
     await r.rpc(ch, 'register', { sessionId: 's', inbound: false });
     assert.match((await r.a.inject('s', 'x', 'u')).note, /not started with ccc[\s\S]*ccc --resume/);
     ch.destroy();
-  } finally { await r.a.close(); }
-});
-
-test('a held hook call that never finds its channel is dropped with a warning, not silently', async () => {
-  const r = await rig();
-  let t = 0;
-  r.a.now = () => t;
-  const warns = [];
-  r.a.on('warn', (m) => warns.push(m));
-  try {
-    await r.hook({ sessionId: 'orphan', kind: 'prompt', text: 'lost' });
-    t = 31000;
-    await r.hook({ sessionId: 'orphan', kind: 'final', text: 'later' });
-    assert.equal(warns.length, 1);
-    assert.match(warns[0], /dropped unroutable prompt for orphan/);
   } finally { await r.a.close(); }
 });
 
@@ -580,4 +671,44 @@ test('transcriptName: /rename beats the generated title, read on incrementally',
   assert.equal(s.name, 'Mine');
   assert.equal(s.at, fs.statSync(file).size - '{"type":"custom-title","custom'.length, 'a cut line is read next time');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('tasks: an interrupted turn (no Stop) ends its foreground calls at the next prompt or idle; a resumed session never revives its old process\'s tasks', async () => {
+  const r = await rig();
+  try {
+    const T = Date.now();
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's', startedAt: T });
+    const start = (id, at, background = false) => r.hook({ sessionId: 's', kind: 'activity', state: 'running', at, task: { op: 'start', id, kind: 'shell', label: id, background } });
+    await start('f1', T + 100);
+    await r.hook({ sessionId: 's', kind: 'prompt', text: 'next', at: T + 200 });
+    assert.equal(r.a.statusSnapshot('s').tasks, undefined, 'a new prompt: the interrupted turn\'s foreground call has returned');
+    await start('f2', T + 300);
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'idle', at: T + 400 });
+    assert.equal(r.a.statusSnapshot('s').tasks, undefined, 'idle: no foreground call runs');
+    await start('b1', T + 500, true);
+    await r.hook({ sessionId: 's', kind: 'prompt', text: 'more', at: T + 600 });
+    assert.deepEqual(r.a.statusSnapshot('s').tasks.map((t) => t.id), ['b1'], 'a background task runs past the turn');
+    // The transcript still sees a shell of the previous claude process open (resumed): it died with that process.
+    await r.hook({ sessionId: 's', kind: 'final', texts: [], at: T + 700,
+      background: [{ id: 'old', kind: 'shell', label: 'npm run dev', startedAt: T - 3600000 }, { id: 'b1', kind: 'shell', label: 'b1', startedAt: T + 500 }] });
+    assert.deepEqual(r.a.statusSnapshot('s').tasks.map((t) => t.id), ['b1']);
+    ch.destroy();
+  } finally { await r.a.close(); }
+});
+
+test('waiting: what a waiting session waits for is in its snapshot, and gone once it moves on', async () => {
+  const r = await rig();
+  try {
+    const ch = await r.open();
+    await r.rpc(ch, 'register', { sessionId: 's' });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'waiting-approval', text: 'Claude needs your permission to use Bash' });
+    assert.deepEqual(r.a.statusSnapshot('s'), { state: 'waiting-approval', waiting: 'Claude needs your permission to use Bash' });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'running' });
+    assert.equal(r.a.statusSnapshot('s').waiting, undefined);
+    await r.rpc(ch, 'permission_request', { request_id: 'p', tool_name: 'Bash', description: 'Run the tests' });
+    await r.hook({ sessionId: 's', kind: 'activity', state: 'waiting-approval', text: 'Claude needs your permission to use Bash' });
+    assert.equal(r.a.statusSnapshot('s').waiting, 'Bash: Run the tests', 'the channel request says more than the notification');
+    ch.destroy();
+  } finally { await r.a.close(); }
 });

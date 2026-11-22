@@ -23,7 +23,7 @@ metadata:
 - **SR-023 [HIGH]** README SessionStart hooks — added the three SessionStart rows + a paragraph on what `check-links.js` auto-repairs and that `codex.js` runs the same check
 - **SR-025 [HIGH]** AGENTS.md Workflows section — corrected to Notification only, mentioned SessionStart chain
 - **SR-026 [MEDIUM]** README gitignore claim — corrected the table + prose to quote the actual `**/.claude/**` pattern; noted `MEMORY.md` and `_meta.json` are device-local
-- **SR-027 [MEDIUM]** README mojibake + BOM — replaced `鈮?` with `>=` (REM thresholds, 20-entry threshold); stripped the leading UTF-8 BOM
+- **SR-027 [MEDIUM]** README mojibake + BOM — replaced `U+922E ?` (mojibake of U+2265) with `>=` (REM thresholds, 20-entry threshold); stripped the leading UTF-8 BOM
 - **SR-028 [MEDIUM]** AGENTS.md setup/ sparse bullet — expanded to enumerate `setup.js` / `install-shell-aliases.js` / `check-links.js` / `fix-lsp-windows.js` / `check-mac-notify.js` / `setup-vscode.js`
 - **SR-029 [MEDIUM]** AGENTS.md codex_config.toml missing — added `codex_config.toml` / `codex_config.template.toml` to Structure with the `[model_providers.<id>]` precondition
 - **SR-030 [MEDIUM]** README npm scripts — added `npm run setup` / `npm test` to Setup section; added a new "Upgrading an existing install" subsection for `npm run migrate`
@@ -56,7 +56,7 @@ metadata:
 - **SR-013 [LOW]** rem/scripts/lib.mjs import-time side effects — convert to lazy getters; covered by SR-004's larger split
 - **SR-015 [LOW]** four SKILL.md over 100 lines (evolve 121, sharp-review 119, watch 114, refresh-docs 109) — trim bodies, push detail to `reference/*`
 
-## Review 2026-08-25 (session) — diff review + architecture survey (架构锐评)
+## Review 2026-08-25 (session) — diff review + architecture survey (architecture sharp review)
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped
@@ -258,7 +258,7 @@ system-prompt/ is a first-class synced module (setup.js junctions it to both ~/.
 
 ## Review 2026-08-25 (follow-up)
 
-## Review 2026-08-25 (session) — docs review (文档锐评)
+## Review 2026-08-25 (session) — docs review (docs sharp review)
 
 ### Reviewer Status
 - Reviewer docs (docs review): OK
@@ -323,7 +323,7 @@ Lines 131-133 don't make it clear whether `co` and `cokm` are both Kimi aliases 
 
 ## Review 2026-08-25 (follow-up)
 
-## Review 2026-08-25 (session) — docs review (文档锐评)
+## Review 2026-08-25 (session) — docs review (docs sharp review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -477,7 +477,7 @@ Link text resolves to openai/codex-plugin-cc but the install command is @openai/
 
 ## Review 2026-08-25 (follow-up)
 
-## Review 2026-08-25 (session) — diff review + security audit (安全锐评)
+## Review 2026-08-25 (session) — diff review + security audit (security sharp review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -595,3 +595,5 @@ The `deepMerge` doc comment reads "...so this is safe for env:<provider> blocks 
 - **Suggestion:** Either resolve the codex launchers through `~/.codex/scripts/runtime/codex.js` (adding a link entry to `CODEX_LINKS`), or document explicitly that `~/.claude/scripts` is the shared script root for both hosts regardless of which binary is installed.
 
 `codexJsPath` is built as `path.join(claudeDir, 'scripts', 'runtime', 'codex.js')`. On a Codex-only machine the `claudeBin` branch is skipped, but the `codexBin` branch still emits wrappers hard-coding a `~/.claude/scripts/runtime/codex.js` path. That link is created by setup's `CLAUDE_LINKS` processing so it usually exists — but the whole point of the `claudeBin`/`codexBin` split introduced here is that the two hosts are independent, and routing the codex launcher through `~/.claude` quietly reintroduces the coupling. Same for `aliases.sh`/`aliases.ps1`, which hardcode `~/.claude/scripts/runtime/codex.js`.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

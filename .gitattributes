@@ -1,6 +1,9 @@
-# Memory/task markdown is parsed line-by-line by rem's task-engine, which is
-# sensitive to line endings. Force LF so git autocrlf never rewrites CRLF on
-# Windows checkout and silently breaks task parsing.
+# Rendered by dev_lab.dev.famconfig from the family base for .gitattributes.
+# Hand edits RED. The base is data in dev_lab.dev._famconfig_rows;
+# this repo's own lines are its declared delta. Change one, re-render, commit.
+
+*.sh text eol=lf
+
+# --- claude-code-config delta, 2 of 2 allowed ---
 .claude/memory/**/*.md text eol=lf
-.claude/rules/**/*.md  text eol=lf
-.githooks/*            text eol=lf
+.claude/rules/**/*.md text eol=lf

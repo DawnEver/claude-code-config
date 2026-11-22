@@ -3,12 +3,14 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, unreadEvents, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, unreadHere, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, eventText, usageView, tokenText, hoursText, statusLabel } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, hpcView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
-import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
+import { USAGE_FILTER_MAX, platformName } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 import { LOGOS } from './logos.mjs';
+/** Each agent's maker, whose mark its avatar shows (logos.mjs). */
+const AGENT_BRANDS = { claude: 'claude', codex: 'openai', agy: 'agy' };
 
 const POLL_MS = 8000;
 const REPO = 'https://github.com/DawnEver/claude-code-config';
@@ -24,22 +26,19 @@ let loading = false;
 let selectsKey = null;
 // Settings of this device: localStorage, never sent anywhere (private mode: none kept).
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  del: (k) => { try { localStorage.removeItem(k); } catch { /* private mode */ } } };
 // The UI language: chosen on this device, else what the Telegram user's language asks for.
 const autoLang = defaultLang(tg?.initDataUnsafe?.user?.language_code ?? navigator.language);
 let langChoice = LANGS.includes(store.get('dashboard.lang')) ? store.get('dashboard.lang') : 'auto';
 let lang = langChoice === 'auto' ? autoLang : langChoice;
 const tr = (key, vars) => t(key, lang, vars);
 const agoText = (ms) => ago(new Date(ms).toISOString(), Date.now(), lang);
-// The open tab survives a reopen: a #quota / #events link opens that tab; otherwise the last
+// The open tab survives a reopen: a #quota / #code link opens that tab; otherwise the last
 // one used; sessions the first time.
-const TABS = ['sessions', 'quota', 'usage', 'code', 'events', 'config'];
+const TABS = ['sessions', 'quota', 'usage', 'code', 'config'];
 const hashTab = location.hash.slice(1);
 let tab = [hashTab, store.get('dashboard.tab')].find((x) => TABS.includes(x)) ?? 'sessions';
-// Events newer than this were not seen yet: kept on this device, moved on by opening the tab.
-let seenAt = store.get('dashboard.eventsSeenAt');
-// The Events tab lists what was unread when it was opened: read events are cleared on the next visit.
-let shownFrom = seenAt;
 // Demo mode (Config › Developer, or `?demo`): the live data with every identity masked in this
 // browser, for showing the dashboard to others. A setting of this device only: nothing reaches the gateway.
 if (params.has('demo')) store.set('dashboard.demo', '1');
@@ -47,6 +46,37 @@ let demoOn = store.get('dashboard.demo') === '1';
 let masker = null;   // one per page: names stay put when demo is toggled off and on
 let raw = null;      // the last snapshot as fetched; `snapshot` is what is shown
 const shown = () => (raw && demoOn ? (masker ??= demoMasker())(raw) : raw);
+
+/*
+ * Sign-in: Telegram signs initData only when the app opens, while Telegram keeps an open app
+ * alive for days. The gateway answers every verified read with a session of its own
+ * (api.mjs `x-viewer-session`), renewed on use; this page keeps it for the Telegram user it
+ * was issued to and signs in with it, falling back to initData when it is refused.
+ */
+const SESSION_KEY = `dashboard.session.${tg?.initDataUnsafe?.user?.id ?? 'none'}`;
+let viewerSession = store.get(SESSION_KEY);
+async function api(url, init = {}) {
+  const send = (authorization) => fetch(url, { cache: 'no-store', ...init, headers: { ...init.headers, authorization } });
+  let res = viewerSession ? await send(`session ${viewerSession}`) : null;
+  if (!res || res.status === 401) res = await send(`tma ${tg.initData}`);
+  viewerSession = res.headers.get('x-viewer-session') ?? (res.status === 401 ? null : viewerSession);
+  if (viewerSession) store.set(SESSION_KEY, viewerSession); else store.del(SESSION_KEY);
+  return res;
+}
+
+// The last snapshot, kept on this device: a reload (Telegram's, or after a deploy) repaints at
+// once, at the reader's scroll position, instead of from an empty page.
+const SNAPSHOT_KEY = 'dashboard.lastSnapshot';
+function keepSnapshot() { store.set(SNAPSHOT_KEY, JSON.stringify({ at: lastOk, raw })); }
+function restoreSnapshot() {
+  try {
+    const kept = JSON.parse(store.get(SNAPSHOT_KEY));
+    if (!Array.isArray(kept?.raw?.hosts) || !(kept.at > 0)) return;
+    raw = kept.raw;
+    snapshot = shown();
+    lastOk = kept.at;
+  } catch { /* none kept */ }
+}
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
 // Quota hosts opened from their header: every account row open, plus the host's facts.
@@ -58,15 +88,28 @@ const PREFS = {
   clock: ['24', '12'], date: ['day', 'iso', 'off'], replyStyle: ['ago', 'clock'], unit: ['used', 'left'],
   groupBy: ['project', 'host'], groupOrder: ['host', 'urgency'], openAt: ['latest', 'first'], pinTabs: ['on', 'off'],
   load: ['compact', 'detailed', 'off'], codeAttention: ['off', 'on'], codeRepoLayout: ['columns', 'list'], codeItemLayout: ['list', 'columns'],
-  textSize: ['m', 's', 'l', 'xl'],
+  textSize: ['m', 's', 'l', 'xl'], taskTags: ['icons', 'text'], taskLines: ['2', '1', '3', '5', '0'],
 };
 // Text size: the one --scale every size in index.html is computed from.
 const TEXT_SCALE = { s: 0.9, m: 1, l: 1.12, xl: 1.25 };
 const pref = Object.fromEntries(Object.entries(PREFS).map(([k, vals]) => [k, vals.includes(store.get(`dashboard.${k}`)) ? store.get(`dashboard.${k}`) : vals[0]]));
 const timeFormat = () => ({ clock: pref.clock, date: pref.date, lang });
 let deployed = null;   // the live version from /api/health: {commit, id, at}
-// Per session, its `posted` count when this device last opened its Topic: what came before is read here.
-const topicSeen = (() => { try { return JSON.parse(store.get('dashboard.topicSeen')) ?? {}; } catch { return {}; } })();
+// Per session, what this device has read (view.mjs: `{ p, w, m }`); the one unread store. Kept in
+// memory when localStorage is unavailable or holds junk (syncSeen repairs it).
+let seen = (() => { try { const v = JSON.parse(store.get('dashboard.seen')); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; } })();
+for (const old of ['dashboard.topicSeen', 'dashboard.sessionSeen']) try { localStorage.removeItem(old); } catch { /* private mode */ }
+const saveSeen = () => store.set('dashboard.seen', JSON.stringify(seen));
+/** Mark sessions read as they are now (one opened or expanded, Mark read, or all). */
+function markRead(list) {
+  for (const s of list) seen[s.id] = readMark(s);
+  saveSeen();
+}
+/** Mark a session unread by hand: a dot until it is read again. */
+function markUnread(s) {
+  seen[s.id] = unreadMark(s, seen[s.id]);
+  saveSeen();
+}
 // Usage (the store's report, docs/usage.md): fetched when its tab opens and every few minutes while open.
 const USAGE_RANGES = [1, 7, 30, 90, 365];   // 1: the last 24 h, by hour
 const USAGE_EVERY_MS = 5 * 60000;
@@ -97,30 +140,101 @@ function applyLang() {
   $('title').textContent = tr('app.title');
   $('force-update').title = tr('app.forceUpdate');
   $('force-update').setAttribute('aria-label', tr('app.forceUpdate'));
+  $('search').placeholder = tr('search.placeholder');
+  $('search').setAttribute('aria-label', tr('search.placeholder'));
   for (const b of document.querySelectorAll('#tabs [data-tab]')) b.querySelector('.label').textContent = tr(`tab.${b.dataset.tab}`);
   document.body.classList.toggle('pin-tabs', pref.pinTabs === 'on');
   document.documentElement.style.setProperty('--scale', String(TEXT_SCALE[pref.textSize]));
 }
 
 function openTopic(s) {
-  const url = topicTarget(s, topicSeen[s.id], pref.openAt);
+  const url = topicTarget(s, seen[s.id]?.p, pref.openAt);
   tg?.HapticFeedback?.impactOccurred?.('light');
-  // What the Topic holds now is read on this device; only sessions still listed are kept.
-  const live = new Set(sessionsOf(snapshot).map((x) => x.id));
-  for (const id of Object.keys(topicSeen)) if (!live.has(id)) delete topicSeen[id];
-  topicSeen[s.id] = s.posted ?? 0;
-  store.set('dashboard.topicSeen', JSON.stringify(topicSeen));
+  markRead([s]);   // what the Topic holds now is read on this device
   if (tg?.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank', 'noopener');
   render();
 }
 
-/** The @ and unread-count badges of a session, as Telegram draws them on a chat. */
-function badges(s) {
-  const out = [];
-  if (s.mention) { const at = el('span', 'badge at', '@'); at.title = tr('session.mention'); out.push(at); }
-  const n = unreadBadge(unreadHere(s, topicSeen[s.id]));
-  if (n) { const b = el('span', 'badge', n); b.title = tr('session.unread'); out.push(b); }
-  return out;
+/** The @ badge: a mention waits for you. */
+const mentionBadge = (s) => {
+  if (!s.mention) return [];
+  const at = el('span', 'badge at', '@');
+  at.title = tr('session.mention');
+  return [at];
+};
+
+/*
+ * The row's read state and its toggle in one circle, as Telegram draws a chat's badge: read, a quiet
+ * grey ring; unread, filled — with the count when the host counts posts, empty otherwise (marked
+ * unread by hand, or a new wait). A tap toggles (no long-press or right-click: it must work in the
+ * Mini App on a phone); the tooltip names the action.
+ */
+function readBadge(s, u, redraw) {
+  const n = unreadBadge(u.count);
+  const btn = el('span', `badge read ${u.unread ? 'on' : 'off'}`, n);
+  btn.setAttribute('role', 'button');
+  btn.setAttribute('tabindex', '0');
+  btn.title = tr(u.unread ? 'session.markRead' : 'session.markUnread');
+  btn.setAttribute('aria-label', n ? `${tr('session.unread')}: ${n}. ${btn.title}` : btn.title);
+  const toggle = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (u.unread) markRead([s]); else markUnread(s);
+    tg?.HapticFeedback?.selectionChanged?.();
+    redraw();
+  };
+  btn.addEventListener('click', toggle);
+  btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') toggle(e); });
+  return btn;
+}
+
+// Sessions whose full task list is open (this page's life): opened by the tasks icon, never the row.
+const tasksOpen = new Set();
+
+// One line icon per task kind (Config › Layout › Task tags: Icons), drawn in the kind's colour.
+const TASK_ICONS = {
+  shell: '<path d="M4 7l5 5-5 5M12 17h8"/>',
+  powershell: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9l4 3-4 3M12 15h5"/>',
+  monitor: '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  agent: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 13v1.5M15 13v1.5"/>',
+};
+
+/**
+ * One running task, three columns: what kind (a tag in the kind's colour — a word or an icon, as
+ * this device chose; filled in the foreground, outlined in the background), what it does, how
+ * long it has run. Full: the label wraps instead of being cut.
+ */
+function taskLine(x, full) {
+  const row = el('div', `task k-${x.kind}${x.background ? ' bg' : ''}`);
+  const tag = el('span', `tk${pref.taskTags === 'icons' ? ' icon' : ''}`);
+  if (pref.taskTags === 'icons') tag.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${TASK_ICONS[x.kind] ?? ''}</svg>`;
+  else tag.textContent = tr(`task.tag.${x.kind}`);
+  row.append(tag, el('span', `tl${full ? ' full' : ''}`, x.label), el('span', 'td', x.for));
+  row.title = [tr(`task.${x.kind}`), x.background && tr('task.bgTitle'), x.label].filter(Boolean).join(' · ');
+  tag.setAttribute('aria-label', row.title);
+  return row;
+}
+
+/** The tasks icon: how many run; a tap lists them all with labels in full, or folds them, and never opens the Topic. */
+function tasksButton(s, running, open, redraw) {
+  const btn = el('span', `tasks-btn${open ? ' on' : ''}`);
+  btn.setAttribute('role', 'button');
+  btn.setAttribute('tabindex', '0');
+  btn.setAttribute('aria-expanded', String(open));
+  btn.setAttribute('aria-label', tr(open ? 'session.tasksHide' : 'session.tasksShow'));
+  btn.title = btn.getAttribute('aria-label');
+  btn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h2M4 12h2M4 18h2M9 6h11M9 12h11M9 18h11"/></svg>';
+  btn.append(el('b', null, String(running)));
+  const toggle = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!tasksOpen.delete(s.id)) { tasksOpen.add(s.id); markRead([s]); }
+    tg?.HapticFeedback?.selectionChanged?.();
+    redraw();
+  };
+  btn.addEventListener('click', toggle);
+  btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') toggle(e); });
+  return btn;
 }
 
 /**
@@ -129,30 +243,51 @@ function badges(s) {
  * project group `inProject`: the machine); on the right the messages the Topic got since you
  * last spoke there, and @ while a mention waits for you. Counts only: no message text reaches the dashboard.
  */
-function sessionRow(s, { withHost = false, inProject = false } = {}) {
+function sessionRow(s, opts = {}) {
+  const { withHost = false, inProject = false } = opts;
   const status = displayStatus(s);
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
+  row.dataset.session = s.id;   // the unread badge finds its target by this
   // The platform the session spends: a provider's own mark (ccds, cods), else the agent's maker.
-  const brand = LOGOS[s.provider] ? s.provider : s.agent === 'claude' ? 'claude' : 'openai';
+  const brand = LOGOS[s.provider] ? s.provider : AGENT_BRANDS[s.agent] ?? 'openai';
   const avatar = el('span', `avatar ${s.agent} b-${brand}`);
   avatar.append(logo(brand));
   avatar.append(el('span', 'dot'));
   const body = el('div', 'main');
   const top = el('div', 'chat-top');
-  const time = el('span', `chat-time${unreadHere(s, topicSeen[s.id]) ? ' fresh' : ''}`, chatTime(s.lastActivityAt, Date.now(), timeFormat()));
+  const u = unreadState(s, seen[s.id]);
+  const time = el('span', `chat-time${u.unread ? ' fresh' : ''}`, chatTime(s.lastActivityAt, Date.now(), timeFormat()));
   top.append(el('span', 'title', sessionLabel(s, lang)), time);
   const bottom = el('div', 'chat-bottom');
   const where = [s.name && !inProject && s.project, (inProject || withHost) && s.hostId, s.branch].filter(Boolean);
-  const sub = el('span', 'sub', [statusLabel(status, lang), status === 'idle' && s.background && tr('session.background', { n: s.background }), replyTime(s, Date.now(), pref.replyStyle, lang), ...where,
+  const tasks = taskView(s.tasks, Date.now());
+  // What runs is its own lines below and the tasks icon's count, not words on this line.
+  const sub = el('span', 'sub', [statusLabel(status, lang), replyTime(s, Date.now(), pref.replyStyle, lang), ...where,
     s.topic?.closed && tr('session.topicClosed')].filter(Boolean).join(' · '));
   // The account the session spends, as on the Quota tab (observation-only sessions have none).
   const q = s.account && accounts.get(s.account);
   if (q) sub.append(document.createTextNode(' · '), acctTag(q));
   // No reading of it anywhere: name what it spends — the platform for an API-key session, else the seat.
   else if (s.provider || s.seat) sub.append(document.createTextNode(` · ${s.provider ? providerName(s.provider) : s.seat}`));
-  bottom.append(sub, ...badges(s));
+  const open = tasksOpen.has(s.id) && tasks.length > 0;
+  bottom.append(sub, ...(tasks.length ? [tasksButton(s, tasks.length, open, () => row.replaceWith(sessionRow(s, opts)))] : []),
+    ...mentionBadge(s), readBadge(s, u, render));
   body.append(top, bottom);
-  row.append(avatar, body);
+  // What it waits for (the permission it asks, its question): the line to read before opening the Topic.
+  if (s.waiting) { const w = el('div', 'waiting', s.waiting); w.title = s.waiting; body.append(w); }
+  // Folded: the first few (Config › Layout › Task lines), cut to a line each. Open: all of them, labels in full.
+  if (tasks.length) {
+    const list = el('div', `tasks${open ? ' all' : ''}`);
+    const { shown, more } = taskLines(tasks, open, Number(pref.taskLines));
+    for (const x of shown) list.append(taskLine(x, open));
+    if (more) list.append(el('div', 'task more', tr('session.tasksMore', { n: more })));
+    body.append(list);
+  }
+  // Under the logo, the account it spends: two seats of one agent told apart at a glance.
+  const who = el('div', 'who');
+  const acctName = sessionAccountLabel(s, q || undefined);
+  who.append(avatar, ...(acctName ? [el('span', 'acct-name', acctName)] : []));
+  row.append(who, body);
   if (s.topic) { row.title = tr('session.openTopic'); row.addEventListener('click', () => openTopic(s)); }
   return row;
 }
@@ -224,10 +359,12 @@ function accountDetail(q, hostId) {
     sub.append(trend(w), el('span', `forecast${w.forecast?.short ? ' hot' : ''}`, w.renewed ? tr('quota.resetUnknown') : forecast || ''));
     box.append(row, sub);
   }
-  if (q.resetCredits) {
-    const first = q.resetCredits.expiries.filter(Boolean).sort((x, y) => x - y)[0];
-    box.append(el('div', 'note', tr('quota.credits', { n: q.resetCredits.count, first: first && countdown(first) })));
+  // Open: the pills with their dates and notes; the list with its controls only in edit mode.
+  if (resetItems(q).length) {
+    box.append(bankedLine(q, true));
+    for (const b of (q.banked ?? []).filter((x) => x.note)) box.append(el('div', 'muted', `${b.name}: ${b.note}`));
   }
+  if (q.banked && editingResets()) box.append(bankedPart(q));
   if (q.extraReset) {
     const note = el(q.extraReset.url ? 'button' : 'div', 'note link', tr('quota.extraReset', { in: q.extraReset.at && countdown(q.extraReset.at) }));
     if (q.extraReset.url) note.addEventListener('click', (e) => { e.stopPropagation(); tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener'); });
@@ -235,6 +372,115 @@ function accountDetail(q, hostId) {
   }
   box.append(sessionsPart(hostSessions(q.key, hostId)));
   return box;
+}
+
+/*
+ * Banked resets: one-off resets an account was granted (a full reset, a model reset), each to spend
+ * before it expires. No API reports them, so they are recorded here and kept by the gateway
+ * (registry.mjs editBanked): listed by expiry, marked spent with a tap, added with a small form.
+ */
+const BANKED_NAMES = ['Full reset', 'Fable reset'];
+// Editing resets is rare and "Used" deletes: the controls show only in edit mode, toggled from
+// the Accounts heading (this page's life only). Never in example data or demo mode.
+let resetEdit = false;
+// The Claude accounts the bulk card edits (empty: all of them), this page's life only.
+const bulkPick = new Set();
+const canEditResets = () => !mock && !demoOn && Boolean(tg?.initData);
+const editingResets = () => resetEdit && canEditResets();
+const bankedForm = { key: null, name: BANKED_NAMES[0], when: '', note: '' };
+async function editBanked(body) {
+  try {
+    const res = await api('api/resets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(res.status === 400 ? tr('banked.bad') : `HTTP ${res.status}`);
+    tg?.HapticFeedback?.notificationOccurred?.('success');
+    bankedForm.key = null;
+    await load();
+  } catch (e) {
+    const text = tr('banked.notSaved', { error: e.message });
+    tg?.showAlert ? tg.showAlert(text) : alert(text);
+  }
+}
+const confirmThen = (text, fn) => (tg?.showConfirm ? tg.showConfirm(text, (ok) => ok && fn()) : confirm(text) && fn());
+
+/**
+ * The resets an account holds, at a glance and as weighty as its windows: Claude's banked resets
+ * (recorded here) and Codex's reset credits (read from the account) in one style, each with its
+ * time left to spend it. `withDate`: the expiry date too (the open card).
+ */
+function resetItems(q) {
+  const credits = q.resetCredits ? Array.from({ length: q.resetCredits.count }, (_, i) => ({ name: tr('banked.credit'), expiresAt: q.resetCredits.expiries[i] ?? null })) : [];
+  return [...(q.banked ?? []), ...credits];
+}
+function bankedLine(q, withDate = false) {
+  const line = el('div', 'qbanked');
+  for (const b of resetItems(q)) {
+    const soon = b.expiresAt && b.expiresAt - Date.now() < 7 * 86400000;
+    const pill = el('span', `bpill${soon ? ' soon' : ''}`);
+    pill.append(el('b', null, `↺ ${b.name.replace(/\s+reset$/i, '')}`),
+      ...(b.expiresAt ? [el('span', null, countdown(b.expiresAt))] : []),
+      ...(withDate && b.expiresAt ? [el('span', 'bdate', formatTime(b.expiresAt, timeFormat()))] : []));
+    pill.title = [b.name, b.expiresAt ? tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) }) : tr('banked.noExpiry'),
+      soon ? tr('banked.soon') : null, b.note].filter(Boolean).join(' · ');
+    line.append(pill);
+  }
+  return line;
+}
+
+function bankedPart(q) {
+  const box = el('div', 'banked');
+  box.addEventListener('click', (e) => e.stopPropagation());
+  const readOnly = !editingResets();
+  box.append(el('div', 'note', q.banked.length ? tr('banked.title', { n: q.banked.length }) : tr('banked.none')));
+  for (const b of q.banked) {
+    const row = el('div', 'banked-row');
+    const text = el('span', null, `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })}`);
+    if (b.note) text.title = b.note;
+    row.append(text);
+    if (!readOnly) {
+      const spent = el('button', 'act danger', tr('banked.spent'));
+      spent.title = tr('banked.spentHint', { name: b.name });
+      spent.addEventListener('click', () => confirmThen(tr('banked.spentConfirm', { name: b.name }), () => editBanked({ account: q.key, remove: b.id })));
+      row.append(spent);
+    }
+    box.append(row);
+  }
+  if (readOnly) return box;
+  box.append(...bankedAdd(q.key, (add) => editBanked({ account: q.key, add })));
+  return box;
+}
+
+/** "+ Add reset", or its form while open for `key` (an account, or '*' for every Claude account). */
+function bankedAdd(key, save) {
+  if (bankedForm.key !== key) {
+    const add = el('button', 'act', tr('banked.add'));
+    add.title = tr(key === '*' ? 'banked.addHintAll' : 'banked.addHint');
+    add.addEventListener('click', () => { Object.assign(bankedForm, { key, name: BANKED_NAMES[0], when: '', note: '' }); render(); });
+    return [add];
+  }
+  const form = el('div', 'banked-form');
+  const input = (type, field, placeholder) => {
+    const i = document.createElement('input');
+    i.type = type; i.value = bankedForm[field]; if (placeholder) i.placeholder = placeholder;
+    i.addEventListener('input', () => { bankedForm[field] = i.value; });
+    i.title = tr(`banked.${field}Hint`);
+    return i;
+  };
+  const name = input('text', 'name', tr('banked.name'));
+  const list = el('datalist');
+  list.id = `banked-names-${key}`;
+  for (const n of BANKED_NAMES) { const o = document.createElement('option'); o.value = n; list.append(o); }
+  name.setAttribute('list', list.id);
+  const ok = el('button', 'act primary', tr('banked.save'));
+  ok.title = tr(key === '*' ? 'banked.addHintAll' : 'banked.addHint');
+  ok.addEventListener('click', () => {
+    const expiresAt = Date.parse(bankedForm.when);   // datetime-local: this device's time zone
+    if (!bankedForm.name.trim() || !(expiresAt > Date.now())) { const t = tr('banked.bad'); return tg?.showAlert ? tg.showAlert(t) : alert(t); }
+    save({ name: bankedForm.name.trim(), expiresAt, note: bankedForm.note.trim() });
+  });
+  const cancel = el('button', 'act', tr('banked.cancel'));
+  cancel.addEventListener('click', () => { bankedForm.key = null; render(); });
+  form.append(name, list, el('label', 'muted', tr('banked.expiresAt')), input('datetime-local', 'when'), input('text', 'note', tr('banked.note')), ok, cancel);
+  return [form];
 }
 
 /**
@@ -302,7 +548,7 @@ function accountRow(q, hostId) {
     name: el('span', `agent ${q.agent ?? q.provider}`, accountName(q)), headline: headline(q),
     right: ref ? el('span', 'see', tr('quota.see', { host: q.refTo })) : null,
     title: ref ? tr('quota.oneBudget', { host: q.refTo }) : null,
-    folded: () => (!ref && q.windows.length ? [quotaMini(q)] : []),
+    folded: () => (!ref ? [...(q.windows.length ? [quotaMini(q)] : []), ...(resetItems(q).length ? [bankedLine(q)] : [])] : []),
     open: () => [ref ? sessionsPart(using) : accountDetail(q, hostId)],
     meta, warns: ref ? [] : [...(q.verdict === 'short' || q.verdict === 'exhausted' ? [verdictText(q, { withReset: false, lang })] : []), ...q.problems],
   });
@@ -335,8 +581,9 @@ function foldRow(id, opts) {
   row.tabIndex = 0;
   if (title) row.title = title;
   const top = el('div', 'qrow-top');
-  // A tap opens or folds the row, as everywhere; `go` ({label, to}) adds a jump icon of its own (a repo to its sessions).
-  const jump = go && el('button', 'go', '↗');
+  // A tap opens or folds the row, as everywhere; `go` ({label, to}) adds an in-app jump of its own (a repo to its sessions):
+  // a labelled pill, not an arrow — an arrow reads as an external link to the forge.
+  const jump = go && el('button', 'go', tr('code.sessionsChip'));
   if (jump) {
     jump.title = go.label;
     jump.setAttribute('aria-label', go.label);
@@ -423,13 +670,90 @@ function renderQuota() {
     head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
     grid.append(section);
   }
-  box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
+  const head = el('div', 'section-h quota-head', tr('quota.heading', { unit: pref.unit }));
+  if (canEditResets() && (snapshot.accounts ?? []).some((a) => a.banked)) {
+    const toggle = el('button', `chip${resetEdit ? ' on' : ''}`, tr(resetEdit ? 'banked.done' : 'banked.edit'));
+    toggle.setAttribute('aria-pressed', String(resetEdit));
+    toggle.title = tr(resetEdit ? 'banked.doneHint' : 'banked.editHint');
+    toggle.addEventListener('click', () => { resetEdit = !resetEdit; bankedForm.key = null; tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    head.append(toggle);
+  }
+  box.append(head);
+  // In edit mode the every-account card leads: it is what editing is mostly for.
+  const bulk = editingResets() ? bankedBulk() : null;
+  if (bulk) box.append(bulk);
+  box.append(grid);
+}
+
+/**
+ * Banked resets across every Claude account at once: each distinct reset (name and expiry) with
+ * how many accounts hold it, added to or removed from all of them in one edit.
+ */
+function bankedBulk() {
+  const claude = (snapshot.accounts ?? []).filter((a) => a.agent === 'claude' && a.banked);
+  if (!claude.length) return null;
+  const all = claude.map((a) => a.key);
+  for (const k of bulkPick) if (!all.includes(k)) bulkPick.delete(k);
+  // No pick means every account; a tap on an account narrows the edits to the picked ones.
+  const keys = bulkPick.size ? all.filter((k) => bulkPick.has(k)) : all;
+  const picked = claude.filter((a) => keys.includes(a.key));
+  const box = el('div', 'banked banked-bulk');
+  box.append(el('div', 'section-h', tr(bulkPick.size ? 'banked.bulkPicked' : 'banked.bulk', { n: keys.length, of: all.length })));
+  const pickRow = el('div', 'bulk-pick');
+  for (const a of claude) {
+    const chip = el('button', `chip${bulkPick.has(a.key) ? ' on' : ''}`, accountTag(a));
+    chip.setAttribute('aria-pressed', String(bulkPick.has(a.key)));
+    chip.title = tr('banked.pickHint');
+    chip.addEventListener('click', () => { if (!bulkPick.delete(a.key)) bulkPick.add(a.key); bankedForm.key = null; tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    pickRow.append(chip);
+  }
+  box.append(pickRow);
+  const seen = new Map();
+  for (const a of picked) for (const b of a.banked) {
+    const id = `${b.name}|${b.expiresAt}`;
+    seen.set(id, { ...b, n: (seen.get(id)?.n ?? 0) + 1 });
+  }
+  const readOnly = !editingResets();
+  for (const b of [...seen.values()].sort((x, y) => x.expiresAt - y.expiresAt)) {
+    const row = el('div', 'banked-row');
+    row.append(el('span', null, `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })} · ${tr('banked.on', { n: b.n, of: keys.length })}`));
+    if (!readOnly) {
+      const drop = el('button', 'act danger', tr('banked.removeAll'));
+      drop.title = tr('banked.removeAllHint', { name: b.name, n: b.n });
+      drop.addEventListener('click', () => confirmThen(tr('banked.removeAllConfirm', { name: b.name, n: b.n }),
+        () => editBanked({ accounts: keys, drop: { name: b.name, expiresAt: b.expiresAt } })));
+      row.append(drop);
+      if (b.n < keys.length) {
+        const fill = el('button', 'act', tr('banked.addAll'));
+        fill.title = tr('banked.addAllHint', { name: b.name, n: keys.length - b.n });
+        fill.addEventListener('click', () => editBanked({ accounts: keys, add: { name: b.name, expiresAt: b.expiresAt, note: b.note ?? '' } }));
+        row.append(fill);
+      }
+    }
+    box.append(row);
+  }
+  if (!readOnly) box.append(...bankedAdd('*', (add) => editBanked({ accounts: keys, add })));
+  return box;
 }
 
 /** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */
-function resourcesBox(r, online) {
+// Hosts whose load a tap opened to the detailed view in compact mode (this page's life only).
+const loadOpen = new Set();
+
+function resourcesBox(r, online, hostId) {
   const { meters, about } = resourceView(r);
-  const box = el('div', `res${online ? '' : ' stale-v'}`);
+  const detailed = pref.load === 'detailed' || loadOpen.has(hostId);
+  // Compact: a tap opens this host's load to the detailed view, and a second tap closes it.
+  const tappable = pref.load === 'compact' && !!about;
+  const box = el(tappable ? 'button' : 'div', `res${online ? '' : ' stale-v'}${tappable ? ' tap' : ''}`);
+  if (tappable) {
+    box.setAttribute('aria-expanded', String(detailed));
+    box.addEventListener('click', () => {
+      if (!loadOpen.delete(hostId)) loadOpen.add(hostId);
+      tg?.HapticFeedback?.selectionChanged?.();
+      box.replaceWith(resourcesBox(r, online, hostId));
+    });
+  }
   if (!meters.length) { box.append(el('span', 'muted', tr('host.noLoad'))); return box; }
   for (const m of meters) {
     const cell = el('div', 'res-m');
@@ -440,7 +764,7 @@ function resourcesBox(r, online) {
     cell.append(el('span', 'k', m.label), track, el('span', 'res-t', m.text));
     box.append(cell);
   }
-  if (about && pref.load === 'detailed') box.append(el('div', 'res-about muted', about));
+  if (about && detailed) box.append(el('div', 'res-about muted', about));
   return box;
 }
 
@@ -462,6 +786,12 @@ function renderChips() {
     chip.append(el('b', null, String(counts[key])));
     chip.addEventListener('click', () => { filters.group = key; tg?.HapticFeedback?.selectionChanged?.(); render(); });
     nav.append(chip);
+  }
+  const fresh = sessionsOf(snapshot).filter((s) => unreadState(s, seen[s.id]).unread);
+  if (fresh.length) {
+    const all = el('button', 'chip mark-read', tr('session.markAllRead'));
+    all.addEventListener('click', () => { markRead(fresh); tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    nav.append(all);
   }
 }
 
@@ -528,22 +858,8 @@ function hostSection(h, body) {
   const head = el('div', 'host-head');
   head.append(el('span', `dot ${h.online ? 'on-dot' : 'off-dot'}`), el('span', 'name', h.id),
     el('span', 'muted meta', h.online ? tr('sessions.count', { n: h.sessions.length }) : tr('host.offlineSeen', { ago: ago(h.lastSeen, Date.now(), lang) })));
-  section.append(head, ...(pref.load !== 'off' ? [resourcesBox(h.resources, h.online)] : []), ...body);
+  section.append(head, ...(pref.load !== 'off' ? [resourcesBox(h.resources, h.online, h.id)] : []), ...body);
   return section;
-}
-
-function renderEvents() {
-  const box = $('events-view');
-  box.replaceChildren();
-  const events = unreadEvents(snapshot.events, shownFrom);
-  if (!events.length) { box.append(el('div', 'empty', tr('events.none'))); return; }
-  const list = el('div', 'event-list');
-  for (const e of events) {
-    const row = el('div', 'event new');
-    row.append(el('div', 'text', eventText(e, Date.now(), lang)), el('div', 'muted', agoText(e.at)));
-    list.append(row);
-  }
-  box.append(list);
 }
 
 // ── Config: Display (this device), Shared settings (all hosts), Developer ──
@@ -602,7 +918,7 @@ function columns(blocks) {
 
 function displaySection() {
   const sample = Date.parse('2026-10-21T12:00:00');
-  const languages = displayRow('cfg.language', 'cfg.lang.autoHint', segmented([['auto', tr('cfg.lang.auto')], ['en', 'English'], ['zh', '中文']], langChoice, tr('cfg.language'), (v) => {
+  const languages = displayRow('cfg.language', 'cfg.lang.autoHint', segmented([['auto', tr('cfg.lang.auto')], ...LANGS.map((l) => [l, t('lang.name', l)])], langChoice, tr('cfg.language'), (v) => {
     langChoice = v;
     store.set('dashboard.lang', v);
     lang = v === 'auto' ? autoLang : v;
@@ -628,7 +944,9 @@ function displaySection() {
     ...cfgGroup('cfg.layout', [
       prefRow('textSize', 'cfg.textSize', null, [tr('cfg.textSize.m'), tr('cfg.textSize.s'), tr('cfg.textSize.l'), tr('cfg.textSize.xl')]),
       prefRow('pinTabs', 'cfg.pinTabs', 'cfg.pinTabs.hint', [tr('cfg.pinTabs.on'), tr('cfg.pinTabs.off')]),
-      prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.compact'), tr('cfg.load.detailed'), tr('cfg.load.off')])]),
+      prefRow('load', 'cfg.load', 'cfg.load.hint', [tr('cfg.load.compact'), tr('cfg.load.detailed'), tr('cfg.load.off')]),
+      prefRow('taskTags', 'cfg.taskTags', 'cfg.taskTags.hint', [tr('cfg.taskTags.icons'), tr('cfg.taskTags.text')]),
+      prefRow('taskLines', 'cfg.taskLines', 'cfg.taskLines.hint', ['2', '1', '3', '5', tr('cfg.taskLines.0')])]),
     ]),
   ];
 }
@@ -669,7 +987,7 @@ async function saveConfig(key, value, button) {
   configDirty = false;
   configShown = null;
   try {
-    const res = await fetch('api/config', { method: 'POST', headers: { authorization: `tma ${tg.initData}`, 'content-type': 'application/json' },
+    const res = await api('api/config', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key, value }) });
     if (!res.ok) throw new Error(res.status === 400 ? tr('cfg.badValue') : `HTTP ${res.status}`);
     tg?.HapticFeedback?.notificationOccurred?.('success');
@@ -778,13 +1096,13 @@ async function fetchUsage(force = false) {
   const q = new URLSearchParams({ days: String(usageDays), tz: String(tzOffsetMin()) });
   for (const [d, vs] of Object.entries(usageFilter)) for (const v of vs) q.append(d, v);
   try {
-    const res = await fetch(`api/usage?${q}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
+    const res = await api(`api/usage?${q}`);
     usage = res.ok ? { key, report: await res.json(), at: Date.now() }
       : { key, error: res.status === 503 ? ['usage.notSetUp'] : ['usage.unavailable', { status: res.status }], at: Date.now() };
   } catch { usage = { key, error: ['usage.unreachable'], at: Date.now() }; } finally { usageLoading = false; }
   // A selection made while this request was in flight asks again.
   if (usageKey() !== key) return fetchUsage(true);
-  renderUsage();
+  drawUsage();
 }
 
 /** Select or unselect one value of a dimension, then refetch. */
@@ -795,7 +1113,7 @@ function toggleUsage(dim, value) {
   usageFilter = { ...usageFilter, [dim]: vs.includes(value) ? vs.filter((v) => v !== value) : [...vs, value] };
   store.set('dashboard.usageFilter', JSON.stringify(usageFilter));
   tg?.HapticFeedback?.selectionChanged?.();
-  renderUsage();
+  drawUsage();
   fetchUsage(true);
 }
 
@@ -817,10 +1135,39 @@ function usageList(titleKey, rows, dim) {
   return block;
 }
 
+/**
+ * HPC (docs/dashboard.md "HPC"): core-hours per bucket with the one barChart, then a line per
+ * cluster login — its newest reading (jobs, CPU efficiency, failures, quota, a billed budget) or
+ * why it was not read. Not narrowed by the token filters. Nothing when no login was read in range.
+ */
+function hpcBlock(v) {
+  const block = el('div', 'block');
+  const pct = (x) => (x == null ? '–' : `${Math.round(x * 100)}%`);
+  const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.hpc.day', { day: d.day, h: Math.round(d.coreHours) }), segs: [{ cls: 'hpc', pct: d.pct }] })),
+    [tick(v.days[0]), tr('usage.hpc.axis'), tick(v.days.at(-1))]);
+  const list = el('div', 'usage-list');
+  for (const g of v.grants) {
+    const row = el('div', 'u');
+    const meta = g.why != null ? tr('usage.hpc.unread', { why: g.why }) : [
+      tr('usage.hpc.jobs', { n: g.jobs ?? 0 }), tr('usage.hpc.eff', { pct: pct(g.cpuEfficiency) }),
+      ...(g.failures ? [tr('usage.hpc.failures', { n: g.failures, oom: g.oom })] : []),
+      tr('usage.hpc.quota', { storage: pct(g.storage), files: pct(g.files) }),
+      ...(g.budget ? [tr('usage.hpc.budget', { used: pct(g.budget.used), total: Math.round(g.budget.total), window: pct(g.budget.window), until: g.budget.until ?? '' })
+        + (g.budget.ahead ? ` ${tr('usage.hpc.ahead')}` : '')] : []),
+    ].join(' · ');
+    row.append(el('span', 'n', g.role ? `${g.name} · ${g.role}` : g.name), el('span', 'm', meta), el('b', null, g.why != null ? '–' : `${Math.round(g.coreHours ?? 0)}`));
+    row.title = tr('usage.hpc.read', { at: formatTime(g.at, timeFormat()) });
+    list.append(row);
+  }
+  block.append(el('div', 'section-h', tr('usage.hpc.title', { h: Math.round(v.totals.coreHours) })), chart, axis, list);
+  return block;
+}
+
 function renderUsage() {
   const box = $('usage-view');
   box.replaceChildren();
-  box.append(rangePicker(USAGE_RANGES, usageDays, (d) => { usageDays = d; store.set('dashboard.usageDays', String(d)); renderUsage(); fetchUsage(true); }));
+  box.append(rangePicker(USAGE_RANGES, usageDays, (d) => { usageDays = d; store.set('dashboard.usageDays', String(d)); drawUsage(); fetchUsage(true); }));
   if (mock) return box.append(el('div', 'qrows empty', tr('usage.mock')));
   const picked = Object.entries(usageFilter).flatMap(([d, vs]) => vs.map((v) => [d, v]));
   if (picked.length) {
@@ -831,7 +1178,7 @@ function renderUsage() {
       bar.append(chip);
     }
     const clear = el('button', 'chip', tr('usage.clearFilter'));
-    clear.addEventListener('click', () => { usageFilter = { project: [], model: [], machine: [] }; store.set('dashboard.usageFilter', JSON.stringify(usageFilter)); renderUsage(); fetchUsage(true); });
+    clear.addEventListener('click', () => { usageFilter = { project: [], model: [], machine: [] }; store.set('dashboard.usageFilter', JSON.stringify(usageFilter)); drawUsage(); fetchUsage(true); });
     bar.append(clear);
     box.append(bar);
   }
@@ -846,9 +1193,11 @@ function renderUsage() {
   if (v.totals.cacheHit != null) total(`${Math.round(v.totals.cacheHit * 100)}%`, 'usage.cacheHit', 'usage.cacheHitTitle');
   if (v.totals.costUsd != null) total(`$${Math.round(v.totals.costUsd)}`, 'usage.apiValue', 'usage.apiValueTitle');
   const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
-  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) }),
-    segs: ['claude', 'codex'].map((a) => ({ cls: a, pct: d[`${a}Pct`] })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, agents: d.segs.filter((s) => s.tokens).map((s) => `${platformName(s.platform)} ${tokenText(s.tokens)}`).join(', ') || '0', active: hoursText(d.active) }),
+    segs: d.segs.map((s) => ({ cls: s.platform, pct: s.pct })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
   box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
+  const hpc = hpcView(demoOn ? masker.usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
+  if (hpc) box.append(hpcBlock(hpc));
   restoreScroll();
 }
 
@@ -919,7 +1268,7 @@ function historyOf(r) {
   if (!held || (!held.loading && Date.now() - held.at > USAGE_EVERY_MS)) {
     codeHistory.set(key, { ...held, loading: true });
     const q = new URLSearchParams({ repo: r.key, days: String(codeDays), tz: String(tzOffsetMin()) });
-    fetch(`api/code/history?${q}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' })
+    api(`api/code/history?${q}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((value) => codeHistory.set(key, { at: Date.now(), value }), (e) => codeHistory.set(key, { at: Date.now(), error: e.message }))
       .finally(() => { if (tab === 'code') render(); });
@@ -1006,28 +1355,36 @@ function renderCode() {
 }
 
 function renderTabs() {
-  // Looking at the events marks them seen (after this render still shows which were new).
-  const n = tabs(snapshot, Date.now(), seenAt, [], shownFrom, accounts);
+  const n = tabs(snapshot, Date.now(), [], accounts);
   $('tabs').hidden = false;   // always: Config holds this device's settings, whatever data there is
   $('n-sessions').textContent = String(n.sessions);
+  const fresh = unreadCount(sessionsOf(snapshot), seen);
+  $('n-unread').hidden = !fresh;
+  $('n-unread').textContent = fresh ? String(fresh) : '';
+  $('n-unread').title = tr('session.unreadSessions', { n: fresh });
   $('n-quota').textContent = String(n.quota);
   $('quota-dot').hidden = !n.alert;
   const code = codeView(snapshot, codeDays, Date.now(), codeRepos);
   $('n-code').textContent = (snapshot.repos ?? []).length ? String(code.repos.length) : '';
   $('code-dot').hidden = pref.codeAttention !== 'on' || !code.attention.length;
-  $('n-events').textContent = String(n.events);
-  $('events-badge').hidden = !n.unseen || tab === 'events';
-  $('events-badge').textContent = String(n.unseen);
   for (const b of document.querySelectorAll('#tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-  for (const v of document.querySelectorAll('.view')) v.hidden = v.dataset.view !== tab;
+  // A search in progress replaces the tab's view with its results.
+  for (const v of document.querySelectorAll('.view')) v.hidden = v.dataset.view !== (query.trim() ? 'search' : tab);
 }
 
 // Each tab's scroll position, kept across tab switches and reopening the app. Content arrives
 // after load (the snapshot, the usage report), so a restore is retried on each render until it
-// lands or the reader scrolls by hand.
+// lands or the reader scrolls by any means: wheel, touch, keys, the scrollbar, a jump.
 const scrollAt = (() => { try { return JSON.parse(store.get('dashboard.scroll')) ?? {}; } catch { return {}; } })();
 let restoring = tab;
 let restoreTries = 0;
+let restoreFrom = window.scrollY;   // where the page stood when the restore was armed: any other position is the reader's
+/** Arm the restore of the current tab's saved position (a tab switch, the first load). */
+function armRestore() {
+  restoring = tab;
+  restoreTries = 0;
+  restoreFrom = window.scrollY;
+}
 /**
  * Back to the tab's saved position once the page is tall enough to hold it, then never again
  * (a redraw keeps the reader's own position). Content that never grows that tall stops the
@@ -1044,11 +1401,45 @@ function restoreScroll() {
 }
 let scrollSave = null;
 window.addEventListener('scroll', () => {
+  // A scroll the restore did not make (it moves the page only as it disarms) is the reader's: it wins.
+  if (restoring && Math.abs(window.scrollY - restoreFrom) > 1) restoring = null;
   if (restoring) return;
   clearTimeout(scrollSave);
   scrollSave = setTimeout(() => { scrollAt[tab] = Math.round(window.scrollY); store.set('dashboard.scroll', JSON.stringify(scrollAt)); }, 200);
 }, { passive: true });
-for (const ev of ['wheel', 'touchstart', 'keydown']) window.addEventListener(ev, () => { restoring = null; }, { passive: true });
+// Intent before any scroll lands (a wheel at the page's end moves nothing, yet the reader chose where to be).
+for (const ev of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(ev, () => { restoring = null; }, { passive: true });
+
+/*
+ * The Sessions tab's unread badge: a tap jumps to the first session unread here, the next tap to the
+ * next one (view.mjs nextUnread). It opens the Sessions tab, clears a search, and when filters hide
+ * every unread session it clears them too: the badge counts all sessions.
+ */
+let unreadJump = null;
+$('n-unread').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!snapshot) return;
+  const unread = new Set(sessionsOf(snapshot).filter((s) => unreadState(s, seen[s.id]).unread).map((s) => s.id));
+  if (!unread.size) return;
+  if (query.trim()) { query = ''; $('search').value = ''; }
+  if (tab !== 'sessions') showTab('sessions'); else render();
+  const rows = () => [...$('hosts').querySelectorAll('[data-session]')];
+  let shown = rows();
+  if (!shown.some((r) => unread.has(r.dataset.session))) {
+    Object.assign(filters, { group: 'all', host: '', agent: '', project: '' });
+    render();
+    shown = rows();
+  }
+  const id = nextUnread(shown.map((r) => r.dataset.session), unread, unreadJump);
+  const row = shown.find((r) => r.dataset.session === id);
+  if (!row) return;
+  unreadJump = id;
+  restoring = null;   // a saved scroll position must not pull the page back
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.classList.add('jumped');
+  setTimeout(() => row.classList.remove('jumped'), 1500);
+  tg?.HapticFeedback?.selectionChanged?.();
+});
 
 /** Switch to a tab as its button does (a link inside a view, e.g. Code › Config). */
 const showTab = (name) => document.querySelector(`#tabs [data-tab="${name}"]`)?.click();
@@ -1059,10 +1450,8 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     scrollAt[tab] = Math.round(window.scrollY);
     store.set('dashboard.scroll', JSON.stringify(scrollAt));
     tab = b.dataset.tab;
-    restoring = tab;
-    restoreTries = 0;
-    if (tab === 'events') shownFrom = seenAt;
-    if (tab === 'usage') { renderUsage(); fetchUsage(); }
+    armRestore();
+    if (tab === 'usage') { drawUsage(); fetchUsage(); }
     configShown = null;
     configDirty = false;
     store.set('dashboard.tab', tab);
@@ -1071,9 +1460,41 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
   });
 }
 
+// The search box: everything the dashboard holds, searched in this page (searchAll in view.mjs).
+let query = '';
+
+function renderSearch() {
+  const box = $('search-view');
+  box.replaceChildren();
+  const found = searchAll(snapshot, query, { now: Date.now(), lang });
+  if (!found.length) { box.append(el('div', 'empty', tr('search.none'))); return; }
+  const list = el('div', 'found-list');
+  for (const r of found) {
+    const row = el('button', 'found');
+    const title = el('div', 'title');
+    title.append(el('span', 'k', tr(`search.kind.${r.kind}`)), document.createTextNode(r.title));
+    row.append(title, ...(r.sub ? [el('div', 'sub', r.sub)] : []));
+    row.addEventListener('click', () => {
+      if (r.session?.topic) return openTopic(r.session);
+      if (r.url) return openUrl(r.url);
+      // Elsewhere in the dashboard: clear the search and show that tab.
+      query = '';
+      $('search').value = '';
+      document.querySelector(`#tabs [data-tab="${r.tab}"]`)?.click();
+      render();
+    });
+    list.append(row);
+  }
+  box.append(list);
+  if (found.length === SEARCH_MAX) box.append(el('div', 'muted', tr('search.more', { n: SEARCH_MAX })));
+}
+
 function render() {
   if (!snapshot) return;
   accounts = accountIndex(snapshot);
+  // Sessions new to this device count as read; gone ones are forgotten.
+  const synced = syncSeen(sessionsOf(snapshot), seen);
+  if (JSON.stringify(synced) !== JSON.stringify(seen)) { seen = synced; saveSeen(); }
   hostList = hostsView(snapshot, Date.now(), accounts);   // one account index per render, shared by every view
   $('summary').hidden = true;   // only a sign-in or access problem stands there
   $('updated').textContent = snapshot.mock ? tr('app.exampleData') : lastOk && snapshot.demo ? tr('app.demoData', { ago: agoText(lastOk) })
@@ -1082,10 +1503,11 @@ function render() {
   // Only the tab in view is drawn (another is drawn when shown), each on its own: a fault in one
   // must not blank another. A redraw keeps the reader where they were on the page.
   const y = window.scrollY;
-  if (tab === 'quota') isolated(renderQuota);
-  if (tab === 'events') isolated(renderEvents);
-  if (tab === 'code') isolated(renderCode);
-  if (tab === 'usage') isolated(renderUsage);
+  if (query.trim()) { isolated(renderSearch); restoreScroll(); return; }
+  // A banked-reset form being filled is not rebuilt under the reader's fingers by a poll.
+  if (tab === 'quota' && !document.activeElement?.matches?.('.banked-form input')) isolated(renderQuota, 'quota-view');
+  if (tab === 'code') isolated(renderCode, 'code-view');
+  if (tab === 'usage') drawUsage();
   // The config form is rebuilt only when its data changed and nobody is editing a shared value:
   // a poll must not wipe a value being typed.
   if (tab === 'config') {
@@ -1093,15 +1515,21 @@ function render() {
     const editing = configDirty || document.activeElement?.matches?.('#config-view input, #config-view select');
     if (key !== configShown && !editing) { configShown = key; renderConfig(); }
   }
-  if (tab === 'events' && snapshot.events?.length) { seenAt = snapshot.events[0].at; store.set('dashboard.eventsSeenAt', seenAt); }
   if (tab === 'sessions') isolated(() => { renderChips(); renderSelects(); renderHosts(); });
   if (!restoring && Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
   restoreScroll();
 }
 
-function isolated(fn) {
-  try { fn(); } catch (e) { console.error(e); }
+/** Draw one view; a fault stays in that view and is said there, so a tab is never left empty without a reason. */
+function isolated(fn, viewId = null) {
+  try { fn(); } catch (e) {
+    console.error(e);
+    if (viewId) $(viewId).append(el('div', 'qrows empty', tr('app.viewFailed', { why: String(e?.message ?? e) })));
+  }
 }
+
+/** The Usage tab, from every caller: a late report (fetchUsage) must not leave it empty on a fault either. */
+function drawUsage() { isolated(renderUsage, 'usage-view'); }
 
 function stop(messageKey) {
   $('summary').hidden = false;
@@ -1109,7 +1537,6 @@ function stop(messageKey) {
   $('hosts').replaceChildren();
   $('chips').replaceChildren();
   $('quota-view').replaceChildren();
-  $('events-view').replaceChildren();
   $('usage-view').replaceChildren();
   $('config-view').replaceChildren();
   $('tabs').hidden = true;
@@ -1119,8 +1546,8 @@ async function fetchSnapshot() {
   if (mock) { snapshot = mockDashboard(); render(); return; }
   if (!tg?.initData) return stop('app.openFromBot');
   try {
-    const res = await fetch('api/dashboard', { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
-    // Expired sign-in (Telegram only signs initData at open): keep the last data, ask for a reopen.
+    const res = await api('api/dashboard');
+    // Sign-in expired (no session, initData too old): keep the last data, ask for a reopen.
     if (res.status === 401 && snapshot) { $('banner').textContent = tr('app.signInExpiredKeep', { ago: agoText(lastOk) }); return render(); }
     if (res.status === 401) return stop('app.signInExpired');
     if (res.status === 403) return stop('app.notAllowed');
@@ -1130,6 +1557,7 @@ async function fetchSnapshot() {
     raw = next;
     snapshot = shown();
     lastOk = Date.now();
+    keepSnapshot();
     $('banner').textContent = '';
   } catch {
     // Keep the last data, clearly marked as old.
@@ -1196,10 +1624,19 @@ async function updateIfStale() {
   store.set('dashboard.autoReloadAt', String(Date.now()));
   await hardReload();
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) updateIfStale(); });
+// While the app is in use a new build only marks the ↻ button: a reload would drop the reader's
+// place. It updates by itself at the next open (the check at start), or at a tap on ↻.
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden || !(await stale())) return;
+  const b = $('force-update');
+  b.classList.add('ready');
+  b.title = tr('app.updateReady');
+});
 
 applyLang();
 $('summary').replaceChildren(el('div', 'summary-head', tr('app.loading')));
+if (!mock && tg?.initData) { restoreSnapshot(); render(); }
 load();
 $('force-update').addEventListener('click', () => hardReload());
 if (!mock) { setInterval(load, POLL_MS); showVersion(); updateIfStale(); }
+$('search').addEventListener('input', (e) => { query = e.target.value; render(); });

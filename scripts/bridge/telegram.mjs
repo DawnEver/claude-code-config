@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 
-export const MAX_MESSAGE = 4096;
+const MAX_MESSAGE = 4096;
 export const ATTACHMENT_LIMITS = Object.freeze({
   photo: 10 * 1024 * 1024, document: 50 * 1024 * 1024,
   download: 20 * 1024 * 1024, caption: 1024,
@@ -71,7 +71,7 @@ export function normalizeMath(value) {
 }
 
 
-export class TelegramError extends Error {
+class TelegramError extends Error {
   constructor(method, body) {
     super(`telegram ${method}: ${body?.description ?? 'request failed'}`);
     this.code = body?.error_code;
@@ -320,9 +320,9 @@ export class TelegramClient {
     return this.call('deleteMessage', { chat_id: chatId, message_id: messageId });
   }
 
-  createForumTopic(chatId, name) {
+  createForumTopic(chatId, name, { iconColor } = {}) {
     if (!name || Array.from(String(name)).length > 128) throw new Error('telegram: Topic name must be 1-128 characters');
-    return this.call('createForumTopic', { chat_id: chatId, name: String(name) });
+    return this.call('createForumTopic', { chat_id: chatId, name: String(name), ...(iconColor ? { icon_color: iconColor } : {}) });
   }
 
   closeForumTopic(chatId, threadId) {

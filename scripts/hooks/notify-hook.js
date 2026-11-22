@@ -8,10 +8,12 @@ import os from 'os';
 import crypto from 'crypto';
 import { execFileSync, spawn } from 'child_process';
 import { isMain } from '../shared/is-main.mjs';
+import { readMergedEnvSettings, ENV_SETTINGS_PATH } from '../shared/config.mjs';
 
 // ── Native OS notification ──
 // Windows/Linux support clicking the notification to open VS Code at the
 // workspace root. macOS uses terminal-notifier without click-to-open.
+// Its step budget is 3 s (every hook < 5 s, D24): a synchronous notifier call waits 2.5 s at most.
 // The PowerShell/dbus tunnel runs detached so it survives Claude Code
 // tearing down the hook process tree.
 
@@ -52,7 +54,7 @@ export function sendNativeNotification(title, message, workspaceRoot, enableSoun
     const nArgs = ['-title', title, '-message', message];
     if (enableSound) nArgs.push('-sound', 'default');
     try {
-      execFileSync(notifyBin, nArgs, { timeout: 5000, stdio: 'ignore' });
+      execFileSync(notifyBin, nArgs, { timeout: 2500, stdio: 'ignore' });
     } catch (err) {
       console.error('[notify-hook] notification failed:', err.message);
     }
@@ -123,7 +125,7 @@ try {
           '--app-name', 'Claude Code',
           '--expire-time', '10000',
           '--print-id',
-        ], { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        ], { timeout: 2500, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
         const notifyId = result ? result.trim() : '';
         if (notifyId) {
           const dbusScript = `
@@ -175,7 +177,9 @@ fi`;
 
 // ── Main ──
 
-export function main(args = process.argv.slice(2)) {
+export async function main(args = process.argv.slice(2)) {
+const options = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.harness?.notifications ?? {};
+if (options.enabled !== true) return;
 let isUserPrompt = false;
 let enableOpen = false;
 let enableSound = true;
@@ -193,7 +197,10 @@ let hookEvent = 'waiting';
 let hookCwd = '';
 if (!process.stdin.isTTY) {
   try {
-    const stdinData = fs.readFileSync(0, 'utf8');
+    // The stdin stream, never fd 0: run by claude-hook.mjs in a worker thread, fd 0 is the
+    // entry's own stdin (already read) and the payload arrives on the worker's stream.
+    let stdinData = '';
+    for await (const chunk of process.stdin) stdinData += chunk;
     const input = JSON.parse(stdinData);
     const hookEventName = (input.hook_event_name || '').toLowerCase();
     // Refer to https://code.claude.com/docs/en/hooks

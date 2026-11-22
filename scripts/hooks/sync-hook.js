@@ -1,17 +1,18 @@
 #!/usr/bin/env node
-// sync-hook.js — keep the cc-config and ai-lab working trees current across hosts.
+// sync-hook.js — keep the cc-config working tree, and its own environment, current across hosts.
 //
-// ai-lab rides the same fast-forward as cc-config: its checkout is the git tree around the
-// interpreter the provider cache records (an editable install, so the pull is the update). A
-// pull that moved it re-syncs the venv when the lock changed and refreshes the provider cache,
-// which is otherwise stale against the new ai-lab.
+// cc-config's .venv is the one interpreter its Python doors run under (scripts/shared/own-python.mjs), and
+// uv.lock pins what it holds -- ai-lab among it. A pull that changes pyproject.toml or uv.lock is handed to a
+// detached run that fills the venv first, moves the tree, settles the venv and refreshes the provider cache.
 //
 // Local work is never mixed with upstream: a tree with uncommitted edits to tracked files, or
 // with commits its upstream lacks, is left exactly as it is and the notice names the command.
 //
 // Two modes, wired to two hook events in claude_settings.json:
-//   --pull    SessionStart: fast-forward the repo onto its upstream, so a
-//             session starts from the freshest tree. Never blocks the session.
+//   --pull             Fast-forward the repo onto its upstream (bounded fetch and merge).
+//                      The provider launchers run it before loading repo modules.
+//   --pull-background  SessionStart: start --pull detached and return at once with a
+//                      one-line notice, so a session never waits on the network.
 //   --remind  SessionEnd:   report uncommitted files / unpushed commits. The
 //             outbound direction stays an explicit user action by design — see
 //             .claude/memory/2026/06/06/feedback-no-auto-push.md.
@@ -33,7 +34,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFileSync, spawn } from 'child_process';
+import { execFile, execFileSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
 
@@ -59,18 +60,6 @@ export function repoRootFrom(modulePath) {
 // escape hatch for a repo laid out differently (and for the integration tests).
 export const REPO = process.env.CLAUDE_SYNC_REPO || repoRootFrom(fileURLToPath(import.meta.url));
 
-/** The ai-lab checkout to keep current, or null: `$CLAUDE_SYNC_AI_LAB` ('' disables), else the
- * work tree around the provider cache's recorded interpreter (`<ai-lab>/.venv/...`). */
-export async function aiLabRepo(env = process.env) {
-  if (env.CLAUDE_SYNC_AI_LAB !== undefined) return env.CLAUDE_SYNC_AI_LAB || null;
-  try {
-    const { recordedPython } = await import('../shared/provider-cache.mjs');
-    const python = recordedPython();
-    if (!python || !fs.existsSync(python)) return null;
-    const top = git(['rev-parse', '--show-toplevel'], { cwd: path.dirname(python), allowFail: true });
-    return top && path.resolve(top) !== path.resolve(REPO) ? path.resolve(top) : null;
-  } catch { return null; }
-}
 
 function git(args, { cwd = REPO, timeout = LOCAL_TIMEOUT_MS, allowFail = false } = {}) {
   try {
@@ -102,18 +91,20 @@ function countIn(cwd, ...args) {
   const n = Number(git(['rev-list', '--count', ...args], { cwd, allowFail: true }));
   return Number.isFinite(n) ? n : 0;
 }
-const count = (...args) => countIn(REPO, ...args);
 
-// Commits on HEAD that no remote has: the upstream range when one is set,
-// otherwise "not reachable from any remote ref" — which is what a host with no
-// upstream configured needs to hear.
-export function unpushedCount() {
-  return upstreamCommit() ? count('@{u}..HEAD') : count('HEAD', '--not', '--remotes');
-}
-
-function dirtyCount() {
-  const out = git(['status', '--porcelain'], { allowFail: true });
-  return out ? out.split('\n').filter(Boolean).length : 0;
+/**
+ * Dirty entries, upstream presence and commits ahead, from one
+ * `git status --porcelain=v2 --branch` — the whole reminder in a single git call.
+ */
+export function parseBranchStatus(out) {
+  let dirty = 0, upstream = false, ahead = 0;
+  for (const line of out.split('\n')) {
+    if (!line) continue;
+    if (!line.startsWith('# ')) dirty++;
+    else if (line.startsWith('# branch.upstream ')) upstream = true;
+    else if (line.startsWith('# branch.ab ')) ahead = Number(line.split(' ')[2]) || 0;
+  }
+  return { dirty, upstream, ahead };
 }
 
 /** Pull-mode notice for one repo, or null when there is nothing worth saying. */
@@ -127,7 +118,7 @@ export function formatPull(result, label = 'cc-config') {
 }
 
 /** Why uncommitted edits keep a behind tree where it is, or null when there are none. */
-export function localChangesNote(dirty, behind, repo) {
+function localChangesNote(dirty, behind, repo) {
   return dirty > 0
     ? `${dirty} local change(s), ${behind} commit(s) behind — commit or stash, then: git -C "${repo}" pull --ff-only`
     : null;
@@ -178,7 +169,7 @@ export function formatMergeFailure(err) {
  * to report instead of merging. `afterPull(range)` runs only when the
  * tree moved; its error string (or throw) is reported as `repairError`.
  */
-export async function pullRepo(repo, { beforeMerge = null, afterPull = null } = {}) {
+export async function pullRepo(repo, { beforeMerge = null, afterPull = null, fetched = null } = {}) {
   if (!repo || !isRepo(repo)) return null;
   const g = (args, opts = {}) => git(args, { cwd: repo, ...opts });
 
@@ -190,10 +181,14 @@ export async function pullRepo(repo, { beforeMerge = null, afterPull = null } = 
 
   // Network step, isolated and bounded. Offline, no remote, or an auth prompt
   // all land here and are all normal.
-  try {
-    g(['fetch', '--quiet', '--no-tags'], { timeout: FETCH_TIMEOUT_MS });
-  } catch {
-    return null;
+  // `fetched`: the caller already fetched (true) or failed to (false), concurrently with other repos.
+  if (fetched === false) return null;
+  if (fetched !== true) {
+    try {
+      g(['fetch', '--quiet', '--no-tags'], { timeout: FETCH_TIMEOUT_MS });
+    } catch {
+      return null;
+    }
   }
 
   const up = upstreamCommit(repo);
@@ -231,73 +226,139 @@ export async function pullRepo(repo, { beforeMerge = null, afterPull = null } = 
 // A pull replaces inodes, which breaks the hard link claude-hud requires
 // (docs/sync-architecture.md §10). SessionStart also runs setup-check-hook,
 // but hook order within an event is not guaranteed, so repair here too.
-export const runPull = () => pullRepo(REPO, {
-  afterPull: async () => { (await import('../setup/check-links.js')).checkLinks(); return null; },
+const relink = async () => { (await import('../setup/check-links.js')).checkLinks(); return null; };
+
+/** `git fetch` without blocking the event loop: true once fetched, false offline/no remote/timeout. */
+export const fetchRepo = (repo) => new Promise((resolve) => {
+  if (!repo || !isRepo(repo) || fs.existsSync(path.join(repo, '.git', 'index.lock'))) return resolve(false);
+  execFile('git', ['-c', 'core.quotepath=false', 'fetch', '--quiet', '--no-tags'], {
+    cwd: repo, timeout: FETCH_TIMEOUT_MS, windowsHide: true,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+  }, (err) => resolve(!err));
 });
 
-/** Regenerate the provider cache against the ai-lab now on disk: an error string, or null. */
+/** Regenerate the provider cache against the environment now synced: an error string, or null. */
 async function refreshCache() {
   const cache = (await import('../setup/provider-setup.mjs')).refreshProviderCache();
   return cache.error ? `provider cache refresh failed: ${cache.error} — run: node scripts/setup/setup.js` : null;
 }
 
-/** Whether `range` touches ai-lab's dependencies, i.e. the update must re-sync the venv. */
+/** Whether `range` touches the dependencies, i.e. the update must re-sync the venv. */
 export const depsChanged = (repo, range) =>
   Boolean(git(['diff', '--name-only', range, '--', 'pyproject.toml', 'uv.lock'], { cwd: repo, allowFail: true }));
 
 // The detached dependency update's record: {pid, at} while it runs, {error, at} when it failed;
 // absent once it succeeded. The next launch reports a failure and retries it.
-export const venvStateFile = () => path.join(os.homedir(), '.claude', 'ai-lab-update.json');
+export const venvStateFile = () => path.join(os.homedir(), '.claude', 'own-env-update.json');
 const readState = () => { try { return JSON.parse(fs.readFileSync(venvStateFile(), 'utf8')); } catch { return null; } };
 const writeState = (s) => { try { fs.mkdirSync(path.dirname(venvStateFile()), { recursive: true }); fs.writeFileSync(venvStateFile(), JSON.stringify(s)); } catch { /* best effort */ } };
 const STALE_RUN_MS = 15 * 60000;
 
+const runUv = (args, { cwd, env }) =>
+  execFileSync('uv', args, { cwd, env, timeout: 600000, stdio: 'ignore', windowsHide: true });
+
 /**
- * A dependency-changing update in one detached run: merge, `uv sync`, cache refresh. It can take
- * minutes, longer than a launch waits for this hook (startup-sync.mjs kills it at 75 s), so the
- * launch keeps the old tree, venv and cache, which agree with each other, until this finishes.
+ * Install `rev`'s locked dependencies into the venv of `repo` without moving its tree: a temporary
+ * worktree supplies `rev`'s pyproject/lock, `UV_PROJECT_ENVIRONMENT` points uv at the live venv,
+ * `--inexact` keeps what the current tree still imports. An error string, or null.
  */
-export async function updateAiLabDeps(repo) {
+function syncDepsAt(repo, rev, { uv = runUv } = {}) {
+  const wt = path.join(os.tmpdir(), `cc-config-deps-${process.pid}-${Date.now()}`);
+  try {
+    git(['worktree', 'add', '--detach', '--quiet', wt, rev], { cwd: repo, timeout: MERGE_TIMEOUT_MS });
+    uv(['sync', '--frozen', '--quiet', '--inexact', '--no-install-project'],
+      { cwd: wt, env: { ...process.env, UV_PROJECT_ENVIRONMENT: path.join(repo, '.venv') } });
+    return null;
+  } catch (err) {
+    return `uv sync of ${rev.slice(0, 9)} failed (${err.code || err.message}) — run: uv sync --project "${repo}"`;
+  } finally {
+    git(['worktree', 'remove', '--force', wt], { cwd: repo, allowFail: true });
+  }
+}
+
+/**
+ * A dependency-changing update in one detached run. It can take minutes, longer than a launch waits
+ * for this hook (startup-sync.mjs kills it at 75 s), so a launch may start Python from the tree at any
+ * moment of it. Hence the order: the new dependencies go into the venv first (old code runs on a
+ * superset), only then does the tree move, then a plain sync settles the project, then the cache.
+ */
+export async function updateOwnDeps(repo, { uv = runUv, refresh = refreshCache } = {}) {
   writeState({ pid: process.pid, at: Date.now() });
+  const pulled = await pullRepo(repo, {
+    beforeMerge: (range) => {
+      const error = syncDepsAt(repo, range.split('..')[1], { uv });
+      return error ? { pulled: 0, note: error } : null;
+    },
+    afterPull: relink,
+  });
   // A retry may find the tree already moved (the venv sync failed after the merge): sync regardless.
-  const pulled = await pullRepo(repo);
   let error = pulled?.note || null;
   if (!error) {
-    try { execFileSync('uv', ['sync', '--frozen', '--quiet'], { cwd: repo, timeout: 600000, stdio: 'ignore', windowsHide: true }); }
+    try { uv(['sync', '--frozen', '--quiet'], { cwd: repo, env: process.env }); }
     catch (err) { error = `uv sync failed (${err.code || err.message}) — run: uv sync --project "${repo}"`; }
   }
   // The cache is refreshed only against a synced venv.
-  error ||= await refreshCache();
+  error ||= await refresh();
   if (error) writeState({ error, at: Date.now() }); else fs.rmSync(venvStateFile(), { force: true });
   return error;
 }
 
-const detachedUpdate = (repo) => spawn(process.execPath, [fileURLToPath(import.meta.url), '--ai-lab-deps', repo],
+const detachedUpdate = (repo) => spawn(process.execPath, [fileURLToPath(import.meta.url), '--deps', repo],
   { detached: true, stdio: 'ignore', windowsHide: true }).unref();
 
 /**
- * Fast-forward ai-lab. A code-only update moves the tree and refreshes the provider cache here; one
- * that changes the dependencies, or retries a failed one, goes to the detached run instead.
+ * Fast-forward cc-config. A code-only update moves the tree here; one that changes the dependencies, or retries
+ * a failed one, goes to the detached run instead.
  */
-export async function runAiLabPull(repo, { background = detachedUpdate } = {}) {
+export async function runPull(fetched = null, { repo = REPO, background = detachedUpdate } = {}) {
   const state = readState();
   if (state?.pid && Date.now() - state.at < STALE_RUN_MS) return { pulled: 0, note: 'dependency update still running in the background' };
   const handOff = (why) => { background(repo); return { pulled: 0, note: `${why}; updating in the background (merge, uv sync, provider cache)` }; };
   if (state?.error) return handOff(`last dependency update failed: ${state.error}`);
   return pullRepo(repo, {
+    fetched,
     beforeMerge: (range) => (depsChanged(repo, range) ? handOff('the update changes its dependencies') : null),
-    afterPull: () => refreshCache(),
+    afterPull: relink,
   });
 }
 
 function runRemind() {
   if (!isRepo()) return null;
+  const out = git(['status', '--porcelain=v2', '--branch'], { allowFail: true });
+  if (out === null) return null;
+  const { dirty, upstream, ahead } = parseBranchStatus(out);
+  if (upstream) return formatReminder({ dirty, ahead });
+  // No upstream: count commits no remote has; a repo with no remote at all is local by design.
   const hasRemote = Boolean(git(['remote'], { allowFail: true }));
   return formatReminder({
-    dirty: dirtyCount(),
-    ahead: unpushedCount(),
-    noUpstream: hasRemote && !upstreamCommit(),
+    dirty,
+    ahead: hasRemote ? countIn(REPO, 'HEAD', '--not', '--remotes') : 0,
+    noUpstream: hasRemote,
   });
+}
+
+/**
+ * Local-only dirty/unpushed reminder under one wall-clock budget (used by Codex SessionEnd and
+ * Antigravity Stop; never performs network work or holds shutdown open).
+ */
+export async function boundedRepoReminder({ budgetMs = 1200, now = Date.now, run = execFileSync } = {}) {
+  const until = now() + budgetMs;
+  const localGit = (args) => {
+    const timeout = until - now();
+    if (timeout <= 0) throw new Error('reminder budget exhausted');
+    return run('git', args, {
+      cwd: REPO, timeout, encoding: 'utf8', windowsHide: true,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  };
+  try {
+    const dirty = localGit(['status', '--porcelain']).split('\n').filter(Boolean).length;
+    let upstream = false, ahead = 0;
+    try { upstream = !!localGit(['rev-parse', '--verify', '--quiet', '@{u}']); } catch { /* new branch */ }
+    if (upstream) ahead = Number(localGit(['rev-list', '--count', '@{u}..HEAD'])) || 0;
+    return formatReminder({ dirty, ahead, noUpstream: !upstream });
+  } catch { return null; }
 }
 
 // ── hook plumbing ──
@@ -332,12 +393,29 @@ export function isStartup(payload) {
   return !source || source === 'startup';
 }
 
+/** Where a detached --pull leaves its JSON result: what the last background sync did. */
+export const backgroundLog = () => path.join(os.tmpdir(), 'cc-config-sync-hook.json');
+
+/**
+ * Start --pull as a detached process writing to backgroundLog(), and return the one-line notice.
+ * The session never waits on the fetch; the pulled tree serves the NEXT session.
+ */
+export function startBackgroundPull({ log = backgroundLog(), run = spawn, env = process.env } = {}) {
+  try {
+    const out = fs.openSync(log, 'w');
+    const child = run(process.execPath, [fileURLToPath(import.meta.url), '--pull'],
+      { detached: true, stdio: ['ignore', out, out], windowsHide: true, env });
+    child.unref();
+    fs.closeSync(out);
+    return `cc-config sync started in the background (result: ${log})`;
+  } catch (err) { return `cc-config background sync did not start: ${err.message}`; }
+}
+
 async function main() {
   const mode = process.argv[2];
-  const payload = await readPayload();
+  const payload = mode === '--pull' || mode === '--pull-background' ? await readPayload() : {};
   let notice = null;
   let syncResult = null;
-  let aiLabResult = null;
 
   if (mode === '--pull') {
     // Provider launchers already run this hook before loading any repo-owned
@@ -345,32 +423,33 @@ async function main() {
     // fetch when Claude subsequently emits SessionStart. Direct `claude`
     // launches have no marker and still update here.
     if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') {
-      syncResult = await runPull();
-      const aiLab = await aiLabRepo();
-      aiLabResult = aiLab ? await runAiLabPull(aiLab) : null;
-      notice = [formatPull(syncResult), formatPull(aiLabResult, 'ai-lab')].filter(Boolean).join('\n') || null;
+      syncResult = await runPull(await fetchRepo(REPO));
+      notice = formatPull(syncResult) || null;
       // SessionStart hooks run in parallel, so ensure.mjs may already have (re)started the
       // bridge from the pre-pull tree; ensure again so the pulled code serves this session.
-      if (syncResult?.pulled > 0) {
+      // Only for this hook's own checkout: a pull of another tree (CLAUDE_SYNC_REPO, as the tests
+      // set) must never replace the machine's daemon with one served from this file's tree.
+      if (syncResult?.pulled > 0 && REPO === repoRootFrom(fileURLToPath(import.meta.url))) {
         try { await (await import('../bridge/ensure.mjs')).ensureDaemon({ replace: true }); } catch { /* bridge is optional */ }
       }
     }
-  } else if (mode === '--ai-lab-deps') {
-    const error = await updateAiLabDeps(process.argv[3]);
+  } else if (mode === '--pull-background') {
+    if (isStartup(payload) && process.env.CC_CONFIG_STARTUP_SYNCED !== '1') notice = startBackgroundPull();
+  } else if (mode === '--deps') {
+    const error = await updateOwnDeps(process.argv[3]);
     if (error) process.stderr.write(`[sync-hook] ${error}\n`);
     return;
   } else if (mode === '--remind') {
     notice = runRemind();
   } else {
-    process.stderr.write('[sync-hook] usage: sync-hook.js --pull|--remind\n');
+    process.stderr.write('[sync-hook] usage: sync-hook.js --pull|--pull-background|--remind\n');
     return;
   }
 
   // Silent when there is nothing to report.
-  if (notice || syncResult?.pulled > 0 || aiLabResult?.pulled > 0) process.stdout.write(JSON.stringify({
+  if (notice || syncResult?.pulled > 0) process.stdout.write(JSON.stringify({
     ...(notice ? { systemMessage: notice } : {}),
     ccConfigSync: syncResult,
-    ...(aiLabResult ? { aiLabSync: aiLabResult } : {}),
   }));
 }
 

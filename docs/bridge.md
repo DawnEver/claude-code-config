@@ -19,9 +19,9 @@ Telegram ── getUpdates / sendMessage ──> daemon.mjs  (one per machine, o
 Each host adapter turns its host's protocol into the same events — `up {id, cwd, branch?,
 backlog[]}`, `prompt {id, text, turnId?}`, `message {id, text, turnId?, itemId?}`, `progress {id, text}`,
 `final {id, text, turnId?, status?}`, `approval {id, ref, summary, answerable}`, `down {id}`
-— and offers the same interface: `inject`, `status`, `answerApproval`, and `interrupt` where
-the host has one (Codex only). `daemon.mjs` has no host-specific branch; everything below
-holds for Claude and Codex alike.
+— and offers the same interface: `inject`, `status`, `answerApproval`, `answerQuestion`, and `interrupt` where
+the host has one (Codex and Antigravity). `daemon.mjs` has no host-specific branch; everything below
+holds for Claude, Codex and Antigravity alike.
 
 **Only main sessions are bridged.** Each adapter decides with one predicate,
 `isMainSession`, before it emits `up`; anything else never registers, never gets a Topic,
@@ -41,8 +41,9 @@ and is never mirrored:
   binary itself, not a shim or launcher naming it) sits above its own in the process tree.
   The tree walk is best-effort: under Git Bash (MSYS) the Windows parent chain stops at
   `sh.exe`, but a session's shell always carries `CLAUDE_PID`. `channel-<pid>.log` records
-  the ancestry and the decision. Its channel keeps serving MCP but never registers; its hook calls are
-  dropped after the 30 s hold.
+  the ancestry and the decision. Its channel keeps serving MCP and registers only as NESTED
+  (never a Topic): the daemon answers that process's hook calls `nested`, so they are
+  deliberately not mirrored, and leave the hooks' spool.
 - A Topic a session got before it was known to be non-main is closed quietly
   (`dismiss`) and deleted with the other ended Topics.
 
@@ -154,7 +155,7 @@ discovery does not dump old conversation text into Telegram.
   live-control endpoint. An attempted reply/interrupt explains that it requires the local
   TUI. To enable full control, **stop that TUI first**, then `codc resume <thread-id>`.
   The bridge never resumes an independent session behind the user's back.
-- No-rollout/ephemeral sessions, custom Codex homes and unsupported transcript schema
+- No-rollout/ephemeral sessions, Codex homes no launch has recorded (see Codex homes) and unsupported transcript schema
   changes remain outside this fallback. It is a tested compatibility reader, not a
   promise that transcripts are a stable upstream API.
 - Switching an already-observed thread to RPC preserves its Topic and refreshes its
@@ -192,25 +193,38 @@ token in `runtime.json`):
   event. Its socket closing is `down` — the only end signal: one channel is one `claude`
   process, and the socket closes exactly when that process exits.
 - **`scripts/hooks/bridge-hook.js`** (wired for `UserPromptSubmit`, `Stop`, `StopFailure`,
-  `PreToolUse`, `PostToolUse` and `Notification`) mirrors every prompt and the
+  `Notification` and `PreToolUse` as steps of the `claude-hook.mjs` entry, and `PostToolUse` /
+  `PostToolUseFailure` for every tool — the mirror misses no edge: a foreground shell reaches the
+  board at its PreToolUse, and a prompt approved in the terminal leaves Needs approval at its
+  PostToolUse) mirrors every prompt and the
   turn's final assistant text with a one-shot `mirror` call, so output does not depend on
   the model calling `reply`; the other events are cheap state edges (`activity`,
   see Session status), and `PreToolUse(AskUserQuestion)` is a `question` call (see Questions).
   `SessionEnd` is not wired: it also fires on an in-process `/clear` or `/resume`, and
   treating it as the end once unregistered a live channel, so a resumed session's turns
   were all dropped (2026-10-08).
-  Each daemon call has a 2 s budget (a waiting question 10 min; a run at most 8.5 s, under
-  the 10 s settings timeout), exits 0 on any failure, and prints nothing except a question's
-  answer. Calls name the payload's `session_id` — the conversation id current in the
-  process; the hook's `CLAUDE_CODE_SESSION_ID` always equals it, so it adds nothing — and
-  are held up to 30 s if they beat the channel's registration. `/clear` and `/resume`
-  change that id, so when no session matches, a prompt, final or answer is retried naming
-  the hook's own nearest `claude` process (a process-table walk, done only on a miss
-  because it is slow); the channel registered under that same process, and the adapter
-  learns the new id, so later activity and questions route by id again. An id belongs to
-  one session at a time: a channel registering it, or a process retry naming it, takes it
-  from any other. A call spooled while the daemon was down carries its process too, since a
-  restarted daemon has forgotten every learned id.
+  Every hook finishes under 5 s for the whole event (user ruling D24, 2026-11-17): a hook
+  makes ONE daemon call of at most 1 s (`CALL_MS`; a run at most 2.5 s, under the 5 s
+  settings timeout), exits 0 on any failure, and prints nothing except a question's denial
+  or a Stop's delivery. Calls name the payload's `session_id` — the conversation id current
+  in the process; the hook's `CLAUDE_CODE_SESSION_ID` always equals it, so it adds nothing —
+  AND the session's claude process: the hook's `CLAUDE_PID`, which Claude Code sets for every
+  hook to ITS OWN pid (`CLAUDE_PID: String(process.pid)` in the CLI's hook environment, so a
+  nested claude's hooks carry the nested one; read from the installed CLI 2026-11-17). The
+  channel registered under that same process, so every way a session comes back routes on
+  its first call, with no process-table query on any hook:
+  - `/clear` and `/resume` in a terminal: same claude process, new id;
+  - `claude --resume` / `--continue` from a new terminal: a new process, whose channel
+    registers the resumed id (or, with `--fork-session`, a new one) under its own pid;
+  - agent view (open, resume, continue; a background session such as `claude --bg-pty-host
+    ... -- claude --session-id <new> --fork-session --resume ...`): a new process with a new
+    id, its channel registered without inbound (see below).
+  A call no channel can take yet (it beat the channel's registration) is answered
+  `routed: false`, never held in the daemon's memory: it waits in the hook's lossless spool
+  and is re-sent until a channel takes it (see [The spool](#the-spool)). An id belongs to one
+  session at a time: a channel registering it, or a call naming its process, takes it from
+  any other. A spooled call carries its process too, since a restarted daemon has forgotten
+  every learned id.
   Agent view (and a background relaunch) moves a conversation to a NEW session id in a NEW
   claude process, while the old process and its channel stay connected; the new one does not
   carry ccc's `--dangerously-load-development-channels` flag (agent view passes only
@@ -224,11 +238,17 @@ token in `runtime.json`):
   Topic (`supersede claude:<old> -> claude:<new> topic=N`; a Topic the new one had is closed),
   messages go to the live session (queued until its next Stop when it has no channel, with a
   note naming `ccc --resume <id>`), and a message sent before the new session connects is
-  held and delivered when it does. The old channel is refused if it re-registers. Nothing is
-  persisted: after a daemon restart the transcripts say it again.
-  `CLAUDE_PID` is deliberately not used: a nested `claude` (e.g. `ccc -p` run from inside a
-  session) inherits its parent's, which once routed one session's output into another's
-  Topic — the walk finds the nested process instead. Channel prompts are unwrapped to their text, so the echo suppression above
+  queued and delivered when it does. The old channel is refused if it re-registers. After a
+  daemon restart the transcripts say the move again.
+  Inbound never depends on the daemon's memory: every message queued for a session (one
+  without a channel, a relaunch not connected yet, or a session not running at all) is kept in
+  `~/.claude/bridge/inbound/`, one file per session id, so a handover or a crash loses none; a
+  channel that takes inbound gets its queue on register, one without gets it at its next Stop.
+  A message for a session that is not running says so (`queued: this session is not running
+  now; the message is delivered when it is resumed`) instead of failing.
+  The hook's `CLAUDE_PID` names the process RUNNING the hook (Claude Code sets it per process);
+  only an MCP server of a nested claude inherits an outer one, which the channel uses to tell
+  a nested session. Channel prompts are unwrapped to their text, so the echo suppression above
   drops them. `reply` stays for explicit mid-task messages.
 - Every turn end is mirrored, with every assistant text block of the turn (the transcript
   after the last user message, plus `last_assistant_message` when the transcript lags), not
@@ -241,13 +261,41 @@ token in `runtime.json`):
 - What a Notification waits for ("Claude needs your permission to use Bash") is posted with
   a nudge, unless a channel permission request already posted it with buttons. An
   AskUserQuestion answered in the terminal is posted as `answered locally: Q -> A`.
-- A prompt, final or answer the daemon did not take (down, restarting, over the 2 s hook
-  budget) is spooled to `~/.claude/bridge/spool.jsonl` and resent, oldest first, by the next
-  hook run within one 2 s budget; the first refusal or the budget's end puts the rest back.
-  Entries older than an hour, and beyond the newest 100, are dropped. A replay never hands
-  out queued Telegram messages — only the session's live Stop hook delivers those. Answers
-  are mirrored like prompts: anything typed into the session reaches its Topic.
+- A prompt, final, answer, notice or task fact the daemon did not take is spooled; see
+  [The spool](#the-spool). Answers are mirrored like prompts: anything typed into the
+  session reaches its Topic.
 - No `/interrupt` (use Esc locally).
+
+#### The spool
+
+The mirror loses nothing (a standing user ruling), and every hook finishes under 5 s, so a
+call the daemon did not take (down, restarting, hung past the hook's one 1 s call) is kept
+on disk and delivered later, never waited for and never dropped:
+
+- The hook appends it to `~/.claude/bridge/spool.jsonl`, marks its session pending
+  (`spool.sessions/`) and returns. While its session has spooled calls, a hook appends
+  instead of calling, so the daemon sees each session's calls in order; other sessions call
+  directly.
+- Every run of `bridge-hook.js` (any event, the question step too) that finds the spool
+  pending and no live sender starts the one detached sender (`--send-spool`, one at a time
+  by `spool.lease`). Delivery never waits for a Stop.
+- The sender moves the spool into `spool.inflight.jsonl` (picking up a claim a dead sender
+  left) and delivers it oldest first PER SESSION: a session no channel can take yet keeps
+  its calls, in order, while every other session's flow on. It retries with backoff up to
+  5 s while no pass delivers, for up to 10 minutes; then the next hook's sender carries on.
+- **Delivery is the only way an entry leaves.** There is no age or count eviction and no
+  timed drop: an entry leaves only once the daemon routed and acked it (`ok: true`, not
+  `routed: false`), or answered it `nested` (a nested session, deliberately not mirrored).
+  Delivered entries are compacted away every 200 and at each pass's end; a crash in between
+  re-sends them (the adapter drops a final it already sent), never skips an undelivered one.
+- An entry the daemon refuses for good (invalid params, unknown method), one whose claude
+  process has exited before any channel took it, and a torn line go to `spool.held.jsonl`:
+  kept, never dropped. `npm run doctor` FAILs with their count (`bridge-spool-held`) and
+  WARNs on a backlog older than 15 minutes (`bridge-spool-pending`). Move a held line back
+  into `spool.jsonl` to retry it.
+- A replay never hands out queued Telegram messages; only the session's live Stop hook
+  delivers those. While that session has spooled calls, its Stop spools its final, so those
+  messages reach it at its first Stop after its calls drained.
 
 Nothing to do by hand once this machine has a `bridge.botToken`: the user-scope MCP server
 `session-bridge` (`node <repo>/claude_plugins/session-bridge/server.mjs`; the absolute path
@@ -259,6 +307,40 @@ adds `--dangerously-load-development-channels server:session-bridge`, because cu
 channels are not on the research-preview allowlist. A plain `claude` still starts the MCP
 server, so a Topic appears, but Claude Code drops channel messages without the flag.
 Requires Anthropic auth: on a third-party provider (`ccds`) Claude Code drops channel messages even with the flag (verified live), and Remote Control is unavailable. Such a session (or one started without the flag) still mirrors out, and its Telegram messages are queued: the Stop hook hands them to the session when its current turn ends, as a continuation. An idle session receives nothing until a local prompt starts a turn; the Topic says so when a message is queued.
+
+### Antigravity (agy)
+
+agy has no shared daemon and no channel: its hooks are the only signal
+(`scripts/hooks/agy-hook.mjs` -> `forwardAgyHook` in `scripts/bridge/agy-adapter.mjs`). Each of
+SessionStart, PreInvocation, PreToolUse, PostToolUse and Stop makes one call, method `agy`, on the
+Claude adapter's 127.0.0.1 IPC (same `runtime.json` token); the daemon routes it to `AgyAdapter`,
+which emits the standard events. A call fails open and silent within ~1.2 s when no daemon runs.
+
+- **Topic**: on the first hook of a conversation (`conversationId`), cwd from `workspacePaths[0]`.
+  Its icon colour is Antigravity's (`TOPIC_ICON_COLORS` in `vocab.mjs`; Claude and Codex have theirs).
+- **Prompt**: PreInvocation with `invocationNum` 1, text from `lastUserInput` without agy's
+  `<USER_REQUEST>` envelope. A Stop continuation (`continuationActive`) is not re-posted.
+- **Tasks**: `run_command` (shell) and `invoke_subagent` (agent) from PreToolUse to PostToolUse;
+  a turn end settles them.
+- **Final**: at Stop, the turn's PLANNER_RESPONSE texts from the transcript tail; a repeat sends nothing new.
+- **Telegram -> agy**: always queued (on disk, `inbound/agy-*.json`) and handed to the next Stop,
+  which continues the session with `{decision: "continue", reason}`. An idle session waits for a local prompt.
+- **Down**: agy has no SessionEnd; a session silent for 3 h (12 h while a turn runs) is reported
+  down (withdrawing any pending question/approval controls). Its next hook brings it back under the same id and Topic.
+- **Questions (`ask_question`)**: `PreToolUse` relays questions and option buttons to Telegram. In a
+  Telegram-started turn, the hook waits up to 10 minutes (hook timeout 660 s) for the answer and
+  returns `{decision: "deny", reason: "User answered via Telegram:\\n..."}` so the model reads the
+  answer directly without blocking on a local TUI prompt. In a local turn it posts read-only
+  (`answerable: false`), returns `{}` at once for the terminal dialog, and emits `question-resolved`
+  on `PostToolUse`.
+- **Approvals**: in a Telegram-started turn when `settings.json` `toolPermission` is not
+  `"always-proceed"` (with `bridge.approvalsFromTelegram: true`), `PreToolUse` for `run_command`,
+  `write_file` and `edit_file` posts Accept/Decline buttons, waits up to 10 minutes, and returns
+  `{decision: "allow"}` or `{decision: "deny", reason}`. Local turns and `"always-proceed"` never block.
+- **`/interrupt`**: arms a pending interrupt on the session (and settles any waiting question or
+  approval immediately); the next `PreToolUse` returns `{decision: "deny", reason: "Interrupted from Telegram."}`
+  and the next `PreInvocation` returns `{terminate: true, reason: "Interrupted from Telegram."}`
+  (`terminationBehavior: "terminate"` + `errorMessage`), clearing the flag once delivered.
 
 ## Setup (per machine)
 
@@ -289,12 +371,18 @@ Requires Anthropic auth: on a third-party provider (`ccds`) Claude Code drops ch
    ```json
    "bridge": {
      "botToken": "123456789:AA...",
-     "allowedUserIds": [123456789],
      "approvalsFromTelegram": false
    }
    ```
-   `allowedUserIds` gates **every** inbound message by sender (not by chat). Empty = all
-   inbound is dropped. Any key may be set in either layer; local wins.
+   Any key may be set in either layer; local wins.
+   **Who may talk to the bridge** is not a settings key: its one source is the machine
+   declaration, hosts-config `hosts/<machine>.toml` `[dev] channels = { "session-bridge" = "<id>" }`,
+   read through `python -m dev_lab.dev.devhost channels --json`
+   (`scripts/shared/channel-declaration.mjs`, the same reader the channel server uses). That
+   declared id is the allowlist: it gates **every** inbound message and button by sender (not by
+   chat). The daemon reads it once at start. An unreadable or missing declaration fails closed —
+   nothing inbound is accepted, and the daemon log names the door to fix. A leftover
+   `bridge.allowedUserIds` key is never read; the daemon names it once — remove it.
 7. **Run**: `npm run bridge` (foreground) or `npm run bridge:install` (service: a per-user
    HKCU Run key at logon via `conhost --headless` on Windows (no admin), launchd on macOS,
    `systemd --user` on Linux). Also `bridge:status`, `bridge:uninstall`. The service runs
@@ -328,11 +416,16 @@ chars; 429s honour `retry_after`.
 ## Approvals
 
 Notifications: every mirrored message is sent silently. What waits for the human — an
-approval, a question, a permission Notification, or a turn that ended `failed` (Codex
-`failed`; Claude `StopFailure`: an API error such as a rate limit) — arms a nudge: if after
+approval, a question, a permission Notification — arms a nudge: if after
 30 s the session has not moved (no later post, not running again), one `waiting for you` reply
 mentions each `allowedUserIds` user by id (`@you`), so it gets through a muted group or
 Topic. Handled at the machine within the grace, it mentions nobody.
+
+A turn that ended `failed` (Codex `failed`; Claude `StopFailure`: an API error such as a rate
+limit) posts a plain `[failed] …` line to its Topic and, with the dashboard configured, is
+alerted in the dashboard bot's private chat with a link to that line (`Bridge.onAlert` ->
+`DashboardPush.raise`; [`dashboard.md`](dashboard.md) "Alerts"). Without the dashboard the
+Topic is the only channel, so the failed line mentions the human there.
 
 Default: `approval needed on <machine>, answer locally or via official remote`, never
 answered. Opt-in per machine with `bridge.approvalsFromTelegram: true`: Accept/Decline
@@ -368,12 +461,16 @@ A multi-select Claude question takes one tapped option, or a comma-separated tex
 - **Claude**: `AskUserQuestion` fires `PreToolUse` before its dialog. The hook calls the
   adapter's `question` method. If the turn was started from Telegram (an inject, or a
   UserPromptSubmit carrying a `<channel>`-wrapped prompt; a locally typed prompt clears it),
-  the hook waits up to 10 minutes for the Telegram answer and returns it as
-  `permissionDecision: allow` + `updatedInput.answers` (`{<question text>: <label>}`), so the
-  dialog is never shown — **exclusive**: while it waits the terminal shows nothing to answer.
-  On timeout, hook failure or an undeliverable post it prints nothing and the dialog appears
-  locally. In a locally typed turn the question is posted as information
-  (`answer locally`, no buttons) and the hook returns at once.
+  the adapter posts it there with buttons and answers `{posted: true}` at once; the hook
+  denies the terminal dialog (`permissionDecision: deny`, its reason telling the model the
+  question went to Telegram and to end its turn). The tapped answer reaches the session as
+  its next message (`Answer from Telegram to the question you asked:` + `Q -> A` lines; a
+  session without a channel gets it at its next Stop); a post Telegram refused sends the
+  session `ask it again in plain text`. No hook waits for a human: it used to hold the call
+  up to 10 minutes for the answer, which no hook under the 5 s rule (D24) can. On hook
+  failure or no bridge it prints nothing and the dialog appears locally. In a locally typed
+  turn the question is posted as information (`answer locally`, no buttons) and the hook
+  returns at once.
 
 ### Delivery outcomes
 
@@ -508,7 +605,7 @@ require separate acceptance evidence.
 - Channels together with `--remote-control` in one Claude session.
 - Telegram approval buttons answer a Claude permission request.
 - `deleteForumTopic` on a closed Topic (create, close, delete; a later send fails).
-- Mirroring after `/clear` and an in-process `/resume` through the process-id retry.
+- Mirroring after `/clear` and an in-process `/resume` (verified with the per-call process retry; routed since 2026-11-17 by the hook's own `CLAUDE_PID`; see the live verification of that change in its commit).
 
 ## Attachments
 
@@ -556,9 +653,10 @@ set, the daemon pushes a read-only snapshot of its sessions and its accounts' qu
 Telegram Mini App. Off the message path; a failing gateway only logs. See
 [`dashboard.md`](dashboard.md).
 
-Quota is state, read on demand in the dashboard. Its events (a window hitting its limit, a
-seat problem, an announced extra reset) live only in the dashboard's Events tab: the bridge
-posts nothing about quota to Telegram, and nothing to any group's General topic.
+Quota is state, read on demand in the dashboard. Its alerts (a window hitting its limit, a
+seat problem, an announced extra reset), like a host going offline, are sent by the dashboard
+bot to the private chat ([`dashboard.md`](dashboard.md) "Alerts"): the bridge posts nothing
+about quota to project groups, and nothing to any group's General topic.
 
 ## Claude seats (`scripts/shared/seats.mjs`)
 
@@ -581,6 +679,22 @@ same account in two Teams. Each seat is declared once, in the top-level `seats` 
 - The channel reports the seat (from `CLAUDE_CONFIG_DIR`): the Topic title shows
   `claude:<alias>`, and the dashboard lists the session under its seat. The base dir counts
   as the seat its login matches.
+
+## Codex homes (`scripts/shared/codex-home.mjs`)
+
+A Codex home (`CODEX_HOME`) is one Codex login: a second ChatGPT account on the same host runs
+in its own home. No config declares homes and the bridge never guesses directory names: every
+`codc`/`cods` launch and every Codex SessionStart hook runs `ensure.mjs`, which records its
+`CODEX_HOME` in `~/.claude/bridge/codex-homes.json` (the base `~/.codex` needs no record).
+
+- The daemon runs one `CodexAdapter` per home — the base home plus each recorded home still on
+  disk (`CodexHomes` in `codex-adapter.mjs`) — each attached to its own home's shared
+  app-server (`codex app-server proxy` with that `CODEX_HOME`) and reading its own rollouts. A
+  home recorded while the daemon runs joins within 15 s; no restart.
+- A session reports its home's label as its seat: `null` for the base home, else the dir name
+  (`~/.codex-work` -> `work`). The Topic title shows `codex:<label>`; the dashboard lists each
+  home's account (its quota series kept per home) and a session under its home's account. Two
+  homes on one login are one account. Usage rows carry the label as their `seat`.
 
 ## Session status
 

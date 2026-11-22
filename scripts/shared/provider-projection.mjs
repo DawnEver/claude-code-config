@@ -7,7 +7,7 @@
 // store (credential-key.mjs). The fields that used to carry those facts here are refused by name.
 
 /** Retired `providers.<name>` fields and where each fact lives now. */
-export const RETIRED_PROVIDER_FIELDS = {
+const RETIRED_PROVIDER_FIELDS = {
   url: "ai-lab's providers.toml (the provider cache)",
   claudePath: "ai-lab's providers.toml `anthropic_path`",
   codexPath: "ai-lab's providers.toml `openai_path`",
@@ -16,7 +16,7 @@ export const RETIRED_PROVIDER_FIELDS = {
 };
 
 /** An error naming every retired field still present in the merged settings, or null. */
-export function retiredFieldsError(settings) {
+function retiredFieldsError(settings) {
   const found = [];
   for (const [name, block] of Object.entries(settings?.providers || {})) {
     for (const field of Object.keys(block || {})) {

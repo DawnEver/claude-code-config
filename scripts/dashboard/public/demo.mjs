@@ -5,8 +5,7 @@
 // name for the masker's life, so names stay stable across polls and cross-references (session ->
 // account -> host) still resolve. Statuses, times and quota numbers pass through untouched.
 //
-// Events are data (registry.mjs), so each of their fields is masked by its role. The free text
-// left — a seat problem (bridge/quota.mjs) is rebuilt from its template; anything else, such as a
+// Each field is masked by its role. The free text left — a seat problem (bridge/quota.mjs) is rebuilt from its template; anything else, such as a
 // host's error, is masked by shape (emails, ids, config keys) plus every name already masked.
 
 const letter = (n) => String.fromCharCode(96 + n);
@@ -89,13 +88,18 @@ export function demoMasker() {
     return { ...snap, demo: true, configPending,
       hosts: hosts.map((h) => (h.config ? { ...h, config: { ...h.config, facts: { ...h.config.facts, dashboardError: text(h.config.facts?.dashboardError) } } } : h)),
       accounts: accounts.map((a) => ({ ...a, problems: (a.problems ?? []).map(text) })),
-      events: (snap.events ?? []).map((e) => ({ ...e,
-        ...(e.account ? { account: { ...e.account, label: seat(e.account.label), email: mail(e.account.email) } } : {}),
-        ...(e.host ? { host: host(e.host) } : {}), ...(e.key ? { key: configKey(e.key) } : {}),
-        ...(e.problem ? { problem: text(e.problem) } : {}), ...(e.error ? { error: text(e.error) } : {}) })) };
+      configLast: Object.fromEntries(Object.entries(snap.configLast ?? {}).map(([k, r]) => [configKey(k),
+        { ...r, host: host(r.host), ...(r.error ? { error: text(r.error) } : {}) }])) };
   };
-  /** The Usage tab's report (scripts/dashboard/usage-store.mjs): its projects and machines, under the same names. */
+  /**
+   * The Usage tab's report (scripts/dashboard/usage-store.mjs): its projects and machines, under the same names;
+   * HPC clusters and logins numbered, a login's unread reason (it may name a host) replaced by its template.
+   */
+  const cluster = namer((n) => `cluster-${letter(n)}`);
+  const login = namer((n) => `login-${n}`);
   mask.usage = (r) => r && { ...r, projects: (r.projects ?? []).map((x) => ({ ...x, k: project(x.k) })),
-    machines: (r.machines ?? []).map((x) => ({ ...x, k: host(x.k) })) };
+    machines: (r.machines ?? []).map((x) => ({ ...x, k: host(x.k) })),
+    ...(r.hpc ? { hpc: { ...r.hpc, latest: (r.hpc.latest ?? []).map((g) => ({ ...g, cluster: cluster(g.cluster), account: login(g.account),
+      slurm_account: null, machine: host(g.machine), why: g.why == null ? g.why : 'not reachable' })) } } : {}) };
   return mask;
 }

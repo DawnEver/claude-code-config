@@ -4,10 +4,15 @@
 // `db` is a D1 binding (in Node tests, the same API over node:sqlite).
 
 import { readOnlySql } from '../shared/usage-schema.mjs';
+import { platformOf } from './public/shared/vocab.mjs';
 
 const TURN_COLS = ['agent', 'session', 'turn', 'model', 'machine', 'account', 'seat', 'project', 'branch', 'origin', 'client',
   'started_at', 'ended_at', 'calls', 'input', 'cache_read', 'cache_write', 'output', 'reasoning', 'tools'];
 const RES_COLS = ['machine', 'hour', 'samples', 'cpu_sum', 'cpu_max', 'mem_sum', 'mem_max', 'mem_total', 'gpu_sum', 'gpu_max', 'gpu_mem_max'];
+const HPC_COLS = ['cluster', 'account', 'hour', 'observed_at', 'machine', 'slurm_account', 'role', 'read', 'why', 'jobs', 'core_hours',
+  'cpu_efficiency', 'completed', 'failed', 'cancelled', 'oom', 'timeout', 'running', 'storage', 'files', 'budget_core_hours', 'budget_spent',
+  'budget_committed', 'budget_since', 'budget_until', 'budget_window'];
+const HPC_VALUES = HPC_COLS.filter((c) => !['cluster', 'account', 'hour'].includes(c));
 
 const insert = (table, cols, conflict, update) => `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})
   ON CONFLICT (${conflict}) DO UPDATE SET ${update}`;
@@ -28,8 +33,8 @@ const SQL = {
   cost: insert('session_costs', ['agent', 'session', 'model', 'machine', 'cost_usd', 'updated_at', 'last_at'], 'agent, session, model',
     'cost_usd = excluded.cost_usd, machine = excluded.machine, updated_at = excluded.updated_at, last_at = COALESCE(excluded.last_at, session_costs.last_at) '
     + 'WHERE (session_costs.cost_usd, session_costs.last_at) IS NOT (excluded.cost_usd, COALESCE(excluded.last_at, session_costs.last_at))'),
-  // Use only grows within a window: a reading is written only when it is higher (every push re-sends
-  // each window; rewriting an unchanged one cost a row each time), with when it was seen.
+  // Use only grows within a window: a reading is written only when it is higher (a host sends a window again after a restart or from another host;
+  // rewriting an unchanged one cost a row each time), with when it was seen.
   quota: insert('quota_windows', ['account', 'agent', 'span', 'window_start', 'window_ms', 'used', 'observed_at'], 'account, span, window_start',
     'used = excluded.used, observed_at = excluded.observed_at WHERE excluded.used > quota_windows.used'),
   // An hour two daemons sampled (a hand-over) is the sum of both.
@@ -38,6 +43,9 @@ const SQL = {
     + 'mem_sum = mem_sum + excluded.mem_sum, mem_max = MAX(mem_max, excluded.mem_max), mem_total = excluded.mem_total, '
     + 'gpu_sum = COALESCE(gpu_sum, 0) + COALESCE(excluded.gpu_sum, 0), gpu_max = MAX(COALESCE(gpu_max, 0), COALESCE(excluded.gpu_max, 0)), '
     + 'gpu_mem_max = MAX(COALESCE(gpu_mem_max, 0), COALESCE(excluded.gpu_mem_max, 0))'),
+  // A login's reading of an hour: a newer one replaces it; the same one re-sent is no write.
+  hpc: insert('hpc_usage', HPC_COLS, 'cluster, account, hour', `${HPC_VALUES.map((c) => `${c} = excluded.${c}`).join(', ')}
+  WHERE excluded.observed_at > hpc_usage.observed_at`),
 };
 
 /** Store one parsed batch (scripts/shared/usage-schema.mjs parseUsageBatch) from `machine`, atomically. */
@@ -49,10 +57,11 @@ export async function ingest(db, machine, batch, now = Date.now()) {
     ...batch.resources.map((r) => db.prepare(SQL.resources).bind(...RES_COLS.map((c) => (c === 'machine' ? machine : r[c])))),
     ...(batch.commits ?? []).map((r) => db.prepare(SQL.commit).bind(r.repo, r.at, r.sha, r.author)),
     ...(batch.pulls ?? []).map((r) => db.prepare(SQL.pull).bind(r.repo, r.number, r.created_at, r.merged_at, r.closed_at, r.author)),
+    ...(batch.hpc ?? []).map((r) => db.prepare(SQL.hpc).bind(...HPC_COLS.map((c) => (c === 'machine' ? machine : r[c])))),
   ];
   if (stmts.length) await db.batch(stmts);
   return { turns: batch.turns.length, costs: batch.costs.length, quota: batch.quota.length, resources: batch.resources.length,
-    commits: batch.commits?.length ?? 0, pulls: batch.pulls?.length ?? 0 };
+    commits: batch.commits?.length ?? 0, pulls: batch.pulls?.length ?? 0, hpc: batch.hpc?.length ?? 0 };
 }
 
 /**
@@ -138,8 +147,8 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now(),
   ]);
   const keeps = (r, except) => FILTER_DIMS.every((d) => d === except || !sel[d] || sel[d].has(r[d]));
   const label = (hour) => new Date(Math.max(hour, since) + off).toISOString().slice(0, unit === 'hour' ? 13 : 10);
-  const daily = rollup(hours.filter((r) => keeps(r)), (r) => `${label(r.hour)}|${r.agent}`, (r) => ({ day: label(r.hour), agent: r.agent }))
-    .map(({ k, ...r }) => r).sort((a, b) => a.day.localeCompare(b.day) || a.agent.localeCompare(b.agent));
+  const daily = rollup(hours.filter((r) => keeps(r)), (r) => `${label(r.hour)}|${platformOf(r.agent, r.model)}`, (r) => ({ day: label(r.hour), platform: platformOf(r.agent, r.model) }))
+    .map(({ k, ...r }) => r).sort((a, b) => a.day.localeCompare(b.day) || a.platform.localeCompare(b.platform));
   const by = (col) => {
     const rows = rollup(hours.filter((r) => keeps(r, col)), (r) => r[col]).sort((a, b) => tokens(b) - tokens(a));
     const shown = rows.filter((r, i) => i < 12 || sel[col]?.has(r.k));
@@ -148,10 +157,31 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now(),
     return shown.map((r) => ({ ...r, k: r.k === '' ? null : r.k, ...(sel[col]?.has(r.k) ? { selected: true } : {}) }));
   };
   return { days, unit, since, daily, projects: by('project'), models: by('model'), machines: by('machine'), costUsd: cost[0]?.usd ?? null,
-    filter: Object.fromEntries(FILTER_DIMS.map((d) => [d, filter[d] ?? []])) };
+    filter: Object.fromEntries(FILTER_DIMS.map((d) => [d, filter[d] ?? []])), hpc: hpcReport(await all('SELECT * FROM hpc_usage WHERE hour >= ? ORDER BY observed_at', since), label) };
 }
 
-export const MAX_QUERY_ROWS = 5000;
+/**
+ * HPC over a report's range (docs/dashboard.md "HPC"), not narrowed by the token filters: each
+ * login's newest reading (`latest`, by cluster and login), and per bucket the core-hours of every
+ * login's last reading in it, summed (`series`): a reading covers the 24 h before it, so readings
+ * of one bucket overlap and are never added up.
+ */
+function hpcReport(rows, label) {
+  const latest = new Map(), last = new Map();
+  for (const r of rows) {   // oldest first: the last write per key is the newest
+    latest.set(`${r.cluster}/${r.account}`, r);
+    last.set(`${label(r.observed_at)}|${r.cluster}/${r.account}`, r);
+  }
+  const series = new Map();
+  for (const [k, r] of last) {
+    const day = k.split('|')[0];
+    series.set(day, (series.get(day) ?? 0) + (r.core_hours ?? 0));
+  }
+  return { latest: [...latest.values()].sort((a, b) => a.cluster.localeCompare(b.cluster) || a.account.localeCompare(b.account)),
+    series: [...series].sort(([a], [b]) => a.localeCompare(b)).map(([day, coreHours]) => ({ day, core_hours: coreHours })) };
+}
+
+const MAX_QUERY_ROWS = 5000;
 
 /** One read-only statement (readOnlySql) -> {columns, rows, truncated} | {error}. */
 export async function query(db, sql) {

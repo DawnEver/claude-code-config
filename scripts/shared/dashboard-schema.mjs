@@ -6,7 +6,7 @@
 import { isValidMachineName } from './machine.mjs';
 
 export const SCHEMA_VERSION = 1;
-import { AGENTS, STATUSES } from '../dashboard/public/shared/vocab.mjs';
+import { AGENTS, STATUSES, TASK_KINDS, TASK_LABEL_MAX, MAX_TASKS, WAITING_MAX } from '../dashboard/public/shared/vocab.mjs';
 
 export { AGENTS, STATUSES };
 /** Native session status (scripts/bridge/daemon.mjs STATUS_CODES). Freshness (`stale`) is separate, set by the gateway. */
@@ -42,24 +42,35 @@ function parseSession(s) {
   const t = s.topic;
   const url = t && topicUrl(t.chatId, t.topicId);
   return {
+    // name: its rename / native title, else its Topic title (Bridge.dashboardSessions).
     id, agent: s.agent, name: text(s.name, 200), project: text(s.project), branch: text(s.branch, 200), seat: text(s.seat, 64), account: text(s.account, 200),
     // The API platform the session spends instead of a subscription; null = a subscription.
     provider: isProvider(s.provider) ? s.provider : null,
     // The forge repository of its working tree (shared/repo-key.mjs): the Code tab's link to it.
     repo: isRepoKey(s.repo) ? s.repo : null,
     status: STATUSES.includes(s.status) ? s.status : 'unknown',
-    // Background tasks (shells, agents) an idle session left running.
-    ...(num(s.background, 1, 999) ? { background: s.background } : {}),
+    // What it waits for (the permission it asks, its question), only while it waits for the human.
+    ...(['needs_approval', 'needs_input'].includes(s.status) && text(s.waiting, WAITING_MAX) ? { waiting: text(s.waiting, WAITING_MAX) } : {}),
+    // The shells and subagents it runs now (scripts/bridge/activity-board.mjs).
+    ...(Array.isArray(s.tasks) && s.tasks.length ? { tasks: s.tasks.slice(0, MAX_TASKS).map(parseTask).filter(Boolean) } : {}),
     unread: num(s.unread, 0, 1e6) ?? 0, mention: s.mention === true,
     // Posts to the Topic ever (a running count: a page keeps what it has seen) and when the last one came.
     posted: num(s.posted, 0, Number.MAX_SAFE_INTEGER) ?? 0, lastPostAt: iso(s.lastPostAt),
     lastActivityAt: iso(s.lastActivityAt),
-    // The Topic, and the same Topic opened at its first unread post and at its latest post.
+    // The Topic, and the same Topic opened at its first unread post and at its latest post. The daemon
+    // exports only sessions that have one (Bridge.dashboardSessions); null here is a malformed Topic.
     topic: url ? { url, closed: t.closed === true, ...atMessage(t, 'firstUnread', 'firstUnreadUrl'), ...atMessage(t, 'lastPost', 'latestUrl') } : null,
   };
 }
 
-export const MAX_ACCOUNTS = 40;
+/** One running task of a session (scripts/bridge/activity-board.mjs ActivityBoard.list): a kind, a one-line label, when it started. */
+function parseTask(t) {
+  const id = text(t?.id, 128);
+  if (!id || !TASK_KINDS.includes(t.kind) || !epoch(t.startedAt)) return null;
+  return { id, kind: t.kind, label: text(t.label, TASK_LABEL_MAX) ?? '', background: t.background === true, startedAt: t.startedAt };
+}
+
+const MAX_ACCOUNTS = 40;
 const num = (v, lo = -Infinity, hi = Infinity) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null);
 const epoch = (v) => num(v, 1e12, 1e14);   // ms, 2001..5138
 
@@ -104,7 +115,7 @@ function parseBalance(b) {
       .filter((x) => /^[A-Z]{3}$/.test(x?.currency) && num(x.amount, -1e9, 1e9) !== null).map((x) => ({ currency: x.currency, amount: x.amount })) };
 }
 
-export const MAX_REPOS = 200;
+const MAX_REPOS = 200;
 const CI_STATES = ['success', 'failure', 'pending'];
 const ci = (v) => (CI_STATES.includes(v) ? v : null);
 const https = (v) => (typeof v === 'string' && /^https:\/\/[^\s"<>]{1,300}$/.test(v) ? v : null);
@@ -166,10 +177,34 @@ function parseConfigSummary(c) {
       dashboardError: text(f.dashboardError, 200) } };
 }
 
+const hours = (v) => (Number.isFinite(v) && v >= 0 && v <= 1e10 ? Math.round(v) : null);
+
+/**
+ * An alert the host raised itself (scripts/bridge/daemon.mjs): a failed turn, or an HPC budget
+ * running out (scripts/bridge/hpc.mjs budgetAlert). The gateway sends it as the dashboard bot
+ * (registry.mjs). `id` makes a push re-sent after a lost reply alert once; a link is built here
+ * from the Topic, like a session's, never taken from the host as a URL.
+ */
+function parseAlert(a) {
+  const id = typeof a?.id === 'string' && /^[\w-]{1,64}$/.test(a.id) ? a.id : null;
+  if (id && a.kind === 'hpc-budget') {
+    const grant = typeof a.grant === 'string' && /^[\w.@-]{1,64}\/[\w.@-]{1,64}$/.test(a.grant) ? a.grant : null;
+    const [spent, committed, total, projected] = [a.spent, a.committed, a.total, a.projected].map(hours);
+    const window = Number.isFinite(a.window) && a.window >= 0 && a.window <= 1 ? a.window : null;
+    const until = typeof a.until === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.until) ? a.until : null;
+    return grant && spent !== null && committed !== null && total > 0 && window !== null
+      ? { id, kind: a.kind, grant, spent, committed, total, window, until, projected } : null;
+  }
+  if (!id || a.kind !== 'turn-failed' || !AGENTS.includes(a.agent)) return null;
+  const t = a.topic;
+  return { id, kind: a.kind, agent: a.agent, project: text(a.project), session: text(a.session, 200), error: text(a.error, 1000) ?? 'unknown',
+    url: t ? topicUrl(t.chatId, t.topicId, t.messageId) : null };
+}
+
 const CHANGE_ID = /^[a-f0-9]{16,32}$/;
 const parseResult = (r) => (r && CHANGE_ID.test(r.id) ? { id: r.id, ok: r.ok === true, error: r.ok === true ? null : text(r.error, 200) ?? 'failed' } : null);
 
-/** A host's POST body -> {bootAt, seq, sessions, accounts, resources, config, configResults} or null. Unknown session entries are dropped, not fatal. */
+/** A host's POST body -> {bootAt, seq, sessions, accounts, forges, resources, config, configResults, alerts} or null. Unknown session entries are dropped, not fatal. */
 export function parseHostPush(body) {
   if (!body || body.schemaVersion !== SCHEMA_VERSION || !Array.isArray(body.sessions)) return null;
   if (!Number.isSafeInteger(body.bootAt) || body.bootAt < 1 || !Number.isSafeInteger(body.seq) || body.seq < 1) return null;
@@ -177,13 +212,12 @@ export function parseHostPush(body) {
   const sessions = [];
   for (const raw of body.sessions.slice(0, MAX_SESSIONS)) {
     const s = parseSession(raw);
-    // A session in an unknown state can be neither read nor acted on: hidden here, whatever bridge version pushed it.
-    if (s?.status === 'unknown') continue;
     if (s && !seen.has(`${s.agent}:${s.id}`)) { seen.add(`${s.agent}:${s.id}`); sessions.push(s); }
   }
   const accounts = (Array.isArray(body.accounts) ? body.accounts : []).slice(0, MAX_ACCOUNTS).map(parseAccount).filter(Boolean);
   return { bootAt: body.bootAt, seq: body.seq, sessions, accounts, forges: parseForges(body.forges), resources: parseResources(body.resources), config: parseConfigSummary(body.config),
-    configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean) };
+    configResults: (Array.isArray(body.configResults) ? body.configResults : []).slice(0, 20).map(parseResult).filter(Boolean),
+    alerts: (Array.isArray(body.alerts) ? body.alerts : []).slice(0, 20).map(parseAlert).filter(Boolean) };
 }
 
 // The config keys the dashboard may change: defined in the page-loadable shared layer.

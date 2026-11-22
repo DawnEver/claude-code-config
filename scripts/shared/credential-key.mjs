@@ -11,7 +11,7 @@
 import { createHash } from 'crypto';
 import { spawnSync } from 'child_process';
 
-export const SESSION_TASK = 'session';
+const SESSION_TASK = 'session';
 
 /** A sha256 prefix that names a key without revealing it. */
 export function keyFingerprint(key) {

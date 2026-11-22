@@ -18,7 +18,7 @@ const json = async (res) => {
 };
 
 /** provider -> async ({key, host, fetch}) -> {balances: [{currency, amount}]}. */
-export const READERS = {
+const READERS = {
   // https://api-docs.deepseek.com/api/get-user-balance
   async deepseek({ key, host, fetch }) {
     const body = await json(await fetch(`https://${host}/user/balance`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(TIMEOUT_MS) }));
@@ -31,7 +31,7 @@ export const READERS = {
  * A balance account's identity is its configured entry (provider + label), the one place the
  * account is declared: every host reading it, whatever key it holds, reports the same account.
  */
-export const balanceKey = (entry) => `api:${entry.provider}:${entry.label ?? 'default'}`;
+const balanceKey = (entry) => `api:${entry.provider}:${entry.label ?? 'default'}`;
 
 /** The account an API-key session on `provider` spends: its unlabelled entry (the launcher's key), else the first. */
 export function balanceKeyFor(provider, entries) {

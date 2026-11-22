@@ -21,10 +21,7 @@ test('telemetry-only registry keeps sessions and activity without any Telegram c
   at = 2000;
   await bridge.prompt('codex:local', 'do work');
   await bridge.notice('codex:local', 'working');
-  const [session] = bridge.dashboardSessions();
-  assert.equal(session.topic, null);
-  assert.equal(session.status, 'working');
-  assert.equal(Date.parse(session.lastActivityAt), at);
+  assert.deepEqual(bridge.dashboardSessions(), [], 'no Topic, no dashboard row');
 });
 
 test('standalone session cards clearly distinguish observation from remote control', async () => {
@@ -212,8 +209,8 @@ function fakeTelegram() {
 function fakeHost(agent, { interrupt = agent === 'codex' } = {}) {
   const h = new EventEmitter();
   h.agent = agent;
-  h.injected = []; h.answered = [];
-  h.inject = async (id, text, user) => { h.injected.push([id, text, user]); };
+  h.injected = []; h.answered = []; h.senderIds = [];
+  h.inject = async (id, text, user, opts) => { h.injected.push([id, text, user]); h.senderIds.push(opts?.userId); };
   h.status = () => 'idle';
   h.answerApproval = (ref, yes, id) => { h.answered.push([ref, yes, id]); return true; };
   h.questionAnswers = []; h.released = [];
@@ -227,7 +224,7 @@ const ALICE = 42, MALLORY = 666;
 const baseConfig = { projects: { proj: { chatId: -100 } }, fallbackChatId: -999, allowedUserIds: [ALICE],
   approvalsFromTelegram: false, idleCloseMinutes: 30, deleteClosedAfterHours: 24 };
 
-function make({ config = {}, topicCacheFile = null, alertGraceMs = 20 } = {}) {
+function make({ config = {}, topicCacheFile = null, alertGraceMs = 20, onAlert = null } = {}) {
   const telegram = fakeTelegram();
   const hosts = { codex: fakeHost('codex'), claude: fakeHost('claude') };
   const logs = [];
@@ -235,7 +232,7 @@ function make({ config = {}, topicCacheFile = null, alertGraceMs = 20 } = {}) {
   const bridge = new Bridge({
     telegram, adapters: Object.values(hosts), machine: 'host-a', config: { ...baseConfig, ...config }, topicCacheFile,
     resolveContext: (cwd, h) => ({ project: cwd === '/proj' ? 'proj' : 'other', branch: h.branch ?? 'main' }),
-    log: (m) => logs.push(m), now: () => t, alertGraceMs,
+    log: (m) => logs.push(m), now: () => t, alertGraceMs, onAlert,
   });
   return { bridge, telegram, hosts, logs, at: (v) => { t = v; } };
 }
@@ -424,6 +421,7 @@ for (const agent of HOSTS) {
       await until(() => r.telegram.reopened.length === 1);
       assert.deepEqual(r.telegram.reopened, [[-100, 100]], 'same Topic');
       assert.deepEqual(host.injected, [['x', 'wake up', 'u']]);
+      assert.deepEqual(host.senderIds, [String(ALICE)], 'the numeric sender id travels beside the username');
       assert.equal(cache()[`-100|${agent}:x`].closedAt, undefined, 'closedAt cleared');
       host.emit('prompt', { id: 'x', text: 'wake up' });   // the echo of the inject
       host.emit('final', { id: 'x', text: 'awake' });
@@ -546,6 +544,20 @@ for (const agent of HOSTS) {
     assert.equal(r.telegram.sent.at(-1).text, 'waiting for you');
   });
 
+  test(`${agent}: a failed turn is a plain line in the Topic and one alert for the dashboard bot's chat`, async () => {
+    const alerts = [];
+    const r = make({ onAlert: (a) => alerts.push(a) });
+    await live(r, agent, 'x');
+    r.hosts[agent].emit('final', { id: 'x', text: 'overloaded_error: 529', status: 'failed' });
+    await until(() => alerts.length === 1);
+    await new Promise((done) => setTimeout(done, 60));
+    const post = r.telegram.sent.at(-1);
+    assert.equal(post.text, '[failed] overloaded_error: 529');
+    assert.equal(r.telegram.sent.some((m) => m.alert), false, 'nobody is mentioned in the Topic');
+    assert.deepEqual(alerts, [{ kind: 'turn-failed', agent, project: 'proj', session: alerts[0].session, error: 'overloaded_error: 529',
+      topic: { chatId: post.chatId, topicId: post.threadId, messageId: post.message_id } }]);
+  });
+
   test(`${agent}: handled at the machine within the grace, nobody is mentioned`, async () => {
     const r = make({ alertGraceMs: 40 });
     await live(r, agent, 'x');
@@ -621,18 +633,17 @@ test('notices post as plain messages; only those asking for the human alert', as
   assert.deepEqual(r.telegram.sent.slice(1).map((m) => m.alert ?? null), [null, null, [ALICE]]);
 });
 
-test('progress lines collapse into one edited message; final is a new message', async () => {
+test('progress lines post nothing; final is a new message', async () => {
   const r = make();
   await live(r, 'codex', 't1');
+  const before = r.telegram.sent.length;
   r.at(10000); r.hosts.codex.emit('progress', { id: 't1', text: '$ ls' });
-  await until(() => r.telegram.sent.length === 2);
   r.at(20000); r.hosts.codex.emit('progress', { id: 't1', text: '$ npm test' });
-  await until(() => r.telegram.edits.length === 1);
-  assert.match(r.telegram.edits[0].text, /\$ ls\n\$ npm test/);
   r.hosts.codex.emit('final', { id: 't1', text: 'All green', status: 'completed' });
   r.hosts.codex.emit('final', { id: 't1', text: '', status: 'interrupted' });
-  await until(() => r.telegram.sent.length === 4);
-  assert.deepEqual(texts(r.telegram).slice(2), ['All green', '[interrupted] (turn interrupted, no message)']);
+  await until(() => r.telegram.sent.length === before + 2);
+  assert.equal(r.telegram.edits.length, 0);
+  assert.deepEqual(texts(r.telegram).slice(before), ['All green', '[interrupted] (turn interrupted, no message)']);
 });
 
 test('Telegram drift: a Topic closed by hand is reopened, a deleted one recreated, then the post is resent', async () => {
@@ -734,21 +745,29 @@ test('a dismissed (non-main) session never gets a Topic; one it already had is c
 });
 
 
-test('dashboardSessions lists every registered session with its status', async () => {
+test('dashboardSessions lists only sessions with a Topic, by their name', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'running' });
   await up(r, 'codex', 'quiet');
-  await live(r, 'codex', 'busy');
-  assert.equal(r.bridge.dashboardSessions().length, 2, 'a session without a Topic is still running here');
-  assert.ok(r.bridge.dashboardSessions().every((x) => x.status === 'working'));
+  await live(r, 'codex', 'busy', { name: 'G-integrator' });
+  await live(r, 'codex', 'unnamed');
+  const rows = Object.fromEntries(r.bridge.dashboardSessions().map((s) => [s.id, s]));
+  assert.deepEqual(Object.keys(rows).sort(), ['busy', 'unnamed'], 'a session without a Topic is not listed');
+  assert.ok(Object.values(rows).every((x) => x.status === 'working'));
+  assert.equal(rows.busy.name, 'G-integrator', 'the session name');
+  const unnamed = r.bridge.sessions.get('codex:unnamed');
+  assert.equal(rows.unnamed.name, unnamed.title, 'no name: the Topic title, never null');
+  assert.notEqual(rows.unnamed.name, 'proj');
+  await r.bridge.rename('codex:busy', 'G-renamed');
+  assert.equal(r.bridge.dashboardSessions().find((s) => s.id === 'busy').name, 'G-renamed', 'a rename shows');
 });
 
 test('a Claude session seat names its Topic and its dashboard entry', async () => {
   const r = make();
-  const s = await up(r, 'claude', 'seated', { seat: 'team-b' });
-  assert.match(s.title, / \| claude:team-b$/);
+  await live(r, 'claude', 'seated', { seat: 'team-b' });
+  assert.match(r.bridge.sessions.get('claude:seated').title, / \| claude:team-b$/);
   assert.equal(r.bridge.dashboardSessions()[0].seat, 'team-b');
-  await up(r, 'claude', 'base');
+  await live(r, 'claude', 'base');
   assert.equal(r.bridge.dashboardSessions()[1].seat, null);
 });
 
@@ -851,7 +870,7 @@ test('a question answered locally first withdraws its controls; an undeliverable
 test('waiting-input reads Needs input', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-input' });
-  await up(r, 'codex', 'q');
+  await live(r, 'codex', 'q');
   assert.equal(r.bridge.dashboardSessions()[0].status, 'needs_input');
 });
 
@@ -895,14 +914,15 @@ test('sweep: an idle-closed Topic of a still-registered session is deleted too; 
 test('fleet snapshot: native status, Topic only once confirmed, no cwd, ended sessions gone', async () => {
   const r = make();
   r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-approval' });
-  await up(r, 'codex', 'quiet');
+  await up(r, 'codex', 'lazy');
+  await live(r, 'codex', 'quiet');
   await live(r, 'claude', 'busy', { seat: 'team-a' });
   const snap = Object.fromEntries(r.bridge.dashboardSessions().map((s) => [s.id, s]));
+  assert.equal(snap.lazy, undefined, 'lazy Topic: not listed before activity');
   assert.equal(snap.quiet.status, 'needs_approval');
-  assert.equal(snap.quiet.topic, null, 'lazy Topic: none before activity');
   assert.equal(snap.busy.seat, 'team-a');
   assert.equal(snap.busy.status, 'unknown', 'a host without a snapshot is not guessed');
-  assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.telegram.sent[0].threadId, closed: false, lastPost: r.telegram.sent.at(-1).message_id });
+  assert.deepEqual(snap.busy.topic, { chatId: -100, topicId: r.bridge.sessions.get('claude:busy').topicId, closed: false, lastPost: r.telegram.sent.at(-1).message_id });
   assert.ok(!JSON.stringify(snap).includes('/proj'), 'no cwd');
   r.hosts.codex.statusSnapshot = () => null;
   assert.equal(r.bridge.dashboardSessions().find((s) => s.id === 'quiet').status, 'unknown', 'a missing snapshot does not break the export');
@@ -1018,4 +1038,26 @@ test('cardDetail: the pinned card names the account and its use, and the machine
   const balance = { key: 'api:deepseek:default', kind: 'balance', provider: 'deepseek', label: null, error: null, balances: [{ currency: 'CNY', amount: 457.2 }] };
   assert.deepEqual(cardDetail({ agent: 'claude', seat: 'w', provider: 'deepseek' }, { accounts: [...accounts, balance], balanceEntries: [{ provider: 'deepseek', label: null }] }),
     ['Account: deepseek · 457.20 CNY']);
+});
+
+test('the dashboard hears what a waiting session waits for', async () => {
+  const r = make();
+  r.hosts.codex.statusSnapshot = () => ({ state: 'waiting-approval', waiting: '$ rm -rf build' });
+  await live(r, 'codex', 'x');
+  const [s] = r.bridge.dashboardSessions();
+  assert.equal(s.status, 'needs_approval');
+  assert.equal(s.waiting, '$ rm -rf build');
+});
+
+// The daemon's change check compares bridgeConfigRevision() -- the SETTINGS -- against the
+// fingerprint it started with; ensure.mjs compares the same against runtime.json. Fingerprinting
+// the merged config (which also carries the allowlist from the channel declaration) at start read
+// as a change every minute: the live daemon handed itself over every minute (2026-11-17), losing
+// whatever it held in memory each time.
+test('the daemon fingerprints its config exactly as its change check and ensure.mjs do', () => {
+  const src = fs.readFileSync(new URL('./daemon.mjs', import.meta.url), 'utf8');
+  const fingerprints = [...src.matchAll(/bridgeConfigRevision\(([^)]*)\)/g)].map((m) => m[1].trim());
+  assert.ok(fingerprints.length >= 2, 'PLANTED CONTROL: the scan sees the start fingerprint and the check');
+  assert.deepEqual(fingerprints.filter(Boolean), [], `every fingerprint is bridgeConfigRevision() of the settings, never of a merged config: ${fingerprints.join(' | ')}`);
+  assert.match(src, /configRevision: startConfig/, 'runtime.json carries the same fingerprint the check compares');
 });

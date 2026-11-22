@@ -74,8 +74,7 @@ if (sync.pulled > 0 || !isLinkCheckFresh()) {
 // Ensure the bridge at this managed Codex entry point; plugin hooks are separate.
 try {
   const { ensureDaemon } = await import('../bridge/ensure.mjs');
-  if (await ensureDaemon() === 'different-home')
-    console.error('[harness] The machine collector belongs to another CODEX_HOME; accounts were not mixed.');
+  await ensureDaemon();
 } catch {
   // The bridge must never block a launch.
 }
@@ -98,7 +97,7 @@ if (error) {
 console.log(provider ? `[codex] Using provider: ${provider}` : '[codex] Using default Codex');
 
 // Codex runs through ai-lab's session launcher, which mints or inherits LAB_SESSION (session-launcher.mjs).
-const session = sessionSpawn('codex', args);
+const session = sessionSpawn('codex', args, { log: (m) => console.error(`[codex] ${m}`) });
 if (session.error) {
   console.error(`[codex] ${session.error}`);
   process.exit(1);

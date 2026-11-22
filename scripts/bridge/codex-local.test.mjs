@@ -35,13 +35,13 @@ test('new legacy and paginated messages mirror once; partial UTF-8 lines wait fo
   await f.observer.refresh();
   f.append(row('event_msg', { type: 'task_started', turn_id: 'T' }));
   f.append(row('event_msg', { type: 'item_completed', turn_id: 'T', item: { type: 'UserMessage', id: 'u', content: [{ type: 'text', text: 'hello' }] } }));
-  f.append(row('event_msg', { type: 'item_completed', turn_id: 'T', item: { type: 'AgentMessage', id: 'a', content: [{ type: 'Text', text: '你好' }], phase: 'commentary' } }));
-  f.append(row('event_msg', { type: 'agent_message', message: '你好' }));
+  f.append(row('event_msg', { type: 'item_completed', turn_id: 'T', item: { type: 'AgentMessage', id: 'a', content: [{ type: 'Text', text: '\u4f60\u597d' }], phase: 'commentary' } }));
+  f.append(row('event_msg', { type: 'agent_message', message: '\u4f60\u597d' }));
   const next = Buffer.from(row('response_item', { type: 'message', id: 'b', role: 'assistant', phase: 'final_answer', content: [{ type: 'output_text', text: 'world' }] }));
   f.append(next.subarray(0, next.length - 2));
   await f.observer.refresh();
   assert.deepEqual(f.events.filter(e => e.kind === 'prompt').map(e => e.text), ['hello']);
-  assert.deepEqual(f.events.filter(e => e.kind === 'message').map(e => e.text), ['你好']);
+  assert.deepEqual(f.events.filter(e => e.kind === 'message').map(e => e.text), ['\u4f60\u597d']);
   assert.deepEqual(f.events.filter(e => e.kind === 'final').map(e => e.text), []);
   f.append(next.subarray(next.length - 2));
   await f.observer.refresh();
@@ -93,14 +93,14 @@ test('shared takeover is silent and consumes skipped bytes instead of replaying 
 test('partial multibyte text is decoded only after its complete JSON line arrives', async (t) => {
   const f = fixture(); t.after(() => fs.rmSync(f.root, { recursive: true, force: true }));
   await f.observer.refresh();
-  const bytes = Buffer.from(row('event_msg', { type: 'user_message', message: '你好' }));
-  const split = bytes.indexOf(Buffer.from('你')) + 1;
+  const bytes = Buffer.from(row('event_msg', { type: 'user_message', message: '\u4f60\u597d' }));
+  const split = bytes.indexOf(Buffer.from('\u4f60')) + 1;
   f.append(bytes.subarray(0, split));
   await f.observer.refresh();
   assert.equal(f.events.length, 0);
   f.append(bytes.subarray(split));
   await f.observer.refresh();
-  assert.deepEqual(f.events.filter(e => e.kind === 'prompt').map(e => e.text), ['你好']);
+  assert.deepEqual(f.events.filter(e => e.kind === 'prompt').map(e => e.text), ['\u4f60\u597d']);
 });
 
 test('reasoning, tool output and user-role context records never leave the observer', async (t) => {

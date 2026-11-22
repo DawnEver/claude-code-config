@@ -2,16 +2,20 @@
 // scripts/dashboard/deploy.mjs — operate the dashboard Worker (docs/dashboard.md).
 // Dashboard membership lives in one place, the shared `bridge.dashboard` block of
 // claude_env_settings.json: {url, botId, hosts: {machine: sha256}}. Everything the Worker
-// knows is derived from it here; the only secrets (host tokens, the dashboard bot token) never
-// leave the machine that owns them.
+// knows is derived from it here. A host token never leaves the machine that owns it (the Worker
+// keeps only its hash); the dashboard bot token goes only to the Worker, as a secret, to send alerts.
 //
 //   node scripts/dashboard/deploy.mjs host-token   join this host: mint its push token into this machine's
 //                                                      local settings and its hash into the shared hosts
 //                                                      map, then deploy (the Worker learns hosts only then)
-//   node scripts/dashboard/deploy.mjs deploy       upload DASHBOARD_CONFIG and deploy to the url's domain
+//   node scripts/dashboard/deploy.mjs deploy       apply the usage store's pending migrations, upload DASHBOARD_CONFIG and DASHBOARD_BOT_TOKEN (the Worker
+//                                                      sends alerts as the dashboard bot) and deploy to the url's domain
 //                                                      (code alone also deploys from CI on push)
 //   node scripts/dashboard/deploy.mjs usage-db     create the usage store (D1 `agents-usage`) if missing, bind it in
 //                                                      wrangler.jsonc, apply its migrations (docs/usage.md)
+//   node scripts/dashboard/deploy.mjs test-alert   send a `test` alert as the dashboard bot to every allowed user,
+//                                                      through the Worker's own sender (notify.mjs), with this
+//                                                      machine's bot token: does the alert chat reach you?
 //   node scripts/dashboard/deploy.mjs set-menu     point the dashboard bot's menu button at the url and
 //                                                      read it back; the bot token is this machine's local
 //                                                      bridge.dashboard.botToken, never synced or printed
@@ -22,23 +26,29 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
+import { prepareSpawn } from '../runtime/win-spawn.mjs';
 import { readMachineName } from '../shared/machine.mjs';
 import { readMergedEnvSettings, LOCAL_ENV_SETTINGS_PATH } from '../shared/config.mjs';
-import { writePrivateFile } from '../bridge/context.mjs';
+import { writePrivateFile, bridgeAllowlist } from '../bridge/context.mjs';
 import { ENV_SETTINGS_PATH } from '../shared/config.mjs';
 import { newHostToken } from './auth.mjs';
 import { parseDashboardConfig } from './api.mjs';
+import { telegramNotifier } from './notify.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** The Worker's DASHBOARD_CONFIG from the merged bridge config; throws on anything it cannot serve. */
-export function dashboardConfigFrom(bridge) {
+/**
+ * The Worker's DASHBOARD_CONFIG from the merged bridge config and the bridge's derived allowlist
+ * (context.mjs bridgeAllowlist: the machine's channel declaration); throws on anything it cannot serve.
+ */
+export function dashboardConfigFrom(bridge, allowlist) {
   const g = bridge.dashboard ?? {};
   const url = new URL(g.url ?? 'missing:');
   if (url.protocol !== 'https:' || url.pathname !== '/') throw new Error('bridge.dashboard.url must be an https origin');
-  const config = { botId: g.botId, allowedUserIds: bridge.allowedUserIds ?? [], hosts: g.hosts ?? {} };
+  if (!allowlist.allowedUserIds.length) throw new Error(`no allowed user, nobody could open the dashboard: ${allowlist.why}`);
+  const config = { botId: g.botId, allowedUserIds: allowlist.allowedUserIds, hosts: g.hosts ?? {},
+    ...(g.offlineAlertSeconds ? { offlineAlertSeconds: g.offlineAlertSeconds } : {}), ...(g.offlineAlertExclude ? { offlineAlertExclude: g.offlineAlertExclude } : {}), ...(g.alertLang ? { alertLang: g.alertLang } : {}) };
   parseDashboardConfig(config);
-  if (!config.allowedUserIds.length) throw new Error('bridge.allowedUserIds is empty: nobody could open the dashboard');
   return { domain: url.hostname, config };
 }
 
@@ -59,12 +69,13 @@ async function hostToken() {
   console.log('the daemon picks the new token up within a minute');
 }
 
-export const USAGE_DB = 'agents-usage';
+const USAGE_DB = 'agents-usage';
 const WRANGLER = path.join(HERE, 'wrangler.jsonc');
 
+// No `shell: true`: it concatenates args unescaped (Node DEP0190). prepareSpawn quotes for npx.cmd.
 function wrangler(args, opts = {}) {
-  return execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['-y', 'wrangler@4', ...args],
-    { encoding: 'utf8', shell: process.platform === 'win32', ...opts });
+  const run = prepareSpawn('npx', ['-y', 'wrangler@4', ...args]);
+  return execFileSync(run.command, run.args, { encoding: 'utf8', ...run.options, ...opts });
 }
 
 /** wrangler.jsonc with the usage store bound to `id`: the binding's one definition. */
@@ -86,13 +97,32 @@ function usageDb() {
   console.log(`${USAGE_DB} (${db.uuid}) bound in wrangler.jsonc and migrated; deploy to serve it`);
 }
 
+/**
+ * The wrangler calls of one deploy, in order: the usage store's pending migrations first, as the CI
+ * deploy does, so code that reads a new table never goes live before the table exists (a hand deploy
+ * once skipped them and the Usage tab answered 500 for every viewer). Applying none is a no-op.
+ */
+export function deployCalls({ domain, secrets, tag }) {
+  return [
+    ['d1', 'migrations', 'apply', USAGE_DB, '--remote', '--config', WRANGLER],
+    ['deploy', '--config', WRANGLER, '--domain', domain, '--secrets-file', secrets, '--tag', tag],
+  ];
+}
+
 function deploy() {
-  const { domain, config } = dashboardConfigFrom(readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {});
+  const bridge = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {};
+  const { domain, config } = dashboardConfigFrom(bridge, bridgeAllowlist());
+  // The Worker sends every alert as the dashboard bot. A machine holding its token uploads it (a
+  // rotated token reaches the Worker this way); any other deploys without it and the Worker keeps
+  // the one uploaded before, since a deploy leaves secrets it does not name in place.
+  const token = localBotToken();
+  if (token) menuRequest(bridge.dashboard, token);   // throws unless the token is the shared botId's
+  else console.warn('no local bridge.dashboard.botToken: the Worker keeps its DASHBOARD_BOT_TOKEN (alerts are logged, not sent, until one machine with the token deploys once)');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-deploy-'));
   const secrets = path.join(dir, 'secrets.json');
   try {
-    writePrivateFile(secrets, JSON.stringify({ DASHBOARD_CONFIG: JSON.stringify(config) }));
-    wrangler(['deploy', '--config', WRANGLER, '--domain', domain, '--secrets-file', secrets, '--tag', commitTag()], { stdio: 'inherit' });
+    writePrivateFile(secrets, JSON.stringify({ DASHBOARD_CONFIG: JSON.stringify(config), ...(token ? { DASHBOARD_BOT_TOKEN: token } : {}) }));
+    for (const call of deployCalls({ domain, secrets, tag: commitTag() })) wrangler(call, { stdio: 'inherit' });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log(`deployed to https://${domain}/ (hosts: ${Object.keys(config.hosts).join(', ') || 'none'})`);
 }
@@ -101,6 +131,19 @@ function deploy() {
 function commitTag() {
   const git = (...a) => execFileSync('git', ['-C', HERE, ...a], { encoding: 'utf8' }).trim();
   try { return `${git('rev-parse', '--short', 'HEAD')}${git('status', '--porcelain', '--', '.') ? '+' : ''}`; } catch { return ''; }
+}
+
+/** One `test` alert through notify.mjs, the code the Worker sends every alert with. */
+async function testAlert() {
+  const bridge = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {};
+  const { config } = dashboardConfigFrom(bridge, bridgeAllowlist());
+  const token = localBotToken();
+  menuRequest(bridge.dashboard, token);   // throws without this machine's token for botId
+  const { alertLang } = parseDashboardConfig(config);
+  const reached = await telegramNotifier({ token, chatIds: config.allowedUserIds, lang: alertLang, log: (m) => console.error(m) })
+    ({ kind: 'test', from: readMachineName() });
+  console.log(`test alert reached ${reached.length} of ${config.allowedUserIds.length} allowed users`);
+  if (reached.length < config.allowedUserIds.length) process.exitCode = 1;
 }
 
 /** The dashboard bot token: machine-local layer only, like every other secret here. */
@@ -137,8 +180,9 @@ export async function main([cmd] = process.argv.slice(2)) {
   if (cmd === 'host-token') return hostToken();
   if (cmd === 'deploy') return deploy();
   if (cmd === 'set-menu') return setMenu();
+  if (cmd === 'test-alert') return testAlert();
   if (cmd === 'usage-db') return usageDb();
-  throw new Error('usage: deploy.mjs host-token | deploy | usage-db | set-menu');
+  throw new Error('usage: deploy.mjs host-token | deploy | usage-db | set-menu | test-alert');
 }
 
 // exitCode, not exit(): exiting with fetch sockets still open trips a libuv assertion on Windows.

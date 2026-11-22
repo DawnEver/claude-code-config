@@ -32,17 +32,13 @@ const fakeHome = () => {
 test('parseSetupArgs: reads the flags setup understands', () => {
   assert.deepEqual(parseSetupArgs(['--replace']), {
     replace: true, initSyncDir: false, syncDir: undefined, syncDirFlagPresent: false,
-    machine: undefined, machineFlagPresent: false, aiLabPython: undefined,
+    machine: undefined, machineFlagPresent: false,
   });
   assert.deepEqual(parseSetupArgs(['--sync-dir', '/x', '--init-sync-dir']), {
     replace: false, initSyncDir: true, syncDir: '/x', syncDirFlagPresent: true,
-    machine: undefined, machineFlagPresent: false, aiLabPython: undefined,
+    machine: undefined, machineFlagPresent: false,
   });
   assert.equal(parseSetupArgs(['-r']).replace, true);
-});
-
-test('parseSetupArgs: --ai-lab-python <PATH>', () => {
-  assert.equal(parseSetupArgs(['--ai-lab-python', '/venv/bin/python']).aiLabPython, '/venv/bin/python');
 });
 
 test('parseSetupArgs: --machine <NAME>', () => {
@@ -273,6 +269,21 @@ test('linkEntry: a plain file with DIFFERENT content is still protected', () => 
   assert.equal(fs.readFileSync(dest, 'utf8'), '{"edited-live":true}');
 });
 
+// The backup path of the cross-volume --replace test above, reached on one volume, so every
+// host -- not only a two-volume Windows runner -- checks that a kept copy holding no secret is
+// the live edit byte for byte: redaction may rewrite a secret, never the formatting.
+test('linkEntry: --replace keeps a secret-free drifted file byte for byte', () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(tmp('dest'), 'config.json');
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(src, '{"a":1}');
+  fs.writeFileSync(dest, '{"edited-live":true}');
+
+  const r = linkEntry(src, dest, HARDLINK, true);
+  assert.equal(r.kind, 'hardlink');
+  assert.equal(fs.readFileSync(`${dest}.setup-bak`, 'utf8'), '{"edited-live":true}');
+});
+
 // ── the per-machine claude-hud config ────────────────────────────────────────
 
 test('ensureClaudeHudConfig: materialises the real config from the tracked template', async () => {
@@ -297,6 +308,23 @@ test('ensureClaudeHudConfig: never clobbers the machine-tuned config', async () 
   assert.equal(ensureClaudeHudConfig(repo), false);
   assert.equal(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'),
     '{"lineLayout":"expanded","maxWidth":120}');
+});
+
+test('ensureClaudeHudConfig: repairs a 256-color index written as a string, in place', async () => {
+  const { ensureClaudeHudConfig } = await import('./setup.js');
+  const repo = tmp('repo');
+  const dir = path.join(repo, 'claude_plugins', 'claude-hud');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'config.template.json'), '{}');
+  const real = path.join(dir, 'config.json');
+  fs.writeFileSync(real, JSON.stringify({ maxWidth: 120, colors: { custom: '208', label: 'dim', git: '#ff8800' } }));
+  const linked = path.join(repo, 'linked.json');
+  fs.linkSync(real, linked);   // the ~/.claude side of the hard link
+
+  assert.equal(ensureClaudeHudConfig(repo), true);
+  const fixed = JSON.parse(fs.readFileSync(linked, 'utf8'));
+  assert.deepEqual(fixed, { maxWidth: 120, colors: { custom: 208, label: 'dim', git: '#ff8800' } });
+  assert.equal(ensureClaudeHudConfig(repo), false);
 });
 
 test('a seat dir links what Claude Code reads from its config dir, and the base dir plugins', () => {

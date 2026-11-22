@@ -18,6 +18,44 @@ import { WsStreamClient } from './ws-stream.mjs';
 import { JsonRpcPeer } from './jsonrpc.mjs';
 import { BRIDGE_DEFAULTS } from './context.mjs';
 import { isProvider } from '../shared/dashboard-schema.mjs';
+import { ActivityBoard } from './activity-board.mjs';
+import { codexHomes, codexHomeKey, codexHomeLabel } from '../shared/codex-home.mjs';
+
+const COMMAND_END = { completed: 'completed', failed: 'failed', declined: 'stopped' };
+// A command run by PowerShell (a path to it, quoted or not, or the bare name), and the script it runs.
+const POWERSHELL = /^\s*(?:"[^"]*[\\/])?(?:[^\s"]*[\\/])?(?:powershell|pwsh)(?:\.exe)?"?(?:\s|$)/i;
+const POWERSHELL_BODY = /^\s*(?:"[^"]*"|\S+)\s+(?:-\w+\s+)*-(?:Command|c)\s+(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(.+))$/i;
+const AGENT_RUNNING = ['pendingInit', 'running'];
+const AGENT_END = { completed: 'completed', errored: 'failed', interrupted: 'stopped', shutdown: 'stopped' };
+
+/**
+ * A thread item as tasks (activity-board.mjs): a command runs from its `inProgress` item to its last;
+ * each subagent a collab call names (spawn, wait, close, ...) by its thread, as `agentsStates`
+ * says. A subagent's label is the prompt it was spawned with.
+ */
+export function trackItem(board, item, at) {
+  if (item?.type === 'commandExecution' && typeof item.id === 'string') {
+    // Its kind by what runs it: a PowerShell (as Codex runs a command on Windows), else a shell. A
+    // unified-exec session is a terminal kept open: it runs in the background of the turn.
+    const kind = POWERSHELL.test(item.command ?? '') ? 'powershell' : 'shell';
+    // A PowerShell is labelled by the script it runs, not by the path to powershell.exe.
+    const body = kind === 'powershell' ? POWERSHELL_BODY.exec(item.command) : null;
+    board.start(item.id, { kind, label: body ? body[1] ?? body[2] ?? body[3] : item.command, background: item.source === 'unifiedExecStartup',
+      at: item.status === 'inProgress' ? at : at - (item.durationMs ?? 0) });
+    if (COMMAND_END[item.status]) board.end(item.id, { status: COMMAND_END[item.status], at });
+  }
+  if (item?.type === 'collabAgentToolCall') {
+    for (const [thread, state] of Object.entries(item.agentsStates ?? {})) {
+      // A subagent is not the turn's: it runs on past it, until Codex says it stopped (here, or its thread's status: reconcileAgents).
+      board.start(thread, { kind: 'agent', label: item.tool === 'spawnAgent' ? item.prompt ?? '' : '', at, background: true });
+      if (!AGENT_RUNNING.includes(state?.status) && AGENT_END[state?.status]) board.end(thread, { status: AGENT_END[state.status], at });
+    }
+  }
+}
+
+/** A subagent thread this young may not have started its first turn: idle then is not stopped. */
+const AGENT_GRACE_MS = 60000;
+const AGENT_STOPPED = new Set(['idle', 'systemError', 'notLoaded']);
 
 const QUOTA_REFRESH_MS = 5 * 60000;
 // Codex keeps a thread in memory ("loaded") long after its last client left (an idle one is
@@ -31,7 +69,7 @@ const dropNulls = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => 
 const IS_WIN = process.platform === 'win32';
 
 /** Approval requests whose response is `{ decision: 'accept' | 'decline' }`. */
-export const ANSWERABLE_APPROVALS = new Set([
+const ANSWERABLE_APPROVALS = new Set([
   'item/commandExecution/requestApproval',
   'item/fileChange/requestApproval',
 ]);
@@ -44,11 +82,11 @@ function spawnCodex(args, opts = {}) {
     : spawn('codex', args, opts);
 }
 
-export function probeDaemon() {
+export function probeDaemon(env = process.env) {
   return new Promise((resolve) => {
     const cmd = IS_WIN ? 'codex app-server daemon version' : 'codex';
     const args = IS_WIN ? [] : ['app-server', 'daemon', 'version'];
-    execFile(cmd, args, { shell: IS_WIN, windowsHide: true, timeout: 20000 }, (err, stdout) => {
+    execFile(cmd, args, { shell: IS_WIN, windowsHide: true, timeout: 20000, env }, (err, stdout) => {
       if (err) return resolve(null);
       try {
         const v = JSON.parse(stdout);
@@ -58,9 +96,9 @@ export function probeDaemon() {
   });
 }
 
-/** Default connector: proxy child + WebSocket framing. Returns a message transport. */
-export function connectProxy() {
-  const child = spawnCodex(['app-server', 'proxy'], { stdio: ['pipe', 'pipe', 'pipe'] });
+/** Default connector: proxy child + WebSocket framing, to `env`'s CODEX_HOME's app-server. Returns a message transport. */
+function connectProxy(env = process.env) {
+  const child = spawnCodex(['app-server', 'proxy'], { stdio: ['pipe', 'pipe', 'pipe'], env });
   const ws = new WsStreamClient(child.stdout, child.stdin);
   child.on('exit', () => ws.emit('close'));
   return {
@@ -125,7 +163,7 @@ export function backlogSince(turns = [], sinceMs) {
 }
 
 /** A SessionSource's kind: the string itself, an object source's key, `unknown` when absent. */
-export function sourceKind(src) {
+function sourceKind(src) {
   if (typeof src === 'string') return src;
   if (src && typeof src === 'object') return Object.keys(src)[0] ?? 'unknown';
   return 'unknown';
@@ -141,8 +179,12 @@ export function isMainSession(thread, sources = BRIDGE_DEFAULTS.codexSources) {
 }
 
 export class CodexAdapter extends EventEmitter {
-  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000, sources = BRIDGE_DEFAULTS.codexSources, localObserver = null } = {}) {
+  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000, sources = BRIDGE_DEFAULTS.codexSources, localObserver = null,
+    home = null, refPrefix = '' } = {}) {
     super();
+    // `home`: the CODEX_HOME whose shared app-server this attaches to (null: the inherited one).
+    this.env = home ? { ...process.env, CODEX_HOME: home } : process.env;
+    this.refPrefix = refPrefix;   // keeps approval/question refs unique across adapters (CodexHomes)
     this.sources = sources;
     this.agent = 'codex';
     this.now = now;
@@ -170,9 +212,9 @@ export class CodexAdapter extends EventEmitter {
   /** Attach to the daemon. Resolves false (no throw) when it is not running. */
   async start() {
     if (this.rpc) return true;
-    if (!(await this.probe())) return false;
+    if (!(await this.probe(this.env))) return false;
     const connection = ++this.connection;
-    const t = this.connect();
+    const t = this.connect(this.env);
     const rpc = new JsonRpcPeer((s) => t.send(s), {
       onRequest: (m, p, id) => { if (this.rpc === rpc) return this.#onServerRequest(m, p, id); },
       onNotification: (m, p) => { if (this.rpc === rpc) this.#onNotification(m, p); },
@@ -232,6 +274,8 @@ export class CodexAdapter extends EventEmitter {
     } while (cursor);
     this.loadedIds = ids;
     for (const id of [...this.threads.keys()]) if (!ids.has(id)) this.#drop(id);
+    await this.#reconcileAgents(rpc);
+    if (this.rpc !== rpc) return;
     for (const id of [...this.released.keys()]) if (!ids.has(id)) this.released.delete(id);
     const now = this.now();
     for (const [id, th] of [...this.threads]) if (th.idleSince !== null && now - th.idleSince >= IDLE_RELEASE_MS) this.#release(id, th.updatedAt);
@@ -243,6 +287,23 @@ export class CodexAdapter extends EventEmitter {
         if (!read || !(read.status?.type === 'active' || (read.updatedAt ?? 0) > this.released.get(id))) continue;
       }
       await this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
+    }
+  }
+
+  /**
+   * Each running subagent asked of Codex itself: a spawned agent's end reaches its parent only
+   * when a later collab call reports it, which may never come. Its thread idle (past its first
+   * turn), broken or unloaded: it stopped.
+   */
+  async #reconcileAgents(rpc) {
+    const now = this.now();
+    for (const th of [...this.threads.values()]) {
+      for (const t of th.tasks.list(now)) {
+        if (t.kind !== 'agent' || now - t.startedAt < AGENT_GRACE_MS) continue;
+        const read = (await rpc.request('thread/read', { threadId: t.id }).catch(() => null))?.thread;
+        if (this.rpc !== rpc) return;
+        if (read && AGENT_STOPPED.has(read.status?.type)) th.tasks.end(t.id, { status: 'completed', at: now });
+      }
     }
   }
 
@@ -303,6 +364,7 @@ export class CodexAdapter extends EventEmitter {
       activeTurnId: running?.id ?? null,
       agentMessages: new Map((running?.items ?? []).filter((item) => item.type === 'agentMessage').map((item) => [item.id, item])),
       deliveredMessages: new Set(),
+      tasks: this.threads.get(threadId)?.tasks ?? new ActivityBoard(),
       idleSince: th.status?.type === 'idle' ? this.now() : null,
       updatedAt: th.updatedAt ?? 0,
     };
@@ -359,6 +421,7 @@ export class CodexAdapter extends EventEmitter {
         }
         break;
       case 'item/started':
+        if (th) trackItem(th.tasks, p.item, this.now());
         if (th && p.item?.type === 'agentMessage' && (!th.activeTurnId || !p.turnId || th.activeTurnId === p.turnId))
           th.agentMessages.set(p.item.id, { ...th.agentMessages.get(p.item.id), ...p.item });
         break;
@@ -370,6 +433,7 @@ export class CodexAdapter extends EventEmitter {
         break;
       case 'item/completed': {
         const item = p.item ?? {};
+        if (th) trackItem(th.tasks, item, this.now());
         if (item.type === 'userMessage') {
           const text = promptText(item);
           if (text) this.emit('prompt', { id: p.threadId, turnId: p.turnId ?? null, text });
@@ -396,6 +460,9 @@ export class CodexAdapter extends EventEmitter {
         const items = [...snapshot, ...[...(th?.agentMessages.values() ?? [])].filter((item) => !ids.has(item.id))];
         const text = finalText(items.filter((item) => !th?.deliveredMessages.has(item.id)));
         if (th) { th.activeTurnId = null; th.agentMessages.clear(); th.deliveredMessages.clear(); }
+        // The turn ended, however (completed, interrupted, failed): its items as it reports them, then
+        // every foreground command it ran has stopped, its own end seen or not.
+        if (th) { for (const item of p.turn?.items ?? []) trackItem(th.tasks, item, this.now()); th.tasks.settleForeground(this.now()); }
         this.emit('final', { id: p.threadId, turnId: p.turn?.id ?? null, status, text });
         if (th) this.emit('status', { id: p.threadId });
         break;
@@ -442,11 +509,11 @@ export class CodexAdapter extends EventEmitter {
     if (!APPROVAL_RE.test(method)) return undefined;   // leave for the TUI (first answer wins)
     const threadId = p.threadId ?? p.conversationId;
     if (!this.threads.has(threadId)) return undefined;
-    const key = `c${this.connection}:${rpcId}`;
+    const key = `${this.refPrefix}c${this.connection}:${rpcId}`;
     if (this.approvals.has(key)) return undefined;
-    this.approvals.set(key, { rpcId, method, threadId: p.threadId ?? p.conversationId });
     const summary = p.command ? `$ ${oneLine(Array.isArray(p.command) ? p.command.join(' ') : p.command, 300)}`
       : p.reason ? oneLine(p.reason, 300) : method;
+    this.approvals.set(key, { rpcId, method, threadId: p.threadId ?? p.conversationId, summary });
     this.emit('approval', {
       id: p.threadId ?? p.conversationId, ref: key, summary,
       answerable: ANSWERABLE_APPROVALS.has(method),
@@ -456,7 +523,7 @@ export class CodexAdapter extends EventEmitter {
   }
 
   #onQuestion(p, rpcId) {
-    const key = `c${this.connection}:${rpcId}`;
+    const key = `${this.refPrefix}c${this.connection}:${rpcId}`;
     if (!this.threads.has(p.threadId) || this.questions.has(key)) return undefined;
     const questions = (Array.isArray(p.questions) ? p.questions : []).map((q) => ({
       id: String(q?.id ?? ''), header: q?.header ?? '', question: String(q?.question ?? ''),
@@ -465,7 +532,7 @@ export class CodexAdapter extends EventEmitter {
     }));
     // A secret never travels through Telegram: the whole request is answered locally.
     const answerable = questions.length > 0 && !questions.some((q) => q.isSecret);
-    this.questions.set(key, { rpcId, threadId: p.threadId, answerable });
+    this.questions.set(key, { rpcId, threadId: p.threadId, answerable, text: questions.map((q) => q.question).filter(Boolean).join(' / ') });
     this.emit('question', { id: p.threadId, ref: key, answerable, questions });
     this.emit('status', { id: p.threadId });
     return undefined;   // answered later via answerQuestion, or in the TUI (first answer wins)
@@ -531,6 +598,16 @@ export class CodexAdapter extends EventEmitter {
     const th = this.threads.get(threadId);
     if (!th && this.localObserver?.has(threadId)) return this.localObserver.statusSnapshot(threadId);
     if (!this.rpc || !th) return { state: 'disconnected' };
+    const tasks = th.tasks.list(this.now());
+    const st = this.#state(threadId, th);
+    // What it waits for: the pending approval's command, or the question.
+    const pending = st.state === 'waiting-approval' ? this.approvals : st.state === 'waiting-input' ? this.questions : null;
+    const waiting = pending && [...pending.values()].find((x) => x.threadId === threadId);
+    const text = waiting?.summary ?? waiting?.text;
+    return { ...st, ...(text ? { waiting: text } : {}), ...(tasks.length ? { tasks } : {}) };
+  }
+
+  #state(threadId, th) {
     const st = th.status;
     if (st?.type === 'active') {
       const flags = st.activeFlags ?? [];
@@ -542,4 +619,70 @@ export class CodexAdapter extends EventEmitter {
     const asking = [...this.questions.values()].some((q) => q.threadId === threadId);
     return { state: waiting ? 'waiting-approval' : asking ? 'waiting-input' : th.activeTurnId ? 'running' : 'idle' };
   }
+}
+
+// Every event an adapter emits that the daemon's Bridge wires (daemon.mjs #wire).
+const CODEX_EVENTS = ['up', 'down', 'dismiss', 'status', 'superseded', 'name', 'prompt', 'message', 'progress', 'final', 'notice',
+  'approval', 'approval-resolved', 'question', 'question-resolved', 'warn'];
+
+/**
+ * The machine's Codex, one host to the Bridge: a CodexAdapter per Codex home (codex-home.mjs
+ * codexHomes — the base home and each home a launch recorded), each attached to its own home's
+ * shared app-server and so its own account. A session comes up carrying its home's label as its
+ * `seat` (null for the base home), as a Claude session carries its seat; calls route to the
+ * adapter that owns the thread, an answer to the one whose ref prefix it carries.
+ */
+export class CodexHomes extends EventEmitter {
+  constructor({ homes = () => codexHomes(), label = (h) => codexHomeLabel(h), create = (home, refPrefix) => new CodexAdapter({ home, refPrefix }) } = {}) {
+    super();
+    this.agent = 'codex';
+    Object.assign(this, { homes, label, create });
+    this.members = new Map();   // home key -> {home, label, adapter}
+    this.made = 0;
+  }
+
+  /** Follow the current list of homes: attach each new one, drop one no longer listed. */
+  sync() {
+    const now = new Map(this.homes().map((h) => [codexHomeKey(h), h]));
+    for (const [key, m] of this.members) if (!now.has(key)) { m.adapter.stop(); this.members.delete(key); }
+    for (const [key, home] of now) {
+      if (this.members.has(key)) continue;
+      const label = this.label(home);
+      const adapter = this.create(home, `h${this.made++}.`);
+      for (const kind of CODEX_EVENTS) adapter.on(kind, (e) => this.emit(kind, kind === 'up' && label ? { ...e, seat: label } : e));
+      this.members.set(key, { home, label, adapter });
+    }
+    return [...this.members.values()];
+  }
+
+  async #each(fn) {
+    for (const r of await Promise.allSettled([...this.members.values()].map(async (m) => {
+      try { await fn(m.adapter); } catch (e) { throw new Error(`${m.label ?? 'base'} home: ${e.message}`); }
+    }))) if (r.status === 'rejected') this.emit('warn', `codex ${r.reason.message}`);
+  }
+
+  async start() { this.sync(); await this.#each((a) => a.start()); }
+  async refresh() { await this.#each((a) => a.refresh()); }
+  stop() { for (const m of this.members.values()) m.adapter.stop(); }
+
+  /** Each home's label, quota and account, for the dashboard's accounts (quota.mjs AccountReader). */
+  accounts() { return [...this.members.values()].map(({ home, label, adapter }) => ({ home, label, quota: adapter.quota, account: adapter.account })); }
+
+  #owner(threadId) {
+    const all = [...this.members.values()].map((m) => m.adapter);
+    return all.find((a) => a.threads.has(threadId)) ?? all.find((a) => a.localObserver?.has(threadId)) ?? all[0];
+  }
+
+  #byRef(ref) { return [...this.members.values()].map((m) => m.adapter).find((a) => String(ref).startsWith(a.refPrefix)); }
+
+  answerQuestion(ref, answers) { return this.#byRef(ref)?.answerQuestion(ref, answers) ?? false; }
+  answerApproval(ref, accept) { return this.#byRef(ref)?.answerApproval(ref, accept) ?? false; }
+  async inject(threadId, ...rest) {
+    const a = this.#owner(threadId);
+    if (!a) throw new Error('codex app-server not connected');
+    return a.inject(threadId, ...rest);
+  }
+  async interrupt(threadId) { return (await this.#owner(threadId)?.interrupt(threadId)) ?? false; }
+  status(threadId) { return this.#owner(threadId)?.status(threadId) ?? 'not loaded'; }
+  statusSnapshot(threadId) { return this.#owner(threadId)?.statusSnapshot(threadId) ?? { state: 'disconnected' }; }
 }

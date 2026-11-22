@@ -13,43 +13,24 @@
 // Fail-open and silent: hook stdout can inject context, so nothing is printed.
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'node:url';
 import { isMain } from '../shared/is-main.mjs';
-import { resolveCodexHome } from '../shared/codex-home.mjs';
-import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE, bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
+import { resolveCodexHome, recordCodexHome } from '../shared/codex-home.mjs';
+import { bridgeSourceRevision, bridgeConfigRevision, readBridgeConfig } from './context.mjs';
+import { BRIDGE_RUNTIME_DIR, RUNTIME_FILE } from './runtime-paths.mjs';
+import { acquireOwnerLock, isAlive, predatesBoot } from '../shared/owner-lock.mjs';
 
-export const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
+const LOCK_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.lock');
 const DAEMON = fileURLToPath(new URL('./daemon.mjs', import.meta.url));
 
-/** True when `file` was written before this boot: its pid may since belong to anything. */
-export const predatesBoot = (file, now = Date.now(), uptime = os.uptime()) => fs.statSync(file).mtimeMs < now - uptime * 1000;
-
-export function isAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
-
 /**
- * Exclusive daemon lock: `wx` create holding our pid. A lock whose owner is dead is taken
- * over. Returns a release function, or null when another live daemon holds it.
+ * Exclusive daemon lock (shared/owner-lock.mjs): `wx` create holding our pid; a lock whose owner
+ * is dead, or recorded before this boot, is taken over. Returns a release function, or null when
+ * another live daemon holds it.
  */
-export function acquireDaemonLock(file = LOCK_FILE, { pid = process.pid, alive = isAlive, stale = predatesBoot } = {}) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(file, String(pid), { flag: 'wx' });
-      return () => { try { if (fs.readFileSync(file, 'utf8') === String(pid)) fs.rmSync(file); } catch { /* gone */ } };
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      const owner = Number(fs.readFileSync(file, 'utf8'));
-      if (owner && owner !== pid && alive(owner) && !stale(file)) return null;
-      fs.rmSync(file, { force: true });
-    }
-  }
-  return null;
-}
+export const acquireDaemonLock = (file = LOCK_FILE, opts = {}) => acquireOwnerLock(file, opts);
 
 const LOG_FILE = path.join(BRIDGE_RUNTIME_DIR, 'daemon.log');
 function spawnDaemon() {
@@ -77,19 +58,18 @@ export function daemonRunning({ runtimeFile = RUNTIME_FILE, alive = isAlive, sta
  * itself over (its own check, within a minute): replacing it here, on every session start, made
  * a burst of starts (subagents, reviewers) during an edit restart it every few seconds. Only
  * `replace` — the daemon's own handover, or a pull that must serve the pulled code now — kills it.
- * @returns {'unconfigured'|'running'|'stale'|'started'|'restarted'|'different-home'}
+ * `codexHome`, the home this launch runs in, is recorded for the daemon to follow (codex-home.mjs).
+ * @returns {'unconfigured'|'running'|'stale'|'started'|'restarted'}
  */
-export async function ensureDaemon({ replace = false, log = logLine, runtimeFile = RUNTIME_FILE, configured = () => { const c = readBridgeConfig(); return !!(c.botToken || c.dashboard); }, codexHome = resolveCodexHome(),
+export async function ensureDaemon({ replace = false, log = logLine, runtimeFile = RUNTIME_FILE, configured = () => { const c = readBridgeConfig(); return !!(c.botToken || c.dashboard); }, codexHome = resolveCodexHome(), record = recordCodexHome,
   revision = bridgeSourceRevision, configRevision = bridgeConfigRevision, alive = isAlive, stale = predatesBoot, kill = (pid) => process.kill(pid), start = spawnDaemon,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   if (!configured()) return 'unconfigured';
+  record(codexHome);
   let rt = null;
   try { rt = JSON.parse(fs.readFileSync(runtimeFile, 'utf8')); } catch { /* not running */ }
   const pid = rt?.pid;
   if (pid && alive(pid) && !stale(runtimeFile)) {
-    const runningHome = rt.codexHome ?? resolveCodexHome({ env: {} });
-    const key = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
-    if (key(runningHome) !== key(codexHome)) return 'different-home';
     // The daemon reads its config once: a config change replaces it like a source change.
     if (rt.sourceRevision === revision() && rt.configRevision === configRevision()) return 'running';
     if (!replace) return 'stale';

@@ -13,7 +13,7 @@
 // it to change approach or report the blocker.
 //
 // Shared knobs live at harness.loopGuard in the merged env registry. Explicit
-// HARNESS_LOOP_GUARD_* env wins, then existing CLAUDE_LOOP_GUARD_* overrides.
+// HARNESS_LOOP_GUARD_* env overrides it (host-neutral).
 //
 // Fails open: any parse/IO problem exits 0 with no output, so a bug here can never
 // wedge a session.
@@ -25,18 +25,19 @@ import crypto from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { ENV_SETTINGS_PATH, readMergedEnvSettings } from '../shared/config.mjs';
 import { sessionIdentity } from '../shared/session-identity.mjs';
+import { AGY_POLLING_TOOLS, normalizeAgyGuardPayload as agyPayload } from '../shared/agy-payload.mjs';
 
 /** Every knob, with its env override. Counts read as "this call is the Nth such call". */
 const DEFAULTS = {
-  warnAt: 3, // CLAUDE_LOOP_GUARD_WARN_AT — nth identical call that gets a warning
-  denyAt: 4, // CLAUDE_LOOP_GUARD_DENY_AT — nth identical call that gets denied
-  similarWarnAt: 4, // CLAUDE_LOOP_GUARD_SIMILAR_WARN_AT
-  similarDenyAt: 5, // CLAUDE_LOOP_GUARD_SIMILAR_DENY_AT
-  similarThreshold: 0.85, // CLAUDE_LOOP_GUARD_SIMILAR_THRESHOLD — trigram Jaccard
-  windowMinutes: 15, // CLAUDE_LOOP_GUARD_WINDOW_MINUTES — older calls stop counting
-  maxEntries: 80, // CLAUDE_LOOP_GUARD_MAX_ENTRIES — bound on the state file
-  disable: false, // CLAUDE_LOOP_GUARD_DISABLE — 1/true turns the guard off entirely
-  // CLAUDE_LOOP_GUARD_EXEMPT — extra comma-separated tool names, added to BASE_EXEMPT
+  warnAt: 3, // HARNESS_LOOP_GUARD_WARN_AT — nth identical call that gets a warning
+  denyAt: 4, // HARNESS_LOOP_GUARD_DENY_AT — nth identical call that gets denied
+  similarWarnAt: 4, // HARNESS_LOOP_GUARD_SIMILAR_WARN_AT
+  similarDenyAt: 5, // HARNESS_LOOP_GUARD_SIMILAR_DENY_AT
+  similarThreshold: 0.85, // HARNESS_LOOP_GUARD_SIMILAR_THRESHOLD — trigram Jaccard
+  windowMinutes: 15, // HARNESS_LOOP_GUARD_WINDOW_MINUTES — older calls stop counting
+  maxEntries: 80, // HARNESS_LOOP_GUARD_MAX_ENTRIES — bound on the state file
+  disable: false, // HARNESS_LOOP_GUARD_DISABLE — 1/true turns the guard off entirely
+  // HARNESS_LOOP_GUARD_EXEMPT — extra comma-separated tool names, added to BASE_EXEMPT
 };
 
 // Tools whose whole job is to be polled or repeated. Guarding them would be noise.
@@ -60,6 +61,7 @@ const BASE_EXEMPT = [
   'sleep',
   'request_user_input',
   'request_user_input_async',
+  ...AGY_POLLING_TOOLS,
 ];
 
 const num = (raw, fallback) => {
@@ -70,8 +72,8 @@ const bool = (raw) => raw === '1' || String(raw).toLowerCase() === 'true';
 
 /** Resolve configuration from an env bag — defaults when unset or malformed. */
 function loadConfig(env = process.env, settings = {}) {
-  // Explicit host-neutral env > legacy Claude env > merged shared/local config > defaults.
-  const value = (key, suffix) => env[`HARNESS_LOOP_GUARD_${suffix}`] ?? env[`CLAUDE_LOOP_GUARD_${suffix}`] ?? settings[key];
+  // HARNESS_LOOP_GUARD_* env > merged shared/local config > defaults.
+  const value = (key, suffix) => env[`HARNESS_LOOP_GUARD_${suffix}`] ?? settings[key];
   const cfg = {
     warnAt: num(value('warnAt', 'WARN_AT'), DEFAULTS.warnAt),
     denyAt: num(value('denyAt', 'DENY_AT'), DEFAULTS.denyAt),
@@ -173,6 +175,7 @@ function guardCall(payload, { env = process.env, host, settings, stateDir, now =
   try {
     if (settings === undefined) settings = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.harness?.loopGuard ?? {};
     const cfg = loadConfig(env, settings);
+    if (host === 'agy') payload = agyPayload(payload);
     const tool = payload.tool_name;
     const identity = sessionIdentity(env, payload, { host });
     const nativeTool = host === 'codex' ? tool?.replace(/^(?:functions|collaboration|clock)\./, '') : tool;

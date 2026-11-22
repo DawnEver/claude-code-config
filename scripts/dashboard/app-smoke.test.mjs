@@ -90,7 +90,7 @@ test('the page renders every tab from the example data, and no view throws', asy
   try {
     await import('./public/app.js');
     const tabs = doc.querySelectorAll('#tabs [data-tab]');
-    assert.deepEqual(tabs.map((b) => b.dataset.tab), ['sessions', 'quota', 'usage', 'code', 'events', 'config']);
+    assert.deepEqual(tabs.map((b) => b.dataset.tab), ['sessions', 'quota', 'usage', 'code', 'config']);
     for (const b of tabs) {
       b.dispatch('click');
       // Open every foldable row of the tab once, so detail views render too: a row whose tap goes
@@ -128,7 +128,93 @@ test('the page renders every tab from the example data, and no view throws', asy
     const balance = doc.getElementById('quota-view').querySelectorAll('.deepseek');
     assert.equal(balance.length, 1);
     assert.equal(balance[0].textContent, 'DeepSeek');
+    // The tasks icon counts what runs, opens it with labels in full, and never opens the Topic.
+    tabs[0].dispatch('click');
+    let opened = 0;
+    globalThis.window.open = () => { opened++; };
+    const tasksBtn = () => doc.getElementById('hosts').querySelectorAll('.tasks-btn')[0];
+    const full = () => doc.getElementById('hosts').querySelectorAll('.tl').filter((x) => x.classList.contains('full')).length;
+    assert.equal(tasksBtn()?.textContent, '5', 'a session running tasks has the icon, counting them');
+    assert.equal(full(), 0, 'folded: each label cut to a line');
+    const kinds = () => doc.getElementById('hosts').querySelectorAll('.task').map((x) => {
+      const tag = x.querySelectorAll('.tk')[0];
+      return [x.className, tag?.className, tag?.getAttribute('aria-label').split(' · ')[0]];
+    });
+    assert.deepEqual(kinds().map((k) => k[0]), ['task k-agent bg', 'task k-monitor bg', 'task more'], 'folded: the first two by kind, the rest counted');
+    assert.equal(doc.getElementById('hosts').querySelectorAll('.task')[2].textContent, '+3 more');
+    assert.equal(doc.getElementById('hosts').querySelectorAll('.tb').length, 0, 'no extra bg mark');
+    tasksBtn().dispatch('click');
+    assert.equal(opened, 0, 'the icon does not open the Topic');
+    assert.equal(full(), 5, 'open: every running task, labels in full');
+    assert.deepEqual(kinds(), [['task k-agent bg', 'tk icon', 'subagent'], ['task k-monitor bg', 'tk icon', 'monitor (watches until it expires)'],
+      ['task k-shell', 'tk icon', 'shell'], ['task k-shell bg', 'tk icon', 'shell'], ['task k-powershell', 'tk icon', 'PowerShell']],
+      'by kind — subagents, monitors, shells, PowerShell — each its own icon, named for a screen reader; in the background the row is marked');
+    tasksBtn().dispatch('click');
+    assert.equal(full(), 0, 'a second tap folds it');
+    doc.getElementById('hosts').querySelectorAll('.chat').find((x) => x.classList.contains('link')).dispatch('click');
+    assert.equal(opened, 1, 'the row still opens its Topic');
+    // The search replaces the tab's view with results; a result leading to a tab clears it and goes there.
+    const search = doc.getElementById('search');
+    search.value = 'idleClose';
+    search.dispatch('input', { target: search });
+    assert.deepEqual(errors, [], 'the search threw while rendering');
+    assert.equal(doc.getElementById('search-view').hidden, false);
+    const found = doc.getElementById('search-view').querySelectorAll('.found');
+    assert.ok(found.length > 0, 'a shared setting is found');
+    found[0].dispatch('click');
+    assert.equal(doc.getElementById('search-view').hidden, true, 'the search is cleared');
+    assert.equal(tabs.find((b) => b.dataset.tab === 'config').getAttribute('aria-selected'), 'true', 'its tab is shown');
   } finally {
     console.error = consoleError;
   }
+});
+
+/**
+ * The page outside example mode: opened from Telegram, the gateway stubbed, the Usage tab open.
+ * Example mode never draws a report (it shows a note), so this is the only run of that path.
+ */
+async function usageTab(report, tag) {
+  const { mockDashboard } = await import('./public/mock.mjs');
+  const doc = documentFrom(fs.readFileSync(new URL('./public/index.html', import.meta.url), 'utf8'));
+  const memory = new Map();
+  const answer = (value) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => value });
+  Object.assign(globalThis, {
+    document: doc,
+    window: { addEventListener() {}, scrollTo() {}, scrollY: 0, innerHeight: 800, open() {},
+      Telegram: { WebApp: { initData: 'signed', initDataUnsafe: { user: { id: 1 } }, ready() {}, expand() {}, onEvent() {} } } },
+    location: { search: '', hash: '', pathname: '/', reload() {} },
+    localStorage: { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, String(v)), removeItem: (k) => memory.delete(k) },
+    fetch: async (url) => answer(String(url).startsWith('api/usage') ? report : String(url).startsWith('api/dashboard') ? mockDashboard() : {}),
+  });
+  const errors = [];
+  const consoleError = console.error;
+  console.error = (e) => errors.push(e);
+  // The live page polls for ever: its timer must not hold this process open.
+  const every = globalThis.setInterval;
+  globalThis.setInterval = (...a) => every(...a).unref();
+  try {
+    await import(`./public/app.js?${tag}`);
+    await new Promise((r) => setTimeout(r, 50));
+    doc.querySelectorAll('#tabs [data-tab]').find((b) => b.dataset.tab === 'usage').dispatch('click');
+    await new Promise((r) => setTimeout(r, 50));
+  } finally { console.error = consoleError; globalThis.setInterval = every; }
+  return { view: doc.getElementById('usage-view'), errors };
+}
+
+const DAY = 86400000;
+const usageReport = (now = Date.now()) => ({ days: 30, unit: 'day', since: now - 29 * DAY,
+  daily: [{ day: new Date(now).toISOString().slice(0, 10), platform: 'claude', input: 10, cache_read: 900, cache_write: 50, output: 40, active_ms: 3600000, turns: 7 }],
+  projects: [{ k: 'example', input: 10, cache_read: 900, cache_write: 50, output: 40, active_ms: 3600000, turns: 7 }], models: [], machines: [],
+  costUsd: 1.5, filter: { project: [], model: [], machine: [] }, hpc: { latest: [], series: [] } });
+
+test('the Usage tab draws a report fetched from the gateway', async () => {
+  const { view, errors } = await usageTab(usageReport(), 'usage-live');
+  assert.deepEqual(errors, [], 'the Usage view threw');
+  assert.ok(view.querySelectorAll('.usage-totals').length === 1 && view.textContent.includes('example'), 'totals and the project list are drawn');
+});
+
+test('a Usage report the view cannot draw says so in the tab: it is never left empty', async () => {
+  const { view, errors } = await usageTab({ ...usageReport(), models: 5 }, 'usage-broken');
+  assert.equal(errors.length > 0, true, 'planted control: this report does break the view');
+  assert.match(view.textContent, /could not be drawn/);
 });

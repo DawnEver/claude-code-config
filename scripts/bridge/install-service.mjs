@@ -18,7 +18,7 @@ import { spawnSync } from 'child_process';
 import { isMain } from '../shared/is-main.mjs';
 
 export const SERVICE_NAME = 'cc-config-bridge';
-export const LAUNCHD_LABEL = 'com.cc-config.bridge';
+const LAUNCHD_LABEL = 'com.cc-config.bridge';
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 
 const xml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

@@ -10,7 +10,7 @@ test('push: authenticated, ordered, never overlapping, failures logged once and 
   const calls = [], logs = [];
   const ok = () => ({ ok: true, status: 200, json: async () => ({ accepted: true }) });
   let respond = ok;
-  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', log: (m) => logs.push(m),
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', heartbeatSeconds: 0, machine: 'host-a', log: (m) => logs.push(m),
     sessions: () => [{ id: 's1' }], fetch: async (url, init) => { calls.push({ url, init }); return respond(); } });
   assert.equal(await push.tick(), true);
   assert.equal(calls[0].url, 'https://gw.example/api/hosts/host-a/snapshot');
@@ -55,11 +55,44 @@ test('config: dashboard needs url + hostToken, https unless loopback', () => {
   assert.equal(read({ dashboard: { url: 'http://127.0.0.1:8787', everySeconds: 30 } }, local).everySeconds, 30);
 });
 
+test('config: the HPC collector runs a command, so only the machine-local layer declares it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-'));
+  const read = (shared, local = {}) => {
+    fs.writeFileSync(path.join(dir, 's.json'), JSON.stringify({ bridge: shared }));
+    fs.writeFileSync(path.join(dir, 'l.json'), JSON.stringify({ bridge: local }));
+    const c = readBridgeConfig({ sharedPath: path.join(dir, 's.json'), localPath: path.join(dir, 'l.json') });
+    return c.hpc ?? c.hpcError;
+  };
+  const door = ['py', '-m', 'door', 'report', '--json'];
+  assert.equal(read({}), null, 'undeclared: off');
+  assert.equal(read({ hpc: { command: door } }), null, 'a command in the synced layer never runs');
+  assert.deepEqual(read({}, { hpc: { command: door, everyHours: 12 } }), { command: door, everyMs: 12 * 3600000 });
+  assert.match(read({}, { hpc: { command: 'py -m door' } }), /argv/, 'a malformed block is off, with its reason');
+});
+
 test('push: the gateway reply carries no alerts and the host posts nothing', async () => {
-  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', sessions: () => [],
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', heartbeatSeconds: 0, machine: 'host-a', sessions: () => [],
     fetch: async () => ({ ok: true, status: 200, json: async () => ({ accepted: true, alerts: ['ignored'] }) }) });
   assert.equal(await push.tick(), true);
   assert.equal('onAlerts' in push, false);
+});
+
+test('push: a raised alert rides every push until one is accepted, then is gone', async () => {
+  const bodies = [];
+  let ok = false;
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', heartbeatSeconds: 0, machine: 'host-a', sessions: () => [],
+    fetch: async (url, init) => { bodies.push(JSON.parse(init.body)); return ok ? { ok: true, status: 200, json: async () => ({ accepted: true }) } : { ok: false, status: 503 }; } });
+  push.raise({ kind: 'turn-failed', agent: 'claude', error: 'boom' });
+  assert.equal(await push.tick(), false);
+  ok = true;
+  push.raise({ kind: 'turn-failed', agent: 'codex', error: 'bang' });
+  assert.equal(await push.tick(), true);
+  assert.equal(await push.tick(), true);
+  assert.deepEqual(bodies.map((b) => b.alerts.map((a) => a.agent)), [['claude'], ['claude', 'codex'], []]);
+  assert.equal(bodies[0].alerts[0].id, bodies[1].alerts[0].id, 'the same id when sent again: the gateway sends it once');
+  for (let i = 0; i < 30; i++) push.raise({ kind: 'turn-failed', agent: 'claude', error: String(i) });
+  assert.equal(push.body().alerts.length, 20, 'bounded: the newest kept');
+  assert.equal(push.body().alerts.at(-1).error, '29');
 });
 
 test('config summary: editable values and facts only — no token, no user id, no chat id', async () => {
@@ -101,7 +134,7 @@ test('push: config changes from the reply are applied and reported on the next p
   const bodies = [];
   let reply = { accepted: true, configChanges: [{ id: 'a'.repeat(24), key: 'bridge.idleCloseMinutes', value: 45 }] };
   let fail = false;
-  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', sessions: () => [], config: () => ({ editable: {} }),
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', heartbeatSeconds: 0, machine: 'host-a', sessions: () => [], config: () => ({ editable: {} }),
     onConfigChanges: (changes) => changes.map((c) => ({ id: c.id, ok: true })),
     fetch: async (url, init) => { bodies.push(JSON.parse(init.body)); if (fail) throw new Error('down'); return { ok: true, status: 200, json: async () => reply }; } });
   await push.tick();
@@ -121,7 +154,7 @@ test('push: declares its forge sources, carries owed readings until accepted, re
   const bodies = [], assigned = [], delivered = [];
   let fail = false, outbox = [{ source: 'github|github.com|o|', at: 1.7e12, repos: [] }];
   const forges = { ids: () => ['github|github.com|o|'], outbox: () => outbox, delivered: (x) => { delivered.push(x); outbox = []; }, assign: (ids) => assigned.push(ids) };
-  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', sessions: () => [], forges,
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', heartbeatSeconds: 0, machine: 'host-a', sessions: () => [], forges,
     fetch: async (url, init) => { bodies.push(JSON.parse(init.body)); return fail ? { ok: false, status: 500 }
       : { ok: true, json: async () => ({ accepted: true, forgeRead: ['github|github.com|o|'] }) }; } });
   fail = true; await push.tick();
@@ -130,4 +163,24 @@ test('push: declares its forge sources, carries owed readings until accepted, re
   assert.deepEqual(bodies.map((b) => [b.forges.sources, b.forges.readings.length]),
     [[['github|github.com|o|'], 1], [['github|github.com|o|'], 1], [['github|github.com|o|'], 0]]);
   assert.deepEqual(assigned, [['github|github.com|o|'], ['github|github.com|o|']]);
+});
+
+test('push: an unchanged snapshot is skipped until the heartbeat; any change or a failed push sends at once', async () => {
+  let t = 0, sessions = [{ id: 's1' }], load = 1;
+  const bodies = [];
+  let respond = () => ({ ok: true, status: 200, json: async () => ({ accepted: true }) });
+  const push = new DashboardPush({ url: 'https://gw.example', hostToken: 'tok', machine: 'host-a', heartbeatSeconds: 60, now: () => t,
+    sessions: () => sessions, resources: () => ({ cpu: load++ }), fetch: async (u, init) => { bodies.push(JSON.parse(init.body)); return respond(); } });
+  assert.equal(await push.tick(), true);
+  t = 15000; assert.equal(await push.tick(), 'unchanged', 'only the machine load moved');
+  sessions = [{ id: 's1', status: 'running' }];
+  t = 30000; assert.equal(await push.tick(), true, 'a session change goes out at once');
+  t = 89000; assert.equal(await push.tick(), 'unchanged');
+  t = 90000; assert.equal(await push.tick(), true, 'heartbeat');
+  assert.deepEqual(bodies.map((b) => b.seq), [1, 2, 3], 'seq counts sent pushes');
+  respond = () => { throw new Error('down'); };
+  sessions = [{ id: 's2' }];
+  t = 91000; assert.equal(await push.tick(), false);
+  respond = () => ({ ok: true, status: 200, json: async () => ({ accepted: true }) });
+  t = 92000; assert.equal(await push.tick(), true, 'a failed push is retried on the next tick');
 });

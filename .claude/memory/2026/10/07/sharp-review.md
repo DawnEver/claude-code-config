@@ -6,7 +6,7 @@ metadata:
 ---
 
 
-## Review 2026-10-07 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-10-07 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -63,7 +63,7 @@ Works only because calls happen after module init.
 
 ## Review 2026-10-07 (follow-up)
 
-## Review 2026-10-07 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-10-07 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped
@@ -159,3 +159,5 @@ Set in #question only when !(p.wait && s.remoteTurn) (line 219), reset in regist
 - **Suggestion:** Alert only for waiting-approval.
 
 #mirror (claude-adapter.mjs:247) hardcodes alert:true.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

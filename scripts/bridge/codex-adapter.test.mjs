@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { CodexAdapter, progressLine, probeDaemon, backlogSince, isMainSession } from './codex-adapter.mjs';
+import { CodexAdapter, CodexHomes, progressLine, probeDaemon, backlogSince, isMainSession, trackItem } from './codex-adapter.mjs';
 
 /** Fake app-server behind the adapter's transport interface. */
 function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
@@ -529,7 +529,7 @@ test('status snapshots reflect native running, pending approval, idle and discon
   assert.equal(a.statusSnapshot('t1').state, 'waiting-approval');
   assert.equal(a.answerApproval('c1:900', true), true);
   assert.equal(a.statusSnapshot('t1').state, 'waiting-approval', 'submission is not native resolution');
-  assert.equal(JSON.stringify(a.statusSnapshot('t1')).includes('PRIVATE'), false);
+  assert.equal(a.statusSnapshot('t1').waiting, '$ PRIVATE TOOL TEXT', 'what it waits for is said (bounded), as the Topic already says it');
   srv.push('serverRequest/resolved', { threadId: 't1', requestId: 900 });
   assert.equal(a.statusSnapshot('t1').state, 'running');
   srv.push('turn/completed', { threadId: 't1', turn: { id: 't', status: 'completed' } });
@@ -670,4 +670,97 @@ test('waitingOnUserInput reads as waiting-input; a pending question does before 
   assert.equal(a.statusSnapshot('t1').state, 'idle');
   srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
   assert.equal(a.statusSnapshot('t1').state, 'waiting-input');
+});
+
+test('trackItem: a command runs from its inProgress item to its end; each subagent by its thread, as agentsStates says', async () => {
+  const { ActivityBoard } = await import('./activity-board.mjs');
+  const b = new ActivityBoard();
+  trackItem(b, { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'inProgress' }, 1000);
+  trackItem(b, { type: 'commandExecution', id: 'c2', command: 'ls', status: 'completed', durationMs: 50 }, 1200);
+  trackItem(b, { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'failed', exitCode: 1 }, 3000);
+  trackItem(b, { type: 'commandExecution', id: 'c3', command: 'cargo build', status: 'inProgress' }, 1500);
+  trackItem(b, { type: 'collabAgentToolCall', id: 'k1', tool: 'spawnAgent', prompt: 'review the diff', status: 'completed',
+    senderThreadId: 'main', receiverThreadIds: ['a1'], agentsStates: { a1: { status: 'running' } } }, 2000);
+  trackItem(b, { type: 'agentMessage', id: 'm', text: 'hi' }, 2500);
+  assert.deepEqual(b.list(3000).map((t) => [t.id, t.kind, t.label, t.startedAt]), [['c3', 'shell', 'cargo build', 1500], ['a1', 'agent', 'review the diff', 2000]],
+    'what runs: a command still in progress, a spawned subagent; ended commands are gone');
+  trackItem(b, { type: 'collabAgentToolCall', id: 'k2', tool: 'wait', status: 'completed', agentsStates: { a1: { status: 'completed' } } }, 9000);
+  assert.deepEqual(b.list(9000).map((t) => t.id), ['c3'], 'the subagent ended as agentsStates says');
+});
+
+test('trackItem: a command run by PowerShell is a PowerShell, labelled by its script; an exec session kept open is in the background', async () => {
+  const { ActivityBoard } = await import('./activity-board.mjs');
+  const b = new ActivityBoard();
+  trackItem(b, { type: 'commandExecution', id: 'p1', status: 'inProgress',
+    command: '"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -Command "Get-ChildItem -Recurse"' }, 1);
+  trackItem(b, { type: 'commandExecution', id: 'p2', status: 'inProgress', command: "pwsh -c 'npm test'" }, 2);
+  trackItem(b, { type: 'commandExecution', id: 's1', status: 'inProgress', command: 'npm run dev', source: 'unifiedExecStartup' }, 3);
+  trackItem(b, { type: 'commandExecution', id: 's2', status: 'inProgress', command: 'echo powershell' }, 4);
+  assert.deepEqual(b.list(5).map((t) => [t.id, t.kind, t.label, t.background]), [
+    ['p1', 'powershell', 'Get-ChildItem -Recurse', false], ['p2', 'powershell', 'npm test', false],
+    ['s1', 'shell', 'npm run dev', true], ['s2', 'shell', 'echo powershell', false]]);
+});
+
+test('tasks: a turn end, however it ended, ends its foreground commands; subagents run on until Codex says they stopped', async () => {
+  const threads = { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'active', activeFlags: [] }, updatedAt: 1000 }, a1: { status: { type: 'active' } } };
+  const { a, srv, clock } = await clocked({ threads });
+  srv.push('turn/started', { threadId: 't1', turn: { id: 'T' } });
+  srv.push('item/started', { threadId: 't1', turnId: 'T', item: { type: 'commandExecution', id: 'c1', command: 'npm test', status: 'inProgress' } });
+  srv.push('item/started', { threadId: 't1', turnId: 'T', item: { type: 'commandExecution', id: 'c2', command: 'npm run dev', status: 'inProgress', source: 'unifiedExecStartup' } });
+  srv.push('item/completed', { threadId: 't1', turnId: 'T', item: { type: 'collabAgentToolCall', id: 'k', tool: 'spawnAgent', prompt: 'review', status: 'completed', agentsStates: { a1: { status: 'running' } } } });
+  srv.push('turn/completed', { threadId: 't1', turn: { id: 'T', status: 'interrupted', items: [] } });
+  assert.deepEqual(a.statusSnapshot('t1').tasks.map((t) => t.id), ['c2', 'a1'], 'the interrupted command is gone; the exec session and the subagent run on');
+  clock.t += 120000;
+  await a.refresh();
+  assert.deepEqual(a.statusSnapshot('t1').tasks.map((t) => t.id), ['c2', 'a1'], 'the subagent thread is still active');
+  threads.a1.status = { type: 'idle' };
+  await a.refresh();
+  assert.deepEqual(a.statusSnapshot('t1').tasks.map((t) => t.id), ['c2'], 'its thread went idle: it stopped');
+});
+
+test('waiting: a pending approval or question is what the thread waits for', async () => {
+  const { a, srv } = await started({ threads: { t1: { id: 't1', cwd: '/w', ephemeral: false, turns: [], status: { type: 'idle' }, updatedAt: Date.now() / 1000 } } });
+  srv.request(77, 'item/commandExecution/requestApproval', { threadId: 't1', turnId: 'x', itemId: 'i', command: 'rm -rf build' });
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnApproval'] } });
+  assert.deepEqual(a.statusSnapshot('t1'), { state: 'waiting-approval', waiting: '$ rm -rf build' });
+  srv.push('serverRequest/resolved', { threadId: 't1', requestId: 77 });
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: [] } });
+  assert.equal(a.statusSnapshot('t1').waiting, undefined);
+  srv.request(78, 'item/tool/requestUserInput', { threadId: 't1', questions: [{ id: 'q', question: 'Which branch?' }] });
+  srv.push('thread/status/changed', { threadId: 't1', status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
+  assert.equal(a.statusSnapshot('t1').waiting, 'Which branch?');
+});
+
+test('CodexHomes: one adapter per Codex home, sessions labelled with their home, calls routed to the owning adapter', async () => {
+  const made = [];
+  const create = (home, refPrefix) => {
+    const a = Object.assign(new EventEmitter(), { home, refPrefix, threads: new Map(), quota: { at: 1 }, account: { email: `${home}@x` }, stopped: false,
+      start: async () => { if (home === '/bad') throw new Error('no app-server'); return true; }, refresh: async () => {}, stop() { this.stopped = true; },
+      inject: async (id) => `${home}:${id}`, interrupt: async () => true, status: () => home, statusSnapshot: () => ({ state: home }),
+      answerQuestion: (ref) => `${home}:${ref}`, answerApproval: (ref) => `${home}:${ref}` });
+    made.push(a);
+    return a;
+  };
+  let homes = ['/base', '/work'];
+  const codex = new CodexHomes({ homes: () => homes, label: (h) => (h === '/base' ? null : h.slice(1)), create });
+  const ups = [], warns = [];
+  codex.on('up', (e) => ups.push(e));
+  codex.on('warn', (w) => warns.push(w));
+  await codex.start();
+  assert.equal(made.length, 2);
+  assert.deepEqual(made.map((a) => a.refPrefix), ['h0.', 'h1.'], 'refs never collide across homes');
+  made[0].emit('up', { id: 't0' });
+  made[1].emit('up', { id: 't1' });
+  assert.deepEqual(ups, [{ id: 't0' }, { id: 't1', seat: 'work' }]);
+  made[1].threads.set('t1', {});
+  assert.equal(await codex.inject('t1', 'hi'), '/work:t1');
+  assert.deepEqual(codex.statusSnapshot('t1'), { state: '/work' });
+  assert.equal(codex.answerApproval('h1.c1:5', true), '/work:h1.c1:5');
+  assert.equal(codex.answerQuestion('h0.c1:2', {}), '/base:h0.c1:2');
+  assert.deepEqual(codex.accounts().map((a) => [a.label, a.account.email]), [[null, '/base@x'], ['work', '/work@x']]);
+  homes = ['/base', '/bad'];
+  await codex.start();
+  assert.equal(made[1].stopped, true, 'a home no longer listed is dropped');
+  assert.match(warns.join('\n'), /bad home: no app-server/, 'one home failing does not stop the others');
+  assert.equal(made.length, 3);
 });

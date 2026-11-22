@@ -1,0 +1,95 @@
+// scripts/bridge/activity-board.mjs — what a session is running besides its own turn: shells and subagents,
+// each from its start to its end. One board per session, fed by either host adapter (Claude's
+// hooks, Codex's app-server items) and read by the dashboard push: what runs now and for how
+// long. A live view, not a history: only running tasks are listed. An ended one is remembered
+// for ENDED_KEEP_MS only so a late start (async hooks) does not revive it, then forgotten.
+
+import { TASK_LABEL_MAX, MAX_TASKS } from '../dashboard/public/shared/vocab.mjs';
+
+/** An ended task is remembered this long, so its late start (async hooks) cannot revive it. */
+export const ENDED_KEEP_MS = 10 * 60000;
+
+const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+
+// A leading `cd <dir> &&` (or `;`), repeated: where it runs, not what it does.
+const LEADING_CD = /^(?:cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*)+/;
+// A home directory, as Windows, Git Bash, macOS or Linux spell it: shown as ~.
+const HOME = /(?:[A-Za-z]:[\\/]|\/[a-z]\/)Users[\\/][^\\/\s"']+|\/(?:Users|home)\/[^/\s"']+/g;
+
+/** What a task is called: one line, a shell's command without its leading cd and with ~ for home; bounded. */
+export function taskLabel(kind, label) {
+  const line = oneLine(label);
+  return (kind === 'shell' ? line.replace(LEADING_CD, '').replace(HOME, '~') : line).slice(0, TASK_LABEL_MAX);
+}
+
+export class ActivityBoard {
+  constructor() {
+    this.tasks = new Map();   // id -> {id, kind, label, background, status, startedAt, endedAt, until?}
+  }
+
+  /**
+   * A task started. Hooks run async: its end may already be here, and a second start changes
+   * nothing. `until`: when it expires on its own (a monitor's deadline).
+   */
+  start(id, { kind, label, at, background = false, until = null }) {
+    const held = this.tasks.get(id);
+    if (held?.kind) return;
+    // A foreground start stamped before the last turn end arrived late (async hooks): that turn ended it.
+    const settled = !background && !held && this.settledAt > at;
+    this.tasks.set(id, { id, kind, label: taskLabel(kind, label), background: !!background, status: held?.status ?? (settled ? 'completed' : 'running'),
+      startedAt: at, endedAt: held?.endedAt ?? (settled ? this.settledAt : null), until });
+  }
+
+  /** A task ended (`status` one of TASK_STATUSES but running). The first end stands. */
+  end(id, { status = 'completed', at }) {
+    const held = this.tasks.get(id);
+    if (held && held.status !== 'running') return;
+    // An end before its start (async hooks) is kept, so the late start does not revive it.
+    this.tasks.set(id, { ...(held ?? { id, kind: null, label: '', background: false, startedAt: at }), status, endedAt: at });
+  }
+
+  /** A running task went on in the background (by itself, or as asked): a turn end no longer ends it. */
+  toBackground(id) {
+    const t = this.tasks.get(id);
+    if (t) t.background = true;
+  }
+
+  /**
+   * The background shells and agents still open are `open` ({id, kind, label, startedAt}: the
+   * transcript says so), taken as the truth: any other running one has ended, and one this board
+   * lost (a daemon restart, a dropped start) is added back. A task with its own deadline (a
+   * monitor) is not the transcript's to end.
+   */
+  settleBackground(open, at) {
+    const ids = new Set(open.map((t) => t.id));
+    for (const t of this.tasks.values()) if (t.background && !t.until && t.status === 'running' && !ids.has(t.id)) this.end(t.id, { status: 'completed', at });
+    for (const t of open) {
+      const held = this.tasks.get(t.id);
+      // Open by the transcript is running, whatever this board concluded (an async hook racing a turn end).
+      if (held?.kind) Object.assign(held, { background: true, status: 'running', endedAt: null });
+      else this.tasks.set(t.id, { id: t.id, kind: t.kind, label: taskLabel(t.kind, t.label), background: true, status: 'running', startedAt: t.startedAt, endedAt: null, until: null });
+    }
+  }
+
+  /**
+   * The turn ended: every foreground call of it has returned, so a foreground task still running
+   * lost its end (an async hook dropped, a daemon handover) and ends now. Background ones run on.
+   */
+  settleForeground(at) {
+    this.settledAt = Math.max(this.settledAt ?? 0, at);
+    for (const t of this.tasks.values()) if (!t.background && t.status === 'running') this.end(t.id, { status: 'completed', at });
+  }
+
+  /** The session ended: nothing it started runs on. */
+  endAll(status, at) {
+    for (const t of this.tasks.values()) if (t.status === 'running') this.end(t.id, { status, at });
+  }
+
+  /** The running tasks, oldest first, bounded. Ends the expired; forgets ended ones past ENDED_KEEP_MS. */
+  list(now) {
+    for (const t of this.tasks.values()) if (t.status === 'running' && t.until && t.until <= now) this.end(t.id, { status: 'completed', at: t.until });
+    for (const [id, t] of this.tasks) if (t.status !== 'running' && now - t.endedAt > ENDED_KEEP_MS) this.tasks.delete(id);
+    return [...this.tasks.values()].filter((t) => t.kind && t.status === 'running').sort((a, b) => a.startedAt - b.startedAt)
+      .slice(0, MAX_TASKS).map(({ id, kind, label, background, startedAt }) => ({ id, kind, label, background, startedAt }));
+  }
+}

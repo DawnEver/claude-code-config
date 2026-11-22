@@ -12,7 +12,12 @@ export function mockDashboard(now = Date.now()) {
     ({ id, hostId, agent, name, project, branch, seat, status, unread, mention, lastActivityAt: t(sec), stale, topic, account: acct[agent] });
   return { schemaVersion: 1, generatedAt: t(0), mock: true, hosts: [
     { id: 'host-a', online: true, lastSeen: t(4), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: [], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
-      { ...s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a', 'OAuth token refresh', 3), repo: 'github.com/example/backend-api' },
+      { ...s('host-a', false, '0b6c4e1a-1111', 'claude', 'backend-api', 'feature/auth', 'working', 12, { url: 'https://t.me/c/1000000001/12', closed: false }, 'team-a', 'OAuth token refresh', 3), repo: 'github.com/example/backend-api',
+        tasks: [{ id: 'k1', kind: 'agent', label: 'Explore: where tokens refresh', background: true, startedAt: now - 12 * 60000 },
+          { id: 'k2', kind: 'shell', label: 'Run the auth tests', background: false, startedAt: now - 40000 },
+          { id: 'k3', kind: 'shell', label: 'npm run build -- --watch --mode development --config ~/repo/frontend/vite.config.ts', background: true, startedAt: now - 3 * 60000 },
+          { id: 'k4', kind: 'monitor', label: 'errors in the dev server log', background: true, startedAt: now - 2 * 60000 },
+          { id: 'k5', kind: 'powershell', label: 'Restart the local auth service', background: false, startedAt: now - 20000 }] },
       s('host-a', false, '019a7f20-2222', 'codex', 'frontend', 'main', 'needs_approval', 40, { url: 'https://t.me/c/1000000001/13', closed: false }, null, 'Landing page redesign', 5, true)],
       resources: { cpu: 42, cores: 16, cpuModel: 'AMD Ryzen 9 7950X', mem: { used: 21e9, total: 34e9, type: 'DDR5' }, gpus: [{ name: 'NVIDIA RTX 4090', util: 87, memUsed: 18e9, memTotal: 25.7e9 }] } },
     { id: 'host-b', online: true, lastSeen: t(9), config: { editable: { 'bridge.idleCloseMinutes': 30, 'bridge.deleteClosedAfterHours': 24, 'bridge.dashboard.everySeconds': 15, 'bridge.projects.backend-api.projectInTitle': 'always' }, localOverrides: ['bridge.dashboard.everySeconds'], facts: { bridge: true, allowedUsers: 1, approvalsFromTelegram: false, codexSources: ['cli'], dashboardError: null } }, sessions: [
@@ -21,12 +26,11 @@ export function mockDashboard(now = Date.now()) {
       resources: { cpu: 7, cores: 10, cpuModel: 'Apple M2 Pro', mem: { used: 9e9, total: 17e9, type: 'LPDDR5' }, gpus: [] } },
     { id: 'host-c', online: false, lastSeen: t(5400), sessions: [
       s('host-c', true, 'aa12bb34-5555', 'claude', 'backend-api', 'main', 'working', 5500, null)] },
-  ], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }], events: [
-    { at: t(40), kind: 'exhausted', account: { agent: 'codex', label: null, email: 'bob@example.com' }, window: '5h', resetsAt: now + 3 * H },
-    { at: t(7200), kind: 'config', key: 'bridge.idleCloseMinutes', value: 30, outcome: 'applied', host: 'host-b' },
-  ], accounts: [
+  ], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }],
+  configLast: { 'bridge.idleCloseMinutes': { outcome: 'applied', value: 30, host: 'host-b', at: t(7200) } }, accounts: [
     { key: 'claude:a', kind: 'quota', agent: 'claude', label: 'team-a', email: 'alice@example.com', detail: 'Team A · Team Premium', problems: [],
-      at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null, windows: [
+      at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null,
+      banked: [{ id: 'r1', name: 'Full reset', expiresAt: now + 29 * 24 * H }, { id: 'r2', name: 'Fable reset', expiresAt: now + 118 * 24 * H, note: 'Refills 5h and the Fable allowance' }], windows: [
         { k: '5h', used: 26, resetsAt: now + 24 * 60000, windowMs: 5 * H, cells: [0.4, 0.8, 1.2, 0.9, 1.6, 2, 1.1, 0.7, 0.9, null], forecast: { atReset: 31, eta: null, short: false } },
         { k: '7d', used: 45, resetsAt: now + 129 * H, windowMs: 168 * H, cells: [0.6, 1.4, 1.8, 0.9, 1.1, 2.2, 2.6, 2.4, 2.5, null, null, null, null, null], forecast: { atReset: 118, eta: now + 47 * H, short: true } }] },
     { key: 'codex:b', kind: 'quota', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-a', 'host-b'],
