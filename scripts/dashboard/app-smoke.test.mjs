@@ -168,3 +168,53 @@ test('the page renders every tab from the example data, and no view throws', asy
     console.error = consoleError;
   }
 });
+
+/**
+ * The page outside example mode: opened from Telegram, the gateway stubbed, the Usage tab open.
+ * Example mode never draws a report (it shows a note), so this is the only run of that path.
+ */
+async function usageTab(report, tag) {
+  const { mockDashboard } = await import('./public/mock.mjs');
+  const doc = documentFrom(fs.readFileSync(new URL('./public/index.html', import.meta.url), 'utf8'));
+  const memory = new Map();
+  const answer = (value) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => value });
+  Object.assign(globalThis, {
+    document: doc,
+    window: { addEventListener() {}, scrollTo() {}, scrollY: 0, innerHeight: 800, open() {},
+      Telegram: { WebApp: { initData: 'signed', initDataUnsafe: { user: { id: 1 } }, ready() {}, expand() {}, onEvent() {} } } },
+    location: { search: '', hash: '', pathname: '/', reload() {} },
+    localStorage: { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, String(v)), removeItem: (k) => memory.delete(k) },
+    fetch: async (url) => answer(String(url).startsWith('api/usage') ? report : String(url).startsWith('api/dashboard') ? mockDashboard() : {}),
+  });
+  const errors = [];
+  const consoleError = console.error;
+  console.error = (e) => errors.push(e);
+  // The live page polls for ever: its timer must not hold this process open.
+  const every = globalThis.setInterval;
+  globalThis.setInterval = (...a) => every(...a).unref();
+  try {
+    await import(`./public/app.js?${tag}`);
+    await new Promise((r) => setTimeout(r, 50));
+    doc.querySelectorAll('#tabs [data-tab]').find((b) => b.dataset.tab === 'usage').dispatch('click');
+    await new Promise((r) => setTimeout(r, 50));
+  } finally { console.error = consoleError; globalThis.setInterval = every; }
+  return { view: doc.getElementById('usage-view'), errors };
+}
+
+const DAY = 86400000;
+const usageReport = (now = Date.now()) => ({ days: 30, unit: 'day', since: now - 29 * DAY,
+  daily: [{ day: new Date(now).toISOString().slice(0, 10), platform: 'claude', input: 10, cache_read: 900, cache_write: 50, output: 40, active_ms: 3600000, turns: 7 }],
+  projects: [{ k: 'example', input: 10, cache_read: 900, cache_write: 50, output: 40, active_ms: 3600000, turns: 7 }], models: [], machines: [],
+  costUsd: 1.5, filter: { project: [], model: [], machine: [] }, hpc: { latest: [], series: [] } });
+
+test('the Usage tab draws a report fetched from the gateway', async () => {
+  const { view, errors } = await usageTab(usageReport(), 'usage-live');
+  assert.deepEqual(errors, [], 'the Usage view threw');
+  assert.ok(view.querySelectorAll('.usage-totals').length === 1 && view.textContent.includes('example'), 'totals and the project list are drawn');
+});
+
+test('a Usage report the view cannot draw says so in the tab: it is never left empty', async () => {
+  const { view, errors } = await usageTab({ ...usageReport(), models: 5 }, 'usage-broken');
+  assert.equal(errors.length > 0, true, 'planted control: this report does break the view');
+  assert.match(view.textContent, /could not be drawn/);
+});

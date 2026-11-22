@@ -5,7 +5,7 @@
 
 import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, hpcView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
-import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
+import { USAGE_FILTER_MAX, platformName } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 import { LOGOS } from './logos.mjs';
@@ -1102,7 +1102,7 @@ async function fetchUsage(force = false) {
   } catch { usage = { key, error: ['usage.unreachable'], at: Date.now() }; } finally { usageLoading = false; }
   // A selection made while this request was in flight asks again.
   if (usageKey() !== key) return fetchUsage(true);
-  renderUsage();
+  drawUsage();
 }
 
 /** Select or unselect one value of a dimension, then refetch. */
@@ -1113,7 +1113,7 @@ function toggleUsage(dim, value) {
   usageFilter = { ...usageFilter, [dim]: vs.includes(value) ? vs.filter((v) => v !== value) : [...vs, value] };
   store.set('dashboard.usageFilter', JSON.stringify(usageFilter));
   tg?.HapticFeedback?.selectionChanged?.();
-  renderUsage();
+  drawUsage();
   fetchUsage(true);
 }
 
@@ -1167,7 +1167,7 @@ function hpcBlock(v) {
 function renderUsage() {
   const box = $('usage-view');
   box.replaceChildren();
-  box.append(rangePicker(USAGE_RANGES, usageDays, (d) => { usageDays = d; store.set('dashboard.usageDays', String(d)); renderUsage(); fetchUsage(true); }));
+  box.append(rangePicker(USAGE_RANGES, usageDays, (d) => { usageDays = d; store.set('dashboard.usageDays', String(d)); drawUsage(); fetchUsage(true); }));
   if (mock) return box.append(el('div', 'qrows empty', tr('usage.mock')));
   const picked = Object.entries(usageFilter).flatMap(([d, vs]) => vs.map((v) => [d, v]));
   if (picked.length) {
@@ -1178,7 +1178,7 @@ function renderUsage() {
       bar.append(chip);
     }
     const clear = el('button', 'chip', tr('usage.clearFilter'));
-    clear.addEventListener('click', () => { usageFilter = { project: [], model: [], machine: [] }; store.set('dashboard.usageFilter', JSON.stringify(usageFilter)); renderUsage(); fetchUsage(true); });
+    clear.addEventListener('click', () => { usageFilter = { project: [], model: [], machine: [] }; store.set('dashboard.usageFilter', JSON.stringify(usageFilter)); drawUsage(); fetchUsage(true); });
     bar.append(clear);
     box.append(bar);
   }
@@ -1193,8 +1193,8 @@ function renderUsage() {
   if (v.totals.cacheHit != null) total(`${Math.round(v.totals.cacheHit * 100)}%`, 'usage.cacheHit', 'usage.cacheHitTitle');
   if (v.totals.costUsd != null) total(`$${Math.round(v.totals.costUsd)}`, 'usage.apiValue', 'usage.apiValueTitle');
   const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
-  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) }),
-    segs: ['claude', 'codex'].map((a) => ({ cls: a, pct: d[`${a}Pct`] })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, agents: d.segs.filter((s) => s.tokens).map((s) => `${platformName(s.platform)} ${tokenText(s.tokens)}`).join(', ') || '0', active: hoursText(d.active) }),
+    segs: d.segs.map((s) => ({ cls: s.platform, pct: s.pct })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
   box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
   const hpc = hpcView(demoOn ? masker.usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
   if (hpc) box.append(hpcBlock(hpc));
@@ -1451,7 +1451,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     store.set('dashboard.scroll', JSON.stringify(scrollAt));
     tab = b.dataset.tab;
     armRestore();
-    if (tab === 'usage') { renderUsage(); fetchUsage(); }
+    if (tab === 'usage') { drawUsage(); fetchUsage(); }
     configShown = null;
     configDirty = false;
     store.set('dashboard.tab', tab);
@@ -1505,9 +1505,9 @@ function render() {
   const y = window.scrollY;
   if (query.trim()) { isolated(renderSearch); restoreScroll(); return; }
   // A banked-reset form being filled is not rebuilt under the reader's fingers by a poll.
-  if (tab === 'quota' && !document.activeElement?.matches?.('.banked-form input')) isolated(renderQuota);
-  if (tab === 'code') isolated(renderCode);
-  if (tab === 'usage') isolated(renderUsage);
+  if (tab === 'quota' && !document.activeElement?.matches?.('.banked-form input')) isolated(renderQuota, 'quota-view');
+  if (tab === 'code') isolated(renderCode, 'code-view');
+  if (tab === 'usage') drawUsage();
   // The config form is rebuilt only when its data changed and nobody is editing a shared value:
   // a poll must not wipe a value being typed.
   if (tab === 'config') {
@@ -1520,9 +1520,16 @@ function render() {
   restoreScroll();
 }
 
-function isolated(fn) {
-  try { fn(); } catch (e) { console.error(e); }
+/** Draw one view; a fault stays in that view and is said there, so a tab is never left empty without a reason. */
+function isolated(fn, viewId = null) {
+  try { fn(); } catch (e) {
+    console.error(e);
+    if (viewId) $(viewId).append(el('div', 'qrows empty', tr('app.viewFailed', { why: String(e?.message ?? e) })));
+  }
 }
+
+/** The Usage tab, from every caller: a late report (fetchUsage) must not leave it empty on a fault either. */
+function drawUsage() { isolated(renderUsage, 'usage-view'); }
 
 function stop(messageKey) {
   $('summary').hidden = false;
