@@ -2,18 +2,25 @@
 // that `cc.js` uses to spawn the `claude` binary.
 //
 // The catalogue (provider cache) and the key (credential store) are injected; local file
-// paths are a temp dir; the real ~/.claude is never touched.
+// paths are a temp dir; the real ~/.claude is never touched. Every launch runs from an empty temp
+// dir with an empty temp home, so a machine-local .claude/automode.json in this checkout (forge sync
+// writes one) or the user's trust list never changes a result.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { buildClaudeInvocation } from './cc-launcher.mjs';
+import { buildClaudeInvocation as launch } from './cc-launcher.mjs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { fakeAiLab, writeCache } from '../shared/provider-cache-fixture.mjs';
 
+// The launch directory and home are the launcher's only machine reads besides injected ones.
+const buildClaudeInvocation = (opts) => launch({
+  cwd: mkdtempSync(join(tmpdir(), 'cc-launcher-cwd-')), home: mkdtempSync(join(tmpdir(), 'cc-launcher-home-')), ...opts,
+});
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'cc-launcher-'));
@@ -231,4 +238,23 @@ test('withKey: false projects url and models but never reads or sets the key (se
   assert.equal(error, null);
   assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
+});
+
+// Planted control: a trusted repo holding .claude/automode.json DOES change the launch args, so the
+// isolation above is what keeps a real local fragment out of every other test.
+test('a trusted repo fragment loads with --settings; the isolated default never sees one', () => {
+  const { shared, local } = fixture();
+  writeFileSync(shared, '{}');
+  const repo = mkdtempSync(join(tmpdir(), 'cc-launcher-repo-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  git('init', '-q');
+  git('remote', 'add', 'origin', 'https://forge.example/o/r.git');
+  mkdirSync(join(repo, '.claude'));
+  writeFileSync(join(repo, '.claude', 'automode.json'), JSON.stringify({ autoMode: { allow: [] } }));
+  const home = mkdtempSync(join(tmpdir(), 'cc-launcher-trust-'));
+  mkdirSync(join(home, '.claude'));
+  writeFileSync(join(home, '.claude', 'trusted-origins'), 'forge.example/o/*\n');
+  const base = { provider: null, extraArgs: ['--foo'], envSettingsPath: shared, localPath: local };
+  assert.ok(buildClaudeInvocation({ ...base, cwd: repo, home }).args.includes('--settings'));
+  assert.ok(!buildClaudeInvocation(base).args.includes('--settings'));
 });

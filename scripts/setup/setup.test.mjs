@@ -30,17 +30,13 @@ const fakeHome = () => {
 test('parseSetupArgs: reads the flags setup understands', () => {
   assert.deepEqual(parseSetupArgs(['--replace']), {
     replace: true, initSyncDir: false, syncDir: undefined, syncDirFlagPresent: false,
-    machine: undefined, machineFlagPresent: false, aiLabPython: undefined,
+    machine: undefined, machineFlagPresent: false,
   });
   assert.deepEqual(parseSetupArgs(['--sync-dir', '/x', '--init-sync-dir']), {
     replace: false, initSyncDir: true, syncDir: '/x', syncDirFlagPresent: true,
-    machine: undefined, machineFlagPresent: false, aiLabPython: undefined,
+    machine: undefined, machineFlagPresent: false,
   });
   assert.equal(parseSetupArgs(['-r']).replace, true);
-});
-
-test('parseSetupArgs: --ai-lab-python <PATH>', () => {
-  assert.equal(parseSetupArgs(['--ai-lab-python', '/venv/bin/python']).aiLabPython, '/venv/bin/python');
 });
 
 test('parseSetupArgs: --machine <NAME>', () => {
@@ -269,6 +265,21 @@ test('linkEntry: a plain file with DIFFERENT content is still protected', () => 
   // the skip path reports `status`, the success path `kind` — hence the two spellings
   assert.equal(r.status, 'skip', 'local edits must never be overwritten without --replace');
   assert.equal(fs.readFileSync(dest, 'utf8'), '{"edited-live":true}');
+});
+
+// The backup path of the cross-volume --replace test above, reached on one volume, so every
+// host -- not only a two-volume Windows runner -- checks that a kept copy holding no secret is
+// the live edit byte for byte: redaction may rewrite a secret, never the formatting.
+test('linkEntry: --replace keeps a secret-free drifted file byte for byte', () => {
+  const src = path.join(tmp('src'), 'config.json');
+  const dest = path.join(tmp('dest'), 'config.json');
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.writeFileSync(src, '{"a":1}');
+  fs.writeFileSync(dest, '{"edited-live":true}');
+
+  const r = linkEntry(src, dest, HARDLINK, true);
+  assert.equal(r.kind, 'hardlink');
+  assert.equal(fs.readFileSync(`${dest}.setup-bak`, 'utf8'), '{"edited-live":true}');
 });
 
 // ── the per-machine claude-hud config ────────────────────────────────────────

@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { main, powershellXmlData } from './notify-hook.js';
 
-test('Claude notification hook is silent by default without reading stdin', () => {
-  assert.doesNotThrow(() => main([]));
+test('Claude notification hook is silent by default without reading stdin', async () => {
+  await assert.doesNotReject(main([]));
 });
 
 test('Windows notification XML is encoded data, never expandable PowerShell source', () => {

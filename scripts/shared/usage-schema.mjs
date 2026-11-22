@@ -91,13 +91,35 @@ function parsePull(r) {
     ? { repo: key, number, created_at: created, merged_at: opt(r.merged_at), closed_at: opt(r.closed_at), author: text(r.author, 100) } : null;
 }
 
+/** The HPC columns that are counts, fractions (0..1), and core-hours (scripts/bridge/hpc.mjs hpcRows). */
+const HPC_COUNTS = ['jobs', 'completed', 'failed', 'cancelled', 'oom', 'timeout', 'running'];
+const HPC_FRACTIONS = ['cpu_efficiency', 'storage', 'files', 'budget_window'];
+const HPC_HOURS = ['core_hours', 'budget_core_hours', 'budget_spent', 'budget_committed'];
+const name = (v) => (typeof v === 'string' && /^[\w.@-]{1,64}$/.test(v) ? v : null);
+const isoDate = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+/** One HPC login's reading (scripts/bridge/hpc.mjs): numbers only; a value out of range drops the row. */
+function parseHpc(r) {
+  const cluster = name(r?.cluster), account = name(r?.account), hour = epoch(r?.hour), at = epoch(r?.observed_at);
+  if (!cluster || !account || hour === null || hour % 3600000 || at === null || ![0, 1].includes(r.read)) return null;
+  const out = { cluster, account, hour, observed_at: at, slurm_account: name(r.slurm_account), role: name(r.role), read: r.read,
+    why: r.read ? null : text(r.why, 160) ?? 'unknown', budget_since: isoDate(r.budget_since), budget_until: isoDate(r.budget_until) };
+  const cols = [[HPC_COUNTS, (v) => int(v, 0, 1e7)], [HPC_FRACTIONS, (v) => real(v, 0, 1)], [HPC_HOURS, (v) => real(v, 0, 1e10)]];
+  for (const [keys, parse] of cols) for (const k of keys) {
+    if (r[k] == null) { out[k] = null; continue; }
+    if ((out[k] = parse(r[k])) === null) return null;
+  }
+  return out;
+}
+
 const list = (v, parse) => (Array.isArray(v) ? v.slice(0, MAX_USAGE_ROWS).map(parse).filter(Boolean) : []);
 
-/** A host's usage POST body -> {turns, costs, quota, resources, commits, pulls} or null. Bad rows are dropped, not fatal. */
+/** A host's usage POST body -> {turns, costs, quota, resources, commits, pulls, hpc} or null. Bad rows are dropped, not fatal. */
 export function parseUsageBatch(body) {
   if (!body || body.schemaVersion !== USAGE_SCHEMA_VERSION) return null;
   return { turns: list(body.turns, parseTurn), costs: list(body.costs, parseCost), quota: list(body.quota, parseQuota),
-    resources: list(body.resources, parseResources), commits: list(body.commits, parseCommit), pulls: list(body.pulls, parsePull) };
+    resources: list(body.resources, parseResources), commits: list(body.commits, parseCommit), pulls: list(body.pulls, parsePull),
+    hpc: list(body.hpc, parseHpc) };
 }
 
 // Statements that change anything. REPLACE is also a string function, so only its statement forms count.

@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-## Review 2026-10-22 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-22 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer diff (openrouter): unsupported
@@ -13,3 +13,5 @@ metadata:
 - Warning: only 0/2 reviewers succeeded
 
 ### Confirmed findings
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

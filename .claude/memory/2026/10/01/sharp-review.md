@@ -9,7 +9,7 @@ metadata:
 
 
 
-## Review 2026-10-01 (session) — diff review + security audit (安全锐评)
+## Review 2026-10-01 (session) — diff review + security audit (security sharp review)
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped
@@ -34,7 +34,7 @@ If runtime.json holds an invalid port, net.connect() throws synchronously before
 
 ## Review 2026-10-01 (follow-up)
 
-## Review 2026-10-01 (session) — diff review + security audit (安全锐评)
+## Review 2026-10-01 (session) — diff review + security audit (security sharp review)
 
 ### Reviewer Status
 - Reviewer claude (claude): skipped
@@ -59,7 +59,7 @@ If runtime.json holds an invalid port, net.connect() throws synchronously before
 
 ## Review 2026-10-01 (follow-up)
 
-## Review 2026-10-01 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-01 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -139,7 +139,7 @@ Reproduced with sessionUp() followed by sweepClosedTopics(). The Object.entries 
 
 ## Review 2026-10-01 (follow-up)
 
-## Review 2026-10-01 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-01 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -213,7 +213,7 @@ Reproduced with sessionUp() followed by sweepClosedTopics(). The Object.entries 
 
 ## Review 2026-10-01 (follow-up)
 
-## Review 2026-10-01 (session) — adversarial review (对抗性审查) + diff review
+## Review 2026-10-01 (session) — adversarial review (adversarial review) + diff review
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -256,3 +256,5 @@ Two sessions resolving to the same fallback id is the real failure mode post-cha
 - **Suggestion:** Keep log machine-local; never mirror to Telegram or sync payload
 
 cwd contains username.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

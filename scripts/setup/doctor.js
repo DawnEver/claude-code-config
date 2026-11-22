@@ -14,26 +14,32 @@
 // Read-only. Never mutates anything. Exits 1 when a check FAILs.
 //
 //   node ~/.claude/scripts/setup/doctor.js          full report
-//   node ~/.claude/scripts/setup/doctor.js --hook   SessionStart: silent unless something is wrong
+//   node ~/.claude/scripts/setup/doctor.js --hook   SessionStart: the last run's FAILs, silent when none; starts the next run detached
+//   node ~/.claude/scripts/setup/doctor.js --hook-refresh   that detached run: writes ~/.claude/doctor-last.json
 //   node ~/.claude/scripts/setup/doctor.js --json   machine-readable
-//   node ~/.claude/scripts/setup/doctor.js --public-hygiene   pre-commit gate (.githooks)
+//   node ~/.claude/scripts/setup/doctor.js --public-hygiene   pre-commit gate (the family hook row public-hygiene, pyproject.toml)
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { isMain } from '../shared/is-main.mjs';
 import { inspectCodexHooks } from './codex-hooks.mjs';
+import { inspectAgyConfig, agyInstalled } from './agy-config.mjs';
+import { readMarketDir } from '../shared/market-dir.mjs';
 import { inspectProtectedPluginCaches, inspectPluginCacheLock } from './update-codex-plugins.mjs';
 import { withoutRetiredCodexRootKey } from './codex-config-compose.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
+import { hooksDrift } from './settings-hooks.mjs';
 import { readMachineName, MACHINE_PATH, MACHINE_FIX_CMD } from '../shared/machine.mjs';
-import { readBridgeConfig, bridgeSourceRevision, RUNTIME_FILE } from '../bridge/context.mjs';
+import { readBridgeConfig, bridgeSourceRevision } from '../bridge/context.mjs';
+import { RUNTIME_FILE, BRIDGE_RUNTIME_DIR, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
+import { acquireOwnerLock, ownerLockLive } from '../shared/owner-lock.mjs';
 import {
-  sourceDir, claudeDir, codexDir, getSyncDir,
-  CLAUDE_LINKS, getCodexLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
+  sourceDir, claudeDir, codexDir, agyDir, getSyncDir,
+  CLAUDE_LINKS, getCodexLinks, getAgyLinks, linkSourceRoot, isHardLinked, sameVolume, localSeats,
 } from './setup.js';
 import { accountFile } from '../shared/seats.mjs';
 import { channelServerPath, channelServerState } from '../shared/channel-server.mjs';
@@ -190,6 +196,13 @@ export function checkPayloadShape(syncDir, repoRoot = sourceDir, files = SYNC_PA
         out.push(finding('FAIL', 'payload-invalid-model', 'claude_settings.json has an invalid model preference',
           'model must be a non-empty model alias or ID when present'));
       }
+      // The hooks are the template's machine wiring (settings-hooks.mjs): a payload that kept an
+      // older wiring runs scripts the repo has since moved past.
+      const drifted = hooksDrift(live, template);
+      if (drifted.length) {
+        out.push(finding('FAIL', 'payload-hooks-drift', `claude_settings.json hooks differ from the template: ${drifted.join(', ')}`,
+          'the template owns the hooks; apply them: node ~/.claude/scripts/setup/settings-hooks.mjs --apply'));
+      }
     }
     // Only the template's shape is required: the payload is the user's own file and may
     // carry personal keys the public template never will.
@@ -237,11 +250,16 @@ export function brokenLink(label, dest) {
   } catch { return null; }
 }
 
-export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir() } = {}) {
+export function checkLinks({ repoRoot = sourceDir, syncDir = getSyncDir(), home = HOME } = {}) {
+  const hostClaude = home === HOME ? claudeDir : path.join(home, '.claude');
+  const hostCodex = home === HOME ? codexDir : path.join(home, '.codex');
+  const hostAgy = home === HOME ? agyDir : path.join(home, '.gemini', 'config');
   const out = [];
   const tables = [
-    { label: 'claude', base: claudeDir, links: CLAUDE_LINKS },
-    { label: 'codex', base: codexDir, links: getCodexLinks(repoRoot) },
+    { label: 'claude', base: hostClaude, links: CLAUDE_LINKS },
+    { label: 'codex', base: hostCodex, links: getCodexLinks(repoRoot) },
+    // agy only where it is installed: setup never creates ~/.gemini.
+    ...(agyInstalled(hostAgy) ? [{ label: 'agy', base: hostAgy, links: getAgyLinks(repoRoot) }] : []),
   ];
   for (const { label, base, links } of tables) {
     for (const link of links) {
@@ -308,9 +326,10 @@ export function checkPlugins(settings, home = HOME) {
 // observable install inventory, so compare it with the configured marketplace clone.
 // This catches retired plugins (a plugin removed from its marketplace)
 // without treating disabled-but-still-available plugins as orphans.
-export function checkCodexPluginCache(repoRoot = sourceDir, home = HOME) {
+export function checkCodexPluginCache(marketDir, home = HOME) {
+  if (!marketDir) return [];
   const cache = path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'plugins', 'cache', 'cc-market');
-  const manifest = path.join(repoRoot, 'cc-market', '.agents', 'plugins', 'marketplace.json');
+  const manifest = path.join(marketDir, '.agents', 'plugins', 'marketplace.json');
   if (!fs.existsSync(cache) || !fs.existsSync(manifest)) return [];
   let known;
   try {
@@ -438,6 +457,26 @@ export function scanPublicHygiene(text, markers = []) {
  * code-shaped names count — `name()`, `ALL_CAPS_WITH_UNDERSCORE`, `camelCase` — matched as whole
  * words in the tracked JS. Words, file names and config keys are left alone.
  */
+const AGY_RULE_MAX_BYTES = 24000;
+
+/**
+ * Antigravity truncates any rule file (`AGENTS.md`, `GLOBAL-AGENTS.md`, `.claude/rules/*.md`)
+ * exceeding 24,000 bytes, silently dropping standards at the tail (incident 2026-11-19).
+ */
+export function checkRuleFileSize(root = sourceDir, maxBytes = AGY_RULE_MAX_BYTES) {
+  const out = [];
+  for (const rel of ['AGENTS.md', 'GLOBAL-AGENTS.md']) {
+    const p = path.join(root, rel);
+    let size;
+    try { size = fs.statSync(p).size; } catch { continue; }
+    if (size > maxBytes) {
+      out.push(finding('FAIL', 'rule-file-size', `${rel} is ${size} bytes (exceeds Antigravity's ${maxBytes}-byte rule limit; tail is truncated)`,
+        `move detailed subsystem prose to docs/*.md so ${rel} stays under ${maxBytes} bytes`));
+    }
+  }
+  return out;
+}
+
 export function checkRuleSymbols(root = sourceDir, files = trackedFiles(root)) {
   const code = files.filter((f) => /\.(mjs|js|cjs)$/.test(f)).map((f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch { return ''; } }).join('\n');
   const known = new Set(code.match(/[A-Za-z_$][\w$]*/g) ?? []);
@@ -566,6 +605,31 @@ export function checkBridgeRevision({ runtimeFile = RUNTIME_FILE, repoRoot = sou
   }
 }
 
+// The Telegram mirror loses nothing (standing user ruling): bridge-hook.js's spool releases an
+// entry only once the daemon routed and acked it, and HOLDS one the daemon refused, one whose
+// claude process exited before any channel took it, and a torn line. A held entry
+// never reached Telegram, so it is a FAIL, surfaced at SessionStart; a backlog the sender has not
+// delivered for a while is a WARN. Counts lines only: the delivery mechanism stays bridge-hook's.
+const SPOOL_STALL_MS = 15 * 60000;
+
+/** Held and long-pending mirror calls in the bridge spool of `dir`. */
+export function checkBridgeSpool({ dir = BRIDGE_RUNTIME_DIR, now = Date.now() } = {}) {
+  const lines = (name) => { try { return fs.readFileSync(path.join(dir, SPOOL_NAMES[name]), 'utf8').split('\n').filter((l) => l.trim()); } catch { return []; } };
+  const out = [];
+  const held = lines('held');
+  if (held.length) {
+    out.push(finding('FAIL', 'bridge-spool-held', `${held.length} mirror call${held.length === 1 ? '' : 's'} the bridge could not deliver ${held.length === 1 ? 'is' : 'are'} kept in ${path.join(dir, SPOOL_NAMES.held)}; never reached Telegram`,
+      `the daemon refused them, or their session ended before any channel took them; read them there, and move a line back into ${SPOOL_NAMES.spool} for the sender to deliver it (docs/bridge.md § The spool)`));
+  }
+  const pending = [...lines('inflight'), ...lines('spool')];   // a delivered line leaves the in-flight file
+  const oldest = pending.map((l) => { try { return JSON.parse(l).at; } catch { return NaN; } }).find(Number.isFinite);
+  if (pending.length && now - oldest > SPOOL_STALL_MS) {
+    out.push(finding('WARN', 'bridge-spool-pending', `${pending.length} mirror call${pending.length === 1 ? '' : 's'} wait for the bridge, the oldest ${Math.round((now - oldest) / 60000)} min`,
+      'any hook starts the detached sender, which delivers them in order once the daemon answers; check that the bridge daemon is running (docs/bridge.md § The spool)'));
+  }
+  return out;
+}
+
 // ── runner ──
 
 // A config dir that lost its session-bridge registration (the CLI recreated .claude.json)
@@ -588,6 +652,48 @@ export function checkChannelServer({ bridged = Boolean(readBridgeConfig().botTok
 // on the tree's fingerprint and rescans only when it moved; `npm run doctor` always scans.
 const DOCTOR_FILE = fileURLToPath(import.meta.url);
 const CONTENT_CACHE_FILE = path.join(HOME, '.claude', 'doctor-cache.json');
+
+// ── The SessionStart hook ──
+// Every hook < 5 s for the whole event (user ruling D24, 2026-11-17), and the checks take ~10 s
+// cold (~1.5 s with the content cache warm). So the hook (--hook) never runs them: it reports the
+// FAILs the last run left (doctor-last.json) and starts the next run DETACHED (--hook-refresh, one
+// at a time by its lease), which the next SessionStart reports. A finding shows one session late.
+const LAST_FILE = path.join(HOME, '.claude', 'doctor-last.json');
+const REFRESH_LEASE = path.join(HOME, '.claude', 'doctor-refresh.lock');
+const REFRESH_LEASE_MS = 10 * 60000;
+
+/** The hook's notice for the titles of failing findings, or null when none fail. */
+function failNotice(failed) {
+  if (!failed.length) return null;
+  return `[doctor] ${failed.length} failing invariant(s) — ${failed.slice(0, 2).join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''} — run: npm run doctor`;
+}
+
+const startRefresh = () => spawn(process.execPath, [DOCTOR_FILE, '--hook-refresh'], { detached: true, stdio: 'ignore', windowsHide: true }).on('error', () => {}).unref();
+
+/** The hook: the last run's notice (null when it found no FAIL, or none ran yet), the next run started unless one runs. */
+export function hookReport({ lastFile = LAST_FILE, lease = REFRESH_LEASE, start = startRefresh, now = Date.now() } = {}) {
+  let failed = [];
+  try { const last = JSON.parse(fs.readFileSync(lastFile, 'utf8')); if (Array.isArray(last?.failed)) failed = last.failed.map(String); } catch { /* none yet, or torn */ }
+  if (!ownerLockLive(lease, { maxAgeMs: REFRESH_LEASE_MS, now })) try { start(); } catch { /* the next SessionStart tries again */ }
+  return failNotice(failed);
+}
+
+/**
+ * The detached run: every check, its FAILs written for the next hook. One at a time by `lease`,
+ * which names its owner: a refresh killed with its tree leaves a lock that is taken over at once.
+ */
+export function refreshHookReport({ lastFile = LAST_FILE, lease = REFRESH_LEASE, run = () => runChecks({ contentCache: CONTENT_CACHE_FILE }), now = Date.now } = {}) {
+  const release = acquireOwnerLock(lease, { maxAgeMs: REFRESH_LEASE_MS, now: now() });
+  if (!release) return;
+  try {
+    const failed = run().filter((f) => f.level === 'FAIL').map((f) => f.title);
+    const tmp = `${lastFile}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ at: now(), failed }));
+    fs.renameSync(tmp, lastFile);
+  } finally {
+    release();
+  }
+}
 
 /**
  * What the content scans read, as one string: HEAD, every changed or untracked path with
@@ -628,7 +734,9 @@ export function cachedContentChecks({ cacheFile = CONTENT_CACHE_FILE, fingerprin
   return findings;
 }
 
-export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME, contentCache = null } = {}) {
+// `market` is this machine's declared cc-market checkout (shared/market-dir.mjs); a test home has none.
+export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home = HOME, contentCache = null,
+  market = home === HOME ? readMarketDir() : { dir: null, why: null } } = {}) {
   const settingsPath = path.join(syncDir, 'claude_settings.json');
   let settings = null;
   try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); } catch { /* reported by checkPayloadShape */ }
@@ -636,7 +744,8 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
   const contentChecks = () => {
     const files = trackedFiles(repoRoot);
     return [
-        ...checkRuleSymbols(repoRoot, files),
+      ...checkRuleFileSize(repoRoot),
+      ...checkRuleSymbols(repoRoot, files),
       ...checkPublicHygiene({ root: repoRoot, files, markersFile, requireMarkers: path.resolve(syncDir) !== path.resolve(repoRoot) }),
     ];
   };
@@ -649,16 +758,19 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
     ...checkHooks(settings, home),
     ...checkPayloadPaths(syncDir),
     ...checkPayloadShape(syncDir, repoRoot),
-    ...checkLinks({ repoRoot, syncDir }),
+    ...checkLinks({ repoRoot, syncDir, home }),
     ...checkPlugins(settings, home),
-    ...checkCodexPluginCache(repoRoot, home),
+    ...(market.why ? [finding('FAIL', 'cc-market-location', 'the cc-market checkout is not declared', market.why)] : []),
+    ...checkCodexPluginCache(market.dir, home),
     ...checkHygiene(repoRoot),
     ...checkNativeCodexHooks({ codexHome: home === HOME ? codexDir : path.join(home, '.codex'), scriptsDir: path.join(home, '.claude', 'scripts') }),
     ...checkProtectedCodexCaches({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
     ...checkPluginCacheLock({ codexHome: home === HOME ? codexDir : path.join(home, '.codex') }),
+    ...checkAgyConfig({ agyHome: path.join(home, '.gemini', 'config'), scriptsDir: path.join(home, '.claude', 'scripts'), marketDir: market.dir }),
     ...content,
     ...checkMachineName(path.join(home, '.claude', 'machine.json')),
     ...checkBridgeRevision({ runtimeFile: path.join(home, '.claude', 'bridge', 'runtime.json'), repoRoot }),
+    ...checkBridgeSpool({ dir: path.join(home, '.claude', 'bridge') }),
     ...checkBridgeHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
       localPath: path.join(home, '.claude', 'claude_env_settings.local.json') }),
     ...checkDashboardHost({ sharedPath: path.join(home, '.claude', 'claude_env_settings.json'),
@@ -668,6 +780,21 @@ export function runChecks({ syncDir = getSyncDir(), repoRoot = sourceDir, home =
       configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
     ...checkRetiredCodexRootKey({ configPath: path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'config.toml') }),
   ];
+}
+
+// agy's hooks.json / plugins.json are merged, not linked, so the link table cannot see a lost
+// managed part; like Codex, an installed hook that never ran is a silent gap.
+export function checkAgyConfig({ agyHome = agyDir, scriptsDir = path.join(claudeDir, 'scripts'), marketDir = null } = {}) {
+  if (!agyInstalled(agyHome)) return [];
+  const state = inspectAgyConfig({ agyDir: agyHome, scriptsDir, marketDir });
+  const fix = 'run setup (it merges the managed parts and preserves user entries)';
+  const out = [];
+  if (!state.installed) out.push(finding('FAIL', 'agy-native-hooks', 'agy hooks.json lacks the current cc-config hook', fix));
+  if (!state.mcpClean) out.push(finding('FAIL', 'agy-mcp', 'agy mcp_config.json still carries the legacy session-bridge server', fix));
+  if (!state.plugins) out.push(finding('FAIL', 'agy-plugins', 'agy plugins.json lacks the current cc-market entry', fix));
+  if (state.installed && !state.executed) out.push(finding('WARN', 'agy-native-hooks', 'agy hooks are installed but their execution has not been observed',
+    `not observed: ${Object.entries(state.events).filter(([, v]) => !v.executed).map(([name]) => name).join(', ')}; start an agy session`));
+  return out;
 }
 
 function checkNativeCodexHooks({ codexHome = codexDir, scriptsDir = path.join(claudeDir, 'scripts') } = {}) {
@@ -711,27 +838,23 @@ const MARK = { FAIL: 'FAIL ', WARN: 'WARN ', OK: 'OK   ' };
 
 function main() {
   const args = process.argv.slice(2);
-  // --public-hygiene: the pre-commit gate (.githooks/pre-commit) — that check alone.
-  const findings = args.includes('--public-hygiene') ? checkPublicHygiene()
-    : runChecks({ contentCache: args.includes('--hook') ? CONTENT_CACHE_FILE : null });
+  if (args.includes('--hook-refresh')) { refreshHookReport(); return; }
+  if (args.includes('--hook')) {
+    // FAILs only, and silent when there are none. WARNs are informational — the
+    // dormant-plugin inventory is always non-empty — and a notice that shows up
+    // every session regardless teaches the reader to ignore all of them.
+    const notice = hookReport();
+    if (notice) process.stdout.write(JSON.stringify({ systemMessage: notice }));
+    return;
+  }
+  // --public-hygiene: the pre-commit gate ([tool.dev_lab.hooks] row public-hygiene) — that check alone.
+  const findings = args.includes('--public-hygiene') ? checkPublicHygiene() : runChecks();
   const failed = findings.filter((f) => f.level === 'FAIL');
   const warned = findings.filter((f) => f.level === 'WARN');
 
   if (args.includes('--json')) {
     process.stdout.write(JSON.stringify({ findings, failed: failed.length, warned: warned.length }, null, 2));
     process.exitCode = failed.length ? 1 : 0;
-    return;
-  }
-
-  if (args.includes('--hook')) {
-    // FAILs only, and silent when there are none. WARNs are informational — the
-    // dormant-plugin inventory is always non-empty — and a notice that shows up
-    // every session regardless teaches the reader to ignore all of them.
-    if (!failed.length) return;
-    const first = failed.slice(0, 2).map((f) => f.title);
-    process.stdout.write(JSON.stringify({
-      systemMessage: `[doctor] ${failed.length} failing invariant(s) — ${first.join('; ')}${failed.length > 2 ? ` (+${failed.length - 2} more)` : ''} — run: npm run doctor`,
-    }));
     return;
   }
 

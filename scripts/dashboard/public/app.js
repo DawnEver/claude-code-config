@@ -3,12 +3,14 @@
 // anything but display (the user's language). All data is rendered with textContent, never as HTML.
 // Every word shown comes from shared/i18n.mjs.
 
-import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
+import { GROUPS, accountSessions, codeView, ago, applyFilters, countdown, displayStatus, filterOptions, tabs, accountName, verdictText, accountIndex, accountTag, hostsView, timeTicks, configView, configLabel, CONFIG_GROUPS, groupSessions, resetText, windowLabel, emailName, bestAccounts, amount, formatTime, sessionLabel, chatTime, unreadBadge, topicTarget, replyTime, sessionsOf, resourceView, providerName, agentName, usageView, hpcView, tokenText, hoursText, statusLabel, taskView, taskLines, searchAll, SEARCH_MAX, sessionAccountLabel, unreadState, readMark, unreadMark, unreadCount, syncSeen, nextUnread } from './view.mjs';
 import { t, defaultLang, LANGS } from './shared/i18n.mjs';
-import { USAGE_FILTER_MAX } from './shared/vocab.mjs';
+import { USAGE_FILTER_MAX, platformName } from './shared/vocab.mjs';
 import { demoMasker } from './demo.mjs';
 import { mockDashboard } from './mock.mjs';
 import { LOGOS } from './logos.mjs';
+/** Each agent's maker, whose mark its avatar shows (logos.mjs). */
+const AGENT_BRANDS = { claude: 'claude', codex: 'openai', agy: 'agy' };
 
 const POLL_MS = 8000;
 const REPO = 'https://github.com/DawnEver/claude-code-config';
@@ -24,7 +26,8 @@ let loading = false;
 let selectsKey = null;
 // Settings of this device: localStorage, never sent anywhere (private mode: none kept).
 const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } } };
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  del: (k) => { try { localStorage.removeItem(k); } catch { /* private mode */ } } };
 // The UI language: chosen on this device, else what the Telegram user's language asks for.
 const autoLang = defaultLang(tg?.initDataUnsafe?.user?.language_code ?? navigator.language);
 let langChoice = LANGS.includes(store.get('dashboard.lang')) ? store.get('dashboard.lang') : 'auto';
@@ -43,6 +46,37 @@ let demoOn = store.get('dashboard.demo') === '1';
 let masker = null;   // one per page: names stay put when demo is toggled off and on
 let raw = null;      // the last snapshot as fetched; `snapshot` is what is shown
 const shown = () => (raw && demoOn ? (masker ??= demoMasker())(raw) : raw);
+
+/*
+ * Sign-in: Telegram signs initData only when the app opens, while Telegram keeps an open app
+ * alive for days. The gateway answers every verified read with a session of its own
+ * (api.mjs `x-viewer-session`), renewed on use; this page keeps it for the Telegram user it
+ * was issued to and signs in with it, falling back to initData when it is refused.
+ */
+const SESSION_KEY = `dashboard.session.${tg?.initDataUnsafe?.user?.id ?? 'none'}`;
+let viewerSession = store.get(SESSION_KEY);
+async function api(url, init = {}) {
+  const send = (authorization) => fetch(url, { cache: 'no-store', ...init, headers: { ...init.headers, authorization } });
+  let res = viewerSession ? await send(`session ${viewerSession}`) : null;
+  if (!res || res.status === 401) res = await send(`tma ${tg.initData}`);
+  viewerSession = res.headers.get('x-viewer-session') ?? (res.status === 401 ? null : viewerSession);
+  if (viewerSession) store.set(SESSION_KEY, viewerSession); else store.del(SESSION_KEY);
+  return res;
+}
+
+// The last snapshot, kept on this device: a reload (Telegram's, or after a deploy) repaints at
+// once, at the reader's scroll position, instead of from an empty page.
+const SNAPSHOT_KEY = 'dashboard.lastSnapshot';
+function keepSnapshot() { store.set(SNAPSHOT_KEY, JSON.stringify({ at: lastOk, raw })); }
+function restoreSnapshot() {
+  try {
+    const kept = JSON.parse(store.get(SNAPSHOT_KEY));
+    if (!Array.isArray(kept?.raw?.hosts) || !(kept.at > 0)) return;
+    raw = kept.raw;
+    snapshot = shown();
+    lastOk = kept.at;
+  } catch { /* none kept */ }
+}
 // Quota rows opened to their detail (host|account), kept across polls.
 const openRows = new Set();
 // Quota hosts opened from their header: every account row open, plus the host's facts.
@@ -215,7 +249,7 @@ function sessionRow(s, opts = {}) {
   const row = el(s.topic ? 'button' : 'div', `chat s-${status}${s.topic ? ' link' : ''}`);
   row.dataset.session = s.id;   // the unread badge finds its target by this
   // The platform the session spends: a provider's own mark (ccds, cods), else the agent's maker.
-  const brand = LOGOS[s.provider] ? s.provider : s.agent === 'claude' ? 'claude' : 'openai';
+  const brand = LOGOS[s.provider] ? s.provider : AGENT_BRANDS[s.agent] ?? 'openai';
   const avatar = el('span', `avatar ${s.agent} b-${brand}`);
   avatar.append(logo(brand));
   avatar.append(el('span', 'dot'));
@@ -325,10 +359,12 @@ function accountDetail(q, hostId) {
     sub.append(trend(w), el('span', `forecast${w.forecast?.short ? ' hot' : ''}`, w.renewed ? tr('quota.resetUnknown') : forecast || ''));
     box.append(row, sub);
   }
-  if (q.resetCredits) {
-    const first = q.resetCredits.expiries.filter(Boolean).sort((x, y) => x - y)[0];
-    box.append(el('div', 'note', tr('quota.credits', { n: q.resetCredits.count, first: first && countdown(first) })));
+  // Open: the pills with their dates and notes; the list with its controls only in edit mode.
+  if (resetItems(q).length) {
+    box.append(bankedLine(q, true));
+    for (const b of (q.banked ?? []).filter((x) => x.note)) box.append(el('div', 'muted', `${b.name}: ${b.note}`));
   }
+  if (q.banked && editingResets()) box.append(bankedPart(q));
   if (q.extraReset) {
     const note = el(q.extraReset.url ? 'button' : 'div', 'note link', tr('quota.extraReset', { in: q.extraReset.at && countdown(q.extraReset.at) }));
     if (q.extraReset.url) note.addEventListener('click', (e) => { e.stopPropagation(); tg?.openLink ? tg.openLink(q.extraReset.url) : window.open(q.extraReset.url, '_blank', 'noopener'); });
@@ -336,6 +372,115 @@ function accountDetail(q, hostId) {
   }
   box.append(sessionsPart(hostSessions(q.key, hostId)));
   return box;
+}
+
+/*
+ * Banked resets: one-off resets an account was granted (a full reset, a model reset), each to spend
+ * before it expires. No API reports them, so they are recorded here and kept by the gateway
+ * (registry.mjs editBanked): listed by expiry, marked spent with a tap, added with a small form.
+ */
+const BANKED_NAMES = ['Full reset', 'Fable reset'];
+// Editing resets is rare and "Used" deletes: the controls show only in edit mode, toggled from
+// the Accounts heading (this page's life only). Never in example data or demo mode.
+let resetEdit = false;
+// The Claude accounts the bulk card edits (empty: all of them), this page's life only.
+const bulkPick = new Set();
+const canEditResets = () => !mock && !demoOn && Boolean(tg?.initData);
+const editingResets = () => resetEdit && canEditResets();
+const bankedForm = { key: null, name: BANKED_NAMES[0], when: '', note: '' };
+async function editBanked(body) {
+  try {
+    const res = await api('api/resets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(res.status === 400 ? tr('banked.bad') : `HTTP ${res.status}`);
+    tg?.HapticFeedback?.notificationOccurred?.('success');
+    bankedForm.key = null;
+    await load();
+  } catch (e) {
+    const text = tr('banked.notSaved', { error: e.message });
+    tg?.showAlert ? tg.showAlert(text) : alert(text);
+  }
+}
+const confirmThen = (text, fn) => (tg?.showConfirm ? tg.showConfirm(text, (ok) => ok && fn()) : confirm(text) && fn());
+
+/**
+ * The resets an account holds, at a glance and as weighty as its windows: Claude's banked resets
+ * (recorded here) and Codex's reset credits (read from the account) in one style, each with its
+ * time left to spend it. `withDate`: the expiry date too (the open card).
+ */
+function resetItems(q) {
+  const credits = q.resetCredits ? Array.from({ length: q.resetCredits.count }, (_, i) => ({ name: tr('banked.credit'), expiresAt: q.resetCredits.expiries[i] ?? null })) : [];
+  return [...(q.banked ?? []), ...credits];
+}
+function bankedLine(q, withDate = false) {
+  const line = el('div', 'qbanked');
+  for (const b of resetItems(q)) {
+    const soon = b.expiresAt && b.expiresAt - Date.now() < 7 * 86400000;
+    const pill = el('span', `bpill${soon ? ' soon' : ''}`);
+    pill.append(el('b', null, `↺ ${b.name.replace(/\s+reset$/i, '')}`),
+      ...(b.expiresAt ? [el('span', null, countdown(b.expiresAt))] : []),
+      ...(withDate && b.expiresAt ? [el('span', 'bdate', formatTime(b.expiresAt, timeFormat()))] : []));
+    pill.title = [b.name, b.expiresAt ? tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) }) : tr('banked.noExpiry'),
+      soon ? tr('banked.soon') : null, b.note].filter(Boolean).join(' · ');
+    line.append(pill);
+  }
+  return line;
+}
+
+function bankedPart(q) {
+  const box = el('div', 'banked');
+  box.addEventListener('click', (e) => e.stopPropagation());
+  const readOnly = !editingResets();
+  box.append(el('div', 'note', q.banked.length ? tr('banked.title', { n: q.banked.length }) : tr('banked.none')));
+  for (const b of q.banked) {
+    const row = el('div', 'banked-row');
+    const text = el('span', null, `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })}`);
+    if (b.note) text.title = b.note;
+    row.append(text);
+    if (!readOnly) {
+      const spent = el('button', 'act danger', tr('banked.spent'));
+      spent.title = tr('banked.spentHint', { name: b.name });
+      spent.addEventListener('click', () => confirmThen(tr('banked.spentConfirm', { name: b.name }), () => editBanked({ account: q.key, remove: b.id })));
+      row.append(spent);
+    }
+    box.append(row);
+  }
+  if (readOnly) return box;
+  box.append(...bankedAdd(q.key, (add) => editBanked({ account: q.key, add })));
+  return box;
+}
+
+/** "+ Add reset", or its form while open for `key` (an account, or '*' for every Claude account). */
+function bankedAdd(key, save) {
+  if (bankedForm.key !== key) {
+    const add = el('button', 'act', tr('banked.add'));
+    add.title = tr(key === '*' ? 'banked.addHintAll' : 'banked.addHint');
+    add.addEventListener('click', () => { Object.assign(bankedForm, { key, name: BANKED_NAMES[0], when: '', note: '' }); render(); });
+    return [add];
+  }
+  const form = el('div', 'banked-form');
+  const input = (type, field, placeholder) => {
+    const i = document.createElement('input');
+    i.type = type; i.value = bankedForm[field]; if (placeholder) i.placeholder = placeholder;
+    i.addEventListener('input', () => { bankedForm[field] = i.value; });
+    i.title = tr(`banked.${field}Hint`);
+    return i;
+  };
+  const name = input('text', 'name', tr('banked.name'));
+  const list = el('datalist');
+  list.id = `banked-names-${key}`;
+  for (const n of BANKED_NAMES) { const o = document.createElement('option'); o.value = n; list.append(o); }
+  name.setAttribute('list', list.id);
+  const ok = el('button', 'act primary', tr('banked.save'));
+  ok.title = tr(key === '*' ? 'banked.addHintAll' : 'banked.addHint');
+  ok.addEventListener('click', () => {
+    const expiresAt = Date.parse(bankedForm.when);   // datetime-local: this device's time zone
+    if (!bankedForm.name.trim() || !(expiresAt > Date.now())) { const t = tr('banked.bad'); return tg?.showAlert ? tg.showAlert(t) : alert(t); }
+    save({ name: bankedForm.name.trim(), expiresAt, note: bankedForm.note.trim() });
+  });
+  const cancel = el('button', 'act', tr('banked.cancel'));
+  cancel.addEventListener('click', () => { bankedForm.key = null; render(); });
+  form.append(name, list, el('label', 'muted', tr('banked.expiresAt')), input('datetime-local', 'when'), input('text', 'note', tr('banked.note')), ok, cancel);
+  return [form];
 }
 
 /**
@@ -403,7 +548,7 @@ function accountRow(q, hostId) {
     name: el('span', `agent ${q.agent ?? q.provider}`, accountName(q)), headline: headline(q),
     right: ref ? el('span', 'see', tr('quota.see', { host: q.refTo })) : null,
     title: ref ? tr('quota.oneBudget', { host: q.refTo }) : null,
-    folded: () => (!ref && q.windows.length ? [quotaMini(q)] : []),
+    folded: () => (!ref ? [...(q.windows.length ? [quotaMini(q)] : []), ...(resetItems(q).length ? [bankedLine(q)] : [])] : []),
     open: () => [ref ? sessionsPart(using) : accountDetail(q, hostId)],
     meta, warns: ref ? [] : [...(q.verdict === 'short' || q.verdict === 'exhausted' ? [verdictText(q, { withReset: false, lang })] : []), ...q.problems],
   });
@@ -525,7 +670,70 @@ function renderQuota() {
     head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
     grid.append(section);
   }
-  box.append(el('div', 'section-h', tr('quota.heading', { unit: pref.unit })), grid);
+  const head = el('div', 'section-h quota-head', tr('quota.heading', { unit: pref.unit }));
+  if (canEditResets() && (snapshot.accounts ?? []).some((a) => a.banked)) {
+    const toggle = el('button', `chip${resetEdit ? ' on' : ''}`, tr(resetEdit ? 'banked.done' : 'banked.edit'));
+    toggle.setAttribute('aria-pressed', String(resetEdit));
+    toggle.title = tr(resetEdit ? 'banked.doneHint' : 'banked.editHint');
+    toggle.addEventListener('click', () => { resetEdit = !resetEdit; bankedForm.key = null; tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    head.append(toggle);
+  }
+  box.append(head);
+  // In edit mode the every-account card leads: it is what editing is mostly for.
+  const bulk = editingResets() ? bankedBulk() : null;
+  if (bulk) box.append(bulk);
+  box.append(grid);
+}
+
+/**
+ * Banked resets across every Claude account at once: each distinct reset (name and expiry) with
+ * how many accounts hold it, added to or removed from all of them in one edit.
+ */
+function bankedBulk() {
+  const claude = (snapshot.accounts ?? []).filter((a) => a.agent === 'claude' && a.banked);
+  if (!claude.length) return null;
+  const all = claude.map((a) => a.key);
+  for (const k of bulkPick) if (!all.includes(k)) bulkPick.delete(k);
+  // No pick means every account; a tap on an account narrows the edits to the picked ones.
+  const keys = bulkPick.size ? all.filter((k) => bulkPick.has(k)) : all;
+  const picked = claude.filter((a) => keys.includes(a.key));
+  const box = el('div', 'banked banked-bulk');
+  box.append(el('div', 'section-h', tr(bulkPick.size ? 'banked.bulkPicked' : 'banked.bulk', { n: keys.length, of: all.length })));
+  const pickRow = el('div', 'bulk-pick');
+  for (const a of claude) {
+    const chip = el('button', `chip${bulkPick.has(a.key) ? ' on' : ''}`, accountTag(a));
+    chip.setAttribute('aria-pressed', String(bulkPick.has(a.key)));
+    chip.title = tr('banked.pickHint');
+    chip.addEventListener('click', () => { if (!bulkPick.delete(a.key)) bulkPick.add(a.key); bankedForm.key = null; tg?.HapticFeedback?.selectionChanged?.(); render(); });
+    pickRow.append(chip);
+  }
+  box.append(pickRow);
+  const seen = new Map();
+  for (const a of picked) for (const b of a.banked) {
+    const id = `${b.name}|${b.expiresAt}`;
+    seen.set(id, { ...b, n: (seen.get(id)?.n ?? 0) + 1 });
+  }
+  const readOnly = !editingResets();
+  for (const b of [...seen.values()].sort((x, y) => x.expiresAt - y.expiresAt)) {
+    const row = el('div', 'banked-row');
+    row.append(el('span', null, `${b.name} · ${tr('banked.expires', { in: countdown(b.expiresAt), at: formatTime(b.expiresAt, timeFormat()) })} · ${tr('banked.on', { n: b.n, of: keys.length })}`));
+    if (!readOnly) {
+      const drop = el('button', 'act danger', tr('banked.removeAll'));
+      drop.title = tr('banked.removeAllHint', { name: b.name, n: b.n });
+      drop.addEventListener('click', () => confirmThen(tr('banked.removeAllConfirm', { name: b.name, n: b.n }),
+        () => editBanked({ accounts: keys, drop: { name: b.name, expiresAt: b.expiresAt } })));
+      row.append(drop);
+      if (b.n < keys.length) {
+        const fill = el('button', 'act', tr('banked.addAll'));
+        fill.title = tr('banked.addAllHint', { name: b.name, n: keys.length - b.n });
+        fill.addEventListener('click', () => editBanked({ accounts: keys, add: { name: b.name, expiresAt: b.expiresAt, note: b.note ?? '' } }));
+        row.append(fill);
+      }
+    }
+    box.append(row);
+  }
+  if (!readOnly) box.append(...bankedAdd('*', (add) => editBanked({ accounts: keys, add })));
+  return box;
 }
 
 /** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */
@@ -710,7 +918,7 @@ function columns(blocks) {
 
 function displaySection() {
   const sample = Date.parse('2026-10-21T12:00:00');
-  const languages = displayRow('cfg.language', 'cfg.lang.autoHint', segmented([['auto', tr('cfg.lang.auto')], ['en', 'English'], ['zh', '中文']], langChoice, tr('cfg.language'), (v) => {
+  const languages = displayRow('cfg.language', 'cfg.lang.autoHint', segmented([['auto', tr('cfg.lang.auto')], ...LANGS.map((l) => [l, t('lang.name', l)])], langChoice, tr('cfg.language'), (v) => {
     langChoice = v;
     store.set('dashboard.lang', v);
     lang = v === 'auto' ? autoLang : v;
@@ -779,7 +987,7 @@ async function saveConfig(key, value, button) {
   configDirty = false;
   configShown = null;
   try {
-    const res = await fetch('api/config', { method: 'POST', headers: { authorization: `tma ${tg.initData}`, 'content-type': 'application/json' },
+    const res = await api('api/config', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ key, value }) });
     if (!res.ok) throw new Error(res.status === 400 ? tr('cfg.badValue') : `HTTP ${res.status}`);
     tg?.HapticFeedback?.notificationOccurred?.('success');
@@ -888,13 +1096,13 @@ async function fetchUsage(force = false) {
   const q = new URLSearchParams({ days: String(usageDays), tz: String(tzOffsetMin()) });
   for (const [d, vs] of Object.entries(usageFilter)) for (const v of vs) q.append(d, v);
   try {
-    const res = await fetch(`api/usage?${q}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
+    const res = await api(`api/usage?${q}`);
     usage = res.ok ? { key, report: await res.json(), at: Date.now() }
       : { key, error: res.status === 503 ? ['usage.notSetUp'] : ['usage.unavailable', { status: res.status }], at: Date.now() };
   } catch { usage = { key, error: ['usage.unreachable'], at: Date.now() }; } finally { usageLoading = false; }
   // A selection made while this request was in flight asks again.
   if (usageKey() !== key) return fetchUsage(true);
-  renderUsage();
+  drawUsage();
 }
 
 /** Select or unselect one value of a dimension, then refetch. */
@@ -905,7 +1113,7 @@ function toggleUsage(dim, value) {
   usageFilter = { ...usageFilter, [dim]: vs.includes(value) ? vs.filter((v) => v !== value) : [...vs, value] };
   store.set('dashboard.usageFilter', JSON.stringify(usageFilter));
   tg?.HapticFeedback?.selectionChanged?.();
-  renderUsage();
+  drawUsage();
   fetchUsage(true);
 }
 
@@ -927,10 +1135,39 @@ function usageList(titleKey, rows, dim) {
   return block;
 }
 
+/**
+ * HPC (docs/dashboard.md "HPC"): core-hours per bucket with the one barChart, then a line per
+ * cluster login — its newest reading (jobs, CPU efficiency, failures, quota, a billed budget) or
+ * why it was not read. Not narrowed by the token filters. Nothing when no login was read in range.
+ */
+function hpcBlock(v) {
+  const block = el('div', 'block');
+  const pct = (x) => (x == null ? '–' : `${Math.round(x * 100)}%`);
+  const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.hpc.day', { day: d.day, h: Math.round(d.coreHours) }), segs: [{ cls: 'hpc', pct: d.pct }] })),
+    [tick(v.days[0]), tr('usage.hpc.axis'), tick(v.days.at(-1))]);
+  const list = el('div', 'usage-list');
+  for (const g of v.grants) {
+    const row = el('div', 'u');
+    const meta = g.why != null ? tr('usage.hpc.unread', { why: g.why }) : [
+      tr('usage.hpc.jobs', { n: g.jobs ?? 0 }), tr('usage.hpc.eff', { pct: pct(g.cpuEfficiency) }),
+      ...(g.failures ? [tr('usage.hpc.failures', { n: g.failures, oom: g.oom })] : []),
+      tr('usage.hpc.quota', { storage: pct(g.storage), files: pct(g.files) }),
+      ...(g.budget ? [tr('usage.hpc.budget', { used: pct(g.budget.used), total: Math.round(g.budget.total), window: pct(g.budget.window), until: g.budget.until ?? '' })
+        + (g.budget.ahead ? ` ${tr('usage.hpc.ahead')}` : '')] : []),
+    ].join(' · ');
+    row.append(el('span', 'n', g.role ? `${g.name} · ${g.role}` : g.name), el('span', 'm', meta), el('b', null, g.why != null ? '–' : `${Math.round(g.coreHours ?? 0)}`));
+    row.title = tr('usage.hpc.read', { at: formatTime(g.at, timeFormat()) });
+    list.append(row);
+  }
+  block.append(el('div', 'section-h', tr('usage.hpc.title', { h: Math.round(v.totals.coreHours) })), chart, axis, list);
+  return block;
+}
+
 function renderUsage() {
   const box = $('usage-view');
   box.replaceChildren();
-  box.append(rangePicker(USAGE_RANGES, usageDays, (d) => { usageDays = d; store.set('dashboard.usageDays', String(d)); renderUsage(); fetchUsage(true); }));
+  box.append(rangePicker(USAGE_RANGES, usageDays, (d) => { usageDays = d; store.set('dashboard.usageDays', String(d)); drawUsage(); fetchUsage(true); }));
   if (mock) return box.append(el('div', 'qrows empty', tr('usage.mock')));
   const picked = Object.entries(usageFilter).flatMap(([d, vs]) => vs.map((v) => [d, v]));
   if (picked.length) {
@@ -941,7 +1178,7 @@ function renderUsage() {
       bar.append(chip);
     }
     const clear = el('button', 'chip', tr('usage.clearFilter'));
-    clear.addEventListener('click', () => { usageFilter = { project: [], model: [], machine: [] }; store.set('dashboard.usageFilter', JSON.stringify(usageFilter)); renderUsage(); fetchUsage(true); });
+    clear.addEventListener('click', () => { usageFilter = { project: [], model: [], machine: [] }; store.set('dashboard.usageFilter', JSON.stringify(usageFilter)); drawUsage(); fetchUsage(true); });
     bar.append(clear);
     box.append(bar);
   }
@@ -956,9 +1193,11 @@ function renderUsage() {
   if (v.totals.cacheHit != null) total(`${Math.round(v.totals.cacheHit * 100)}%`, 'usage.cacheHit', 'usage.cacheHitTitle');
   if (v.totals.costUsd != null) total(`$${Math.round(v.totals.costUsd)}`, 'usage.apiValue', 'usage.apiValueTitle');
   const tick = (d) => (!d ? '' : v.unit === 'hour' ? `${d.day.slice(11)}:00` : d.day);
-  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, claude: tokenText(d.claude), codex: tokenText(d.codex), active: hoursText(d.active) }),
-    segs: ['claude', 'codex'].map((a) => ({ cls: a, pct: d[`${a}Pct`] })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
+  const [chart, axis] = barChart(v.days.map((d) => ({ title: tr('usage.day', { day: d.day, agents: d.segs.filter((s) => s.tokens).map((s) => `${platformName(s.platform)} ${tokenText(s.tokens)}`).join(', ') || '0', active: hoursText(d.active) }),
+    segs: d.segs.map((s) => ({ cls: s.platform, pct: s.pct })) })), [tick(v.days[0]), tr('usage.axis', { unit: v.unit }), tick(v.days.at(-1))]);
   box.append(totals, chart, axis, columns([usageList('usage.projects', v.projects, 'project'), usageList('usage.models', v.models, 'model'), usageList('usage.machines', v.machines, 'machine')]));
+  const hpc = hpcView(demoOn ? masker.usage(usage.report) : usage.report, Date.now(), tzOffsetMin());
+  if (hpc) box.append(hpcBlock(hpc));
   restoreScroll();
 }
 
@@ -1029,7 +1268,7 @@ function historyOf(r) {
   if (!held || (!held.loading && Date.now() - held.at > USAGE_EVERY_MS)) {
     codeHistory.set(key, { ...held, loading: true });
     const q = new URLSearchParams({ repo: r.key, days: String(codeDays), tz: String(tzOffsetMin()) });
-    fetch(`api/code/history?${q}`, { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' })
+    api(`api/code/history?${q}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((value) => codeHistory.set(key, { at: Date.now(), value }), (e) => codeHistory.set(key, { at: Date.now(), error: e.message }))
       .finally(() => { if (tab === 'code') render(); });
@@ -1212,7 +1451,7 @@ for (const b of document.querySelectorAll('#tabs [data-tab]')) {
     store.set('dashboard.scroll', JSON.stringify(scrollAt));
     tab = b.dataset.tab;
     armRestore();
-    if (tab === 'usage') { renderUsage(); fetchUsage(); }
+    if (tab === 'usage') { drawUsage(); fetchUsage(); }
     configShown = null;
     configDirty = false;
     store.set('dashboard.tab', tab);
@@ -1265,9 +1504,10 @@ function render() {
   // must not blank another. A redraw keeps the reader where they were on the page.
   const y = window.scrollY;
   if (query.trim()) { isolated(renderSearch); restoreScroll(); return; }
-  if (tab === 'quota') isolated(renderQuota);
-  if (tab === 'code') isolated(renderCode);
-  if (tab === 'usage') isolated(renderUsage);
+  // A banked-reset form being filled is not rebuilt under the reader's fingers by a poll.
+  if (tab === 'quota' && !document.activeElement?.matches?.('.banked-form input')) isolated(renderQuota, 'quota-view');
+  if (tab === 'code') isolated(renderCode, 'code-view');
+  if (tab === 'usage') drawUsage();
   // The config form is rebuilt only when its data changed and nobody is editing a shared value:
   // a poll must not wipe a value being typed.
   if (tab === 'config') {
@@ -1280,9 +1520,16 @@ function render() {
   restoreScroll();
 }
 
-function isolated(fn) {
-  try { fn(); } catch (e) { console.error(e); }
+/** Draw one view; a fault stays in that view and is said there, so a tab is never left empty without a reason. */
+function isolated(fn, viewId = null) {
+  try { fn(); } catch (e) {
+    console.error(e);
+    if (viewId) $(viewId).append(el('div', 'qrows empty', tr('app.viewFailed', { why: String(e?.message ?? e) })));
+  }
 }
+
+/** The Usage tab, from every caller: a late report (fetchUsage) must not leave it empty on a fault either. */
+function drawUsage() { isolated(renderUsage, 'usage-view'); }
 
 function stop(messageKey) {
   $('summary').hidden = false;
@@ -1299,8 +1546,8 @@ async function fetchSnapshot() {
   if (mock) { snapshot = mockDashboard(); render(); return; }
   if (!tg?.initData) return stop('app.openFromBot');
   try {
-    const res = await fetch('api/dashboard', { headers: { authorization: `tma ${tg.initData}` }, cache: 'no-store' });
-    // Expired sign-in (Telegram only signs initData at open): keep the last data, ask for a reopen.
+    const res = await api('api/dashboard');
+    // Sign-in expired (no session, initData too old): keep the last data, ask for a reopen.
     if (res.status === 401 && snapshot) { $('banner').textContent = tr('app.signInExpiredKeep', { ago: agoText(lastOk) }); return render(); }
     if (res.status === 401) return stop('app.signInExpired');
     if (res.status === 403) return stop('app.notAllowed');
@@ -1310,6 +1557,7 @@ async function fetchSnapshot() {
     raw = next;
     snapshot = shown();
     lastOk = Date.now();
+    keepSnapshot();
     $('banner').textContent = '';
   } catch {
     // Keep the last data, clearly marked as old.
@@ -1376,10 +1624,18 @@ async function updateIfStale() {
   store.set('dashboard.autoReloadAt', String(Date.now()));
   await hardReload();
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) updateIfStale(); });
+// While the app is in use a new build only marks the ↻ button: a reload would drop the reader's
+// place. It updates by itself at the next open (the check at start), or at a tap on ↻.
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden || !(await stale())) return;
+  const b = $('force-update');
+  b.classList.add('ready');
+  b.title = tr('app.updateReady');
+});
 
 applyLang();
 $('summary').replaceChildren(el('div', 'summary-head', tr('app.loading')));
+if (!mock && tg?.initData) { restoreSnapshot(); render(); }
 load();
 $('force-update').addEventListener('click', () => hardReload());
 if (!mock) { setInterval(load, POLL_MS); showVersion(); updateIfStale(); }

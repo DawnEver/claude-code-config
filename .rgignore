@@ -1,4 +1,9 @@
-# For VScode tell ripgrep not to exclude:
+# Rendered by dev_lab.dev.famconfig from the family base for .rgignore.
+# Hand edits RED. The base is data in dev_lab.dev._famconfig_rows;
+# this repo's own lines are its declared delta. Change one, re-render, commit.
+
+attic/
+
+# --- claude-code-config delta, 2 of 2 allowed ---
 .submodules/
 .git/
-!cc-market/

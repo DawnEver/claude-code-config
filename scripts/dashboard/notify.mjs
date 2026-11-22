@@ -41,6 +41,11 @@ const ALERTS = {
     detail: (a) => a.error,
     url: (a) => a.url,
   },
+  'hpc-budget': {
+    subject: (a) => a.grant,
+    detail: (a, now, lang) => (a.total > 0 ? t('alert.detail.hpcBudget', lang, { used: a.spent + a.committed, total: a.total,
+      pct: Math.round(((a.spent + a.committed) / a.total) * 100), window: Math.round((a.window ?? 0) * 100), until: a.until, projected: a.projected }) : null),
+  },
   'config-refused': {
     subject: (a) => `${a.key} = ${JSON.stringify(a.value)}`,
     detail: (a, now, lang) => t('alert.detail.refusedBy', lang, { host: a.host, error: a.error }),

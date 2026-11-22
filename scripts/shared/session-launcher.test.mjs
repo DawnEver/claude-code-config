@@ -14,20 +14,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 const python = join(tmpdir(), 'venv', 'python.exe');
 const has = () => ({ ok: true });
 
-test('the agent runs as `<recorded python> -m ai_lab.session <agent> ...`', () => {
+test('the agent runs as `<own python> -m ai_lab.session <agent> ...`', () => {
   assert.deepEqual(sessionSpawn('claude', ['-c', 'x'], { python, ensure: has }),
     { command: python, args: ['-m', SESSION_MODULE, 'claude', '-c', 'x'] });
   assert.equal(SESSION_MODULE, 'ai_lab.session');
   assert.deepEqual(sessionSpawn('codex', [], { python, ensure: has }).args, ['-m', 'ai_lab.session', 'codex']);
+  assert.deepEqual(sessionSpawn('agy', ['-c'], { python, ensure: has }).args, ['-m', 'ai_lab.session', 'agy', '-c']);
 });
 
-test('planted: an ai-lab without ai_lab.session, or no recorded interpreter, still launches the agent, saying why', () => {
+test('planted: an environment without ai_lab.session still launches the agent, saying why', () => {
   const old = sessionSpawn('claude', ['-c', 'x'], { python, ensure: () => ({ ok: false, why: 'ModuleNotFoundError: x' }) });
   assert.deepEqual([old.command, old.args, old.error], ['claude', ['-c', 'x'], undefined]);
   assert.match(old.notice, /cannot import ai_lab\.session \(ModuleNotFoundError: x\).*without a lab session.*setup/s);
-  const none = sessionSpawn('codex', [], { python: null, ensure: has });
-  assert.deepEqual([none.command, none.args], ['codex', []]);
-  assert.match(none.notice, /no ai-lab interpreter recorded.*without a lab session.*setup/s);
 });
 
 test('the default probe treats an interpreter that does not exist as no ai-lab', () => {
@@ -64,7 +62,7 @@ test('a venv behind its tree is synced to the lock before the launch, then probe
     probe: () => probes.shift(), project: () => 'proj', sync: (dir) => { synced.push(dir); return true; }, log: (m) => logs.push(m),
   });
   assert.deepEqual([ready, synced], [{ ok: true }, ['proj']]);
-  assert.match(logs[0], /lab_commons.config.*syncing its venv/);
+  assert.match(logs[0], /lab_commons.config.*syncing it to the lock/);
 });
 
 test('an importable venv is not synced; a non-uv interpreter or a failed sync reports why', () => {

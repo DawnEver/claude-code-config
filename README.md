@@ -14,10 +14,10 @@ concern. Third-party tools and separately cloned repos keep their own licences.
 
 Prerequisites: [Node.js](https://nodejs.org/en/download),
 [Claude Code](https://code.claude.com/docs/en/setup) and/or
-[Codex](https://github.com/openai/codex).
+[Codex](https://github.com/openai/codex) and/or the Antigravity CLI (`agy`).
 
 ```sh
-npm run setup                         # link ~/.claude and ~/.codex to this repo
+npm run setup                         # link ~/.claude, ~/.codex and ~/.gemini/config to this repo
 npm run setup -- --machine host-a     # name this host (once per machine)
 npm run doctor                        # must report no FAIL
 ```
@@ -36,6 +36,7 @@ cleanup; this is recovery, not deletion or a guarantee of atomic native cache up
 |---|---|
 | `ccc` / `ccds` | Claude Code — official subscription / DeepSeek |
 | `codc` / `cods` | Codex — official provider / DeepSeek |
+| `agyc` | Antigravity CLI (`agy`) with startup sync and provenance |
 | `todo` | Task backlog: `todo`, `todo <text>`, `todo rm <id>` |
 | `npm run migrate` | Bring an existing install up to the current layout |
 
@@ -53,4 +54,5 @@ Providers are declared once in `claude_env_settings.json` and projected to both 
 | [`docs/dashboard.md`](docs/dashboard.md) | Agents Dashboard: read-only Telegram Mini App over every host's sessions |
 | [`docs/harness-architecture.md`](docs/harness-architecture.md) | Multi-machine collaboration design |
 | [`docs/codex-harness-audit.md`](docs/codex-harness-audit.md) | Codex support checklist: working integrations, partial behavior and missing wiring |
+| [`docs/agy.md`](docs/agy.md) | Antigravity CLI as the third host: links, merged config, hooks, `agyc` |
 | [`AGENTS.md`](AGENTS.md) | Repo map for contributors and agents |

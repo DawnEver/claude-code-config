@@ -29,7 +29,8 @@ export function mockDashboard(now = Date.now()) {
   ], configKeys: configKeysMeta(), configPending: [{ id: 'c1', key: 'bridge.deleteClosedAfterHours', value: 48, at: t(20), host: 'host-a' }],
   configLast: { 'bridge.idleCloseMinutes': { outcome: 'applied', value: 30, host: 'host-b', at: t(7200) } }, accounts: [
     { key: 'claude:a', kind: 'quota', agent: 'claude', label: 'team-a', email: 'alice@example.com', detail: 'Team A · Team Premium', problems: [],
-      at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null, windows: [
+      at: now - 60000, hosts: ['host-a', 'host-c'], resetCredits: null, extraReset: null,
+      banked: [{ id: 'r1', name: 'Full reset', expiresAt: now + 29 * 24 * H }, { id: 'r2', name: 'Fable reset', expiresAt: now + 118 * 24 * H, note: 'Refills 5h and the Fable allowance' }], windows: [
         { k: '5h', used: 26, resetsAt: now + 24 * 60000, windowMs: 5 * H, cells: [0.4, 0.8, 1.2, 0.9, 1.6, 2, 1.1, 0.7, 0.9, null], forecast: { atReset: 31, eta: null, short: false } },
         { k: '7d', used: 45, resetsAt: now + 129 * H, windowMs: 168 * H, cells: [0.6, 1.4, 1.8, 0.9, 1.1, 2.2, 2.6, 2.4, 2.5, null, null, null, null, null], forecast: { atReset: 118, eta: now + 47 * H, short: true } }] },
     { key: 'codex:b', kind: 'quota', agent: 'codex', label: null, email: 'bob@example.com', detail: 'Pro', problems: [], at: now - 30000, hosts: ['host-a', 'host-b'],

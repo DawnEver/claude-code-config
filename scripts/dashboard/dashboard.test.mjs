@@ -1,16 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { verifyInitData, verifyHostToken, newHostToken } from './auth.mjs';
+import { verifyInitData, verifyHostToken, newHostToken, viewerSessionKey, issueViewerSession, verifyViewerSession } from './auth.mjs';
 import { parseHostPush, topicUrl, MAX_SESSIONS } from '../shared/dashboard-schema.mjs';
 import { WAITING_MAX } from './public/shared/vocab.mjs';
 import { Registry, FORGE_EVERY_MS, FORGE_FORGET_MS, FORGE_LEASE_MS } from './registry.mjs';
 import { createApi, parseDashboardConfig, REPORT_TTL_MS } from './api.mjs';
-import { dashboardConfigFrom, menuRequest } from './deploy.mjs';
+import { dashboardConfigFrom, deployCalls, menuRequest } from './deploy.mjs';
 import { demoMasker } from './public/demo.mjs';
 import { mockDashboard } from './public/mock.mjs';
 import { quotaAlertsFor } from './public/shared/quota-model.mjs';
 import { alertText, telegramNotifier, ALERT_KINDS } from './notify.mjs';
+const locale = (name) => JSON.parse(fs.readFileSync(new URL(`./public/shared/locales/${name}`, import.meta.url), 'utf8'));
+const EN = locale('strings.json');
+const ZH = locale('strings.zh.json');
 import { accountSessions, codeView, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, quotaView, stats, tabs, taskView, taskLines, searchAll, sessionAccountLabel, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
@@ -44,6 +47,19 @@ test('initData: Ed25519-signed for the dashboard bot, fresh and allowlisted only
   for (const bad of [undefined, '', 'signature=zz', 'user=%7B%22id%22%3A42%7D']) assert.equal((await verifyInitData(bad, opts)).status, 401);
 });
 
+test('viewer session: HMAC-signed by the gateway, for one user, until it expires', async () => {
+  const key = await viewerSessionKey(crypto.getRandomValues(new Uint8Array(32)));
+  const token = await issueViewerSession(ALICE, NOW + 60000, key);
+  assert.deepEqual(await verifyViewerSession(token, key, NOW), { ok: true, userId: ALICE });
+  assert.equal((await verifyViewerSession(token, key, NOW + 60001)).ok, false, 'expired');
+  const otherKey = await viewerSessionKey(crypto.getRandomValues(new Uint8Array(32)));
+  assert.equal((await verifyViewerSession(token, otherKey, NOW)).ok, false, 'another gateway key');
+  const [v, , exp, sig] = token.split('.');
+  assert.equal((await verifyViewerSession([v, MALLORY, exp, sig].join('.'), key, NOW)).ok, false, 'tampered user');
+  assert.equal((await verifyViewerSession([v, ALICE, Number(exp) + 9999, sig].join('.'), key, NOW)).ok, false, 'tampered expiry');
+  for (const bad of [undefined, '', 'x.y.z', 'v1.42.1.zz']) assert.equal((await verifyViewerSession(bad, key, NOW)).ok, false);
+});
+
 test('host token: only its own host, by stored hash', async () => {
   const { token, hash } = await newHostToken();
   const hosts = { 'host-a': hash };
@@ -60,7 +76,8 @@ const push = (over = {}) => ({ schemaVersion: 1, bootAt: 1000, seq: 1, sessions:
 test('schema: whitelists fields, derives a Topic link, never forwards the chat id', () => {
   const p = parseHostPush(push({ sessions: [session({ cwd: '/home/u/x', token: 'secret' }), session({ id: 's2', topic: null }),
     session({ id: 's3', status: 'bogus' }), session({ id: 's4', status: 'unknown' }), session({ agent: 'gpt' }), session()] }));
-  assert.equal(p.sessions.length, 2, 'unknown agent, unknown state and duplicate dropped');
+  assert.equal(p.sessions.length, 4, 'unknown agent and duplicate dropped');
+  assert.deepEqual(p.sessions.slice(2).map((s) => s.status), ['unknown', 'unknown'], 'a live session whose state is not known yet stays listed');
   assert.deepEqual(Object.keys(p.sessions[0]).sort(), ['account', 'agent', 'branch', 'id', 'lastActivityAt', 'lastPostAt', 'mention', 'name', 'posted', 'project', 'provider', 'repo', 'seat', 'status', 'topic', 'unread']);
   assert.deepEqual(p.sessions[0].topic, { url: 'https://t.me/c/1234567890/77', closed: false });
   assert.equal(p.sessions[1].topic, null);
@@ -97,6 +114,29 @@ test('registry: ordering per boot, offline after TTL, configured hosts listed be
   assert.equal(r.accept('host-b', parseHostPush(push({ bootAt: t + 3600000 }))).accepted, false, 'a boot dated ahead of the gateway clock');
 });
 
+test('registry: persisted host snapshots and accounts survive Durable Object eviction without blanking', () => {
+  let t = NOW;
+  const kv = new Map();
+  const store = { get: (k) => kv.get(k), put: (k, v) => kv.set(k, structuredClone(v)) };
+  const acct = { key: 'claude:u@example.com', kind: 'quota', agent: 'claude', label: null, email: 'u@example.com', detail: 'Max', problems: [], at: NOW, windows: [], resetCredits: null, extraReset: null };
+  const r1 = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, store, now: () => t });
+  assert.equal(r1.accept('host-a', parseHostPush(push({ seq: 3, accounts: [acct] }))).accepted, true);
+  // Simulate DO eviction / Worker redeploy 20s later: cold constructor restores sessions + accounts at once.
+  t += 20000;
+  const r2 = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, store, now: () => t });
+  assert.equal(r2.host('host-a').online, true);
+  assert.equal(r2.host('host-a').sessions.length, 1);
+  assert.equal(r2.accounts().length, 1);
+  assert.equal(r2.accounts()[0].email, 'u@example.com');
+  assert.equal(r2.accept('host-a', parseHostPush(push({ seq: 2 }))).accepted, false, 'persisted seq still rejects delayed older push');
+  // Even after host-a goes offline, its last account observation remains cached rather than zeroing out.
+  t += 60000;
+  const r3 = new Registry({ hosts: ['host-a', 'host-b'], ttlMs: 60000, store, now: () => t });
+  assert.equal(r3.host('host-a').online, false);
+  assert.equal(r3.host('host-a').sessions[0].stale, true);
+  assert.equal(r3.accounts().length, 1);
+});
+
 async function gateway(over = {}, { db = null } = {}) {
   const { token, hash } = await newHostToken();
   let now = NOW;
@@ -108,6 +148,29 @@ async function gateway(over = {}, { db = null } = {}) {
 const asViewer = async (user) => ({ headers: { authorization: `tma ${await initData({ user })}` } });
 const hostPost = (token, body) => ({ method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
   body: typeof body === 'string' ? body : JSON.stringify(body) });
+
+test('api: a viewer stays signed in past the age of initData on the session the gateway hands out, renewed on use', async () => {
+  const g = await gateway({ initDataMaxAgeSeconds: 3600, viewerSessionDays: 1 });
+  const first = await g.req('/api/dashboard', await asViewer(ALICE));
+  assert.equal(first.status, 200);
+  let token = first.headers.get('x-viewer-session');
+  assert.ok(token, 'a session is handed out with the first verified read');
+  const bySession = (t) => ({ headers: { authorization: `session ${t}` } });
+  g.tick(7200 * 1000);   // initData is now too old
+  assert.equal((await g.req('/api/dashboard', await asViewer(ALICE))).status, 401);
+  const later = await g.req('/api/dashboard', bySession(token));
+  assert.equal(later.status, 200, 'the session outlives initData');
+  token = later.headers.get('x-viewer-session');
+  g.tick(20 * 3600 * 1000);
+  assert.equal((await g.req('/api/dashboard', bySession(token))).status, 200, 'renewed: a day past the first sign-in, still in');
+  g.tick(25 * 3600 * 1000);
+  assert.equal((await g.req('/api/dashboard', bySession(token))).status, 401, 'unused for longer than viewerSessionDays');
+  const mallory = await g.req('/api/dashboard', await asViewer(MALLORY));
+  assert.equal(mallory.headers.get('x-viewer-session'), null, 'none for a refused viewer');
+  const g2 = await gateway({ allowedUserIds: [] });
+  const k = await viewerSessionKey(crypto.getRandomValues(new Uint8Array(32)));
+  assert.equal((await g2.req('/api/dashboard', bySession(await issueViewerSession(ALICE, NOW + 60000, k)))).status, 401, 'signed by another gateway');
+});
 
 test('api: host push and viewer read, each authenticated', async () => {
   const g = await gateway();
@@ -179,14 +242,16 @@ test('config: DASHBOARD_CONFIG fails loudly, and is derived from the shared brid
   assert.throws(() => parseDashboardConfig({ hosts: {} }), /botId/);
   assert.throws(() => parseDashboardConfig({ botId: BOT_ID, hosts: { 'host-a': 'not-a-hash' } }), /sha256/);
   const { hash } = await newHostToken();
-  const bridge = { allowedUserIds: [ALICE], dashboard: { url: 'https://dashboard.example.com', botId: BOT_ID, hosts: { 'host-a': hash }, hostToken: 'local-secret' } };
-  const derived = dashboardConfigFrom(bridge);
+  // A stale local allowedUserIds (MALLORY) is in the settings; the Worker gets the declared list only.
+  const bridge = { allowedUserIds: [MALLORY], dashboard: { url: 'https://dashboard.example.com', botId: BOT_ID, hosts: { 'host-a': hash }, hostToken: 'local-secret' } };
+  const allowlist = { allowedUserIds: [ALICE], why: null, stale: 'named' };
+  const derived = dashboardConfigFrom(bridge, allowlist);
   assert.deepEqual(derived, { domain: 'dashboard.example.com', config: { botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash } } });
   assert.ok(!JSON.stringify(derived).includes('local-secret'), 'a host token never reaches the Worker');
-  assert.throws(() => dashboardConfigFrom({ ...bridge, dashboard: { ...bridge.dashboard, url: 'https://dashboard.example.com/x' } }), /origin/);
-  assert.throws(() => dashboardConfigFrom({ ...bridge, allowedUserIds: [] }), /allowedUserIds/);
+  assert.throws(() => dashboardConfigFrom({ ...bridge, dashboard: { ...bridge.dashboard, url: 'https://dashboard.example.com/x' } }, allowlist), /origin/);
+  assert.throws(() => dashboardConfigFrom(bridge, { allowedUserIds: [], why: 'nothing declared; declare it in hosts-config', stale: null }), /nobody could open.*hosts-config/);
   const withBot = { ...bridge, dashboard: { ...bridge.dashboard, botToken: `${BOT_ID}:${'x'.repeat(35)}` } };
-  assert.ok(!JSON.stringify(dashboardConfigFrom(withBot)).includes('x'.repeat(35)), 'the bot token never reaches the Worker');
+  assert.ok(!JSON.stringify(dashboardConfigFrom(withBot, allowlist)).includes('x'.repeat(35)), 'the bot token never reaches the Worker');
 });
 
 test('set-menu: the local bot token must be the configured bot', () => {
@@ -381,12 +446,12 @@ test('every message the bot sends has one shape — heading: subject, then detai
   assert.equal(alertText(e, NOW + 2 * HR), lines('Quota exhausted: Codex · a@example.com', '5h window'), 'a passed reset is not counted down');
   assert.equal(alertText({ kind: 'config-refused', key: 'k', value: 3, host: 'h', error: 'busy' }), lines('Config change refused: k = 3', 'by h: busy'));
   assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: new Date(NOW - 6 * 60000).toISOString() }, NOW), lines('Host offline: host-x', 'silent for 6m'));
-  assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: null }, NOW, 'zh'), lines('主机掉线：host-x', '自 dashboard 重启以来未上报'));
+  assert.equal(alertText({ kind: 'host-offline', host: 'host-x', lastSeen: null }, NOW, 'zh'), lines(`${ZH['alert.host-offline']}${ZH['alert.sep']}host-x`, ZH['alert.detail.neverSeen']));
   assert.equal(alertText({ kind: 'turn-failed', host: 'host-x', agent: 'claude', project: 'p', session: 's', error: 'overloaded: 529', url: 'https://t.me/c/1/2' }),
     lines('Turn failed: Claude · host-x · p · s', 'overloaded: 529', 'https://t.me/c/1/2'));
   assert.equal(alertText({ kind: 'extra-reset', account: { agent: 'claude', label: 'team-a' }, at: NOW + HR, url: 'https://x.test/r' }, NOW),
     lines('Extra reset announced: Claude · team-a', 'in 1h 0m', 'https://x.test/r'));
-  assert.equal(alertText({ kind: 'test', from: 'host-x' }, NOW, 'zh'), lines('测试：host-x', 'dashboard 的提醒会发到这里。'));
+  assert.equal(alertText({ kind: 'test', from: 'host-x' }, NOW, 'zh'), lines(`${ZH['alert.test']}${ZH['alert.sep']}host-x`, ZH['alert.detail.test']));
   for (const kind of ALERT_KINDS) for (const lang of ['en', 'zh']) assert.doesNotMatch(alertText({ kind, account: {}, host: 'h' }, NOW, lang), /^alert\./, `${kind} ${lang} has its heading`);
 });
 
@@ -445,6 +510,17 @@ test('host alerts: a failed turn is sent once, even when its push is sent again'
   r.accept('host-a', parseHostPush(push({ seq: 1, alerts: [failed] })));
   r.accept('host-a', parseHostPush(push({ seq: 2, alerts: [failed] })));
   assert.deepEqual(sent.map((a) => [a.kind, a.host, a.error]), [['turn-failed', 'host-a', 'overloaded']]);
+});
+
+test('host alerts: an HPC budget run-out is sent once, numbers only, worded with its grant and window', () => {
+  const { r, sent } = alerting();
+  const over = { id: 'hpc-0123456789ab', kind: 'hpc-budget', grant: 'c/lab', spent: 15000, committed: 80, total: 20000, window: 0.5041,
+    until: '2027-08-01', projected: 29756, url: 'https://evil.test' };
+  r.accept('host-a', parseHostPush(push({ seq: 1, alerts: [over, { ...over, id: 'hpc-bad', grant: 'x y\nz' }] })));
+  r.accept('host-a', parseHostPush(push({ seq: 2, alerts: [over] })));
+  assert.equal(sent.length, 1, 'once per id; a malformed grant is dropped at the boundary');
+  assert.equal(sent[0].url, undefined, 'a host never hands the bot a link');
+  assert.equal(alertText(sent[0], NOW), 'HPC budget running out: c/lab\n15080 of 20000 core-h (75%) with 50% of the window gone, to 2027-08-01 · on pace for 29756');
 });
 
 test('telegramNotifier: plain text to every allowed chat, resolving those reached; a failure is logged without the token', async () => {
@@ -727,8 +803,8 @@ test('layers: the Worker never imports page presentation; the shared layer impor
   for (const f of ['./registry.mjs', './api.mjs', './worker.mjs', '../shared/dashboard-schema.mjs']) {
     assert.doesNotMatch(read(f), /public\/(view|app|demo|mock)\.m?js/, `${f} imports page presentation`);
   }
-  for (const f of fs.readdirSync(new URL('./public/shared/', import.meta.url))) {
-    for (const [, spec] of read(`./public/shared/${f}`).matchAll(/from '([^']+)'/g)) assert.match(spec, /^\.\/[\w-]+\.mjs$/, `${f} imports ${spec}`);
+  for (const f of fs.readdirSync(new URL('./public/shared/', import.meta.url)).filter((f) => f.endsWith('.mjs'))) {
+    for (const [, spec] of read(`./public/shared/${f}`).matchAll(/from '([^']+)'/g)) assert.match(spec, /^\.\/([\w-]+\.mjs|locales\/strings(\.[a-z]+)?\.json)$/, `${f} imports ${spec}`);
   }
 });
 
@@ -779,13 +855,24 @@ test('i18n: the language defaults from Telegram language_code (zh* -> zh, else e
   assert.deepEqual(['zh', 'zh-hans', 'zh-TW', 'ZH'].map(defaultLang), ['zh', 'zh', 'zh', 'zh']);
   assert.deepEqual(['en', 'de', 'ja', '', undefined, null].map(defaultLang), ['en', 'en', 'en', 'en', 'en', 'en']);
   assert.equal(t('tab.config', 'en'), 'Config');
-  assert.equal(t('tab.config', 'zh'), '设置');
+  assert.equal(t('tab.config', 'zh'), ZH['tab.config']);
   assert.equal(t('tab.config', 'fr'), 'Config', 'an unknown language reads English');
   assert.equal(t('no.such.key', 'zh'), 'no.such.key');
   assert.equal(t('sessions.count', 'en', { n: 1 }), '1 session');
   assert.equal(t('sessions.count', 'en', { n: 3 }), '3 sessions');
-  assert.equal(t('status.needs_approval', 'zh'), '待批准');
+  assert.equal(t('status.needs_approval', 'zh'), ZH['status.needs_approval']);
+  assert.equal(t('cfg.overrides', 'en', { hosts: 'h', n: 2 }), 'overridden locally on h: a shared edit does not reach them', 'a template chooses by equality');
+  assert.equal(t('quota.windowTitle', 'en', { ceiling: true, unit: 'left', n: 40 }), 'at most 40% left (stale reading)', 'a choice nests in a choice');
+  assert.equal(t('quota.extraReset', 'en', {}), 'extra reset announced', 'a missing var drops its optional part');
   for (const k of i18nKeys()) for (const l of LANGS) assert.notEqual(t(k, l, {}), k, `${k} has ${l}`);
+});
+
+test('i18n: strings.zh.json translates every English key and only those (status words are vocab.mjs English, so zh adds them)', async () => {
+  const { STATUS } = await import('./public/shared/vocab.mjs');
+  const statusKeys = Object.keys(STATUS).map((k) => `status.${k}`);
+  assert.deepEqual(Object.keys(ZH).filter((k) => !statusKeys.includes(k)).sort(), Object.keys(EN).sort());
+  for (const k of statusKeys) assert.ok(k in ZH && !(k in EN), k);
+  assert.doesNotMatch(fs.readFileSync(new URL('./public/shared/locales/strings.zh.json', import.meta.url), 'utf8'), /\\u[0-9a-f]{4}/i, 'zh is readable characters, not escapes');
 });
 
 test('i18n: every config key and option, every status and chip has words; view text follows the language', async () => {
@@ -796,9 +883,9 @@ test('i18n: every config key and option, every status and chip has words; view t
     ...DISPLAY_STATUSES.map((s) => `status.${s}`), ...Object.keys(GROUPS).map((g) => `group.${g}`)];
   for (const k of keys) assert.notEqual(t(k, 'zh'), k, k);
   assert.equal(configLabel('bridge.projects.api.projectInTitle', 'bridge.projects.*.projectInTitle'), 'Project name in Topic titles · api');
-  assert.equal(stateAge({ status: 'idle', lastActivityAt: new Date(NOW - 125 * 60000).toISOString() }, NOW, 'zh'), '空闲 2h');
-  assert.equal(ago(new Date(NOW - 3 * 60000).toISOString(), NOW, 'zh'), '3m前');
-  assert.equal(formatTime(new Date(2026, 9, 21, 23, 36).getTime(), { lang: 'zh' }), '10月21日 23:36');
+  assert.equal(stateAge({ status: 'idle', lastActivityAt: new Date(NOW - 125 * 60000).toISOString() }, NOW, 'zh'), `${ZH['status.idle']} 2h`);
+  assert.equal(ago(new Date(NOW - 3 * 60000).toISOString(), NOW, 'zh'), ZH['time.ago'].replace('{span}', '3m'));
+  assert.equal(formatTime(new Date(2026, 9, 21, 23, 36).getTime(), { lang: 'zh' }), `${ZH['cal.day'].replace('{month}', '10').replace('{day}', '21')} 23:36`);
 });
 
 test('view: config rows sit in their group and read the change flow — queued, handed to a host, then the outcome', () => {
@@ -1045,4 +1132,61 @@ test('the unread badge jumps to the first unread session, then the next, wrappin
   assert.equal(nextUnread(order, unread, 'gone'), 'b', 'the last target vanished: start over');
   assert.equal(nextUnread(order, new Set(['b']), 'b'), 'b', 'only one: stays on it');
   assert.equal(nextUnread(order, new Set()), null, 'nothing unread');
+});
+
+test('banked resets: kept per account in storage, edited by an allowlisted viewer, expired ones dropped', async () => {
+  const { token, hash } = await newHostToken();
+  let now = NOW;
+  const kv = new Map();
+  const store = { get: (k) => kv.get(k), put: (k, v) => kv.set(k, structuredClone(v)) };
+  const make = () => createApi(parseDashboardConfig({ botId: BOT_ID, allowedUserIds: [ALICE], hosts: { 'host-a': hash }, ratePerMinute: 1000 }, PUBLIC_KEY), { now: () => now, store });
+  let api = make();
+  const req = (p, init = {}) => api(new Request(`https://dashboard.example${p}`, init));
+  const KEY = 'claude:a@example.com|org';
+  const acct = { key: KEY, agent: 'claude', label: null, email: 'a@example.com', aliases: [null], detail: null, problems: [], at: NOW,
+    windows: [{ k: '5h', used: 10, resetsAt: NOW + 3600000, windowMs: 18000000, cells: [], forecast: null }], resetCredits: null, extraReset: null };
+  await req('/api/hosts/host-a/snapshot', hostPost(token, push({ accounts: [acct] })));
+  const edit = async (body, user = ALICE) => req('/api/resets', { method: 'POST', headers: { ...(await asViewer(user)).headers, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await edit({ account: KEY, add: { name: 'Full reset', expiresAt: NOW + 86400000 } }, MALLORY)).status, 403);
+  assert.equal((await edit({ account: 'claude:nobody|', add: { name: 'Full reset', expiresAt: NOW + 86400000 } })).status, 400, 'no such account');
+  assert.equal((await edit({ account: KEY, add: { name: '', expiresAt: NOW + 86400000 } })).status, 400, 'a name is required');
+  assert.equal((await edit({ account: KEY, add: { name: 'Full reset', expiresAt: NOW - 1 } })).status, 400, 'already expired');
+  assert.equal((await edit({ account: KEY, add: { name: 'Full reset', expiresAt: NOW + 86400000 } })).status, 200);
+  assert.equal((await edit({ account: KEY, add: { name: 'Fable reset', expiresAt: NOW + 2 * 86400000, note: 'Refills 5h and Fable' } })).status, 200);
+  const read = async () => (await (await req('/api/dashboard', { headers: { authorization: `tma ${await initData({ authDate: now / 1000 })}` } })).json()).accounts.find((a) => a.key === KEY).banked;
+  let banked = await read();
+  assert.deepEqual(banked.map((b) => [b.name, b.expiresAt, b.note ?? null]), [['Full reset', NOW + 86400000, null], ['Fable reset', NOW + 2 * 86400000, 'Refills 5h and Fable']]);
+  api = make();   // a restart keeps them: they live in storage
+  await req('/api/hosts/host-a/snapshot', hostPost(token, push({ accounts: [acct] })));
+  assert.equal((await read()).length, 2);
+  assert.equal((await edit({ account: KEY, remove: banked[0].id })).status, 200, 'spent');
+  banked = await read();
+  assert.deepEqual(banked.map((b) => b.name), ['Fable reset']);
+  now += 3 * 86400000;
+  await req('/api/hosts/host-a/snapshot', hostPost(token, push({ seq: 2, accounts: [{ ...acct, at: now }] })));
+  assert.deepEqual(await read(), [], 'expired: gone');
+  const byHost = async (body) => req('/api/hosts/host-a/resets', hostPost(token, body));
+  assert.equal((await byHost({ account: KEY, add: { name: 'Full reset', expiresAt: now + 1000 } })).status, 200, 'a host may record one');
+  assert.deepEqual((await (await byHost({})).json()).accounts.map((a) => [a.key, a.banked.length]), [[KEY, 1]]);
+  assert.equal((await req('/api/hosts/host-a/resets', hostPost('wrong-token-wrong-token', {}))).status, 401);
+  // Many accounts at once: all or none, never twice, dropped by name and expiry.
+  const KEY2 = 'claude:b@example.com|org';
+  await req('/api/hosts/host-a/snapshot', hostPost(token, push({ seq: 3, accounts: [{ ...acct, at: now }, { ...acct, key: KEY2, email: 'b@example.com', at: now }] })));
+  const full = { name: 'Full reset', expiresAt: now + 1000 };
+  assert.equal((await byHost({ accounts: [KEY, 'claude:nobody|'], add: full })).status, 400, 'an unknown account refuses the whole edit');
+  assert.equal((await byHost({ accounts: [KEY, KEY2], add: full })).status, 200);
+  const all = async () => Object.fromEntries((await (await byHost({})).json()).accounts.map((a) => [a.key, a.banked.map((b) => b.name)]));
+  assert.deepEqual(await all(), { [KEY]: ['Full reset'], [KEY2]: ['Full reset'] }, 'the same reset is not added twice');
+  assert.equal((await byHost({ accounts: [KEY, KEY2], drop: full })).status, 200);
+  assert.deepEqual(await all(), { [KEY]: [], [KEY2]: [] });
+});
+
+
+// 2026-11-20: a hand deploy shipped code reading `hpc_usage` while migration 0006 was never applied
+// (CI applies migrations, but runs only on main), and the Usage tab answered 500 for every viewer.
+test('a deploy applies the usage store migrations before it uploads the Worker', () => {
+  const calls = deployCalls({ domain: 'dash.example', secrets: '/tmp/s.json', tag: 'abc1234' });
+  assert.deepEqual(calls.map((c) => c.slice(0, 3)), [['d1', 'migrations', 'apply'], ['deploy', '--config', calls[1][2]]]);
+  assert.ok(calls[0].includes('agents-usage') && calls[0].includes('--remote'));
+  assert.ok(calls[1].includes('dash.example') && calls[1].includes('abc1234'));
 });

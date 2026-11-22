@@ -13,6 +13,8 @@ import { quotaAlertsFor, quotaView } from './public/shared/quota-model.mjs';
 
 /** How many alert ids hosts sent are remembered, so a push re-sent after a lost reply alerts once. */
 const MAX_SEEN_ALERTS = 200;
+/** At most this many banked resets are kept per account. */
+export const MAX_BANKED = 10;
 /** A change handed to a host that does not report it within this goes to the next host. */
 const CHANGE_RETRY_MS = 120000;
 
@@ -25,12 +27,18 @@ const FORGE_SKIP_MS = 30 * 60000;
 /** A source no host has declared for this long left every config: it is forgotten. */
 export const FORGE_FORGET_MS = 24 * 3600000;
 
+/** How often an unchanged host heartbeat refreshes its persisted `receivedAt` in DO storage. */
+const HOST_PERSIST_MS = 60000;
+const hostSig = (p) => JSON.stringify([p.sessions, p.accounts, p.config]);
+
 export class Registry {
   constructor({ hosts = [], ttlMs = 60000, offlineAlertMs = 300000, offlineAlertExclude = [], now = Date.now, store = null, notify = () => {} } = {}) {
     Object.assign(this, { ttlMs, offlineAlertMs, now, store, notify });
     this.offlineAlertExclude = new Set(offlineAlertExclude);   // hosts never alerted offline
     this.startedAt = now();   // a host not heard from since this start is counted silent from it
-    this.hosts = new Map(hosts.map((id) => [id, null]));   // configured host id -> last push | null
+    this.hosts = new Map(hosts.map((id) => [id, store?.get(`host:${id}`) ?? null]));   // configured host id -> last push | null (persisted across DO eviction)
+    this.hostStored = new Map();
+    for (const [id, p] of this.hosts) if (p) this.hostStored.set(id, { at: p.receivedAt ?? 0, sig: hostSig(p) });
     this.alerted = new Map(Object.entries(store?.get('alerted') ?? {}));   // account key -> what was last alerted (quota-model.mjs quotaAlertsFor)
     this.down = new Map(Object.entries(store?.get('down') ?? {}));   // host id alerted offline -> when (ISO, or null) it was last seen
     this.seenAlerts = [];   // ids of host alerts already sent, newest first (MAX_SEEN_ALERTS)
@@ -39,6 +47,10 @@ export class Registry {
     // Forge sources (bridge.forges), the one record of each: its last reading ({at, repos} or
     // {at, error}), the host holding its lease, and hosts that cannot read it until a time. Kept
     // in storage, so a restart neither empties the Code tab nor makes every host read at once.
+    // Each subscription's banked resets (a one-off full or model reset the vendor granted, to
+    // spend before it expires): no API reports them, so a viewer records them here. Account key
+    // -> [{id, name, expiresAt, note?}].
+    this.banked = new Map(Object.entries(store?.get('banked') ?? {}));
     this.forges = new Map(Object.entries(store?.get('forges') ?? {}).filter(([id]) => id.includes('|')));   // `|` ids only (sourceId)
   }
 
@@ -53,7 +65,15 @@ export class Registry {
     // A boot dated ahead of this clock would outrank every later boot: refused (5 min skew).
     if (push.bootAt > this.now() + 300000) return { accepted: false };
     if (prev && (push.bootAt < prev.bootAt || (push.bootAt === prev.bootAt && push.seq <= prev.seq))) return { accepted: false };
-    this.hosts.set(hostId, { ...push, receivedAt: this.now() });
+    const now = this.now();
+    const record = { ...push, receivedAt: now };
+    this.hosts.set(hostId, record);
+    const sig = hostSig(record);
+    const saved = this.hostStored.get(hostId);
+    if (!saved || saved.sig !== sig || now - saved.at >= HOST_PERSIST_MS) {
+      this.store?.put(`host:${hostId}`, record);
+      this.hostStored.set(hostId, { at: now, sig });
+    }
     // Back: watched again, silently (only going offline is alerted).
     if (this.down.has(hostId)) {
       this.down.delete(hostId);
@@ -190,6 +210,29 @@ export class Registry {
    * An offline host's last report still counts: use only grows until a reset, so an old
    * reading stays a true floor, and the reader marks it by its age.
    */
+  /**
+   * Apply a banked-reset edit (api.mjs parseBankedEdit) to each of `accounts`: `add` one (the
+   * same name and expiry is not added twice), `remove` one by id, `drop` one by name and expiry.
+   * False, changing nothing, when any of them is not a subscription a host reports. Expired
+   * entries are hidden at once and leave storage on the next edit.
+   */
+  editBanked({ accounts, add = null, remove = null, drop = null }) {
+    const known = new Set(this.accounts().filter((a) => a.kind !== 'balance').map((a) => a.key));
+    if (!accounts.every((k) => known.has(k))) return false;
+    for (const key of accounts) {
+      const list = this.liveBanked(key).filter((b) => b.id !== remove && !(drop && b.name === drop.name && b.expiresAt === drop.expiresAt));
+      if (add && !list.some((b) => b.name === add.name && b.expiresAt === add.expiresAt)) {
+        list.push({ id: crypto.randomUUID().slice(0, 8), name: add.name, expiresAt: add.expiresAt, ...(add.note ? { note: add.note } : {}) });
+      }
+      if (list.length) this.banked.set(key, list.sort((x, y) => x.expiresAt - y.expiresAt).slice(0, MAX_BANKED)); else this.banked.delete(key);
+    }
+    for (const [key, list] of this.banked) if (!list.some((b) => b.expiresAt > this.now())) this.banked.delete(key);
+    this.store?.put('banked', Object.fromEntries(this.banked));
+    return true;
+  }
+
+  liveBanked(key) { return (this.banked.get(key) ?? []).filter((b) => b.expiresAt > this.now()); }
+
   accounts() {
     const byKey = new Map();
     for (const [id, p] of this.hosts) {
@@ -199,6 +242,7 @@ export class Registry {
         byKey.set(a.key, !held || (a.at ?? 0) > (held.at ?? 0) ? { ...a, hosts } : { ...held, hosts });
       }
     }
+    for (const [key, a] of byKey) if (a.kind !== 'balance') byKey.set(key, { ...a, banked: this.liveBanked(key) });
     // Subscriptions first, by agent; then API balances, by provider.
     const order = (a) => [a.kind === 'balance' ? 1 : 0, a.agent ?? a.provider, String(a.label ?? a.email)];
     return [...byKey.values()].sort((a, b) => { const x = order(a), y = order(b); return x[0] - y[0] || x[1].localeCompare(y[1]) || x[2].localeCompare(y[2]); });

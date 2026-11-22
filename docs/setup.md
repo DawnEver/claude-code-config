@@ -130,25 +130,24 @@ Everything below is per user account; nothing needs admin rights.
    `uv`. Set the *user* PATH (`[Environment]::SetEnvironmentVariable('Path', …, 'User')`),
    then open a new terminal — an already-running session and its `!` shell keep the old PATH.
    Setup installs `ccc`/`ccds` only when it finds `claude`, so it must be on PATH first.
-2. **Clone, outside any synced folder**, this repo and its sibling ai-lab
-   (`git clone https://github.com/DawnEver/ai-lab.git`), then `uv sync` in ai-lab to build
-   `.venv` — its python is the provider catalogue ([`providers.md`](providers.md)).
+2. **Clone this repo, outside any synced folder.** Setup builds its own `.venv` from `uv.lock`
+   (ai-lab, lab-commons and dev-lab come with it), the one interpreter every Python door runs
+   under ([`providers.md`](providers.md)).
 3. **Setup.** Wait for the cloud client to finish downloading the sync dir, then
    ```sh
-   node scripts/setup/setup.js --sync-dir "<cloud>/Sync/cc-config" --machine <NAME> \
-     --ai-lab-python "<ai-lab>/.venv/Scripts/python.exe"
+   node scripts/setup/setup.js --sync-dir "<cloud>/Sync/cc-config" --machine <NAME>
    ```
    `<NAME>` is unique per host and is what `seats[].machines` in the shared
    `claude_env_settings.json` names; `--init-sync-dir` only on the very first host.
    This links the payload (including `private-markers`), the seat dirs, and the
    public-hygiene pre-commit hook. If it WARNs that a repo copy is "detached and newer",
    compare it with the template: equal means an earlier run without `--sync-dir` seeded it —
-   delete it and re-run. Plain files in `~/.claude` are re-linked with `--replace` (it keeps a
+   delete it and re-run. Plain files in `~/.claude` are re-linked with `--replace` (it keeps a secret-redacted
    `*.setup-bak`).
 4. **Plugins.** If doctor reports `plugin-enabled-not-installed`:
    `claude plugin install <name>@cc-market` for each.
 5. **Seats.** For each seat listed for this machine: `ccc --seat <alias>`, then `/login`.
-6. **Provider keys.** `<ai-lab python> -m ai_lab.auth login <provider> --task session`
+6. **Provider keys.** `.venv/Scripts/python -m ai_lab.auth login <provider> --task session` (in this repo)
    (reads the key without echo; enables `ccds`/`cods`).
 7. **Bridge.** A bot of its own in `~/.claude/claude_env_settings.local.json` (`bridge.botToken`),
    then re-run setup ([`bridge.md`](bridge.md) § Setup). In Telegram, add the bot to every
@@ -180,8 +179,8 @@ repo's layout and wrappers whose name was retired, then re-runs `setup()`. It al
 cc-market plugin's `migrations/migrate.mjs` against the current project. Re-run after any repo
 layout change.
 
-`npm run setup` also writes `~/.claude/provider-cache.json` from ai-lab
-(`--ai-lab-python <interpreter>` on a machine's first run). API keys live in the git credential
+`npm run setup` also builds cc-config's own `.venv` and writes `~/.claude/provider-cache.json`
+from the ai-lab it pins. API keys live in the git credential
 store (`python -m ai_lab.auth login <provider> --task session`). See [`providers.md`](providers.md).
 
 ## Plugins
@@ -271,7 +270,7 @@ an elevated shell); directory entries use junctions and never need it. Without t
 setup falls back to **hard links** for files and logs `(hard link)`. A hard link breaks silently
 when a writer *replaces* the file (`git checkout`, an atomic save, a cloud sync-down); setup then
 reports `plain file, not linked` — re-run `npm run setup -- -r`. A drifted unlinked copy is kept
-as `<name>.setup-bak`.
+as `<name>.setup-bak`, with every secret-named value (token, key, password) redacted.
 
 **The `claude-hud` config is always hard-linked.** `claude-hud` >= 0.8.0 refuses a symlinked
 `config.json`. Hard links need source and target on the same volume; otherwise setup falls back

@@ -18,6 +18,7 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { sourceDir, claudeDir, codexDir, CLAUDE_LINKS, getCodexLinks, removeExisting, setup } from '../../scripts/setup/setup.js';
 import { WRAPPER_NAMES } from '../../scripts/setup/install-cli-wrappers.js';
+import { readMarketDir } from '../../scripts/shared/market-dir.mjs';
 import { isManagedWrapper, resolveWrapperBinDirs } from '../../scripts/setup/install-cli-wrappers.js';
 import {
   CLAUDE_GITIGNORE_TEMPLATE,
@@ -152,9 +153,8 @@ export function migrateOrphanedWrappers({ dryRun } = {}) {
 
 // ── D. cc-market project migration ──
 
-export function discoverProjectMigrators(ccMarketDir) {
-  const dir = ccMarketDir || path.join(sourceDir, 'cc-market');
-  if (!fs.existsSync(dir)) return [];
+export function discoverProjectMigrators(dir = readMarketDir().dir) {
+  if (!dir || !fs.existsSync(dir)) return [];
 
   const migrators = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

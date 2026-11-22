@@ -3,7 +3,7 @@
 // the view adds is freshness: a session of an offline host reads `Stale`, never its last state.
 // The page answers, in order: does anything need me, what is running, where.
 
-import { STATUS, QUOTA_STALE_MS, TASK_KINDS, agentName } from './shared/vocab.mjs';
+import { PLATFORMS, STATUS, QUOTA_STALE_MS, TASK_KINDS, agentName } from './shared/vocab.mjs';
 import { quotaView, alertKey } from './shared/quota-model.mjs';
 import { t } from './shared/i18n.mjs';
 
@@ -140,7 +140,7 @@ export function groupSessions(hosts, by = 'host', order = 'host') {
 export const sessionLabel = (s, lang = 'en') => s.name ?? s.project ?? t('session.unknownProject', lang);
 
 /**
- * A session's running tasks (scripts/bridge/tasks.mjs: only what runs is reported), as listed
+ * A session's running tasks (scripts/bridge/activity-board.mjs: only what runs is reported), as listed
  * by kind in TASK_KINDS order, within a kind as listed (oldest first), each with how long it has run so far.
  */
 export const taskView = (tasks = [], now = Date.now()) => tasks
@@ -156,7 +156,7 @@ export function chatTime(iso, now = Date.now(), { clock = '24', lang = 'en' } = 
   if (!Number.isFinite(at)) return '';
   const d = new Date(at), today = new Date(now);
   if (d.toDateString() === today.toDateString()) return formatTime(at, { clock, date: 'off', lang });
-  return now - at < 6 * 86400000 ? CAL[lang === 'zh' ? 'zh' : 'en'].weekday(d) : CAL[lang === 'zh' ? 'zh' : 'en'].day(d);
+  return now - at < 6 * 86400000 ? cal(lang).weekday(d) : cal(lang).day(d);
 }
 
 /** A count badge as Telegram draws it: up to 99, then 99+. */
@@ -200,21 +200,19 @@ export function stats(snapshot) {
  */
 export function formatTime(ms, { clock = '24', date = 'day', lang = 'en' } = {}) {
   const d = new Date(ms);
-  const cal = CAL[lang === 'zh' ? 'zh' : 'en'];
+  const c = cal(lang);
   const pad = (n) => String(n).padStart(2, '0');
   const h = d.getHours();
-  const time = clock === '12' ? cal.ampm(`${h % 12 || 12}:${pad(d.getMinutes())}`, h < 12) : `${pad(h)}:${pad(d.getMinutes())}`;
-  const day = date === 'iso' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : date === 'day' ? cal.day(d) : '';
+  const time = clock === '12' ? c.ampm(`${h % 12 || 12}:${pad(d.getMinutes())}`, h < 12) : `${pad(h)}:${pad(d.getMinutes())}`;
+  const day = date === 'iso' ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : date === 'day' ? c.day(d) : '';
   return day ? `${day} ${time}` : time;
 }
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-/** How each UI language writes a weekday, a short date and a 12h time. */
-const CAL = {
-  en: { weekday: (d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()], day: (d) => `${d.getDate()} ${MONTHS[d.getMonth()]}`,
-    ampm: (hm, am) => `${hm} ${am ? 'AM' : 'PM'}` },
-  zh: { weekday: (d) => `周${'日一二三四五六'[d.getDay()]}`, day: (d) => `${d.getMonth() + 1}月${d.getDate()}日`,
-    ampm: (hm, am) => `${am ? '上午' : '下午'} ${hm}` },
-};
+/** How a UI language writes a weekday, a short date and a 12h time: its i18n `cal.*` words. */
+const cal = (lang) => ({
+  weekday: (d) => t('cal.weekdays', lang).split(' ')[d.getDay()],
+  day: (d) => t('cal.day', lang, { day: d.getDate(), month: d.getMonth() + 1, monthName: t('cal.months', lang).split(' ')[d.getMonth()] }),
+  ampm: (hm, am) => t('cal.ampm', lang, { hm, am }),
+});
 
 export function ago(iso, now = Date.now(), lang = 'en') {
   const at = Date.parse(iso);
@@ -313,7 +311,7 @@ export function timeTicks(w, now = Date.now(), lang = 'en') {
   const ticks = [];
   for (const t = first; t.getTime() < w.resetsAt; daily ? t.setDate(t.getDate() + 1) : t.setHours(t.getHours() + 1)) {
     ticks.push({ at: t.getTime(), pos: (t.getTime() - start) / w.windowMs,
-      label: daily ? `${CAL[lang === 'zh' ? 'zh' : 'en'].weekday(t)} ${t.getDate()}` : String(t.getHours()).padStart(2, '0') });
+      label: daily ? `${cal(lang).weekday(t)} ${t.getDate()}` : String(t.getHours()).padStart(2, '0') });
   }
   return { ticks, now: now >= start && now <= w.resetsAt ? (now - start) / w.windowMs : null };
 }
@@ -404,31 +402,27 @@ export const hoursText = (ms) => (!(ms > 0) ? '0' : ms < 3600000 ? `${Math.round
 
 /**
  * The Usage tab from the store's report (scripts/dashboard/usage-store.mjs report): totals, one
- * bar per day of the range (every day, empty ones too) split by agent, and the ranked lists.
+ * bar per day of the range (every day, empty ones too) split by platform (vocab.mjs platformOf), and the ranked lists.
  * `active` is agent time: turns' durations summed, so parallel sessions add up.
  */
+/** One bucket of the bar chart: no tokens yet on any platform of vocab.mjs PLATFORMS. */
+const emptyBucket = (day) => ({ day, ...Object.fromEntries(PLATFORMS.map((p) => [p, 0])), active: 0 });
+
 export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
   if (!report) return null;
   const byDay = new Map();
   let tokens = 0, active = 0, turns = 0, input = 0, cacheRead = 0, cacheWrite = 0;
   for (const d of report.daily ?? []) {
-    const row = byDay.get(d.day) ?? { day: d.day, claude: 0, codex: 0, active: 0 };
-    row[d.agent] = (row[d.agent] ?? 0) + tokensOf(d);
+    const row = byDay.get(d.day) ?? emptyBucket(d.day);
+    row[d.platform] = (row[d.platform] ?? 0) + tokensOf(d);
     row.active += d.active_ms ?? 0;
     byDay.set(d.day, row);
     tokens += tokensOf(d); active += d.active_ms ?? 0; turns += d.turns ?? 0;
     input += d.input ?? 0; cacheRead += d.cache_read ?? 0; cacheWrite += d.cache_write ?? 0;
   }
-  // A 24 h report is by hour ('YYYY-MM-DDTHH'), any other by day: every bucket of the range, empty ones too.
   const hourly = report.unit === 'hour';
-  const ms = hourly ? 3600000 : 86400000;
-  const days = [];
-  const today = Math.floor((now + tzOffsetMin * 60000) / ms);
-  for (let i = (hourly ? 24 : report.days) - 1; i >= 0; i--) {
-    const day = new Date((today - i) * ms).toISOString().slice(0, hourly ? 13 : 10);
-    days.push(byDay.get(day) ?? { day, claude: 0, codex: 0, active: 0 });
-  }
-  const max = Math.max(1, ...days.map((d) => d.claude + d.codex));
+  const days = rangeBuckets(report, now, tzOffsetMin).map((day) => byDay.get(day) ?? emptyBucket(day));
+  const max = Math.max(1, ...days.map((d) => PLATFORMS.reduce((n, p) => n + d[p], 0)));
   // `value` is what a filter sends back: '' for the no-project bucket.
   // A share is of its own list: under a filter, a list spans more than the filtered totals.
   const list = (rows) => {
@@ -439,9 +433,42 @@ export function usageView(report, now = Date.now(), tzOffsetMin = 0) {
   return {
     unit: hourly ? 'hour' : 'day',
     totals: { tokens, active, turns, costUsd: report.costUsd ?? null, cacheHit: input + cacheRead + cacheWrite ? cacheRead / (input + cacheRead + cacheWrite) : null },
-    days: days.map((d) => ({ ...d, claudePct: (d.claude / max) * 100, codexPct: (d.codex / max) * 100 })),
+    days: days.map((d) => ({ ...d, segs: PLATFORMS.map((platform) => ({ platform, tokens: d[platform], pct: (d[platform] / max) * 100 })) })),
     projects: list(report.projects ?? []), models: list(report.models ?? []), machines: list(report.machines ?? []),
   };
+}
+
+/** Every bucket label of a report's range, oldest first: a 24 h report by hour ('YYYY-MM-DDTHH'), any other by day. */
+function rangeBuckets(report, now, tzOffsetMin) {
+  const hourly = report.unit === 'hour';
+  const ms = hourly ? 3600000 : 86400000;
+  const today = Math.floor((now + tzOffsetMin * 60000) / ms);
+  return Array.from({ length: hourly ? 24 : report.days }, (_, i) => new Date((today - (hourly ? 23 : report.days - 1) + i) * ms).toISOString().slice(0, hourly ? 13 : 10));
+}
+
+/**
+ * The Usage tab's HPC section from the report's `hpc` (usage-store.mjs hpcReport), or null when no
+ * login was read in range: core-hours per bucket (each bucket's last 24 h reading per login,
+ * summed) and one line per login — its newest reading, or why it was not read. A billed login's
+ * budget is `ahead` when spent plus committed is a larger share of it than of its window.
+ */
+export function hpcView(report, now = Date.now(), tzOffsetMin = 0) {
+  const hpc = report?.hpc;
+  if (!hpc?.latest?.length) return null;
+  const byDay = new Map((hpc.series ?? []).map((s) => [s.day, s.core_hours]));
+  const days = rangeBuckets(report, now, tzOffsetMin).map((day) => ({ day, coreHours: byDay.get(day) ?? 0 }));
+  const max = Math.max(1e-9, ...days.map((d) => d.coreHours));
+  const grants = hpc.latest.map((g) => {
+    const total = g.budget_core_hours;
+    const used = total > 0 ? ((g.budget_spent ?? 0) + (g.budget_committed ?? 0)) / total : null;
+    return { name: `${g.cluster}/${g.account}`, role: g.role ?? null, at: g.observed_at, why: g.read ? null : g.why,
+      jobs: g.jobs, coreHours: g.core_hours, cpuEfficiency: g.cpu_efficiency, failures: (g.failed ?? 0) + (g.oom ?? 0) + (g.timeout ?? 0),
+      oom: g.oom ?? 0, storage: g.storage, files: g.files,
+      budget: used === null ? null : { used, window: g.budget_window, ahead: used > (g.budget_window ?? 0), spent: g.budget_spent,
+        committed: g.budget_committed, total, until: g.budget_until } };
+  });
+  return { unit: report.unit === 'hour' ? 'hour' : 'day', days: days.map((d) => ({ ...d, pct: (d.coreHours / max) * 100 })),
+    totals: { coreHours: hpc.latest.reduce((n, g) => n + (g.read ? g.core_hours ?? 0 : 0), 0) }, grants };
 }
 
 // ── Code (per repository; read by the hosts that reach each forge, scripts/bridge/forges.mjs) ──

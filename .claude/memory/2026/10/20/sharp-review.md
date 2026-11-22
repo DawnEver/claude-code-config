@@ -8,7 +8,7 @@ metadata:
 
 ## Review 2026-10-20 (follow-up)
 
-## Review 2026-10-20 (session) — diff review + adversarial review (对抗性审查)
+## Review 2026-10-20 (session) — diff review + adversarial review (adversarial review)
 
 ### Reviewer Status
 - Reviewer claude (claude): OK
@@ -50,3 +50,5 @@ Only w.renewed is checked; stale reading with past resetsAt or null resetsAt ren
 - **Suggestion:** Add view tests for verdictText(q, now, false) and the default; consider an options object.
 
 No test pins either form; the Telegram alert caller relies on the default.
+
+> Amended 2026-11-17: translated to English (D26) -- approved: "(user, translated) .claude/memory/ and .claude/tasks/ should also be English only"

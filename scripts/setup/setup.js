@@ -8,9 +8,12 @@ import { checkMacNotify } from './check-mac-notify.js';
 import { installCliWrappers } from './install-cli-wrappers.js';
 import { regenerateCodexArtifacts } from './inject-codex-providers.mjs';
 import { refreshProviderCache } from './provider-setup.mjs';
+import { buildOwnEnv } from './own-env.mjs';
 import { composeCodexConfigFile } from './codex-config-file.mjs';
 import { installCodexHooks } from './codex-hooks.mjs';
+import { installAgyConfig, installAgyStatusLine, agyInstalled } from './agy-config.mjs';
 import { isMain } from '../shared/is-main.mjs';
+import { readMarketDir } from '../shared/market-dir.mjs';
 import { resolveCodexHome } from '../shared/codex-home.mjs';
 import { readBridgeConfig } from '../bridge/context.mjs';
 import { planService, runAction, SERVICE_NAME } from '../bridge/install-service.mjs';
@@ -29,6 +32,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const sourceDir = path.resolve(__dirname, '../..');
 export const claudeDir = path.join(os.homedir(), '.claude');
 export const codexDir = resolveCodexHome();
+// Antigravity CLI's global customization root (rules GEMINI.md, skills/, hooks.json, ...).
+export const agyDir = path.join(os.homedir(), '.gemini', 'config');
 
 // Directory holding the cloud-synced config payload. Defaults to the repo itself, so a
 // single-machine install needs no configuration and behaves exactly as it did before
@@ -106,7 +111,8 @@ export const CODEX_LINKS = [
 
 const isWindows = process.platform === 'win32';
 
-export function discoverCodexSkillLinks(baseSourceDir = sourceDir) {
+// Codex and agy keep their own built-in skills beside ours, so each skill is linked one by one.
+export function discoverSkillLinks(baseSourceDir = sourceDir) {
   const skillsDir = path.join(baseSourceDir, 'skills');
   if (!fs.existsSync(skillsDir)) return [];
 
@@ -130,7 +136,17 @@ export function discoverCodexSkillLinks(baseSourceDir = sourceDir) {
 }
 
 export function getCodexLinks(baseSourceDir = sourceDir) {
-  return [...CODEX_LINKS, ...discoverCodexSkillLinks(baseSourceDir)];
+  return [...CODEX_LINKS, ...discoverSkillLinks(baseSourceDir)];
+}
+
+// agy: hooks.json / mcp_config.json / plugins.json are merged by agy-config.mjs, never linked.
+export const AGY_LINKS = [
+  // agy's global rules file; same single source as ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md.
+  { src: 'GLOBAL-AGENTS.md', dest: 'GEMINI.md', type: 'file' },
+];
+
+export function getAgyLinks(baseSourceDir = sourceDir) {
+  return [...AGY_LINKS, ...discoverSkillLinks(baseSourceDir)];
 }
 
 // claude-hud's config is machine-tuned (lineLayout, language, maxWidth) and is hard-linked
@@ -330,7 +346,9 @@ export function linkEntry(srcPath, destPath, link, replace) {
     // An unlinked plain file may hold edits the repo never saw -- a hard link that broke
     // and drifted. Keep that one; anything matching the source is safe to drop.
     if (stat.isFile() && !stat.isSymbolicLink() && !filesMatch(srcPath, backupPath)) {
-      notes.push(`replaced existing - kept unlinked copy at ${path.basename(backupPath)}`);
+      // The payload holds tokens and API keys: the kept copy keeps its structure, never a secret.
+      fs.writeFileSync(backupPath, scrubSecrets(fs.readFileSync(backupPath, 'utf8')));
+      notes.push(`replaced existing - kept unlinked copy (secrets redacted) at ${path.basename(backupPath)}`);
     } else {
       fs.rmSync(backupPath, { recursive: true, force: true });
       notes.push('removed existing');
@@ -338,6 +356,32 @@ export function linkEntry(srcPath, destPath, link, replace) {
   }
 
   return { status: 'link', kind, notes };
+}
+
+const SECRET_NAME = /token|secret|password|passwd|credential|api[_-]?key|auth|^key$|_key$|-key$|bearer|cookie/i;
+export const REDACTED = '<redacted>';
+
+/**
+ * A config text with every secret-named value replaced by REDACTED, so a kept backup never holds
+ * a token or key in plaintext. JSON is walked by key; any other text (TOML, env) is scrubbed by
+ * `name = value` / `name: value` lines whose name looks secret. A text with nothing to redact is
+ * returned unchanged: the kept copy is the live edit, and only a secret is ever rewritten.
+ */
+export function scrubSecrets(text) {
+  let redacted = false;
+  const walk = (v, secret) => {
+    if (Array.isArray(v)) return v.map((x) => walk(x, secret));
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, secret || SECRET_NAME.test(k))]));
+    if (!secret || v === null || typeof v === 'boolean') return v;
+    redacted = true;
+    return REDACTED;
+  };
+  try {
+    const scrubbed = walk(JSON.parse(text), false);
+    return redacted ? `${JSON.stringify(scrubbed, null, 2)}\n` : text;
+  } catch { /* not JSON */ }
+  return text.replace(/^(\s*["']?([\w.-]+)["']?\s*[=:]\s*)(.+)$/gm,
+    (line, head, name) => (SECRET_NAME.test(name) ? `${head}"${REDACTED}"` : line));
 }
 
 export function linkSourceRoot(link, { repoRoot = sourceDir, syncDir = repoRoot, claudeRoot = claudeDir } = {}) {
@@ -350,7 +394,7 @@ export function linkSourceRoot(link, { repoRoot = sourceDir, syncDir = repoRoot,
  * the link: the other name then holds a private copy that never sees another host's edit.
  *   - sync copy at least as new as the private one: the change came from the cloud and nothing
  *     was edited here since the break, so re-linking loses nothing (the copy is kept as
- *     .setup-bak when it differs).
+ *     .setup-bak, secrets redacted, when it differs).
  *   - private copy newer: edited here after the break, on top of a stale base. Both sides hold
  *     something; merging is a human's call, so it is reported (doctor: link-detached) and left.
  * -> 'repaired' | 'conflict' | null (nothing to heal: missing, a symlink, linked, cross-volume)
@@ -460,7 +504,6 @@ function expandHome(p, home) {
 export function parseSetupArgs(argv = []) {
   const idx = argv.indexOf('--sync-dir');
   const mIdx = argv.indexOf('--machine');
-  const pIdx = argv.indexOf('--ai-lab-python');
   return {
     replace: argv.includes('--replace') || argv.includes('-r'),
     initSyncDir: argv.includes('--init-sync-dir'),
@@ -468,7 +511,6 @@ export function parseSetupArgs(argv = []) {
     syncDirFlagPresent: idx !== -1,
     machine: mIdx !== -1 ? argv[mIdx + 1] : undefined,
     machineFlagPresent: mIdx !== -1,
-    aiLabPython: pIdx !== -1 ? argv[pIdx + 1] : undefined,
   };
 }
 
@@ -590,10 +632,20 @@ export function setup(options = {}) {
 
   const counters = { created: 0, skipped: 0, errors: earlyErrors, replace };
 
+  // cc-config's own environment is the one interpreter every Python door runs under
+  // (scripts/shared/own-python.mjs); build it from the lock before anything asks a door.
+  const env = buildOwnEnv();
+  if (env.error) {
+    console.log(`ERR   .venv - ${env.error}`);
+    counters.errors++;
+  } else {
+    console.log('SYNC  .venv - cc-config own environment matches uv.lock');
+  }
+
   // The provider catalogue is ai-lab's: copy it into ~/.claude/provider-cache.json, the only
   // thing a launcher reads (scripts/shared/provider-cache.mjs). Before the codex artifacts,
   // which derive from it.
-  const cache = refreshProviderCache({ aiLabPython: options.aiLabPython });
+  const cache = refreshProviderCache();
   if (cache.error) {
     console.log(`ERR   provider-cache.json - ${cache.error}`);
     counters.errors++;
@@ -697,27 +749,12 @@ export function setup(options = {}) {
   fs.mkdirSync(path.join(codexDir, 'skills'), { recursive: true });
   processLinks(getCodexLinks(), codexDir, counters, syncDir);
 
-  // Clone or update cc-market (community plugin marketplace)
+  // cc-market: Claude installs it from GitHub into ~/.claude/plugins/marketplaces; the development
+  // checkout is the family repo the machine file declares ([repos] cc-market), never a clone here.
   console.log('\n--- Plugins (cc-market) ---');
-  const ccMarketDir = path.join(sourceDir, 'cc-market');
-  if (fs.existsSync(path.join(ccMarketDir, '.git'))) {
-    try {
-      execFileSync('git', ['pull', '--ff-only'], { cwd: ccMarketDir, stdio: 'pipe' });
-      console.log('OK    cc-market - pulled latest');
-    } catch {
-      console.log('OK    cc-market - already exists (could not pull)');
-    }
-  } else if (fs.existsSync(ccMarketDir)) {
-    console.log('SKIP  cc-market - directory exists but is not a git repo');
-  } else {
-    try {
-      execFileSync('git', ['clone', 'https://github.com/DawnEver/cc-market'], { cwd: sourceDir, stdio: 'pipe' });
-      console.log('OK    cc-market - cloned from https://github.com/DawnEver/cc-market');
-    } catch (err) {
-      console.log(`ERR   cc-market - ${err.stderr?.toString().trim() || err.message}`);
-      counters.errors++;
-    }
-  }
+  const market = readMarketDir();
+  if (market.dir) console.log(`OK    cc-market checkout - ${market.dir}`);
+  else console.log(`NOTE  ${market.why}`);
   // Note: plugin enablement + the cc-market marketplace live in claude_settings.template.json,
   // which setup copies to claude_settings.json on a fresh install. setup does not mutate
   // enabledPlugins — flipping a plugin on or off is a deliberate edit to the shared payload
@@ -742,14 +779,24 @@ export function setup(options = {}) {
     console.log(`OK    Codex hooks ${hooks.changed ? 'updated' : 'unchanged'}; review/trust new definitions with /hooks (never auto-trusted)`);
   } catch (err) { console.log(`ERR   Codex hooks: ${err.message}`); counters.errors++; }
 
+  // plugins.json names the plugins inside the declared cc-market checkout. Only where agy is
+  // installed (~/.gemini exists): setup never creates another host's home.
+  if (agyInstalled(agyDir)) {
+    console.log('\n--- Antigravity (agy) ---');
+    fs.mkdirSync(path.join(agyDir, 'skills'), { recursive: true });
+    processLinks(getAgyLinks(), agyDir, counters, syncDir);
+    try {
+      const agy = installAgyConfig({ agyDir, scriptsDir: path.join(claudeDir, 'scripts'), marketDir: market.dir });
+      console.log(`OK    agy hooks.json / plugins.json ${agy.changed ? 'updated' : 'unchanged'} (user entries preserved)`);
+    } catch (err) { console.log(`ERR   agy config: ${err.message}`); counters.errors++; }
+    try {
+      const line = installAgyStatusLine({ scriptsDir: path.join(claudeDir, 'scripts') });
+      console.log(line.status === 'skipped' ? `SKIP  agy statusLine - ${line.why}` : `OK    agy statusLine ${line.status}`);
+    } catch (err) { console.log(`ERR   agy statusLine: ${err.message}`); counters.errors++; }
+  }
+
   console.log('\n--- CLI Wrappers ---');
   installCliWrappers(claudeDir);
-
-  // The repo is public: .githooks/pre-commit runs doctor's public-hygiene gate.
-  try {
-    execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: sourceDir, stdio: 'ignore' });
-    console.log('OK    git core.hooksPath -> .githooks (public-hygiene pre-commit)');
-  } catch { /* not a git checkout: nothing to gate */ }
 
   // Collectors can run with dashboard credentials alone; Telegram is an optional transport.
   const bridge = readBridgeConfig({

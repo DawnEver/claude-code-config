@@ -20,7 +20,7 @@
     --ok: #34c759; --warn: #ff9500; --bad: #ff3b30; --run: #0a84ff; --idle: #8e8e93;
     --on-colour: #fff;   /* text on a filled brand colour (an avatar's letter) */
     /* The platforms' own brand colours: Claude's terracotta, OpenAI's black on white, DeepSeek's blue. */
-    --claude: #d97757; --codex: #10a37f; --deepseek: #4d6bfe; --openai: #000; --logo-bg: #fff;
+    --claude: #d97757; --codex: #10a37f; --agy: #3186ff; --deepseek: #4d6bfe; --openai: #000; --logo-bg: #fff;
     /* A running task's kind. */
     --k-shell: var(--run); --k-powershell: #30b0c7; --k-monitor: #ff9f0a; --k-agent: #af52de;
     /* Text: one scale by importance (Config › Text size sets --scale): page title, body, headline,
@@ -86,7 +86,7 @@
   :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) + :where(.chat, .found, .u, .qrow, .cfg-row, .code-item) { border-top: 1px solid var(--sep); }
 
   /* ── Primitive: pill — every small control. Variants: chip (larger), filled action, on a track. ── */
-  :where(.chip, .tasks-btn, .range button, .seg button, .tabs button, .qrow-top .go, .cfg-edit button)
+  :where(.chip, .tasks-btn, .range button, .seg button, .tabs button, .qrow-top .go, .cfg-edit button, .act)
     { display: inline-flex; align-items: center; justify-content: center; gap: var(--s1); flex: none; padding: var(--pill-pad); border: 0; border-radius: var(--r-pill);
       font-size: var(--t3); font-weight: var(--w-strong); white-space: nowrap; background: var(--press); color: var(--hint); cursor: pointer; }
   :where(.chip, .tabs button, .cfg-edit button) { padding: var(--chip-pad); font-size: var(--t2); }
@@ -112,7 +112,7 @@
     font-size: var(--t1); font-weight: var(--w-bold); line-height: 1; color: var(--accent-fg); background: var(--accent); cursor: pointer; }
 
   /* ── Primitive: input ── */
-  :where(select, .search input, .cfg-edit input) { padding: var(--s3) var(--s4); border: 1px solid var(--sep); border-radius: var(--r-ctl); background: var(--bg); font-size: var(--t2); }
+  :where(select, .search input, .cfg-edit input, .banked-form input) { padding: var(--s3) var(--s4); border: 1px solid var(--sep); border-radius: var(--r-ctl); background: var(--bg); font-size: var(--t2); }
 
   /* ── Primitive: tag, badge, dot ── */
   :where(.acct, .mark, .task .tk) { display: inline-block; padding: 0 var(--s3); border-radius: var(--r-tag); font-weight: var(--w-strong); }
@@ -169,17 +169,17 @@
   .host-head .meta { margin-left: auto; }
   .list { margin-bottom: 0; }
   .main { flex: 1; }
-  .agent { font-weight: var(--w-strong); } .agent.claude { color: var(--claude); } .agent.codex { color: var(--codex); } .agent.deepseek { color: var(--deepseek); }
+  .agent { font-weight: var(--w-strong); } .agent.claude { color: var(--claude); } .agent.codex { color: var(--codex); } .agent.agy { color: var(--agy); } .agent.deepseek { color: var(--deepseek); }
   .chev { flex: none; color: var(--hint); }
   .chat { display: flex; align-items: center; gap: var(--s5); }
   .who { flex: none; width: var(--who); display: grid; justify-items: center; gap: var(--s1); }
   .who .acct-name { max-width: var(--who); line-height: 1.15; }
   .avatar { position: relative; flex: none; width: var(--avatar); height: var(--avatar); border-radius: 50%; display: grid; place-items: center;
     color: var(--on-colour); font-weight: var(--w-bold); background: var(--idle); }
-  .avatar.claude { background: var(--claude); } .avatar.codex { background: var(--codex); }
+  .avatar.claude { background: var(--claude); } .avatar.codex { background: var(--codex); } .avatar.agy { background: var(--agy); }
   /* The platform's own mark in its own colour on white, as the platforms show it. */
   .avatar[class*=" b-"] { background: var(--logo-bg); box-shadow: inset 0 0 0 1px var(--sep); }
-  .avatar.b-claude { color: var(--claude); } .avatar.b-openai { color: var(--openai); } .avatar.b-deepseek { color: var(--deepseek); }
+  .avatar.b-claude { color: var(--claude); } .avatar.b-openai { color: var(--openai); } .avatar.b-agy { color: var(--agy); } .avatar.b-deepseek { color: var(--deepseek); }
   .avatar svg { width: var(--logo); height: var(--logo); fill: currentColor; }
   .avatar .dot { position: absolute; right: -1px; bottom: -1px; width: var(--dot-avatar); height: var(--dot-avatar); border: 2px solid var(--card); }
   .chat-top, .chat-bottom { display: flex; align-items: center; gap: var(--s3); }
@@ -217,9 +217,24 @@
   .qrow.v-short .left { color: var(--warn); } .qrow.v-exhausted .left, .v-exhausted .warn { color: var(--bad); }
   .qref .qrow-top { font-size: var(--t2); }
   .qdetail { margin-top: var(--s1); }
+  .banked-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-top: var(--s1); font-size: var(--t3); }
+  .bulk-pick { display: flex; flex-wrap: wrap; gap: var(--s1); margin-top: var(--s1); }
+  .banked-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); margin-top: var(--s2); }
+  .banked-form input { flex: 1 1 10em; min-width: 0; }
+  .banked > .act { margin-top: var(--s2); }
+  .act.danger { color: var(--bad); }
+  .act.primary { background: var(--accent); color: var(--accent-fg); }
+  .bdate { opacity: .8; }
+  .qbanked { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
+  .bpill { display: inline-flex; gap: var(--s2); align-items: baseline; padding: var(--pill-pad); border-radius: var(--r-pill); background: var(--press); color: var(--fg); font-size: var(--t3); white-space: nowrap; }
+  .bpill b { font-weight: var(--w-strong); }
+  .bpill.soon { color: var(--warn); }
+  .icon-btn.ready { box-shadow: 0 0 0 2px var(--accent); }
+  .banked-bulk { margin-bottom: var(--s5); padding: var(--row-pad); border-radius: var(--r-card); background: var(--card); }
+  .quota-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
   /* A cell keeps its bar >= 36px: 22 + 36 + 34 + reset (~52) + gaps fits the 160px minimum. */
   .qmini { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--s2) var(--s6); margin-top: var(--s3); }
-  .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) 34px auto; gap: var(--s3); align-items: center; font-size: var(--t3); }
+  .qmini > div { display: grid; grid-template-columns: 22px minmax(36px, 1fr) minmax(34px, auto) auto; gap: var(--s3); align-items: center; font-size: var(--t3); }
   .qmini .used, .win .used, .reset { text-align: right; white-space: nowrap; }
   .reset:empty { display: none; }
   .k.bind { color: var(--fg); font-weight: var(--w-bold); text-decoration: underline; text-underline-offset: 2px; }
@@ -228,7 +243,7 @@
   .shared { margin-top: var(--s2); }
   .warn { margin-top: var(--s3); color: var(--warn); }
   /* An account's windows: label | bar | use | reset (26 / 44 / 52px fit "5h", "100%", "6d 23h"), its trend and forecast beneath. */
-  .win, .win-sub { display: grid; grid-template-columns: 26px 1fr 44px auto; gap: var(--s4); align-items: center; margin-top: var(--s5); }
+  .win, .win-sub { display: grid; grid-template-columns: 26px 1fr minmax(44px, auto) auto; gap: var(--s4); align-items: center; margin-top: var(--s5); }
   .win .reset { min-width: 52px; }
   .win-sub { gap: var(--s1) var(--s4); margin-top: var(--s2); }
   .win-sub > span { grid-column: 2 / 5; }
@@ -261,8 +276,8 @@
   .usage-totals b { display: block; font-size: var(--t1); }
   .usage-days { display: flex; align-items: flex-end; gap: var(--s1); height: var(--chart); padding: var(--s4); margin-bottom: var(--s2); }
   .usage-days .d { flex: 1; display: flex; flex-direction: column-reverse; height: 100%; min-width: var(--s1); }
-  .usage-days .claude { background: var(--claude); } .usage-days .codex { background: var(--codex); }
-  .usage-days .commits { background: var(--accent); } .usage-days .merged { background: var(--ok); } .usage-days .opened { background: var(--hint); }
+  .usage-days .claude { background: var(--claude); } .usage-days .codex { background: var(--codex); } .usage-days .agy { background: var(--agy); } .usage-days .deepseek { background: var(--deepseek); }
+  .usage-days .hpc { background: var(--run); } .usage-days .commits { background: var(--accent); } .usage-days .merged { background: var(--ok); } .usage-days .opened { background: var(--hint); }
   .usage-axis { display: flex; justify-content: space-between; margin-bottom: var(--s6); }
   .usage-list .u { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--s5); font-size: var(--t2); cursor: pointer; }
   .usage-list .u.on { background: color-mix(in srgb, var(--accent) 14%, transparent); } .usage-list .u.on .n { font-weight: var(--w-strong); }
@@ -297,15 +312,15 @@
      hover (only where hover exists), a deeper tint while pressed, and a keyboard focus ring. ── */
   :is(.chat.link, .code-item.link, .host-head.toggle, .note.link, .note.toggle) { cursor: pointer; }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle, .note.link, .note.toggle) { transition: background-color .12s; }
-  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go) { transition: filter .12s, background-color .12s; }
+  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .commit, .cfg-edit button, .qrow-top .go, .act) { transition: filter .12s, background-color .12s; }
   @media (hover: hover) {
     :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):hover { background: var(--hover); }
     :is(.note.link, .note.toggle, .commit):hover { text-decoration: underline; }
-    :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .qrow-top .go):hover { filter: brightness(.95); }
+    :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .qrow-top .go, .act):hover { filter: brightness(.95); }
     :is(.icon-btn, .cfg-edit button):hover { filter: brightness(1.1); }
   }
   :is(.qrow, .chat.link, .code-item.link, .usage-list .u, .host-head.toggle):active { background: var(--press); }
-  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .cfg-edit button):active { filter: brightness(.88); }
+  :is(.chip, .tasks-btn, .badge.read, .range button, .seg button, .tabs [data-tab], .icon-btn, .cfg-edit button, .act):active { filter: brightness(.88); }
   :is(button, [role="button"], [role="link"], summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>

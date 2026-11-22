@@ -32,7 +32,7 @@ test('a link the cloud broke is re-linked to the sync copy: nothing was edited h
     assert.deepEqual(f.heal(), { repaired: [f.dest], conflicts: [] });
     assert.equal(isHardLinked(f.src, f.dest), true);
     assert.equal(fs.readFileSync(f.dest, 'utf8'), '{"v":2}', 'reads what the other hosts wrote');
-    assert.equal(fs.readFileSync(`${f.dest}.setup-bak`, 'utf8'), '{"v":1}', 'the private copy is kept');
+    assert.deepEqual(JSON.parse(fs.readFileSync(`${f.dest}.setup-bak`, 'utf8')), { v: 1 }, 'the private copy is kept');
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -59,4 +59,27 @@ test('sameVolume on Windows is the drive, whatever dev a cloud-managed file repo
     assert.equal(sameVolume(path.join(root, 'a'), root, 'win32'), true);
     assert.equal(sameVolume(path.join(root, 'missing'), root, 'win32'), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a kept private copy never holds a secret in plaintext', () => {
+  const f = fixture();
+  const PLANTED = 'sk-planted-0123456789';
+  try {
+    fs.writeFileSync(f.dest, JSON.stringify({ v: 1, env: { ANTHROPIC_AUTH_TOKEN: PLANTED, OTHER: 'kept' },
+      providers: [{ name: 'p', apiKey: PLANTED }], bridge: { botToken: PLANTED, chatId: 42 } }));
+    age(f.dest, 60000);
+    f.cloudReplace('{"v":2}');
+    assert.deepEqual(f.heal(), { repaired: [f.dest], conflicts: [] });
+    const kept = fs.readFileSync(`${f.dest}.setup-bak`, 'utf8');
+    assert.ok(!kept.includes(PLANTED), 'the planted secret is gone from the backup');
+    assert.deepEqual(JSON.parse(kept), { v: 1, env: { ANTHROPIC_AUTH_TOKEN: '<redacted>', OTHER: 'kept' },
+      providers: [{ name: 'p', apiKey: '<redacted>' }], bridge: { botToken: '<redacted>', chatId: 42 } });
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('a non-JSON kept copy is scrubbed by secret-named lines', async () => {
+  const { scrubSecrets } = await import('./setup.js');
+  const out = scrubSecrets(['model = "m"', 'api_key = "sk-planted"', '[x]', 'bearer_token="t"', ''].join('\n'));
+  assert.ok(!out.includes('sk-planted') && !out.includes('"t"'));
+  assert.match(out, /model = "m"/);
 });

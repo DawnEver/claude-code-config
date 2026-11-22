@@ -55,10 +55,17 @@ no API, no authentication.
   The Worker verifies `initData` by its **Ed25519 `signature`** (Telegram's third-party
   validation): it needs only the dashboard bot's numeric id and Telegram's public key, never the
   bot token. The token lives only in the local settings of the machine that sets the menu button.
-- **Viewer**: allowlisted by `bridge.allowedUserIds` (the bridge's own allowlist), freshness by
+- **Viewer**: allowlisted by the bridge's own allowlist — the machine's declared `session-bridge` channel user
+  (hosts-config `hosts/<machine>.toml` `[dev] channels`, docs/bridge.md), freshness by
   `auth_date` within `initDataMaxAgeSeconds` (default 24 h — Telegram signs initData once, at
-  open, and a Topic link can reload the app with it; past it the app keeps the last data and asks to be
-  reopened). `initDataUnsafe` and any client-sent id are never trusted.
+  open, and a Topic link can reload the app with it). Every verified read answers with a
+  **viewer session** of the gateway's own (`x-viewer-session`: `v1.<userId>.<expiry>.<HMAC>`,
+  key made once and kept in Durable Object storage), renewed on use and valid
+  `viewerSessionDays` (default 30) since the last read; the page keeps it per Telegram user and
+  signs in with `Authorization: session <token>`, falling back to initData. The allowlist is
+  checked on every use. Only past both does the app keep the last data and ask to be reopened.
+  The page also keeps its last snapshot on the device, so a reload repaints at once, at the
+  reader's scroll position. `initDataUnsafe` and any client-sent id are never trusted.
 - **Host**: a bearer token per machine, minted on that machine; the Worker holds only its
   SHA-256. Read from the machine-local settings layer only: one written into the synced file
   is ignored.
@@ -69,7 +76,13 @@ no API, no authentication.
   same codes label the status card): `working`, `idle`, `needs_approval`, `needs_input`,
   `unknown`, and `ended` for the instant a session is going down — an ended session is
   dropped from the next push rather than listed. The UI never infers a status.
-  A session whose host reports `unknown` is not listed at all.
+  `unknown` is a live session no hook has reported on yet (a fresh start, a daemon restart):
+  listed as **Connected**, not hidden -- provided it has a Topic.
+- **Listed**: only a session with a Telegram Topic (user ruling 2026-11-15). One never given a
+  Topic -- lazy until its first post, a side or background session, telemetry-only mode -- is not
+  exported; `Bridge.dashboardSessions()` is the one place that decides it.
+- **Name**: the session's own name (its `/rename`, else its native title), else its Topic title
+  -- never the project name, which is the row's meta.
 - **Waiting**: a `needs_approval` / `needs_input` session carries `waiting` (at most
   `WAITING_MAX` = 300 characters, dropped at the boundary for any other status): what it waits
   for — Claude's channel permission request (`Bash: <description>`), else the Notification's
@@ -86,7 +99,7 @@ no API, no authentication.
   PowerShell tool; a Codex command run by powershell/pwsh, labelled by its script), `monitor`
   (Claude's Monitor: always in the background, ends when its `timeout_ms` expires — default 5 min,
   at most 30 — or the session ends), `agent` (a Claude Agent call, a Codex subagent)
-  (`TaskBoard` in `scripts/bridge/tasks.mjs`, one per session): only what runs now, each with
+  (`ActivityBoard` in `scripts/bridge/activity-board.mjs`, one per session): only what runs now, each with
   its start — an ended task is never reported (the board remembers it 10 min only so a late
   start cannot revive it); at most 50, each label one line of at most 200 characters: a Claude shell's `description`
   (what it does), else its command without a leading `cd … &&` and with `~` for home; an
@@ -184,7 +197,37 @@ a selected value always stays listed (at zero if nothing matches). `GET /api/usa
 filter is held `REPORT_TTL_MS` like a range. The selection is kept per device. Demo mode shows
 masked names, so its rows do not filter.
 
+### HPC
+
+The Usage tab's last block: the Slurm logins a host can read, over the tab's range (the token
+filters do not narrow it). Core-hours per bucket with the same `barChart`, and a line per cluster
+login: jobs, CPU efficiency, failures (failed, out of memory, timed out), storage and file quota
+used, a billed grant's budget (spent plus committed of its total, how much of its window is gone,
+marked when ahead of pace) — or `not read: <why>`. Shown only once a login was read in range.
+
+**The dashboard knows no Slurm.** A host that declares it runs one read door — a command printing
+a JSON report (`scripts/bridge/hpc.mjs` states its schema; dev-lab's is
+`python -m dev_lab.dev.hpcusage report --json`) — every `everyHours` (default 6; each read is an
+ssh round per login), and the usage push stores what it printed (`hpc_usage`, migration 0006).
+Each reading covers the 24 h before it, so a bucket shows each login's last reading in it, never a
+sum of overlapping readings. The last read time and the standing alerts live in
+`~/.claude/bridge/hpc-state-<home>.json`, so a daemon hand-over does not read early; a failed read
+is logged (`hpc: read failed (…)`) and tried again a cadence later.
+
+**Off by default; machine-local only.** It runs a command and needs the machine's own cluster
+logins, so only the local layer declares it — one in the synced file, and so from the dashboard or
+another host, is ignored. Declare it on the one host whose logins reach the clusters, in
+`~/.claude/claude_env_settings.local.json`; a malformed block logs `hpc: off (<reason>)`:
+
+```json
+"bridge": { "hpc": { "command": ["<dev-lab venv python>", "-m", "dev_lab.dev.hpcusage", "report", "--json"], "everyHours": 6 } }
+```
+
 ## Quota
+
+Antigravity's quota is its statusLine payload's `quota` (`{<pool>-<span>: {remaining_fraction, reset_in_seconds}}`),
+teed by `scripts/hooks/agy-statusline.mjs` (agy `settings.json` `statusLine.command`) into one series per pool
+(`agy-usage-<login>-<pool>.jsonl`). Each pool is its own account, `agy:<email>|<pool>`; a session spends the freshest.
 
 Each host's `AccountReader` (`scripts/bridge/quota.mjs`) groups its Claude config dirs by
 seat, checks each login against `seats`, and computes every window's use, trend and forecast
@@ -234,6 +277,14 @@ app-server); the Worker never recomputes it.
   the trend (spend per slice against an even spend; hatched = never observed), reset time and
   forecast; Codex reset credits; an announced extra reset (community APIs, fetched at most
   every 30 min).
+- **Banked resets**: one-off resets an account was granted (Claude's "Full reset", "Fable
+  reset"), each with its expiry, shown as pills on every account row beside its windows (with
+  dates when open; orange under a week left). No API reports them, so they are recorded by hand
+  in **edit mode** (the Accounts heading's "Edit resets": + Add reset, Used) and kept by the gateway in Durable Object storage
+  (`Registry.editBanked`, at most 10 per account). In edit mode a card above the hosts covers every Claude
+  account at once: each distinct reset with how many accounts hold it, **Add to all**,
+  **Remove from all**, and + Add reset for all. An expired reset is hidden at once and leaves
+  storage on the next edit. Read-only in demo mode.
 
 ## Accounts: subscriptions and API balances
 
@@ -285,6 +336,7 @@ The registry judges what is worth telling, as data, and keeps no list of alerts:
 | host offline (coming back is not alerted) | `Registry.sweep`, on the Durable Object's alarm | silence past `offlineAlertSeconds` |
 | a failed turn (Claude `StopFailure`, Codex `failed`) | the bridge daemon, an outbox on the push (`DashboardPush.raise`) | alert id (a push re-sent after a lost reply alerts once) |
 | a config change refused by a host | `#settle` | report |
+| an HPC budget running out: spent plus committed past its total, or its spend so far projected past it before its window ends | the HPC host (`hpc.mjs budgetAlert`), an outbox on the push | condition (recovering clears it; kept in the host's HPC state) |
 
 - **Budget**: the alarm is set for when the next host would turn silent, never on a fixed timer:
   while hosts push it fires at most once per `offlineAlertSeconds` (288 Durable Object requests
@@ -431,8 +483,9 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
    the variable `DASHBOARD_DOMAIN` (the url's host). It never
    touches `DASHBOARD_CONFIG`, which persists across deploys.
    **Membership deploy**: `host-token` runs it; by hand (`npm run dashboard -- deploy`) only
-   after changing `botId`, `allowedUserIds`, `offlineAlertSeconds` or `alertLang`. It derives the
-   Worker's `DASHBOARD_CONFIG` secret (`botId`, `allowedUserIds`, `hosts`, and the optional shared
+   after changing `botId`, the declared `session-bridge` channel user, `offlineAlertSeconds` or
+   `alertLang`. It derives the Worker's `DASHBOARD_CONFIG` secret (`botId`, `allowedUserIds` —
+   the deploying machine's channel declaration, never a settings key — `hosts`, and the optional shared
    `bridge.dashboard.offlineAlertSeconds` / `offlineAlertExclude` / `alertLang` — `en` or `zh`) from the merged config —
    never a host token — and the `DASHBOARD_BOT_TOKEN` secret from this machine's
    `bridge.dashboard.botToken` when this machine has it (step 5). Any machine can deploy: one
@@ -453,8 +506,10 @@ Dashboard membership has one home: the shared `bridge.dashboard` block of
 | Route | Auth | Returns |
 | --- | --- | --- |
 | `GET /api/health` | none | `{ok, schemaVersion, version: {commit, id, at}}` (the live deploy) |
-| `GET /api/dashboard` | `Authorization: tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], repos[], configKeys[], configLast{}, configPending[]}` |
+| `GET /api/dashboard` | viewer: `Authorization: session <token>` or `tma <raw initData>` | `Registry.snapshot()`: `{schemaVersion, generatedAt, hosts[{id, online, lastSeen, sessions[], resources, config}], accounts[], repos[], configKeys[], configLast{}, configPending[]}` |
 | `POST /api/config` | `Authorization: tma <raw initData>` | `202 {id}`: a `CONFIG_KEYS` change queued; `400` for any other key or value |
+| `POST /api/resets` | viewer | `{account` or `accounts[], add: {name, expiresAt, note?}}`, `remove: id` or `drop: {name, expiresAt}` (all or none) -> `200 {banked[]}`; `400` for an unknown account or a past expiry |
+| `POST /api/hosts/:hostId/resets` | `Authorization: Bearer <host token>` | the same edit, or `{}`: `200 {accounts[{key, agent, email, banked}]}` (scripts, no Telegram at hand) |
 | `POST /api/hosts/:hostId/snapshot` | `Authorization: Bearer <host token>` | `{accepted, configChanges[]}` (accepted false = not newer than held; the changes this host should apply) |
 
 Every route shares the per-client `ratePerMinute` (120), keyed by `CF-Connecting-IP`, which

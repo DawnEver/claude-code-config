@@ -1,11 +1,11 @@
 // Shared plugin-launcher logic: resolves the latest installed version of a
 // cc-market plugin, finds its CLI script, and spawns it. Falls back to the
-// repo source tree when the plugin is not installed (development mode).
+// machine's declared cc-market checkout when the plugin is not installed (development mode).
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { spawn } from 'child_process';
-import { fileURLToPath } from 'url';
+import { readMarketDir } from '../shared/market-dir.mjs';
 
 const installedPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
 
@@ -26,8 +26,9 @@ export function launchPlugin(pluginKey, fallbackSubdir, scriptRelPath, {
   } catch {}
 
   if (!cliPath || !fs.existsSync(cliPath)) {
-    const repoDir = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-    cliPath = path.join(repoDir, 'cc-market', fallbackSubdir, ...scriptRelPath.split('/'));
+    const market = readMarketDir();
+    if (!market.dir) { console.error(`${errorPrefix}: ${pluginKey} is not installed and ${market.why}`); process.exit(1); }
+    cliPath = path.join(market.dir, fallbackSubdir, ...scriptRelPath.split('/'));
   }
 
   const p = spawn('node', [...nodeArgs, cliPath, ...process.argv.slice(2)], { stdio: 'inherit' });

@@ -10,6 +10,7 @@ L0 sources   Claude transcripts  ~/.claude*/projects/**/*.jsonl  (each seat dir 
              Codex rollouts       ~/.codex/{sessions,archived_sessions}/**/*.jsonl
              quota readings       AccountReader (scripts/bridge/quota.mjs)
              load samples         ResourceReader (scripts/bridge/resources.mjs), every dashboard push
+             HPC readings         HpcReader (scripts/bridge/hpc.mjs), a declared read door every few hours
 L1 host      scripts/usage/transcripts.mjs  a transcript -> turn rows (pure)
              scripts/usage/scan.mjs         what is new since the cursor (~/.claude/bridge/usage-cursor.json)
              scripts/usage/push.mjs         batches -> POST /api/hosts/<machine>/usage, every 5 min
@@ -25,6 +26,7 @@ L3 readers   Mini App Usage tab (GET /api/usage)   ·   npm run usage (POST /api
 | what a session's work is worth at API list price | Claude's `cost-state` transcript entry | `session_costs` (Codex reports none) |
 | quota % per window | the live readings the dashboard already takes | `quota_windows`, the highest use per window |
 | CPU / memory / GPU | the bridge's 15 s samples | `resources`, sums per hour |
+| HPC jobs, core-hours, quota, billed budget | a host's declared read door (docs/dashboard.md "HPC") | `hpc_usage`, one row per cluster login per reading hour |
 | project | the cwd's origin repo name (else its dir), an agent worktree counted as its repo | `turns.project` |
 | task | the git branch (a lane: docs/harness-architecture.md) | `turns.branch` |
 | time | a turn runs from its prompt to its last model call or tool result | `started_at`, `ended_at`; view `turn_times` adds the gap since the session's previous turn |
@@ -33,7 +35,13 @@ The transcripts are not copied anywhere: the hosts delete them on their own sche
 (`cleanupPeriodDays`), and the store is the long memory. Nothing is instrumented: a turn's
 row exists because the host already wrote it down.
 
-Tokens mean the same on both hosts: `input` uncached, `cache_read`, `cache_write`, `output`
+Antigravity's transcripts are `~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs/transcript.jsonl`
+(`agyTranscript`; `transcript_full.jsonl` is skipped): a turn per USER_INPUT (`human`) or SYSTEM_MESSAGE
+(`system`), a call per PLANNER_RESPONSE (`input_tokens` uncached, `cache_read_tokens`, `output_tokens`).
+The session is the conversation id, the client `agy`, the account `agy:<email>` (cli.log's login). agy
+records no cwd or branch: the project comes from the workspace the bridge noted (`agy-cwd.json`), the branch stays empty.
+
+Tokens mean the same on every host: `input` uncached, `cache_read`, `cache_write`, `output`
 (reasoning included) and `reasoning` (of output). Codex's own input counts its cached part.
 
 ## Delivery

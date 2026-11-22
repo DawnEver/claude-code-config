@@ -36,7 +36,7 @@ for (const agent of ['codex', 'claude']) test(`${agent} receives authenticated T
   assert.match(f.injected[0][1], /describe this/);
   const file = path.join(f.uploadsDir, fs.readdirSync(f.uploadsDir)[0]);
   assert.equal(fs.readFileSync(file, 'utf8'), 'image fixture');
-  assert.deepEqual(f.injected[0][3], { images: [file] });
+  assert.deepEqual(f.injected[0][3], { userId: '42', images: [file] });
 });
 
 test('unauthorized or wrong Topic attachments never download', async (t) => {
@@ -51,7 +51,7 @@ test('documents preserve safe extension but never user-controlled paths', async 
   await f.bridge.handleUpdate(f.message({ photo: undefined, document: { file_id: 'doc', file_name: '../../evil.pdf' } }));
   const names = fs.readdirSync(f.uploadsDir);
   assert.equal(names.length, 1); assert.match(names[0], /^[a-f0-9]{32}\.pdf$/);
-  assert.deepEqual(f.injected[0][3], { images: [] });
+  assert.deepEqual(f.injected[0][3], { userId: '42', images: [] });
   assert.match(f.injected[0][1], /@/);
 });
 
