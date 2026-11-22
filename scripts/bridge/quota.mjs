@@ -132,11 +132,12 @@ const cellsFor = (windowMs) => Math.max(1, Math.round(windowMs / (windowMs <= 24
 /**
  * Every window of `q`, computed once: its use, reset, trend cells (spend per slice against an
  * even spend; -1 never observed, null still ahead) and forecast. A passed reset is a new window
- * not yet started: no use, no reset time.
+ * not yet started: no use, no reset time. Shortest window first (5h before 7d) for every agent:
+ * the order a source sampled them in (Antigravity reports the weekly bucket first) is not a display order.
  */
 function windowModels(q, now) {
   const fresh = q && now - q.at <= QUOTA_STALE_MS;
-  return Object.entries(q?.windows ?? {}).map(([k, v]) => {
+  return Object.entries(q?.windows ?? {}).sort(([, a], [, b]) => a.windowMs - b.windowMs).map(([k, v]) => {
     if (v.resetsAt <= now) return { k, used: 0, resetsAt: null, windowMs: v.windowMs, cells: [], forecast: null };
     // A fresh reading is the model's clock: trend and forecast move with a new reading, not with the time, so an
     // unchanged reading pushes an unchanged snapshot (dashboard-push.mjs skips it). A stale one is observed up to

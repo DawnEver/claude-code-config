@@ -33,6 +33,7 @@
   "app.signInExpiredKeep": "登录已过期 · 关闭并重新打开以刷新（数据来自 {ago}）",
   "app.notAllowed": "此 Telegram 账号无权访问",
   "app.unreachable": "无法连接网关",
+  "app.viewFailed": "此页面无法绘制：{why}",
   "app.unreachableKeep": "无法连接网关 · 显示 {ago} 的数据",
   "tab.sessions": "会话",
   "tab.quota": "账户",
