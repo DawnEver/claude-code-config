@@ -34,14 +34,15 @@ test('a leftover bridge.allowedUserIds is never read, only named', () => {
 });
 
 // 2026-11-21: the declaration ran under ai-lab's interpreter (the provider cache's), which carries no dev_lab,
-// so the door always failed and every Telegram message was undeclared. It runs where dev_lab lives.
-test('the declaration door runs under the dev-lab checkout environment, never another repo\'s', async () => {
+// so the door always failed and every Telegram message was undeclared. It runs under cc-config's own interpreter.
+test('the declaration door runs under cc-config\'s own interpreter, never another repo\'s', async () => {
   const { readChannelDeclaration, DECLARATION_DOOR } = await import('./channel-declaration.mjs');
+  const { ownPython } = await import('./own-python.mjs');
   let ran;
   const run = (python, argv) => { ran = [python, ...argv]; return { status: 0, stdout: JSON.stringify({ [CHANNEL_SOURCE]: '1001' }) }; };
-  const got = readChannelDeclaration({ interpreter: () => ({ python: 'C:/w/dev-lab/.venv/Scripts/python.exe', why: null }), run });
-  assert.deepEqual(got, { channels: { [CHANNEL_SOURCE]: '1001' }, why: null });
-  assert.deepEqual(ran, ['C:/w/dev-lab/.venv/Scripts/python.exe', ...DECLARATION_DOOR]);
-  const none = readChannelDeclaration({ interpreter: () => ({ python: null, why: 'dev-lab is not declared in the machine file [repos]' }), run });
-  assert.deepEqual(none, { channels: {}, why: 'dev-lab is not declared in the machine file [repos]' });
+  assert.deepEqual(readChannelDeclaration({ run }), { channels: { [CHANNEL_SOURCE]: '1001' }, why: null });
+  assert.deepEqual(ran, [ownPython(), ...DECLARATION_DOOR]);
+  const missing = readChannelDeclaration({ run: () => ({ error: new Error('ENOENT') }) });
+  assert.deepEqual(missing.channels, {});
+  assert.match(missing.why, /setup\.js/);
 });

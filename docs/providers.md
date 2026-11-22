@@ -20,11 +20,12 @@ fallback that reads them (`scripts/shared/provider-projection.mjs`).
 
 ## The provider cache (`~/.claude/provider-cache.json`)
 
-`node scripts/setup/setup.js [--ai-lab-python <interpreter>]` runs
-`<interpreter> -m ai_lab.providers --json` once and writes its document as the cache
-(`scripts/shared/provider-cache.mjs`). The interpreter is the flag, else the one the previous
-cache recorded; the first setup on a machine needs the flag (the ai-lab venv's python). Setup
-is the only place cc-config runs Python; a launch never does.
+`node scripts/setup/setup.js` builds cc-config's own environment (`uv sync --frozen`: the
+`doors` group of `pyproject.toml`, pinned by `uv.lock`, carries ai-lab), then runs
+`<own python> -m ai_lab.providers --json` once and writes its document as the cache
+(`scripts/shared/provider-cache.mjs`). The interpreter is always this checkout's own `.venv`
+(`scripts/shared/own-python.mjs`); no other repo's environment is borrowed. A launch reads the
+cache in Node and never runs Python for it.
 
 Every launch checks the cache in Node and REFUSES to launch on any of these, naming the
 remedy (rerun setup) -- there is no silent regeneration:
@@ -32,8 +33,8 @@ remedy (rerun setup) -- there is no silent regeneration:
 - absent, unparseable, or a `schema_version` other than 1;
 - (a) `source_sha256` differs from a fresh sha256 over the recorded input files (the packaged
   `providers.toml`, then the user `providers.toml`; an absent file adds no bytes);
-- (b) the ai-lab version in the `ai_lab-<v>.dist-info` beside the recorded interpreter differs
-  from the recorded `ai_lab_version`;
+- (b) the ai-lab version in the `ai_lab-<v>.dist-info` beside the interpreter that generated it
+  differs from the recorded `ai_lab_version`;
 - (c) `generated_at` is older than 7 days.
 
 The cache holds no secret: a key is named by its credential USERNAME (`key_usernames`), never
