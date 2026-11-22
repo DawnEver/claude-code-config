@@ -4,6 +4,7 @@
 // `db` is a D1 binding (in Node tests, the same API over node:sqlite).
 
 import { readOnlySql } from '../shared/usage-schema.mjs';
+import { platformOf } from './public/shared/vocab.mjs';
 
 const TURN_COLS = ['agent', 'session', 'turn', 'model', 'machine', 'account', 'seat', 'project', 'branch', 'origin', 'client',
   'started_at', 'ended_at', 'calls', 'input', 'cache_read', 'cache_write', 'output', 'reasoning', 'tools'];
@@ -146,8 +147,8 @@ export async function report(db, { days = 30, tzOffsetMin = 0, now = Date.now(),
   ]);
   const keeps = (r, except) => FILTER_DIMS.every((d) => d === except || !sel[d] || sel[d].has(r[d]));
   const label = (hour) => new Date(Math.max(hour, since) + off).toISOString().slice(0, unit === 'hour' ? 13 : 10);
-  const daily = rollup(hours.filter((r) => keeps(r)), (r) => `${label(r.hour)}|${r.agent}`, (r) => ({ day: label(r.hour), agent: r.agent }))
-    .map(({ k, ...r }) => r).sort((a, b) => a.day.localeCompare(b.day) || a.agent.localeCompare(b.agent));
+  const daily = rollup(hours.filter((r) => keeps(r)), (r) => `${label(r.hour)}|${platformOf(r.agent, r.model)}`, (r) => ({ day: label(r.hour), platform: platformOf(r.agent, r.model) }))
+    .map(({ k, ...r }) => r).sort((a, b) => a.day.localeCompare(b.day) || a.platform.localeCompare(b.platform));
   const by = (col) => {
     const rows = rollup(hours.filter((r) => keeps(r, col)), (r) => r[col]).sort((a, b) => tokens(b) - tokens(a));
     const shown = rows.filter((r, i) => i < 12 || sel[col]?.has(r.k));

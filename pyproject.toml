@@ -1,5 +1,8 @@
-# claude-code-config as a family member: a manifest only -- no Python package, no Python code. Its tests are
+# claude-code-config as a family member: no Python package and no Python code of its own. Its tests are
 # `npm test` (node:test), posted as the one `base` part by dev_lab.dev.commandpart on GitHub-hosted runners.
+# Its checkout's own environment (.venv) is the ONE interpreter every Python door it calls runs under
+# (scripts/shared/own-python.mjs): ai-lab's provider catalogue and session, lab_commons' machine file, dev-lab's
+# channel declaration. Their versions are this lock's, so no other repo's environment is ever borrowed.
 [project]
 name = "claude-code-config"
 version = "0"
@@ -8,13 +11,18 @@ dependencies = []
 
 [tool.uv]
 package = false
+default-groups = ["doors", "dev"]
 
 [dependency-groups]
-# The family development system (part producer, hooks, forge door). DEV ONLY: nothing here imports it.
+# The doors the launchers, the bridge and setup run at runtime (scripts/shared/own-python.mjs).
+doors = ["ai-lab", "lab-commons[paths]", "dev-lab"]
+# The family development system (part producer, hooks, forge door).
 dev = ["dev-lab"]
 
 [tool.uv.sources]
-# dev-lab floats on integrate/main like every family repo; the lock is the pin.
+# Every family member floats on integrate/main; the lock is the pin.
+ai-lab = { git = "https://github.com/DawnEver/ai-lab.git", branch = "integrate/main" }
+lab-commons = { git = "https://github.com/DawnEver/lab-commons.git", branch = "integrate/main" }
 dev-lab = { git = "https://github.com/DawnEver/dev-lab.git", branch = "integrate/main" }
 
 [tool.dev_lab.parts]

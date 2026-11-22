@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { AccountReader, accountFor, agyPools, agyTier, readAgy, readAgyEmail, refreshAgyQuota, teeAgyUsage } from './quota.mjs';
+import { AccountReader, accountFor, quotaOf, agyPools, agyTier, readAgy, readAgyEmail, refreshAgyQuota, teeAgyUsage } from './quota.mjs';
 import { parseHostPush, SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 import { statusText } from '../hooks/agy-statusline.mjs';
 
@@ -113,4 +113,15 @@ test('readAgyEmail reads statusLine snapshot first and falls back to log/cli-*.l
 test('the agy status line names model, context and each pool', () => {
   assert.equal(statusText({ model: { display_name: 'Gemini' }, context_window: { used_percentage: 30.4 } }, { gemini: { '5h': { used: 2 }, '7d': { used: 40 } } }), 'Gemini · ctx 30% · gemini 7d 40%');
   assert.equal(statusText(null), 'agy');
+});
+
+test('an account lists its windows shortest first, whatever order its source sampled them in', () => {
+  const now = Date.now();
+  // Antigravity reports the weekly bucket before the 5 h one; Claude Code the other way round.
+  const weeklyFirst = { '7d': { used: 40, resetsAt: now + 100 * H, windowMs: 168 * H }, '5h': { used: 10, resetsAt: now + 3 * H, windowMs: 5 * H } };
+  const pools = [{ pool: 'gemini', account: { email: 'a@example.com' }, quota: quotaOf([{ from: now, at: now, windows: weeklyFirst }]) }];
+  const reader = new AccountReader({ machine: 'm', now: () => now, extraResets: async () => null,
+    sources: { seats: () => [], claude: () => [], agy: () => pools } });
+  const [account] = reader.read().filter((a) => a.agent === 'agy');
+  assert.deepEqual(account.windows.map((w) => w.k), ['5h', '7d']);
 });

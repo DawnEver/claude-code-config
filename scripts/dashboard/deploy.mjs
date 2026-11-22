@@ -8,7 +8,7 @@
 //   node scripts/dashboard/deploy.mjs host-token   join this host: mint its push token into this machine's
 //                                                      local settings and its hash into the shared hosts
 //                                                      map, then deploy (the Worker learns hosts only then)
-//   node scripts/dashboard/deploy.mjs deploy       upload DASHBOARD_CONFIG and DASHBOARD_BOT_TOKEN (the Worker
+//   node scripts/dashboard/deploy.mjs deploy       apply the usage store's pending migrations, upload DASHBOARD_CONFIG and DASHBOARD_BOT_TOKEN (the Worker
 //                                                      sends alerts as the dashboard bot) and deploy to the url's domain
 //                                                      (code alone also deploys from CI on push)
 //   node scripts/dashboard/deploy.mjs usage-db     create the usage store (D1 `agents-usage`) if missing, bind it in
@@ -97,6 +97,18 @@ function usageDb() {
   console.log(`${USAGE_DB} (${db.uuid}) bound in wrangler.jsonc and migrated; deploy to serve it`);
 }
 
+/**
+ * The wrangler calls of one deploy, in order: the usage store's pending migrations first, as the CI
+ * deploy does, so code that reads a new table never goes live before the table exists (a hand deploy
+ * once skipped them and the Usage tab answered 500 for every viewer). Applying none is a no-op.
+ */
+export function deployCalls({ domain, secrets, tag }) {
+  return [
+    ['d1', 'migrations', 'apply', USAGE_DB, '--remote', '--config', WRANGLER],
+    ['deploy', '--config', WRANGLER, '--domain', domain, '--secrets-file', secrets, '--tag', tag],
+  ];
+}
+
 function deploy() {
   const bridge = readMergedEnvSettings({ sharedPath: ENV_SETTINGS_PATH })?.bridge ?? {};
   const { domain, config } = dashboardConfigFrom(bridge, bridgeAllowlist());
@@ -110,7 +122,7 @@ function deploy() {
   const secrets = path.join(dir, 'secrets.json');
   try {
     writePrivateFile(secrets, JSON.stringify({ DASHBOARD_CONFIG: JSON.stringify(config), ...(token ? { DASHBOARD_BOT_TOKEN: token } : {}) }));
-    wrangler(['deploy', '--config', WRANGLER, '--domain', domain, '--secrets-file', secrets, '--tag', commitTag()], { stdio: 'inherit' });
+    for (const call of deployCalls({ domain, secrets, tag: commitTag() })) wrangler(call, { stdio: 'inherit' });
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   console.log(`deployed to https://${domain}/ (hosts: ${Object.keys(config.hosts).join(', ') || 'none'})`);
 }

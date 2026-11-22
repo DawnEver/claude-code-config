@@ -1,7 +1,8 @@
 // scripts/shared/provider-cache.mjs — the setup-time copy of ai-lab's provider catalogue.
 //
 // ai-lab owns the catalogue (urls, per-protocol paths, Claude-role model maps, key usernames).
-// cc-config keeps no copy of it: setup runs `<python> -m ai_lab.providers --json` ONCE and
+// cc-config keeps no copy of it: setup runs `<own python> -m ai_lab.providers --json` ONCE (own-python.mjs:
+// this checkout's environment, whose lock pins ai-lab) and
 // writes the document to ~/.claude/provider-cache.json; every launch reads only that file, in
 // Node, with no Python call. The cache holds no secret (key USERNAMES only).
 //
@@ -9,7 +10,7 @@
 //   (a) source_sha256 differs from a fresh sha256 over the recorded input files (packaged
 //       providers.toml bytes, then the user providers.toml bytes, an absent file adding none —
 //       the rule ai_lab.providers documents);
-//   (b) the ai-lab version installed beside the recorded interpreter differs from the recorded one;
+//   (b) the ai-lab version installed beside the interpreter that generated it differs from the recorded one;
 //   (c) the document is older than MAX_AGE_MS.
 // There is no silent regeneration and no fallback to a catalogue in claude_env_settings.json.
 
@@ -18,6 +19,7 @@ import { spawnSync } from 'child_process';
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import os from 'os';
+import { ownPython } from './own-python.mjs';
 
 export const PROVIDER_CACHE_PATH = join(os.homedir(), '.claude', 'provider-cache.json');
 const PROVIDER_CACHE_SCHEMA = 1;
@@ -70,12 +72,9 @@ function validateCatalogue(doc) {
  * Setup: run `<python> -m ai_lab.providers --json` and write the cache.
  * Returns {ok:true, providers:n} or {error}. A missing interpreter or ai-lab refuses by name.
  */
-export function writeProviderCache({ python, path = PROVIDER_CACHE_PATH, run = spawnSync } = {}) {
-  if (!python) {
-    return { error: `no Python for ai-lab: pass --ai-lab-python <path to the ai-lab venv interpreter> to ${SETUP_REMEDY}` };
-  }
+export function writeProviderCache({ python = ownPython(), path = PROVIDER_CACHE_PATH, run = spawnSync } = {}) {
   const res = run(python, ['-m', 'ai_lab.providers', '--json'], { encoding: 'utf8' });
-  if (res.error?.code === 'ENOENT') return { error: `no Python: ${python} not found (the provider cache needs Python + ai-lab)` };
+  if (res.error?.code === 'ENOENT') return { error: `no Python: ${python} not found (cc-config's own environment; ${SETUP_REMEDY} builds it)` };
   if (res.error) return { error: `ai_lab.providers failed: ${res.error.message}` };
   if (res.status !== 0) {
     const why = String(res.stderr || '').trim().split('\n').pop() || `exit ${res.status}`;
@@ -88,11 +87,6 @@ export function writeProviderCache({ python, path = PROVIDER_CACHE_PATH, run = s
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(doc, null, 2) + '\n');
   return { ok: true, providers: Object.keys(doc.providers).length, python: doc.python };
-}
-
-/** The interpreter a previous setup recorded, or null. */
-export function recordedPython(path = PROVIDER_CACHE_PATH) {
-  try { return JSON.parse(readFileSync(path, 'utf8')).python || null; } catch { return null; }
 }
 
 /**

@@ -7,6 +7,15 @@
 const AGENT_NAMES = { claude: 'Claude', codex: 'Codex', agy: 'Antigravity' };
 export const AGENTS = Object.keys(AGENT_NAMES);
 export const agentName = (agent) => AGENT_NAMES[agent] ?? agent;
+/**
+ * The platform a turn spends: its agent's own, unless its model is another provider's (DeepSeek served
+ * through Claude Code or Codex). The Usage bars split by it; the model name is all a turn records.
+ */
+const MODEL_PLATFORMS = [[/^deepseek-/, 'deepseek']];
+export const PLATFORMS = [...AGENTS, ...new Set(MODEL_PLATFORMS.map(([, p]) => p))];
+export const platformOf = (agent, model) => MODEL_PLATFORMS.find(([re]) => re.test(model ?? ''))?.[1] ?? agent;
+const PLATFORM_NAMES = { deepseek: 'DeepSeek' };
+export const platformName = (p) => PLATFORM_NAMES[p] ?? agentName(p);
 /** Each agent's Telegram Topic icon colour (createForumTopic icon_color: one of the six Telegram allows). */
 export const TOPIC_ICON_COLORS = { claude: 16478047, codex: 9367192, agy: 7322096 };
 
