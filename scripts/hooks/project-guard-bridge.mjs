@@ -6,8 +6,8 @@
 // doors (`permissions.allow` `Bash(...)`) once under `.claude/`. Rather than duplicating host-specific
 // hook manifests in every repository or leaving dynamic path/subagent/consent rules unjudged on Codex
 // and Antigravity, both `agy-hook.mjs` and `codex-hook.mjs` normalize their host wire payloads onto
-// the canonical hook contract here — gated strictly by `~/.claude/trusted-origins` so untrusted
-// checkouts never execute arbitrary repository hook code.
+// the canonical hook contract here — repo hook code is gated strictly by `~/.claude/trusted-origins`;
+// every other repo is judged by the FAMILY deny rows from the machine dev-lab install (D99), never its own copy.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,6 +15,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isTrustedRepo } from '../runtime/repo-automode.mjs';
 import { agyToCanonicalPayload, stripAgyPromptEnvelope } from '../shared/agy-payload.mjs';
+import { ownPython } from '../shared/own-python.mjs';
 
 export { stripAgyPromptEnvelope };
 
@@ -166,6 +167,62 @@ function runOneHandler(handler, { repoRoot, cwd, payload, payloadJson, childEnv,
   return { code: r.status ?? 1, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
+/** The canonical (Claude) events a host's installed events reach, as a parent and as a subagent. */
+export function canonicalEventsFor(host, hostEvents) {
+  const out = new Set();
+  for (const e of hostEvents) for (const sub of [false, true]) {
+    const c = resolveCanonicalEvent(host, e, { invocationNum: 0 }, sub);
+    if (c) out.add(c);
+  }
+  return out;
+}
+
+const FAMILY_REMEDY = 'run node scripts/setup/setup.js in cc-config (builds its own environment, whose lock carries dev-lab)';
+
+/**
+ * The family deny engine and rows from the dev-lab cc-config's own environment pins (D99; own-python.mjs): one source,
+ * `python -m dev_lab.dev.agenthooks --path / --family-rules`, cached by engine path + mtime.
+ * Never a repository's copy. Returns {engine, rules} or {error}.
+ */
+export function installedFamilyGuard({ python = ownPython(), run = spawnSync,
+  cacheDir = path.join(os.homedir(), '.claude', 'cache') } = {}) {
+  if (!python || !fs.existsSync(python)) return { error: `no cc-config interpreter at ${python}` };
+  const door = args => run(python, ['-m', 'dev_lab.dev.agenthooks', ...args], { encoding: 'utf8', timeout: 30000, windowsHide: true });
+  const where = door(['--path']);
+  if (where.error || where.status !== 0) return { error: `dev_lab.dev.agenthooks --path exited ${where.status ?? where.error?.code}` };
+  const engine = where.stdout.trim();
+  let stamp;
+  try { stamp = `${engine}|${fs.statSync(engine).mtimeMs}`; } catch { return { error: `no engine at ${engine}` }; }
+  const rules = path.join(cacheDir, 'family-deny-rules.json');
+  const stampFile = `${rules}.stamp`;
+  try { if (fs.readFileSync(stampFile, 'utf8') === stamp && fs.existsSync(rules)) return { engine, rules }; } catch { /* refresh */ }
+  const rows = door(['--family-rules']);
+  if (rows.error || rows.status !== 0) return { error: `dev_lab.dev.agenthooks --family-rules exited ${rows.status ?? rows.error?.code}` };
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(rules, rows.stdout);
+  fs.writeFileSync(stampFile, stamp);
+  return { engine, rules };
+}
+
+/** An untrusted (or repo-less) call: only the installed family rows judge it, fail closed. */
+function runFamilyGuard(hostEvent, input, { host, env, isSubagent, run, family, cwd }) {
+  if (resolveCanonicalEvent(host, hostEvent, input, isSubagent) !== 'PreToolUse') return null;
+  const payload = host === 'agy'
+    ? agyToCanonicalPayload('PreToolUse', input, { repoRoot: cwd, isSubagent })
+    : codexToCanonicalPayload('PreToolUse', input, { repoRoot: cwd, env, isSubagent });
+  if (payload.tool_name !== 'Bash' && payload.tool_name !== 'PowerShell') return null;
+  const guard = family();
+  if (guard.error) return { denyReason: `agent-guard: family deny rows unavailable: ${guard.error} -- refused (fail closed); ${FAMILY_REMEDY}`, contexts: [], allowDoor: false };
+  const r = run(process.execPath, [guard.engine, guard.rules], { cwd: payload.cwd || cwd, input: JSON.stringify(payload), encoding: 'utf8', timeout: 5000, windowsHide: true });
+  if (r.error || (r.status !== 0 && r.status !== 2)) return { denyReason: `agent-guard: the family engine exited ${r.status ?? r.error?.code} -- refused (fail closed)`, contexts: [], allowDoor: false };
+  let reason = r.status === 2 ? (r.stderr || '').trim() : '';
+  try {
+    const spec = JSON.parse((r.stdout || '').trim() || '{}').hookSpecificOutput ?? {};
+    if (spec.permissionDecision === 'deny') reason = String(spec.permissionDecisionReason || 'denied by family row');
+  } catch { /* plain text: no decision */ }
+  return reason ? { denyReason: reason, contexts: [], allowDoor: false } : null;
+}
+
 function resolveCanonicalEvent(host, hostEvent, input, isSubagent) {
   if (host === 'agy') {
     if (hostEvent === 'SessionStart') return 'SessionStart';
@@ -180,8 +237,10 @@ function resolveCanonicalEvent(host, hostEvent, input, isSubagent) {
   if (host === 'codex') {
     if (hostEvent === 'SessionStart') return 'SessionStart';
     if (hostEvent === 'PreToolUse') return 'PreToolUse';
+    if (hostEvent === 'UserPromptSubmit') return 'UserPromptSubmit';
     if (hostEvent === 'PostToolUse') return 'PostToolUse';
-    if (hostEvent === 'SessionEnd') return isSubagent ? 'SubagentStop' : 'Stop';
+    if (hostEvent === 'Stop') return isSubagent ? 'SubagentStop' : 'Stop';
+    if (hostEvent === 'SessionEnd') return 'SessionEnd';
     return null;
   }
   return hostEvent;
@@ -202,13 +261,14 @@ export function runProjectGuards(hostEvent, input = {}, {
   runGit,
   isSubagent = false,
   run = spawnSync,
+  family = installedFamilyGuard,
 } = {}) {
   const start = input.workspacePaths?.[0] || input.cwd;
   const repoRoot = findProjectRootWithClaudeSettings(start);
-  if (!repoRoot) return null;
-
   const trustOpts = { home, ...(trust !== undefined ? { trust } : {}), ...(runGit ? { runGit } : {}) };
-  if (!isTrustedRepo(repoRoot, trustOpts).trusted) return null;
+  if (!repoRoot || !isTrustedRepo(repoRoot, trustOpts).trusted) {
+    return runFamilyGuard(hostEvent, input, { host, env, isSubagent, run, family, cwd: repoRoot || start || process.cwd() });
+  }
 
   const claudeEvent = resolveCanonicalEvent(host, hostEvent, input, isSubagent);
   if (!claudeEvent) return null;

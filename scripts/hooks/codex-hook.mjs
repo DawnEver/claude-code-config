@@ -126,6 +126,13 @@ export async function runCodexHook(input, deps = {}) {
     if (['request_user_input', 'request_user_input_async', 'AskUserQuestion'].includes(String(input.tool_name).split('.').at(-1)))
       await attempt(() => (deps.notify ?? notifyDetached)(codexNotification(input, 'UserInputRequest')));
     if (contexts.length) return { hookSpecificOutput: { hookEventName: event, additionalContext: contexts.join('\n') } };
+  } else if (event === 'UserPromptSubmit' || event === 'PostToolUse' || event === 'Stop') {
+    // Project hooks own these turns: task binding and recall, the walls ledger, the Stop pass.
+    const proj = await runProject();
+    if (proj?.blockReason && event !== 'PostToolUse') return { decision: 'block', reason: proj.blockReason };
+    if (proj?.contexts?.length && event !== 'Stop')
+      return { hookSpecificOutput: { hookEventName: event, additionalContext: proj.contexts.join('\n') } };
+    if (proj?.contexts?.length) messages.push(...proj.contexts);
   } else if (event === 'PermissionRequest') {
     await attempt(() => (deps.notify ?? notifyDetached)(codexNotification(input, event)));
   } else if (event === 'SessionEnd') {

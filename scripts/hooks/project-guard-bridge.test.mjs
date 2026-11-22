@@ -48,6 +48,14 @@ test('stripAgyPromptEnvelope + payload normalization cover agy and codex', () =>
   assert.equal(cx.agent_id, 't-1');
 });
 
+const allowingFamily = t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'family-allow-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'e.js'), "process.stdin.resume().on('end', () => {})");
+  fs.writeFileSync(path.join(dir, 'r.json'), '[]');
+  return () => ({ engine: path.join(dir, 'e.js'), rules: path.join(dir, 'r.json') });
+};
+
 test('untrusted repositories never execute .claude/settings.json hooks (supply-chain RCE guard)', t => {
   const marker = path.join(os.tmpdir(), `rce-probe-${process.pid}-${Date.now()}`);
   const { root, runGit } = makeRepo(t, {
@@ -63,8 +71,8 @@ test('untrusted repositories never execute .claude/settings.json hooks (supply-c
     conversationId: 'c1',
     workspacePaths: [root],
     toolCall: { name: 'run_command', args: { CommandLine: 'echo hi' } },
-  }, { host: 'agy', trust: ['github.com/org/*'], runGit });
-  assert.equal(res, null);
+  }, { host: 'agy', trust: ['github.com/org/*'], runGit, family: allowingFamily(t) });
+  assert.equal(res, null); // only the installed family rows judged it, and they allow it
   assert.equal(fs.existsSync(marker), false);
 });
 
@@ -164,4 +172,61 @@ test('findProjectRootWithClaudeSettings stops at git root', t => {
   const sub = path.join(root, 'a', 'b');
   fs.mkdirSync(sub, { recursive: true });
   assert.equal(findProjectRootWithClaudeSettings(sub), root);
+});
+
+// Parity: every project-hook event Claude runs reaches the project on codex and agy alike.
+// Planted control: an event no host maps (PreCompact) must be reported missing, so the check can say no.
+import { canonicalEventsFor } from './project-guard-bridge.mjs';
+import { managedCodexHooks } from '../setup/codex-hooks.mjs';
+test('codex and agy reach every turn-level project event Claude runs (task binding, recall, walls, Stop pass)', () => {
+  const claude = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop'];
+  const installed = Object.keys(managedCodexHooks({ scriptsDir: '/s', node: '/n' }));
+  const codex = canonicalEventsFor('codex', installed);
+  const agy = canonicalEventsFor('agy', ['SessionStart', 'PreInvocation', 'PreToolUse', 'PostToolUse', 'Stop']);
+  const missing = (host, have) => claude.filter(e => !have.has(e)).map(e => `${host}:${e}`);
+  assert.deepEqual([...missing('codex', codex), ...missing('agy', agy)], []);
+  assert.deepEqual(missing('control', canonicalEventsFor('codex', ['SessionStart'])).length > 0, true);
+  assert.ok(!canonicalEventsFor('codex', ['PreCompact']).size);
+});
+
+test('codex UserPromptSubmit carries project context and a Stop block continues the turn', async () => {
+  const ctx = await runCodexHook({ hook_event_name: 'UserPromptSubmit', prompt: 'task: x' },
+    { repair: () => {}, projectHooks: () => ({ contexts: ['[task] bound x'] }) });
+  assert.equal(ctx.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.match(ctx.hookSpecificOutput.additionalContext, /bound x/);
+  const stop = await runCodexHook({ hook_event_name: 'Stop' },
+    { repair: () => {}, projectHooks: () => ({ blockReason: 'STRAYS: commit first', contexts: [] }) });
+  assert.deepEqual(stop, { decision: 'block', reason: 'STRAYS: commit first' });
+});
+
+// D99: the family deny rows hold in EVERY repo, from the machine's dev-lab install, never the repo's copy.
+test('an untrusted repo is guarded by the installed family rows; its own permissive engine cannot weaken them', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'family-guard-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const familyEngine = path.join(dir, 'family-engine.js');
+  fs.writeFileSync(familyEngine, `let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+    const c=String(JSON.parse(s).tool_input?.command||'');
+    if (c.includes('git reset --hard')) process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'GIT-RESET: family row'}}));});`);
+  const familyRules = path.join(dir, 'family-rules.json');
+  fs.writeFileSync(familyRules, '[]');
+  // Planted: the untrusted repo ships an engine that allows everything.
+  const { root, runGit } = makeRepo(t, {
+    origin: 'git@github.com:stranger/evil.git',
+    denyEngine: 'process.exit(0)',
+    denyRules: [],
+    settings: { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node .claude/hooks/deny-commands.js .claude/hooks/deny-rules.json' }] }] } },
+  });
+  const family = () => ({ engine: familyEngine, rules: familyRules });
+  const call = cmd => runProjectGuards('PreToolUse', {
+    conversationId: 'c1', workspacePaths: [root],
+    toolCall: { name: 'run_command', args: { CommandLine: cmd } },
+  }, { host: 'agy', trust: ['github.com/org/*'], runGit, family });
+  assert.match(call('git reset --hard HEAD').denyReason, /GIT-RESET/);
+  assert.equal(call('git status')?.denyReason, undefined);
+  // A missing install is a named wall, not a silent pass.
+  const none = runProjectGuards('PreToolUse', {
+    conversationId: 'c1', workspacePaths: [root],
+    toolCall: { name: 'run_command', args: { CommandLine: 'git status' } },
+  }, { host: 'agy', trust: ['github.com/org/*'], runGit, family: () => ({ error: 'no cc-config interpreter' }) });
+  assert.match(none.denyReason, /family deny rows unavailable: no cc-config interpreter.*setup\.js/);
 });
