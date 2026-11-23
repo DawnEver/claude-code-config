@@ -942,7 +942,7 @@ export async function main() {
   const releaseLock = acquireDaemonLock();
   if (!releaseLock) { log('already running; one getUpdates consumer per bot token'); process.exit(0); }
   process.on('exit', releaseLock);
-  // Resolved once: a declaration edited later takes effect when the daemon restarts.
+  // Resolved once: a declaration edited later changes bridgeConfigRevision(), so the change check below hands over.
   const allowlist = bridgeAllowlist();
   const config = { ...readBridgeConfig(), allowedUserIds: allowlist.allowedUserIds };
   const machine = readMachineName();

@@ -19,9 +19,13 @@ import { CONFIG_KEYS, parseConfigChange } from '../shared/dashboard-schema.mjs';
 import { resolveSyncDir } from '../shared/sync-dir.mjs';
 import { declaredAllowlist, readChannelDeclaration } from '../shared/channel-declaration.mjs';
 
-/** Fingerprint of the normalised bridge config: a daemon read at startup is stale once it changes. */
-export function bridgeConfigRevision(config = readBridgeConfig()) {
-  return createHash('sha256').update(JSON.stringify(config)).digest('hex');
+/**
+ * Fingerprint of what a daemon reads once at startup: the normalised bridge settings and the
+ * declared sender allowlist (hosts-config, bridgeAllowlist). A daemon is stale once either changes,
+ * so a newly declared channel hands it over like a settings edit.
+ */
+export function bridgeConfigRevision(config = readBridgeConfig(), allowedUserIds = bridgeAllowlist().allowedUserIds) {
+  return createHash('sha256').update(JSON.stringify({ config, allowedUserIds })).digest('hex');
 }
 
 /** Source-only daemon fingerprint; not config, host binary or channel process identity. */
