@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { readBridgeConfig, bridgeAllowlist, repoNameFromUrl, gitContext, bridgeSourceRevision } from './context.mjs';
+import { readBridgeConfig, bridgeAllowlist, repoNameFromUrl, gitContext, bridgeSourceRevision, bridgeConfigRevision } from './context.mjs';
 
 test('bridgeSourceRevision follows source edits, ignores tests and config, and exposes only a digest', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-revision-'));
@@ -83,4 +83,17 @@ test('gitContext uses hints first and reads this checkout otherwise', () => {
   const here = gitContext(path.resolve(import.meta.dirname, '..', '..'));
   assert.ok(here.project);
   assert.ok(here.branch);
+});
+
+// The daemon resolves the channel allowlist once at start, and both its change check and
+// ensure.mjs compare this fingerprint: a declaration the fingerprint did not carry never
+// restarted it (2026-11-23: a newly declared channel stayed "allowlist empty" until the daemon was
+// killed by hand).
+test('the config fingerprint carries the declared allowlist, so a new declaration restarts the daemon', () => {
+  const config = { botToken: 't', projects: {} };
+  assert.notEqual(bridgeConfigRevision(config, []), bridgeConfigRevision(config, [8068396521]), 'a newly declared user changes it');
+  assert.equal(bridgeConfigRevision(config, [8068396521]), bridgeConfigRevision(config, [8068396521]), 'PLANTED CONTROL: an unchanged declaration does not');
+  const src = fs.readFileSync(new URL('./context.mjs', import.meta.url), 'utf8');
+  assert.match(src, /export function bridgeConfigRevision\(config = readBridgeConfig\(\), allowedUserIds = bridgeAllowlist\(\)\.allowedUserIds\)/,
+    'with no arguments (the daemon and ensure.mjs) it reads the declaration itself');
 });
