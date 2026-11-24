@@ -185,12 +185,13 @@ store (`python -m ai_lab.auth login <provider> --task session`). See [`providers
 
 ## Plugins
 
-`rem`, `sharp-review`, `evolve` and `fabric` are enabled via `enabledPlugins`. That list is set on
-**fresh install** (the template is copied to `claude_settings.json` on first run) and is
-otherwise a deliberate edit to the shared payload — `npm run migrate` does not enable plugins.
-`traceme` is gone from the marketplace: usage statistics are the usage store (`docs/usage.md`).
-A host that still has it installed gets doctor's orphaned-plugin WARN; remove it with
-`claude plugin uninstall traceme@cc-market`.
+No cc-market plugin is enabled by the templates: rem, sharp-review, evolve, watch, cc-latex, traceme
+and fabric are RETIRED (user ruling 2026-11-24; `scripts/setup/retired-plugins.mjs` is the set,
+`retired-plugins.test.mjs` refuses a template that enables one), and cc-academia, the one live plugin, is
+opt-in. Enablement is set on **fresh install** (the template is copied to `claude_settings.json` on first
+run) and is otherwise a deliberate edit to the shared payload — `npm run migrate` does not enable plugins.
+A machine removes an installed retired plugin with `claude plugin uninstall <name>@cc-market`; rem through
+dev-lab's door, `python -m dev_lab.dev.remretired uninstall --apply`. Doctor WARNs on an orphan left behind.
 
 ### LSPs
 

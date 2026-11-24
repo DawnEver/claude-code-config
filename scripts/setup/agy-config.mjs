@@ -22,7 +22,7 @@ const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse']);
 // PreToolUse waits up to 600 s for a Telegram answer, but only in Telegram-started turns.
 const timeoutFor = event => event === 'PreToolUse' ? 660 : event === 'SessionStart' ? 30 : event === 'Stop' ? 15 : 10;
 /** cc-market plugins agy loads, and the dormant ones loaded only once their manifest ships disabled. */
-export const AGY_PLUGINS = { enabled: ['rem', 'sharp-review', 'evolve', 'fabric'], dormant: ['watch', 'cc-latex', 'cc-academia'] };
+export const AGY_PLUGINS = { enabled: [], dormant: ['cc-academia'] };
 
 const slash = p => p.replace(/\\/g, '/');
 const fingerprint = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
