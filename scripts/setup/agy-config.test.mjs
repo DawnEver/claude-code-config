@@ -18,9 +18,9 @@ function fixture(t) {
   const home = path.join(root, 'home');
   const repoRoot = path.join(root, 'repo');
   const marketDir = path.join(repoRoot, 'cc-market');
-  for (const p of ['rem', 'sharp-review', 'evolve', 'fabric', 'watch', 'cc-latex']) fs.mkdirSync(path.join(marketDir, p), { recursive: true });
-  fs.mkdirSync(path.join(marketDir, 'cc-latex', '.antigravity-plugin'));
-  fs.writeFileSync(path.join(marketDir, 'cc-latex', '.antigravity-plugin', 'plugin.json'), '{"disabled":true}');
+  for (const p of ['rem', 'sharp-review', 'evolve', 'fabric', 'watch', 'cc-academia']) fs.mkdirSync(path.join(marketDir, p), { recursive: true });
+  fs.mkdirSync(path.join(marketDir, 'cc-academia', '.antigravity-plugin'));
+  fs.writeFileSync(path.join(marketDir, 'cc-academia', '.antigravity-plugin', 'plugin.json'), '{"disabled":true}');
   const agyDir = path.join(home, '.gemini', 'config');
   return { root, agyDir, home, repoRoot, marketDir, scriptsDir: path.join(home, '.claude', 'scripts'), smoke: ok };
 }
@@ -51,7 +51,7 @@ test('merges managed hooks/plugins, cleans legacy session-bridge MCP, and preser
   const plugins = JSON.parse(fs.readFileSync(path.join(o.agyDir, 'plugins.json'), 'utf8'));
   assert.equal(plugins.entries.length, 2, 'stale cc-market entry replaced, own kept');
   assert.deepEqual(plugins.entries[0], { path: '~/own' });
-  assert.deepEqual(plugins.entries[1].include_only, ['rem', 'sharp-review', 'evolve', 'fabric', 'cc-latex']);
+  assert.deepEqual(plugins.entries[1].include_only, ['cc-academia'], 'retired plugins are never loaded');
   let probed = 0;
   assert.equal(installAgyConfig({ ...o, smoke: () => { probed++; return { ok: true }; } }).changed, false, 'idempotent');
   assert.equal(probed, 0, 'an unchanged hook spawns no smoke run');

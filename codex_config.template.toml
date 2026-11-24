@@ -50,21 +50,6 @@ sandbox = "elevated"
 source_type = "git"
 source = "https://github.com/DawnEver/cc-market.git"
 
-[plugins."evolve@cc-market"]
-enabled = true
-
-[plugins."sharp-review@cc-market"]
-enabled = true
-
-[plugins."rem@cc-market"]
-enabled = true
-
-[plugins."fabric@cc-market"]
-enabled = true
-
-[plugins."cc-latex@cc-market"]
-enabled = true
-
 [features]
 remote_control = true
 prevent_idle_sleep = true
