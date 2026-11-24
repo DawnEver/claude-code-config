@@ -3,17 +3,18 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { globMatch, originKey, readTrustList, repoAutoModeArgs } from './repo-automode.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
 function repo({ origin = 'git@forge.example:team/proj.git', fragment = { autoMode: { allow: ['$defaults', 'x'] } } } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'repo-automode-'));
+  const root = tempDir('repo-automode-');
   mkdirSync(join(root, '.claude'));
   if (fragment !== null) writeFileSync(join(root, '.claude', 'automode.json'), JSON.stringify(fragment));
   const runGit = (_cwd, args) => (args[0] === 'rev-parse' ? root : origin);
@@ -61,7 +62,7 @@ test('no fragment -> nothing', () => {
 });
 
 test('not a git repo -> nothing', () => {
-  const r = repoAutoModeArgs({ cwd: tmpdir(), runGit: () => null, trust: ['**'] });
+  const r = repoAutoModeArgs({ cwd: tempDir('repo-automode-'), runGit: () => null, trust: ['**'] });
   assert.deepEqual(r.args, []);
   assert.match(r.notice, /not a git repo/);
 });
@@ -79,7 +80,7 @@ test('an explicit --settings on the command line wins', () => {
 });
 
 test('readTrustList: one glob per line, # comments dropped, absent file = []', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trust-home-'));
+  const home = tempDir('trust-home-');
   assert.deepEqual(readTrustList(home), []);
   mkdirSync(join(home, '.claude'));
   writeFileSync(join(home, '.claude', 'trusted-origins'), '# mine\nforge.example/team/*  # team\n\n');

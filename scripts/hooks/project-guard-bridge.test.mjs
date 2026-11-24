@@ -15,7 +15,7 @@ import { runAgyHook } from './agy-hook.mjs';
 import { runCodexHook } from './codex-hook.mjs';
 
 function makeRepo(t, { settings = {}, denyEngine = null, denyRules = null, origin = 'git@github.com:org/consumer-a.git' } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-bridge-'));
+  const root = tempDir('guard-bridge-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, '.git'));
   fs.mkdirSync(path.join(root, '.claude', 'hooks'), { recursive: true });
@@ -49,7 +49,7 @@ test('stripAgyPromptEnvelope + payload normalization cover agy and codex', () =>
 });
 
 const allowingFamily = t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'family-allow-'));
+  const dir = tempDir('family-allow-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, 'e.js'), "process.stdin.resume().on('end', () => {})");
   fs.writeFileSync(path.join(dir, 'r.json'), '[]');
@@ -57,7 +57,7 @@ const allowingFamily = t => {
 };
 
 test('untrusted repositories never execute .claude/settings.json hooks (supply-chain RCE guard)', t => {
-  const marker = path.join(os.tmpdir(), `rce-probe-${process.pid}-${Date.now()}`);
+  const marker = path.join(tempDir('rce-probe-'), 'marker');
   const { root, runGit } = makeRepo(t, {
     origin: 'https://github.com/evil-org/untrusted-repo.git',
     settings: {
@@ -137,7 +137,7 @@ test('trusted repositories enforce deny-commands (fail closed when missing), hoo
   assert.match(codexHookOut.hookSpecificOutput.permissionDecisionReason, /PUSH-DENIED/);
 
   // 4. agy sanctioned door returns allow, non-door returns ask, compound command never auto-allows
-  const agyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-h-'));
+  const agyHome = tempDir('agy-h-');
   t.after(() => fs.rmSync(agyHome, { recursive: true, force: true }));
   const doorOut = await runAgyHook({
     hookEventName: 'PreToolUse',
@@ -178,6 +178,7 @@ test('findProjectRootWithClaudeSettings stops at git root', t => {
 // Planted control: an event no host maps (PreCompact) must be reported missing, so the check can say no.
 import { canonicalEventsFor } from './project-guard-bridge.mjs';
 import { managedCodexHooks } from '../setup/codex-hooks.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 test('codex and agy reach every turn-level project event Claude runs (task binding, recall, walls, Stop pass)', () => {
   const claude = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SubagentStop'];
   const installed = Object.keys(managedCodexHooks({ scriptsDir: '/s', node: '/n' }));
@@ -201,7 +202,7 @@ test('codex UserPromptSubmit carries project context and a Stop block continues 
 
 // D99: the family deny rows hold in EVERY repo, from the machine's dev-lab install, never the repo's copy.
 test('an untrusted repo is guarded by the installed family rows; its own permissive engine cannot weaken them', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'family-guard-'));
+  const dir = tempDir('family-guard-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const familyEngine = path.join(dir, 'family-engine.js');
   fs.writeFileSync(familyEngine, `let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{

@@ -4,8 +4,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { planService, runAction, SERVICE_NAME } from './install-service.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
-const home = path.join(os.tmpdir(), 'svc-home');
+const home = path.join(tempDir('svc-'), 'svc-home');
 
 test('windows: per-user Run key (no admin), hidden via conhost --headless, daemon via the ~/.claude link', () => {
   const p = planService({ platform: 'win32', home, nodePath: 'C:\\node\\node.exe' });
@@ -39,7 +40,7 @@ test('linux: systemd --user unit enabled now', () => {
 });
 
 test('runAction is idempotent: install overwrites, uninstall removes, optional failures tolerated', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-'));
+  const dir = tempDir('svc-');
   const ran = [];
   const run = (cmd, args) => { ran.push([cmd, ...args].join(' ')); return { status: cmd === 'launchctl' && args[0] === 'bootout' ? 3 : 0 }; };
   try {

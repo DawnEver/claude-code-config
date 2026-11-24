@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { TelegramClient, chunkText, normalizeMath } from './telegram.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('math projection preserves prose/code/currency and converts formulas', () => {
   assert.equal(normalizeMath('Inline $x^2$ and $$\\frac{1}{3}$$.'),
@@ -17,7 +18,7 @@ test('math projection preserves prose/code/currency and converts formulas', () =
 });
 
 test('sendAttachment uploads explicit files with multipart topic and caption', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-attachment-'));
+  const dir = tempDir('telegram-attachment-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'answer.txt');
   fs.writeFileSync(file, 'the answer');
@@ -42,7 +43,7 @@ test('sendAttachment uploads explicit files with multipart topic and caption', a
 });
 
 test('sendAttachment validates kind, regular files, caption and size before network access', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-attachment-'));
+  const dir = tempDir('telegram-attachment-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'large.bin');
   fs.closeSync(fs.openSync(file, 'w'));
@@ -59,7 +60,7 @@ test('sendAttachment validates kind, regular files, caption and size before netw
 });
 
 test('sendAttachment does not retry uncertain delivery or leak transport URLs', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-attachment-'));
+  const dir = tempDir('telegram-attachment-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'answer.txt');
   fs.writeFileSync(file, 'answer');
@@ -240,7 +241,7 @@ test('alert prefix stays within Telegram length limit and unreadable acknowledge
 });
 
 test('getUpdates advances, persists and dedupes the offset', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-'));
+  const dir = tempDir('tg-');
   const offsetFile = path.join(dir, 'offset.json');
   const api = await fakeApi((m, p) => ({ ok: true, result: [{ update_id: 10 }, { update_id: 11 }].filter((u) => u.update_id >= (p.offset ?? 0)) }));
   try {

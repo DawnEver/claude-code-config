@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Bridge } from './daemon.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 function fixture(t, agent = 'codex') {
-  const uploadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-inbound-'));
+  const uploadsDir = tempDir('bridge-inbound-');
   t.after(() => fs.rmSync(uploadsDir, { recursive: true, force: true }));
   const host = new EventEmitter(); host.agent = agent;
   const injected = [], downloads = [], sent = [];

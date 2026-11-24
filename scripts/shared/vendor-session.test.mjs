@@ -2,18 +2,18 @@
 // hands ai_lab.session `--resume <id>` / `resume <id>`: a continued conversation keeps its LAB_SESSION.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { claudeProjectSlug, claudeResumeArgs, codexResumeArgs } from './vendor-session.mjs';
 import { buildClaudeInvocation } from '../runtime/cc-launcher.mjs';
 import { buildCodexInvocation } from '../runtime/codex-launcher.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 const A = '11111111-2222-4333-8444-555555555555';
 const B = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
-function claudeDir(cwd, ids, configDir = mkdtempSync(join(tmpdir(), 'vs-claude-'))) {
+function claudeDir(cwd, ids, configDir = tempDir('vs-claude-')) {
   const dir = join(configDir, 'projects', claudeProjectSlug(cwd));
   mkdirSync(dir, { recursive: true });
   ids.forEach((id, i) => {
@@ -25,7 +25,7 @@ function claudeDir(cwd, ids, configDir = mkdtempSync(join(tmpdir(), 'vs-claude-'
 }
 
 function codexHome(ids) {
-  const home = mkdtempSync(join(tmpdir(), 'vs-codex-'));
+  const home = tempDir('vs-codex-');
   const day = join(home, 'sessions', '2026', '10', '21');
   mkdirSync(day, { recursive: true });
   ids.forEach((id, i) => {
@@ -58,7 +58,7 @@ test('codex: resume --last becomes resume <the newest rollout>; resume <id> and 
 });
 
 test('the launchers resolve the continuation and issue no LAB_SESSION of their own (ai_lab.session does)', () => {
-  const home = mkdtempSync(join(tmpdir(), 'vs-home-'));
+  const home = tempDir('vs-home-');
   claudeDir('/w', [A, B], join(home, '.claude'));
   const claude = buildClaudeInvocation({ provider: null, extraArgs: ['-c'], envSettingsPath: '/nonexistent', home, cwd: '/w',
     machine: null, repoSettings: () => ({ args: [] }) });

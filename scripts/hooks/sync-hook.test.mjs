@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { depsChanged, updateOwnDeps, venvStateFile, repoRootFrom, REPO, formatPull, formatReminder, parseBranchStatus, formatMergeFailure, isStartup } from './sync-hook.js';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -119,7 +120,7 @@ function git(cwd, ...args) {
 
 /** A bare origin plus two clones, `a` and `b`, with one shared commit. */
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-'));
+  const root = tempDir('sync-hook-');
   const origin = path.join(root, 'origin.git');
   const a = path.join(root, 'a');
   const b = path.join(root, 'b');
@@ -135,7 +136,7 @@ function fixture() {
 /** Run the hook as a separate process, as the harness would. */
 // A successful pull re-runs checkLinks(), which writes into ~/.claude, ~/.codex and ~/.gemini:
 // the child gets a throwaway HOME so a test never edits the live hosts (it once broke agy's hooks.json).
-const TEST_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-home-'));
+const TEST_HOME = tempDir('sync-hook-home-');
 process.on('exit', () => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
 function runHook(repo, mode, payload = {}, extraEnv = {}) {
@@ -224,7 +225,7 @@ test('integration: a non-startup session never moves the tree', () => {
 });
 
 test('integration: offline is a silent no-op, not a blocked session', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-offline-'));
+  const root = tempDir('sync-hook-offline-');
   git(root, 'init', '--quiet');
   git(root, 'commit', '--allow-empty', '--quiet', '-m', 'init');
 
@@ -274,7 +275,7 @@ test('integration: an untracked file alone does not block the update', () => {
 
 // A home with no provider cache: the post-pull refresh must fail loudly there, never touch the real one.
 function tempHome() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-home-'));
+  const home = tempDir('sync-hook-home-');
   return { HOME: home, USERPROFILE: home };
 }
 
@@ -361,7 +362,7 @@ test('integration: the SessionStart mode returns at once and the detached pull s
   git(a, 'add', '.');
   git(a, 'commit', '--quiet', '-m', 'from a');
   git(a, 'push', '--quiet');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-bg-'));
+  const tmp = tempDir('sync-hook-bg-');
   const t0 = Date.now();
   const notice = runHook(b, '--pull-background', { source: 'startup' }, '', { TMP: tmp, TEMP: tmp, TMPDIR: tmp });
   assert.ok(Date.now() - t0 < 10_000, 'the hook returned without waiting on the network');

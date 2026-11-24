@@ -9,8 +9,9 @@ import {
 } from './agy-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { Bridge } from './daemon.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agy-'));
+const tmp = () => tempDir('agy-');
 const until = async (fn, ms = 2000) => {
   const end = Date.now() + ms;
   while (!fn()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 5)); }

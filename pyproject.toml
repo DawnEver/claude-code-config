@@ -25,6 +25,9 @@ ai-lab = { git = "https://github.com/DawnEver/ai-lab.git", branch = "integrate/m
 lab-commons = { git = "https://github.com/DawnEver/lab-commons.git", branch = "integrate/main" }
 dev-lab = { git = "https://github.com/DawnEver/dev-lab.git", branch = "integrate/main" }
 
+[tool.dev_lab.doors]
+NETWORK-VERB = "<venv python> -m dev_lab.dev.netverb -- <git push|fetch|pull|clone|ls-remote|submodule update ...  or  uv lock|add|remove ...>  (retries 3x, then reports a diagnosis); an environment change is <venv python> -m dev_lab.dev.dep --sync, which retries inside"
+
 [tool.dev_lab.parts]
 output = "output/logs"
 

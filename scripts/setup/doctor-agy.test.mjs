@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { checkAgyConfig, checkRuleFileSize } from './doctor.js';
 import { installAgyConfig } from './agy-config.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('checkAgyConfig: silent without agy, FAIL on missing hook or legacy session-bridge MCP, WARN until a hook ran', t => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-agy-'));
+  const home = tempDir('doctor-agy-');
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const agyHome = path.join(home, '.gemini', 'config');
   const scriptsDir = path.join(home, '.claude', 'scripts');
@@ -24,7 +25,7 @@ test('checkAgyConfig: silent without agy, FAIL on missing hook or legacy session
 });
 
 test('checkRuleFileSize: passes under 24,000 bytes and FAILs when AGENTS.md or GLOBAL-AGENTS.md exceeds it', t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rulesize-'));
+  const root = tempDir('doctor-rulesize-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'AGENTS.md'), 'short\n');
   fs.writeFileSync(path.join(root, 'GLOBAL-AGENTS.md'), 'short\n');

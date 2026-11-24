@@ -4,6 +4,7 @@ import { syncBeforeLaunch } from './startup-sync.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('provider launcher bootstraps do not preload mutable config or home modules before synchronization', () => {
   for (const file of ['cc.js', 'codex.js']) {
@@ -15,7 +16,7 @@ test('provider launcher bootstraps do not preload mutable config or home modules
 });
 
 test('wrapper and daemon native startup share a short lease even without shared env', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'startup-lease-'));
+  const dir = tempDir('startup-lease-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const stampFile = path.join(dir, 'stamp');
   let calls = 0;
@@ -27,7 +28,7 @@ test('wrapper and daemon native startup share a short lease even without shared 
 });
 
 test('a failed startup spawn releases the lease and fails open', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'startup-lease-'));
+  const dir = tempDir('startup-lease-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const stampFile = path.join(dir, 'stamp');
   const out = syncBeforeLaunch({ stampFile, env: {}, spawn: () => { throw new Error('offline'); } });

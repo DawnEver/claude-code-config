@@ -8,12 +8,13 @@ import {
   installAgyConfig, inspectAgyConfig, managedAgyHook, hookDefinitionId, hookScriptRef, smokeRunCommand,
   installAgyStatusLine, AGY_DIR, AGY_SETTINGS, HOOK_NAME,
 } from './agy-config.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const REAL_SCRIPTS = fileURLToPath(new URL('..', import.meta.url));
 const ok = () => ({ ok: true });
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-config-'));
+  const root = tempDir('agy-config-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const home = path.join(root, 'home');
   const repoRoot = path.join(root, 'repo');

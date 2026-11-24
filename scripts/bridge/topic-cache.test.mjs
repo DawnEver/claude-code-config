@@ -4,11 +4,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { TopicCache } from './topic-cache.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const H = 3600000;
 
 test('loads valid entries only, persists, and selects closed Topics past the age', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-'));
+  const dir = tempDir('tc-');
   const file = path.join(dir, 'topics.json');
   try {
     fs.writeFileSync(file, JSON.stringify({ '-1|codex:old': 9, '-1|codex:open': { topicId: 10, title: 'a' }, '-1|claude:x': { topicId: 11, title: 'b', closedAt: 0 } }));
@@ -26,7 +27,7 @@ test('loads valid entries only, persists, and selects closed Topics past the age
 });
 
 test('a missing or corrupt file is an empty cache; no file means memory only', () => {
-  assert.deepEqual(new TopicCache(path.join(os.tmpdir(), 'nope-topics.json')).entries, {});
+  assert.deepEqual(new TopicCache(path.join(tempDir('tc-'), 'nope-topics.json')).entries, {});
   const c = new TopicCache(null);
   c.set('a|b', { topicId: 1 });
   assert.equal(c.get('a|b').topicId, 1);

@@ -3,10 +3,10 @@
 // provider-catalogue.fixture.json (trimmed to three rows; `session` key usernames added
 // because lab_commons API_KEY_TASKS does not declare that task yet).
 
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { tmpdir } from 'os';
 import { sourceSha256 } from './provider-cache.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 const FIXTURE = new URL('./provider-catalogue.fixture.json', import.meta.url);
 
@@ -16,7 +16,7 @@ export function catalogueDoc() {
 
 /** A temp dir holding a fake venv with ai-lab installed and the two catalogue inputs. */
 export function fakeAiLab({ version = catalogueDoc().ai_lab_version, userToml = null } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'ai-lab-'));
+  const dir = tempDir('ai-lab-');
   const python = join(dir, 'venv', 'Scripts', 'python.exe');
   const dist = join(dir, 'venv', 'Lib', 'site-packages', `ai_lab-${version}.dist-info`);
   mkdirSync(dist, { recursive: true });

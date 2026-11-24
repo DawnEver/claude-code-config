@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { escapeArgument, escapeCommand, buildSpawn, resolveCommand, prepareSpawn } from './win-spawn.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const WIN = { platform: 'win32', comspec: 'cmd.exe' };
 /** The command line cmd.exe actually receives, minus the /d /s /c wrapper. */
@@ -94,7 +94,7 @@ test('a missing Windows command cannot interpret hostile argv as a shell command
 });
 
 test('a real .cmd launch disables an explicitly enabled parent delayed-expansion mode', { skip: process.platform !== 'win32' }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'win-spawn-delayed-'));
+  const dir = tempDir('win-spawn-delayed-');
   try {
     writeFileSync(join(dir, 'argecho.mjs'), 'console.log(JSON.stringify(process.argv.slice(2)));\n');
     writeFileSync(join(dir, 'argecho.cmd'), '@ECHO off\r\nnode "%~dp0argecho.mjs" %*\r\n');
@@ -111,7 +111,7 @@ test('a real .cmd launch disables an explicitly enabled parent delayed-expansion
 // shim — the same shape npm generates for `codex` / `claude` — and compare what argv it
 // received against what we asked for.
 test('round-trip through a real .cmd shim preserves argv exactly', { skip: process.platform !== 'win32' }, () => {
-  const dir = mkdtempSync(join(tmpdir(), 'win-spawn-'));
+  const dir = tempDir('win-spawn-');
   try {
     writeFileSync(join(dir, 'argecho.mjs'), 'console.log(JSON.stringify(process.argv.slice(2)));\n');
     // Mirrors the npm shim: a .cmd that forwards %* to a node script.

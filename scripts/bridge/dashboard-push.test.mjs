@@ -5,6 +5,7 @@ import { readBridgeConfig } from './context.mjs';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('push: authenticated, ordered, never overlapping, failures logged once and never thrown', async () => {
   const calls = [], logs = [];
@@ -37,7 +38,7 @@ test('push: authenticated, ordered, never overlapping, failures logged once and 
 });
 
 test('config: dashboard needs url + hostToken, https unless loopback', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-'));
+  const dir = tempDir('dash-');
   const read = (shared, local = {}) => {
     fs.writeFileSync(path.join(dir, 's.json'), JSON.stringify({ bridge: shared }));
     fs.writeFileSync(path.join(dir, 'l.json'), JSON.stringify({ bridge: local }));
@@ -56,7 +57,7 @@ test('config: dashboard needs url + hostToken, https unless loopback', () => {
 });
 
 test('config: the HPC collector runs a command, so only the machine-local layer declares it', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-'));
+  const dir = tempDir('dash-');
   const read = (shared, local = {}) => {
     fs.writeFileSync(path.join(dir, 's.json'), JSON.stringify({ bridge: shared }));
     fs.writeFileSync(path.join(dir, 'l.json'), JSON.stringify({ bridge: local }));
@@ -97,7 +98,7 @@ test('push: a raised alert rides every push until one is accepted, then is gone'
 
 test('config summary: editable values and facts only — no token, no user id, no chat id', async () => {
   const { configSummary } = await import('./context.mjs');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-sum-'));
+  const dir = tempDir('dash-sum-');
   try {
     const localPath = path.join(dir, 'l.json');
     fs.writeFileSync(localPath, JSON.stringify({ bridge: { idleCloseMinutes: 5 } }));
@@ -115,7 +116,7 @@ test('config summary: editable values and facts only — no token, no user id, n
 
 test('applyConfigChange: validated again on the host, written in place, nothing else touched', async () => {
   const { applyConfigChange } = await import('./context.mjs');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-apply-'));
+  const dir = tempDir('dash-apply-');
   try {
     const sharedPath = path.join(dir, 's.json');
     const before = { providers: { a: 1 }, bridge: { idleCloseMinutes: 30, allowedUserIds: [1], projects: { repo: { chatId: -1 } } } };

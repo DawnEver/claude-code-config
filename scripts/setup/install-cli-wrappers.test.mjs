@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { wrapperPaths, removeLegacyProfileSources } from './install-cli-wrappers.js';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('Windows wrapper paths include cmd and extensionless Git Bash entry points', () => {
   assert.deepEqual(wrapperPaths('C:\\host-bin', 'codc', true), [
@@ -16,7 +17,7 @@ test('macOS and Linux use one extensionless executable wrapper', () => {
 });
 
 test('legacy profile source removal preserves unrelated content on Windows and POSIX', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapper-profile-'));
+  const home = tempDir('wrapper-profile-');
   const win = path.join(home, 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1');
   const zsh = path.join(home, '.zshrc');
   fs.mkdirSync(path.dirname(win), { recursive: true });

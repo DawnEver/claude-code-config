@@ -17,8 +17,9 @@ import {
 } from './setup.js';
 import { execFileSync } from 'child_process';
 import { SYNC_PAYLOAD_FILES, readSyncDirPointer } from '../shared/sync-dir.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
-const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `setup-${p}-`));
+const tmp = (p) => tempDir(`setup-${p}-`);
 const fakeHome = () => {
   const h = tmp('home');
   fs.mkdirSync(path.join(h, '.claude'), { recursive: true });
@@ -155,14 +156,13 @@ test('adoptSyncDir: is idempotent', () => {
 // on a single-volume host (macOS), where these tests are skipped.
 function secondVolumeTmp() {
   if (process.platform !== 'win32') return null;
-  const baseDev = fs.statSync(os.tmpdir()).dev;
+  const baseDev = fs.statSync(tempDir('setup-vol-')).dev;
   for (const letter of ['D', 'E', 'F', 'C']) {
     const root = `${letter}:/`;
     try {
       if (!fs.existsSync(root)) continue;
-      const dir = fs.mkdtempSync(path.join(root, 'setup-xvol-'));
+      const dir = tempDir('setup-xvol-', root);
       if (fs.statSync(dir).dev !== baseDev) return dir;
-      fs.rmSync(dir, { recursive: true, force: true });
     } catch {
       // Root not writable — try the next one.
     }
@@ -172,8 +172,7 @@ function secondVolumeTmp() {
 
 const XVOL = secondVolumeTmp();
 const xvolSkip = XVOL ? false : 'needs a second writable volume';
-// XVOL sits at a volume root rather than under os.tmpdir(), so nothing else will sweep it.
-if (XVOL) after(() => fs.rmSync(XVOL, { recursive: true, force: true }));
+// XVOL sits at a volume root rather than under the temp root; tempDir still removes it at exit.
 const HARDLINK = { src: 'config.json', dest: 'config.json', type: 'file', hardlink: true };
 
 test('sameVolume: true within one volume, false across two', { skip: xvolSkip }, () => {
@@ -194,7 +193,7 @@ test('linkEntry: a hardlink entry on one volume really is hard linked', () => {
 
 test('linkEntry: across volumes a hardlink entry falls back to a copy, not an error', { skip: xvolSkip }, () => {
   const src = path.join(tmp('src'), 'config.json');
-  const dest = path.join(fs.mkdtempSync(path.join(XVOL, 'dest-')), 'config.json');
+  const dest = path.join(tempDir('dest-', XVOL), 'config.json');
   fs.writeFileSync(src, '{"a":1}');
 
   const r = linkEntry(src, dest, HARDLINK, false);
@@ -206,7 +205,7 @@ test('linkEntry: across volumes a hardlink entry falls back to a copy, not an er
 
 test('linkEntry: an up-to-date cross-volume copy is satisfied, not re-reported', { skip: xvolSkip }, () => {
   const src = path.join(tmp('src'), 'config.json');
-  const dest = path.join(fs.mkdtempSync(path.join(XVOL, 'dest-')), 'config.json');
+  const dest = path.join(tempDir('dest-', XVOL), 'config.json');
   fs.writeFileSync(src, '{"a":1}');
   linkEntry(src, dest, HARDLINK, false);
 
@@ -216,7 +215,7 @@ test('linkEntry: an up-to-date cross-volume copy is satisfied, not re-reported',
 
 test('linkEntry: a drifted cross-volume copy is never overwritten without --replace', { skip: xvolSkip }, () => {
   const src = path.join(tmp('src'), 'config.json');
-  const dest = path.join(fs.mkdtempSync(path.join(XVOL, 'dest-')), 'config.json');
+  const dest = path.join(tempDir('dest-', XVOL), 'config.json');
   fs.writeFileSync(src, '{"a":1}');
   fs.writeFileSync(dest, '{"edited-live":true}');
 
@@ -228,7 +227,7 @@ test('linkEntry: a drifted cross-volume copy is never overwritten without --repl
 
 test('linkEntry: --replace re-syncs a drifted copy and keeps the old one', { skip: xvolSkip }, () => {
   const src = path.join(tmp('src'), 'config.json');
-  const dest = path.join(fs.mkdtempSync(path.join(XVOL, 'dest-')), 'config.json');
+  const dest = path.join(tempDir('dest-', XVOL), 'config.json');
   fs.writeFileSync(src, '{"a":1}');
   fs.writeFileSync(dest, '{"edited-live":true}');
 

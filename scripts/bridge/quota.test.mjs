@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { AccountReader, accountFor, accountModels, recordsQuota, planName, teeClaudeUsage, windowView, project, claudeWindows, codexWindows, quotaOf, readClaudeDirs } from './quota.mjs';
 import { readSeries } from './quota-series.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 // One observation as a series: what a host knows the moment it first sees its quota.
 const claudeQuota = (snap) => (snap?.at > 0 ? quotaOf([{ from: snap.at, at: snap.at, windows: claudeWindows(snap) }]) : null);
@@ -58,7 +59,7 @@ test('quota windows are labelled by their real length; distinct short windows do
 });
 
 test('readClaudeDirs reads the base dir and each local seat dir: account and quota from its own files', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-home-'));
+  const home = tempDir('quota-home-');
   const acct = (email, org) => JSON.stringify({ oauthAccount: { emailAddress: email, organizationName: org, organizationUuid: org } });
   try {
     fs.mkdirSync(path.join(home, '.claude'));
@@ -73,7 +74,7 @@ test('readClaudeDirs reads the base dir and each local seat dir: account and quo
 });
 
 test('teeClaudeUsage records the statusLine quota as normalized windows in the config dir series', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-'));
+  const dir = tempDir('quota-');
   try {
     const file = path.join(dir, 'b', 'claude-usage.jsonl');
     const line = { rate_limits: { five_hour: { used_percentage: 5, resets_at: (NOW + H) / 1000 } } };
@@ -162,7 +163,7 @@ test('AccountReader: extra resets fetched in the background at most once per int
 });
 
 test('recordsQuota: a host without a configured dashboard records nothing', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-cfg-'));
+  const dir = tempDir('quota-cfg-');
   try {
     const sharedPath = path.join(dir, 's.json'), localPath = path.join(dir, 'l.json');
     const write = (shared, local) => { fs.writeFileSync(sharedPath, JSON.stringify(shared)); fs.writeFileSync(localPath, JSON.stringify(local)); };

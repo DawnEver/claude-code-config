@@ -12,9 +12,10 @@ import {
   validateSyncDir,
   SYNC_DIR_POINTER_NAME,
 } from './sync-dir.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 function tmp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `sync-dir-${prefix}-`));
+  return tempDir(`sync-dir-${prefix}-`);
 }
 
 // A fake $HOME whose .claude dir we control, so no test ever touches the real one.

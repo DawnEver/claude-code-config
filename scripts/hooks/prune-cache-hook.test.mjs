@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { liveVersions, staleVersions, prune } from './prune-cache-hook.js';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('liveVersions reads Windows and POSIX command lines, quoted or not', () => {
   const live = liveVersions([
@@ -23,7 +23,7 @@ test('staleVersions keeps the numerically latest and live versions, ignores non-
 });
 
 function cache() {
-  const root = join(mkdtempSync(join(tmpdir(), 'prune-')), 'cache');
+  const root = join(tempDir('prune-'), 'cache');
   for (const v of ['0.2.19', '0.2.20', '0.2.21']) {
     mkdirSync(join(root, 'mp', 'fabric', v, 'scripts'), { recursive: true });
     writeFileSync(join(root, 'mp', 'fabric', v, 'scripts', 'a.mjs'), '');
