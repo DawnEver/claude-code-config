@@ -5,13 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { hooksDrift, applyTemplateHooks } from './settings-hooks.mjs';
 import { checkPayloadShape } from './doctor.js';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const NEW = { SessionStart: [{ hooks: [{ type: 'command', command: 'node ~/.claude/scripts/hooks/claude-hook.mjs --event SessionStart', timeout: 30 }] }] };
 const OLD = { SessionStart: [{ hooks: [{ type: 'command', command: 'node ~/.claude/scripts/hooks/sync-hook.js --pull', timeout: 90 }] }],
   PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: 'node ~/.claude/scripts/hooks/bridge-hook.js' }] }] };
 
 function fixture(live) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-hooks-'));
+  const dir = tempDir('settings-hooks-');
   const settingsPath = path.join(dir, 'claude_settings.json');
   const templatePath = path.join(dir, 'claude_settings.template.json');
   fs.writeFileSync(settingsPath, JSON.stringify(live, null, 4) + '\n');

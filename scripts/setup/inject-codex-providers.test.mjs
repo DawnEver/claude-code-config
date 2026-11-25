@@ -1,14 +1,13 @@
 // Unit tests for scripts/setup/inject-codex-providers.mjs.
 //
 // Generates [model_providers.*] blocks for codex_config.toml from
-// `claude_env_settings.json`. Each test uses mkdtempSync for temp files; the
+// `claude_env_settings.json`. Each test uses tempDir() for temp files; the
 // real ~/.codex is never touched.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import {
   generateModelProvidersBlock,
   injectModelProviders,
@@ -21,9 +20,10 @@ import {
   CODEX_TOML_START_MARKER,
   CODEX_TOML_END_MARKER,
 } from './inject-codex-providers.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'inject-codex-'));
+  const dir = tempDir('inject-codex-');
   return {
     path: join(dir, 'codex_config.toml'),
     modelsPath: join(dir, 'models.json'),
@@ -345,13 +345,13 @@ test('regenerate: missing settings returns missing and writes nothing', () => {
   assert.equal(readFileSync(path, 'utf8'), cfgBefore); // last-known-good config preserved
 });
 
-test('regenerate: unparseable settings returns unparseable with an error and writes nothing', () => {
+test('regenerate: unparsable settings returns unparsable with an error and writes nothing', () => {
   const { path, modelsPath, settingsPath } = fixture();
   writeFileSync(settingsPath, '{ this is not json');
   writeFileSync(path, 'model = "gpt-5.6-sol"\n');
   const cfgBefore = readFileSync(path, 'utf8');
   const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache });
-  assert.equal(r.settings, 'unparseable');
+  assert.equal(r.settings, 'unparsable');
   assert.ok(r.error instanceof Error);
   assert.equal(existsSync(modelsPath), false);
   assert.equal(readFileSync(path, 'utf8'), cfgBefore);

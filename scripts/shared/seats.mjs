@@ -101,7 +101,7 @@ export const usageFile = (dir) => path.join(dir, 'bridge', 'claude-usage.jsonl')
 const norm = (s) => ({ alias: isValidAlias(s.alias) ? s.alias : null, email: s.email ?? null, org: s.org ?? null,
   orgUuid: s.orgUuid ?? null });
 
-/** The seats `machine` holds, normalised; junk entries are skipped. */
+/** The seats `machine` holds, normalized; junk entries are skipped. */
 export function seatsFor(seats, machine) {
   return (Array.isArray(seats) ? seats : [])
     .filter((s) => s && typeof s === 'object' && Array.isArray(s.machines) && s.machines.includes(machine))

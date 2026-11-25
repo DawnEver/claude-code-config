@@ -16,14 +16,17 @@ default-groups = ["doors", "dev"]
 [dependency-groups]
 # The doors the launchers, the bridge and setup run at runtime (scripts/shared/own-python.mjs).
 doors = ["ai-lab", "lab-commons[paths]", "dev-lab"]
-# The family development system (part producer, hooks, forge door).
-dev = ["dev-lab"]
+# The family development system (part producer, hooks, forge door) and its test kit (the JS engine, typos).
+dev = ["dev-lab[test]"]
 
 [tool.uv.sources]
 # Every family member floats on integrate/main; the lock is the pin.
 ai-lab = { git = "https://github.com/DawnEver/ai-lab.git", branch = "integrate/main" }
 lab-commons = { git = "https://github.com/DawnEver/lab-commons.git", branch = "integrate/main" }
 dev-lab = { git = "https://github.com/DawnEver/dev-lab.git", branch = "integrate/main" }
+
+[tool.dev_lab.doors]
+NETWORK-VERB = "<venv python> -m dev_lab.dev.netverb -- <git push|fetch|pull|clone|ls-remote|submodule update ...  or  uv lock|add|remove ...>  (retries 3x, then reports a diagnosis); an environment change is <venv python> -m dev_lab.dev.dep --sync, which retries inside"
 
 [tool.dev_lab.parts]
 output = "output/logs"
@@ -48,6 +51,10 @@ test_roots = []
 trunk = "main"
 sessions = ["integrate/main"]
 prune_merged = true
+# Branch limits (user ruling 2026-11-20): land or retire a head past them (dev_lab.dev.branchpolicy).
+max_ahead = 10
+max_idle_hours = 12
+ephemeral = ['pr/*']
 
 # FORGE-PROTECTION-DECLARED (dev_lab.dev.forgeprotect): the ONE bypass identity per forge; on GitHub the ops App
 # merges break-glass and the repo admin stays. `python -m dev_lab.dev.forge protect plan|check|apply`.
@@ -98,6 +105,29 @@ jobs.deploy.steps = [
     { name = "Deploy the Worker", env = { CLOUDFLARE_API_TOKEN = "${{ secrets.CLOUDFLARE_API_TOKEN }}", DASHBOARD_DOMAIN = "${{ vars.DASHBOARD_DOMAIN }}" }, run = 'npx -y wrangler@4 deploy --config scripts/dashboard/wrangler.jsonc --domain "$DASHBOARD_DOMAIN" --tag "${GITHUB_SHA::7}"' },
 ]
 
-# The family files famfiles renders (.gitignore, .gitattributes, .rgignore) read this repo's deltas from this module.
+# The family's ruff tables (dev_lab.dev._famconfig_ruff_rows): single quotes, 120 columns, the family select. They
+# hold the one Python file here, scripts/_famconfig.py; target-version follows requires-python.
+[tool.ruff]
+line-length = 120
+cache-dir = "output/cache/ruff"
+target-version = "py313"
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = [
+    "A", "AIR", "ANN", "ARG", "ASYNC", "B", "BLE", "C4", "C90", "COM", "D", "DJ", "DTZ", "E", "EM", "ERA",
+    "F", "FA", "FBT", "FIX", "FLY", "FURB", "G", "I", "ICN", "INP", "INT", "ISC", "LOG", "N", "NPY", "PD",
+    "PERF", "PGH", "PIE", "PLC", "PLE", "PLR", "PLW", "PT", "PTH", "PYI", "Q", "RET", "RSE", "RUF", "S",
+    "SIM", "SLF", "SLOT", "T10", "T20", "TD", "TID", "TRY", "UP", "W", "YTT",
+]
+ignore = ["COM812", "D203", "D213", "D400", "D401", "N818", "PLR0913", "Q000", "Q003", "S603"]
+
+[tool.ruff.lint.per-file-ignores]
+# famfiles loads the delta module by PATH (`--deltas scripts/_famconfig.py`); scripts/ is a node tree, not a package.
+"scripts/_famconfig.py" = ["INP001"]
+
+# The family files famfiles renders (.gitignore, .gitattributes) read this repo's deltas from this module.
 [tool.dev_lab.render]
 deltas = "scripts/_famconfig.py"

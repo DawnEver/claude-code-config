@@ -120,7 +120,7 @@ async function open(device, { unread = [], scroll = null, theme = null } = {}) {
       return last;
     },
     /** How far a session row's middle is from the viewport's middle. */
-    offCentre: (id) => page.evaluate((id) => { const r = document.querySelector(`[data-session="${id}"]`).getBoundingClientRect(); return Math.abs(r.top + r.height / 2 - innerHeight / 2); }, id),
+    offCenter: (id) => page.evaluate((id) => { const r = document.querySelector(`[data-session="${id}"]`).getBoundingClientRect(); return Math.abs(r.top + r.height / 2 - innerHeight / 2); }, id),
     order: () => page.evaluate(() => [...document.querySelectorAll('#hosts [data-session]')].map((r) => r.dataset.session)),
     close: () => ctx.close(),
   };
@@ -195,7 +195,7 @@ test('a poll while scrolling keeps the position (phone, touch)', async () => {
 
 const UNREAD = ['extra-3', 'extra-21', 'extra-37'];
 
-test('unread badge from another tab opens Sessions and centres the first unread', async () => {
+test('unread badge from another tab opens Sessions and centers the first unread', async () => {
   const h = await open(PHONE, { unread: UNREAD });
   assert.ok(await h.page.isVisible('#n-unread'));
   await h.tab('quota');
@@ -203,7 +203,7 @@ test('unread badge from another tab opens Sessions and centres the first unread'
   assert.equal(await h.page.getAttribute('#tabs [data-tab="sessions"]', 'aria-selected'), 'true');
   await h.still();
   const first = (await h.order()).find((id) => UNREAD.includes(id));
-  assert.ok(await h.offCentre(first) < 4, 'centred');
+  assert.ok(await h.offCenter(first) < 4, 'centered');
   assert.ok(await h.page.$eval(`[data-session="${first}"]`, (r) => r.classList.contains('jumped')));
   // The jump is not undone by a poll nor by the saved position.
   const y = await h.y();
@@ -239,7 +239,7 @@ test('unread badge with a search active clears it and jumps', async () => {
   assert.equal(await h.page.inputValue('#search'), '');
   assert.ok(await h.page.isHidden('#search-view'));
   await h.still();
-  assert.ok(await h.offCentre((await h.order()).find((id) => UNREAD.includes(id))) < 4);
+  assert.ok(await h.offCenter((await h.order()).find((id) => UNREAD.includes(id))) < 4);
   await h.close();
 });
 
@@ -327,7 +327,7 @@ test('narrow phone: no horizontal overflow on any tab', async () => {
   await h.close();
 });
 
-test('dark theme: the Telegram theme colours apply and every tab renders', async () => {
+test('dark theme: the Telegram theme colors apply and every tab renders', async () => {
   const h = await open(PHONE, { theme: DARK });
   const [bg, fg] = await h.page.evaluate(() => [getComputedStyle(document.body).backgroundColor, getComputedStyle(document.body).color]);
   assert.equal(bg, 'rgb(23, 33, 43)');

@@ -10,6 +10,7 @@ import {
   composeCodexConfigFile,
   withCodexNotify,
 } from './codex-config-file.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('native notify is projected into the local preamble, never overrides user configuration', () => {
   const out = withCodexNotify('model = "x"\n[tui]\ntheme = "x"\n', '/scripts/codex-hook.mjs');
@@ -19,7 +20,7 @@ test('native notify is projected into the local preamble, never overrides user c
   assert.equal(withCodexNotify(user), user);
 });
 
-const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `codex-cfg-${p}-`));
+const tmp = (p) => tempDir(`codex-cfg-${p}-`);
 
 test('per-home instruction path is projected locally without modifying the shared head', () => {
   const payload = 'model_instructions_file = "~/.codex/system-prompt/codex-base.md"\n';
@@ -152,7 +153,7 @@ test('the generated provider block lands between the markers', () => {
   assert.match(out, /setup-managed[\s\S]*\[model_providers\.deepseek\][\s\S]*setup-managed/);
 });
 
-test('an unparseable payload is REFUSED, not rewritten', () => {
+test('an unparsable payload is REFUSED, not rewritten', () => {
   // A multi-line string containing a header-looking line: splitting it would emit
   // unterminated TOML over the cloud payload.
   const payload = 'notes = """\n[projects.evil]\n';   // deliberately unbalanced

@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
 import { isValidAlias, baseDir, seatDir, configDir, aliasOf, accountFile, usageFile, seatsFor, resolveSeat } from './seats.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 test('resolveSeat: exact, else a unique prefix, else a unique near typo; otherwise list every seat', () => {
   const aliases = ['alpha', 'beta', 'bravo'];
   assert.deepEqual(resolveSeat('beta', aliases), { alias: 'beta', match: 'exact' });
   assert.deepEqual(resolveSeat('Al', aliases), { alias: 'alpha', match: 'prefix' }, 'prefix, case-insensitive');
-  assert.deepEqual(resolveSeat('alpah', aliases), { alias: 'alpha', match: 'typo' }, 'transposed letters');
+  assert.deepEqual(resolveSeat('alpah', aliases), { alias: 'alpha', match: 'typo' }, 'transposed letters'); // spelling-ignore-line: the typo is the input
   assert.deepEqual(resolveSeat('bet', aliases), { alias: 'beta', match: 'prefix' });
   assert.match(resolveSeat('b', aliases).error, /unknown seat "b"; seats on this machine: alpha, beta, bravo/, 'ambiguous prefix');
   assert.match(resolveSeat('zzzzz', aliases).error, /alpha, beta, bravo/);
@@ -41,7 +42,7 @@ test('the base keeps .claude.json in home; a seat keeps it inside its dir', () =
   assert.equal(usageFile(seatDir('team-b', HOME)), path.join(HOME, '.claude-team-b', 'bridge', 'claude-usage.jsonl'));
 });
 
-test('seatsFor returns this machine\'s seats normalised and survives junk', () => {
+test('seatsFor returns this machine\'s seats normalized and survives junk', () => {
   const seats = [{ alias: 'team-a', email: 'a@x', machines: ['m1'] }, { alias: 'Bad', email: 'b@x', machines: ['m1'] },
     { alias: 'team-b', machines: ['m2'] }, null, 3, { machines: 'm1' }];
   assert.deepEqual(seatsFor(seats, 'm1'), [
@@ -53,7 +54,7 @@ test('seatsFor returns this machine\'s seats normalised and survives junk', () =
 test('a seat runs in the base dir when the base login holds it, else in its own dir', async () => {
   const fs = await import('fs');
   const os = await import('os');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'seats-home-'));
+  const home = tempDir('seats-home-');
   const { readAccount, baseSeat, seatHome, seatOf } = await import('./seats.mjs');
   try {
     fs.mkdirSync(baseDir(home));

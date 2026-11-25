@@ -33,7 +33,7 @@ export class DashboardPush {
   }
 
   body() {
-    // Accounts first: a session is labelled with the account it spends (sessions(accounts)).
+    // Accounts first: a session is labeled with the account it spends (sessions(accounts)).
     const accounts = this.accounts();
     // The forge sources this host could read and the readings it owes (forges.mjs ForgeReader):
     // the gateway answers which to read next, so a source is read by one host per interval.

@@ -28,7 +28,7 @@ This does the following, all idempotent (safe to re-run, no-op once current):
    into this repo but no longer correspond to an entry in `CLAUDE_LINKS` /
    `CODEX_LINKS` (e.g. a renamed/removed skill or config), then re-runs the
    normal link-creation pass for the current layout.
-2. **Orphaned CLI aliases** — removes wrapper files this repo wrote (recognised by their
+2. **Orphaned CLI aliases** — removes wrapper files this repo wrote (recognized by their
    marker comment) whose name is no longer in `WRAPPER_NAMES` (scripts/setup/install-cli-wrappers.js). This is what stops a
    retired provider leaving `<name>.cmd` behind after its `<name>` is gone. It sweeps the
    claude bin dir, so on a Codex-only host it is a no-op.
@@ -65,7 +65,12 @@ This does the following, all idempotent (safe to re-run, no-op once current):
 4. **Project `.claude/`** — for every cc-market plugin that provides a
    `migrations/migrate.mjs` (e.g. rem's memory/frontmatter normalization,
    sharp-review's legacy finding-file consolidation), runs it against the
-   current project.
+   current project. Discovery is by directory in the declared cc-market checkout
+   (machine file `[repos] cc-market`), never `installed_plugins.json`, so a plugin's
+   migration runs whether or not it is installed there. The contract:
+   `export async function migrate(projectRoot) -> {changed, summary}`, idempotent and
+   self-detecting; a breaking `.claude/` format change is folded into the plugin's one
+   `migrations/migrate.mjs`, never a new versioned step.
 
 Preview repo-link changes only, without touching anything:
 

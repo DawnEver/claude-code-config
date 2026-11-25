@@ -3,7 +3,7 @@
 // its claude process by the CLAUDE_PID Claude Code gives it.
 import { execFileSync } from 'child_process';
 
-/** The first `n` tokens of a command line, honouring double quotes. */
+/** The first `n` tokens of a command line, honoring double quotes. */
 export function tokens(cmd, n) {
   return [...String(cmd).matchAll(/"([^"]*)"|(\S+)/g)].slice(0, n).map((m) => m[1] ?? m[2]);
 }
@@ -71,4 +71,3 @@ export function ancestorsOf(pid, table, max = 64) {
   }
   return out;
 }
-

@@ -50,7 +50,7 @@ three files.
 ### Tier A — tracked in git, synced via GitHub
 
 Everything under `scripts/`, `skills/`, `output-styles/`, `system-prompt/`,
-`claude_plugins/`, `.claude/rules/`, `.claude/memory/`, `docs/`, all `*.template.*`
+`claude_plugins/`, `.claude/memory/`, `docs/`, all `*.template.*`
 files, `GLOBAL-AGENTS.md`, `keybindings.json`, `AGENTS.md`, `README.md`.
 
 Transport: `git pull` / `git push`. Nothing else.
@@ -107,7 +107,7 @@ other hosts' dead paths forever. So the file is split by owner:
 `~/.codex/config.toml` is therefore **a real file composed per host**, not a symlink into
 the payload: shared head + generated providers block + this host's own state. Splitting
 the live 198-line file yielded an 82-line shared head — exactly the section set the
-tracked template already declares — and 39 machine-local sections that stop travelling.
+tracked template already declares — and 39 machine-local sections that stop traveling.
 `sharedHeadOf()` is idempotent and also runs against the payload on every setup, so state
 that leaked in from an older host gets stripped rather than shared.
 
@@ -164,7 +164,7 @@ export function resolveSyncDir({ repoRoot, env = process.env, home = os.homedir(
   }
 
   // 3. default: the repo itself. Zero-config, single-machine, no cloud storage.
-  //    Identical to the pre-migration behaviour.
+  //    Identical to the pre-migration behavior.
   return repoRoot;
 }
 ```
@@ -361,7 +361,7 @@ rolling back before step 7.
   touches this file".
   **Fixed:** the tracked file is now `config.template.json` and the real `config.json` is
   gitignored and per-machine (its contents are host tuning: `lineLayout`, `language`,
-  `maxWidth`). `ensureClaudeHudConfig()` materialises it from the template on setup and from
+  `maxWidth`). `ensureClaudeHudConfig()` materializes it from the template on setup and from
   `check-links` at SessionStart, so both halves are self-healing and no git operation
   touches the inode any more.
   Migrating an existing host is silent: the pull leaves a plain file whose content is
@@ -380,11 +380,11 @@ rolling back before step 7.
 - **Files-On-Demand placeholders.** A dehydrated cloud file satisfies `existsSync` but its
   first read can block on a network fetch or fail offline, and the launchers read
   `claude_env_settings.json` on the critical path of every `ccc`/`cods` invocation. Pin
-  the sync folder to "Always keep on this device". Offline launch behaviour is untested.
+  the sync folder to "Always keep on this device". Offline launch behavior is untested.
 - **Payload hard links on Windows without symlink rights.** Without Developer Mode, setup
   links the three payload files into `~/.claude/` as hard links, and the cloud client
   *replaces* a file on every download — so each incoming edit silently detaches the host's
-  copy (one host read a private copy for 11 days, 2026-10). Defences, in order:
+  copy (one host read a private copy for 11 days, 2026-10). Defenses, in order:
   enable Developer Mode and re-run `setup.js --replace` so the links become symlinks;
   `healSyncLinks()` (`scripts/setup/check-links.js`) re-links a detached copy to the sync
   copy at SessionStart, in the launchers and every minute in the bridge daemon, but only

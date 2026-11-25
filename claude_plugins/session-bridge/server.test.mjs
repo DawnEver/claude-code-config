@@ -12,6 +12,7 @@ import { readChannelDeclaration, DECLARATION_DOOR } from '../../scripts/shared/c
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
 import { Bridge } from '../../scripts/bridge/daemon.mjs';
 import { TelegramClient } from '../../scripts/bridge/telegram.mjs';
+import { tempDir } from '../../scripts/shared/temp-dir.mjs';
 
 const until = async (fn, ms = 3000) => {
   const end = Date.now() + ms;
@@ -38,7 +39,7 @@ test('channel only emits one verdict for a valid forwarded request, and invalida
 });
 
 async function rig(configureHub = () => {}, declared = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-'));
+  const dir = tempDir('sb-');
   const hub = new ClaudeAdapter();
   const port = await hub.listen(0);
   configureHub(hub);
@@ -218,7 +219,7 @@ test('wrong token is rejected and never registers', async () => {
 
 test('reply tool reports, not throws, when the daemon is down', async () => {
   const out = [];
-  const link = new DaemonLink({ runtimeFile: path.join(os.tmpdir(), 'nope-runtime.json'), session: { sessionId: 'x' } });
+  const link = new DaemonLink({ runtimeFile: path.join(tempDir('sb-'), 'nope-runtime.json'), session: { sessionId: 'x' } });
   const s = createChannelServer({ write: (m) => out.push(m), link });
   await s.onMessage({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'reply', arguments: { text: 'hi' } } });
   assert.equal(out[0].result.isError, true);
@@ -226,7 +227,7 @@ test('reply tool reports, not throws, when the daemon is down', async () => {
 });
 
 test('a runtime file with a bad port is retried, never thrown out of net.connect', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rt-'));
+  const dir = tempDir('rt-');
   const runtimeFile = path.join(dir, 'runtime.json');
   fs.writeFileSync(runtimeFile, JSON.stringify({ port: 'oops', token: 't' }));
   const link = new DaemonLink({ runtimeFile, session: { sessionId: 'x' } });
@@ -327,7 +328,7 @@ test('sessionIdentity: CLAUDE_CODE_SESSION_ID, else a fallback whose inputs are 
 });
 
 test('pruneChannelLogs: drops channel logs older than the cutoff, keeps fresh ones and others', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-logs-'));
+  const dir = tempDir('sb-logs-');
   const now = Date.now();
   const make = (name, ageDays) => {
     const f = path.join(dir, name);

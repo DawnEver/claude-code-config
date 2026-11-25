@@ -37,7 +37,7 @@ fabric's `call`/`fan_out` spawns:
 Paths go through `~/.claude/system-prompt`, never a machine path: `setup.js` links the repo's
 `system-prompt/` there on every host, so the same config file resolves correctly on a machine
 with a different username, drive letter, or checkout location. A hardcoded path here is the
-bug `.claude/rules/rem/path-conventions.md` exists to prevent. `dist/` is generated per
+bug `AGENTS.md`'s "No machine path in a tracked or synced file" rule exists to prevent. `dist/` is generated per
 machine by `build.mjs` and is gitignored.
 
 ## Styles

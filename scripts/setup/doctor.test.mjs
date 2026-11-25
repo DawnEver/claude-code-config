@@ -17,7 +17,7 @@ import {
 } from './doctor.js';
 
 test('doctor reports a retired root Codex flag read-only and ignores nested user keys', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-retired-codex-'));
+  const dir = tempDir('doctor-retired-codex-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const configPath = path.join(dir, 'config.toml');
   assert.deepEqual(checkRetiredCodexRootKey({ configPath }), []);
@@ -34,7 +34,7 @@ test('doctor reports a retired root Codex flag read-only and ignores nested user
 
 test('doctor warns about unidentified or dead cache lock owners without changing the lock', async t => {
   const { checkPluginCacheLock } = await import('./doctor.js');
-  const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-cache-lock-'));
+  const codexHome = tempDir('doctor-cache-lock-');
   t.after(() => fs.rmSync(codexHome, { recursive: true, force: true }));
   const lock = path.join(codexHome, '.tmp', 'cc-config-plugin-update.lock');
   assert.deepEqual(checkPluginCacheLock({ codexHome }), []);
@@ -52,7 +52,7 @@ test('doctor warns about unidentified or dead cache lock owners without changing
 });
 
 test('doctor detects native updates that leave a cache root but delete its protected contents', t => {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-protected-'))); // macOS tmpdir is a symlink; the code compares real paths
+  const home = fs.realpathSync(tempDir('doctor-protected-')); // macOS tmpdir is a symlink; the code compares real paths
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   assert.deepEqual(checkProtectedCodexCaches({ codexHome: home }), []);
   const backup = path.join(home, '.tmp', 'cc-config-plugin-backup-fixture');
@@ -72,9 +72,10 @@ test('doctor detects native updates that leave a cache root but delete its prote
   assert.equal(checkProtectedCodexCaches({ codexHome: home })[0].level, 'WARN');
 });
 import { CLAUDE_LINKS } from './setup.js';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('checkBridgeSpool: a held entry FAILs with its count; a backlog older than 15 min WARNs', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-spool-'));
+  const dir = tempDir('doctor-spool-');
   const now = Date.parse('2026-11-17T12:00:00Z');
   const line = (at) => JSON.stringify({ at, call: { kind: 'prompt', text: 'x' } });
   try {
@@ -94,7 +95,7 @@ test('checkBridgeSpool: a held entry FAILs with its count; a backlog older than 
 });
 
 test('checkBridgeRevision is read-only and distinguishes inactive, unknown, current and stale code', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-revision-'));
+  const dir = tempDir('doctor-revision-');
   const runtimeFile = path.join(dir, 'runtime.json');
   const options = { runtimeFile, isAlive: () => true, revision: () => 'current' };
   try {
@@ -117,7 +118,7 @@ test('checkBridgeRevision is read-only and distinguishes inactive, unknown, curr
 // ── machine name (provenance, harness-architecture §8b) ──
 
 test('checkMachineName: WARN when missing or invalid, silent when valid', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-machine-'));
+  const dir = tempDir('doctor-machine-');
   const file = path.join(dir, 'machine.json');
   const [missing] = checkMachineName(file);
   assert.equal(missing.level, 'WARN');
@@ -130,7 +131,7 @@ test('checkMachineName: WARN when missing or invalid, silent when valid', () => 
 });
 
 test('checkCodexShellEnv: FAIL when a named host composed config lacks the policy', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-codex-env-'));
+  const dir = tempDir('doctor-codex-env-');
   const cfg = path.join(dir, 'config.toml');
   assert.deepEqual(checkCodexShellEnv({ machine: null, configPath: cfg }), []);
   fs.writeFileSync(cfg, 'model = "x"\n');
@@ -223,7 +224,7 @@ test('parseHookCommands finds the script in each wired command', () => {
 
 // ── checks, against temp fixtures ──
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-')); }
+function tmp() { return tempDir('doctor-'); }
 
 test('a payload carrying a machine path is a FAIL', () => {
   const dir = tmp();
@@ -442,7 +443,7 @@ test('scanPublicHygiene: private markers (literal and /regex/), inline allow mar
 });
 
 test('checkPublicHygiene: FAILs every tracked hit (memory included), skips binary', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-pub-'));
+  const dir = tempDir('doctor-pub-');
   const files = {
     'a.md': J('reach me at bob', '@corp.io'),
     'b.md': 'clean',
@@ -462,7 +463,7 @@ test('checkPublicHygiene: FAILs every tracked hit (memory included), skips binar
 });
 
 test('checkPublicHygiene: WARN when a fleet host (sync dir) lacks the private markers', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-pub-markers-'));
+  const dir = tempDir('doctor-pub-markers-');
   const markersFile = path.join(dir, 'none');
   const [w] = checkPublicHygiene({ root: dir, files: [], markersFile, requireMarkers: true });
   assert.equal(w.level, 'WARN');
@@ -475,14 +476,14 @@ test('checkPublicHygiene: WARN when a fleet host (sync dir) lacks the private ma
 test('private-markers rides the sync payload as an optional ~/.claude link', () => {
   const link = CLAUDE_LINKS.find((l) => l.dest === 'private-markers');
   assert.deepEqual(link, { src: 'private-markers', dest: 'private-markers', type: 'file', base: 'sync', optional: true });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-optional-'));
+  const dir = tempDir('doctor-optional-');
   const out = checkLinks({ repoRoot: dir, syncDir: dir });
   assert.equal(out.some((f) => f.title.includes('private-markers')), false);
 });
 
 test('checkDashboardHost: this host token must match its shared hosts entry; a token with no shared block FAILs', async () => {
   const { createHash } = await import('crypto');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-dash-'));
+  const dir = tempDir('doctor-dash-');
   const sharedPath = path.join(dir, 'shared.json'), localPath = path.join(dir, 'local.json');
   const write = (shared, local) => { fs.writeFileSync(sharedPath, JSON.stringify(shared)); fs.writeFileSync(localPath, JSON.stringify(local)); };
   const hash = createHash('sha256').update('tok').digest('hex');
@@ -502,7 +503,7 @@ test('checkDashboardHost: this host token must match its shared hosts entry; a t
 });
 
 test('checkBridgeHost: WARN when the fleet runs a bridge and this host has no bot', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-bridge-'));
+  const dir = tempDir('doctor-bridge-');
   const sharedPath = path.join(dir, 'shared.json');
   const localPath = path.join(dir, 'local.json');
   assert.deepEqual(checkBridgeHost({ sharedPath, localPath }), []);           // no bridge anywhere
@@ -525,7 +526,7 @@ test('checkPublicHygiene: the real tracked tree is clean', () => {
 });
 
 test('checkChannelServer: FAIL per bridged config dir that lost the session-bridge registration', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-channel-'));
+  const home = tempDir('doctor-channel-');
   const server = path.join(home, 'server.mjs');
   const base = path.join(home, '.claude');
   const seat = path.join(home, '.claude-a');
@@ -539,19 +540,18 @@ test('checkChannelServer: FAIL per bridged config dir that lost the session-brid
   assert.match(out[0].title, /^seat a: .*not registered/);
 });
 
-test('rules-symbols: a rule naming a function or constant the code no longer has fails', async () => {
+test('rules-symbols: a rule file (AGENTS.md) naming a function or constant the code no longer has fails', async () => {
   const { checkRuleSymbols } = await import('./doctor.js');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-rules-'));
+  const root = tempDir('doctor-rules-');
   try {
-    fs.mkdirSync(path.join(root, '.claude', 'rules'), { recursive: true });
     fs.writeFileSync(path.join(root, 'a.mjs'), 'export const WRAPPER_NAMES = []; export function migrateOrphanedWrappers() {}');
-    fs.writeFileSync(path.join(root, '.claude', 'rules', 'r.md'),
+    fs.writeFileSync(path.join(root, 'AGENTS.md'),
       'Uses `migrateOrphanedWrappers()` and `WRAPPER_NAMES`; renamed from `KNOWN_ALIAS_NAMES`. Plain words: `setup`, `cwd`, `config.json`.');
-    const files = ['a.mjs', '.claude/rules/r.md'];
+    const files = ['a.mjs', 'AGENTS.md'];
     const out = checkRuleSymbols(root, files);
     assert.deepEqual(out.map((f) => f.level), ['FAIL']);
-    assert.match(out[0].title, /KNOWN_ALIAS_NAMES/);
-    fs.writeFileSync(path.join(root, '.claude', 'rules', 'r.md'), 'Uses `migrateOrphanedWrappers()` and `WRAPPER_NAMES`.');
+    assert.match(out[0].title, /^AGENTS\.md names `KNOWN_ALIAS_NAMES`/);
+    fs.writeFileSync(path.join(root, 'AGENTS.md'), 'Uses `migrateOrphanedWrappers()` and `WRAPPER_NAMES`.');
     assert.deepEqual(checkRuleSymbols(root, files), [], 'clean: no finding');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

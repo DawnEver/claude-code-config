@@ -6,9 +6,10 @@ import path from 'path';
 import { AccountReader, accountFor, quotaOf, agyPools, agyTier, readAgy, readAgyEmail, refreshAgyQuota, teeAgyUsage } from './quota.mjs';
 import { parseHostPush, SCHEMA_VERSION } from '../shared/dashboard-schema.mjs';
 import { statusText } from '../hooks/agy-statusline.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const H = 3600000;
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agyq-'));
+const tmp = () => tempDir('agyq-');
 
 test('agy quota tiers: pool and span from bucket id or explicit window (`3p` -> `claude-gpt`)', () => {
   assert.deepEqual(agyTier('gemini-5h'), { pool: 'gemini', windowMs: 5 * H });

@@ -6,6 +6,7 @@ import os from 'os';
 import path from 'path';
 import { ClaudeAdapter, unwrapChannel, isEnvelope, continuedIn } from './claude-adapter.mjs';
 import { lineSplitter } from './jsonrpc.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const until = async (fn, ms = 2000) => {
   const end = Date.now() + ms;
@@ -13,7 +14,7 @@ const until = async (fn, ms = 2000) => {
 };
 
 test('continuedIn: the last continued-in record of the tail; none, cut or missing reads null', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-continued-'));
+  const dir = tempDir('bridge-continued-');
   try {
     const f = path.join(dir, 't.jsonl');
     fs.writeFileSync(f, `${'x'.repeat(70000)}\n{"type":"continued-in","sessionId":"a","continuedInSessionId":"b"}\n{"type":"queue-operation"}\n`);
@@ -205,7 +206,7 @@ test('a nested session registers as nested: its calls are answered `nested` (not
 });
 
 test('a resumed session with a new id receives an inbound message, and so does an agent-view (no-channel) session, across a daemon restart', async () => {
-  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-queue-'));
+  const queueDir = tempDir('ca-queue-');
   try {
     // A resumed session (`claude --resume`/`--fork-session`, a new id) with the channel flag: inbound goes straight in.
     let r = await rig({ queueDir });
@@ -246,7 +247,7 @@ test('a resumed session with a new id receives an inbound message, and so does a
 });
 
 test('a message for a session that is not running waits on disk and is delivered when it is resumed', async () => {
-  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ca-queue-'));
+  const queueDir = tempDir('ca-queue-');
   const r = await rig({ queueDir });
   try {
     const note = await r.a.inject('closed-1', 'while you were away', 'u');
@@ -445,7 +446,7 @@ test('hook activity drives the state machine; only the channel closing takes the
   } finally { await r.a.close(); }
 });
 
-const ASK = [{ question: 'Which colour?', header: 'Colour', multiSelect: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }];
+const ASK = [{ question: 'Which color?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }];
 const ask = async (r, params) => { const s = await r.open(); const res = r.rpc(s, 'question', params); return { s, res }; };
 
 // A question never holds its hook (every hook < 5 s, user ruling D24): in a Telegram-started
@@ -467,14 +468,14 @@ test('a question in a Telegram-started turn is posted there at once; its answer 
     assert.ok(Date.now() - t0 < 1000);
     s.destroy();
     assert.equal(questions.length, 1);
-    assert.deepEqual(questions[0].questions, [{ id: '0', header: 'Colour', question: 'Which colour?', isOther: true, isSecret: false, multiSelect: false,
+    assert.deepEqual(questions[0].questions, [{ id: '0', header: 'Color', question: 'Which color?', isOther: true, isSecret: false, multiSelect: false,
       options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }]);
     assert.equal(questions[0].answerable, true);
     await new Promise((res2) => setTimeout(res2, 30));
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 's'), true, 'the hook closing its socket does not withdraw a posted question');
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 'other'), false, 'wrong session');
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false, 'answered once');
-    await until(() => inbound.some((m) => /Which colour\? -> Blue/.test(m.text)));
+    await until(() => inbound.some((m) => /Which color\? -> Blue/.test(m.text)));
     assert.equal(r.a.statusSnapshot('s').state, 'running', 'the answer starts the next turn');
   } finally { await r.a.close(); }
 });
@@ -557,7 +558,7 @@ test('a session missing only the flag says to resume with ccc', async () => {
 
 // Agent-view handoff: Claude Code appends `continued-in` to the OLD transcript only.
 const handoff = async (fn) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-handoff-'));
+  const dir = tempDir('bridge-handoff-');
   const r = await rig();
   const moves = [];
   r.a.on('superseded', (e) => moves.push(e));
@@ -660,7 +661,7 @@ test('handoff: the relaunch\'s first hook naming its transcript also moves the s
 
 test('transcriptName: /rename beats the generated title, read on incrementally', async () => {
   const { transcriptName } = await import('./claude-adapter.mjs');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tname-'));
+  const dir = tempDir('tname-');
   const file = path.join(dir, 't.jsonl');
   const line = (o) => `${JSON.stringify(o)}\n`;
   fs.writeFileSync(file, line({ type: 'user' }) + line({ type: 'ai-title', aiTitle: 'Generated' }));

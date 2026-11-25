@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { turnTexts, backgroundTasks, parseJsonl, mirrorFor, questionFor, questionOutput, deliverOutput, callHub, spool, readSpool,
   sendSpool, startSender, claudePidOfHook, outcomeOf, CALL_MS, LEASE_STALE_MS } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const HOOK = fileURLToPath(new URL('./bridge-hook.js', import.meta.url));
 
@@ -50,7 +51,7 @@ test('backgroundTasks: shells and agents started minus those notified or stopped
   ];
   assert.deepEqual(backgroundTasks(lines.join('\n'), { now }), [{ id: 'toolu_sh2', kind: 'shell', label: '', startedAt: Date.parse(T) }],
     'sh2 still runs, known by its tool call (no call entry: its result time, no label)');
-  const payload = { hook_event_name: 'Stop', session_id: 's', transcript_path: path.join(os.tmpdir(), `bg-${process.pid}.jsonl`) };
+  const payload = { hook_event_name: 'Stop', session_id: 's', transcript_path: path.join(tempDir('bg-'), 'transcript.jsonl') };
   const now2 = new Date().toISOString();
   fs.writeFileSync(payload.transcript_path, lines[1].replace(T, now2));
   try { assert.deepEqual(mirrorFor(payload), { sessionId: 's', kind: 'final', texts: [], background: [{ id: 'toolu_sh2', kind: 'shell', label: '', startedAt: Date.parse(now2) }] },
@@ -88,7 +89,7 @@ test('mirrorFor: prompt from payload, channel injections skipped, final prefers 
   assert.equal(mirrorFor({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, {}), null, 'no session id -> no-op');
   assert.deepEqual(mirrorFor({ hook_event_name: 'Stop', session_id: 's', last_assistant_message: 'bye' }, env),
     { sessionId: 's', kind: 'final', texts: ['bye'], background: [] });
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-'));
+  const dir = tempDir('bh-');
   try {
     const tp = path.join(dir, 't.jsonl');
     fs.writeFileSync(tp, [user('q'), asst([{ type: 'text', text: 'checking' }]), asst([{ type: 'text', text: 'from transcript' }])].join('\n'));
@@ -185,7 +186,7 @@ async function liveAdapter(bridge, { register = true } = {}) {
 }
 
 test('a missed SessionStart is healed by the next UserPromptSubmit: the hook names its claude process itself', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
+  const home = tempDir('bh-home-');
   const bridge = path.join(home, '.claude', 'bridge');
   fs.mkdirSync(bridge, { recursive: true });
   const live = await liveAdapter(bridge);
@@ -205,7 +206,7 @@ test('a missed SessionStart is healed by the next UserPromptSubmit: the hook nam
 });
 
 test('callHub delivers to a live hub, and resolves quietly when none runs', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-'));
+  const dir = tempDir('bh-');
   const hub = new ClaudeAdapter();
   try {
     const port = await hub.listen(0);
@@ -239,7 +240,7 @@ const spoolFiles = (dir) => {
 // spool -- no age or count eviction; an entry the daemon refuses is held and surfaced, never dropped.
 
 test('delivery is the only way out: 1,500 entries older than a day all reach the daemon, in order', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const dir = tempDir('bh-spool-');
   const f = spoolFiles(dir);
   const old = Date.now() - 2 * 86400000;
   try {
@@ -255,7 +256,7 @@ test('delivery is the only way out: 1,500 entries older than a day all reach the
 });
 
 test('a daemon that never acks, or never routes, keeps every entry; only a routed ack releases one', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const dir = tempDir('bh-spool-');
   const f = spoolFiles(dir);
   try {
     for (let i = 0; i < 5; i++) spool({ sessionId: 's', kind: 'prompt', text: `k${i}` }, { file: f.file, now: Date.now() + i });
@@ -271,7 +272,7 @@ test('a daemon that never acks, or never routes, keeps every entry; only a route
 });
 
 test('a call waiting for its channel survives past 30 s and is delivered once the session is routable', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const dir = tempDir('bh-spool-');
   const f = spoolFiles(dir);
   const live = await liveAdapter(dir, { register: false });
   f.runtimeFile = path.join(dir, 'runtime.json');
@@ -295,7 +296,7 @@ test('a call waiting for its channel survives past 30 s and is delivered once th
 });
 
 test('one session waiting for its channel never blocks another; a session whose process exited unrouted is held', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const dir = tempDir('bh-spool-');
   const f = spoolFiles(dir);
   try {
     spool({ sessionId: 'waiting', claudePid: 10, kind: 'prompt', text: 'w1' }, { file: f.file, now: 1 });
@@ -314,7 +315,7 @@ test('one session waiting for its channel never blocks another; a session whose 
 });
 
 test('an entry the daemon refuses, or a torn line, is held and surfaced, never dropped; the rest flows on', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const dir = tempDir('bh-spool-');
   const f = spoolFiles(dir);
   try {
     spool({ kind: 'prompt', text: 'a' }, { file: f.file, now: 1 });
@@ -336,7 +337,7 @@ test('an entry the daemon refuses, or a torn line, is held and surfaced, never d
 });
 
 test('the sender delivers the spool oldest first, marked as replays; a refusal keeps the rest for a later try', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const dir = tempDir('bh-spool-');
   const f = spoolFiles(dir);
   const T = Date.now();
   try {
@@ -358,7 +359,7 @@ test('the sender delivers the spool oldest first, marked as replays; a refusal k
 });
 
 test('a sender that runs out of lifetime keeps every undelivered call for the next one', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-spool-'));
+  const dir = tempDir('bh-spool-');
   const f = spoolFiles(dir);
   try {
     spool({ kind: 'prompt', text: 'kept' }, { file: f.file, now: Date.now() });
@@ -370,7 +371,7 @@ test('a sender that runs out of lifetime keeps every undelivered call for the ne
 });
 
 test('one sender at a time: a fresh lease starts none, a stale one is taken over', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-lease-'));
+  const dir = tempDir('bh-lease-');
   const f = spoolFiles(dir);
   try {
     const started = [];
@@ -423,7 +424,7 @@ async function until(cond, ms = 30_000) {
 }
 
 test('an unreachable bridge: the hook spools the prompt and returns at once; the detached sender delivers it when the bridge is up', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
+  const home = tempDir('bh-home-');
   const bridge = path.join(home, '.claude', 'bridge');
   fs.mkdirSync(bridge, { recursive: true });
   const probe = await plantedDaemon();
@@ -449,7 +450,7 @@ test('an unreachable bridge: the hook spools the prompt and returns at once; the
 });
 
 test('a hung bridge costs a hook one bounded call, and the call is spooled; a live bridge takes it directly', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
+  const home = tempDir('bh-home-');
   const bridge = path.join(home, '.claude', 'bridge');
   fs.mkdirSync(bridge, { recursive: true });
   const stop = { hook_event_name: 'Stop', session_id: 's', last_assistant_message: 'the answer' };
@@ -480,7 +481,7 @@ test('a pending spool is drained by a PreToolUse or PostToolUse hook, with no St
     ['PreToolUse(AskUserQuestion) --question', { hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'AskUserQuestion', tool_input: { questions: [{ question: 'q?' }] } }, ['--question']],
     ['PostToolUse(Read)', { hook_event_name: 'PostToolUse', session_id: 's', tool_name: 'Read', tool_use_id: 'u1', tool_input: {} }, []],
   ]) {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-home-'));
+    const home = tempDir('bh-home-');
     const bridge = path.join(home, '.claude', 'bridge');
     fs.mkdirSync(bridge, { recursive: true });
     const daemon = await plantedDaemon('ok');
@@ -526,7 +527,7 @@ test('turnTexts and backgroundTasks take entries parsed once, as Stop reads a la
 });
 
 test('mirrorFor: a TaskStop ends the task its call started, found by its task id in the transcript — a monitor stopped early', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bh-stop-'));
+  const dir = tempDir('bh-stop-');
   const file = path.join(dir, 't.jsonl');
   const result = (text, id) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
   fs.writeFileSync(file, [

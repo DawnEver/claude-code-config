@@ -320,7 +320,7 @@ export function injectModelsJson(codexModelsPath, generated) {
  *     file exists (`injectModelProviders` self-guards and returns 'no-config').
  *
  * Idempotent: no file write when the generated content already matches. When the settings
- * are missing/unparseable or the cache is absent/stale, both injectors receive '' and return
+ * are missing/unparsable or the cache is absent/stale, both injectors receive '' and return
  * 'empty' WITHOUT touching any pre-existing artifact (last-known-good is preserved); the
  * stale cache is reported as `cache: <error>`, and a launch refuses on it anyway.
  *
@@ -329,7 +329,7 @@ export function injectModelsJson(codexModelsPath, generated) {
  * @param {{ settingsPath: string, codexConfigPath: string, modelsPath: string,
  *   readCache?: () => ({cache: object} | {error: string}) }} paths
  * @returns {{
- *   settings: 'missing' | 'unparseable' | 'ok',
+ *   settings: 'missing' | 'unparsable' | 'ok',
  *   error?: Error,
  *   cache: 'ok' | string,
  *   providers: { status: 'no-config' | 'empty' | 'no-change' | 'updated', providers?: number },
@@ -346,7 +346,7 @@ export function regenerateCodexArtifacts({ settingsPath, codexConfigPath, models
       status = 'ok';
     } catch (err) {
       error = err;
-      status = 'unparseable';
+      status = 'unparsable';
     }
   }
   const read = readCache();

@@ -6,9 +6,10 @@ import path from 'node:path';
 import { execFileSync, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { installCodexHooks, managedCodexHooks, inspectCodexHooks, hookDefinitionId } from './codex-hooks.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('native hook installation preserves user handlers, is idempotent, and never trusts definitions', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-hooks-'));
+  const dir = tempDir('native-hooks-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'hooks.json');
   fs.writeFileSync(file, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'my-review' }] }] } }));
@@ -30,7 +31,7 @@ test('native hook installation preserves user handlers, is idempotent, and never
 });
 
 test('foreign empty handler groups are preserved', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-hooks-'));
+  const dir = tempDir('native-hooks-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, 'hooks.json'), JSON.stringify({ hooks: { PreCompact: [{ matcher: 'user-reserved', hooks: [] }] } }));
   installCodexHooks({ codexDir: dir, scriptsDir: '/scripts' });
@@ -38,7 +39,7 @@ test('foreign empty handler groups are preserved', t => {
 });
 
 test('inspection rejects altered managed group execution constraints', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-group-'));
+  const dir = tempDir('native-group-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const options = { codexDir: dir, scriptsDir: '/scripts' };
   installCodexHooks(options);
@@ -50,7 +51,7 @@ test('inspection rejects altered managed group execution constraints', t => {
 });
 
 test('the generated command executes literal metacharacter paths without interpreting them', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-argv-'));
+  const dir = tempDir('native-argv-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const scriptsDir = path.join(dir, 'a $(never-run) `literal` path');
   fs.mkdirSync(path.join(scriptsDir, 'hooks'), { recursive: true });
@@ -65,7 +66,7 @@ test('the generated command executes literal metacharacter paths without interpr
 });
 
 test('generated real native entry records only the actual invoked event in an isolated home', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-entry-'));
+  const dir = tempDir('native-entry-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const options = { codexDir: dir, scriptsDir: fileURLToPath(new URL('../', import.meta.url)) };
   installCodexHooks(options);
@@ -81,7 +82,7 @@ test('generated real native entry records only the actual invoked event in an is
 });
 
 test('malformed and symlinked user hooks are never overwritten', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-hooks-'));
+  const dir = tempDir('native-hooks-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'hooks.json');
   fs.writeFileSync(file, '{bad');

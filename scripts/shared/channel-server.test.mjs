@@ -4,9 +4,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { CHANNEL_SERVER, channelServerState, ensureChannelServer } from './channel-server.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 function fixture(config) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-server-'));
+  const dir = tempDir('channel-server-');
   const server = path.join(dir, 'server.mjs');
   fs.writeFileSync(server, '');
   const file = path.join(dir, '.claude.json');

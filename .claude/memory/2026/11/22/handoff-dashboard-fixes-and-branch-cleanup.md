@@ -1,6 +1,6 @@
 ---
 name: handoff-dashboard-fixes-and-branch-cleanup
-description: "2026-11-22 handoff: Accounts windows 5h-first and the Usage tab names its fault (deployed 7eef9c0); every unlanded branch of this repo and cc-market merged up to date and pushed, PRs listed; WS1 Telegram inbound is undeclared"
+description: "2026-11-22 handoff: Accounts windows 5h-first and the Usage tab names its fault (deployed 7eef9c0); every unlanded branch of this repo and cc-market merged up to date and pushed, PRs listed; <machine> Telegram inbound is undeclared"
 metadata:
   type: project
 ---
@@ -19,8 +19,12 @@ Branch cleanup (3) -- every branch merged with its landing branch by merge (neve
 - cc-market -> main: #52 pr/reviewer-scholarone-import (the nine never-pushed local commits of feat/reviewer-scholarone-import, merged with main and ruff-formatted; the local branch itself was left untouched), #50, #49, #45, #38, #37 and the existing PR of pr/toolchain/task-close-prunes-its-branches.
 - NOT verified per branch: both cleanup agents stopped on the model usage limit before handing back, so whether #33, #50 and #51 are already superseded on integrate/main was never checked, and the cleanup agent's last note was one flaky sync-hook test file in the hard-link worktree to rerun alone. Read each PR's CI before landing; close a superseded one rather than merging it.
 - origin/vscode-extension (2026-05-10, 610 behind, archives the extensions main already deleted): not merged; judged baggage, left for the user to delete.
-- Old checkout D:/Documents/MingyangBao/cc-config: its 7 local branches were all landed and its worktrees held nothing unlanded; worktrees removed through `python -m dev_lab.dev.worktrees --remove`. The checkout itself stays until the user says (ruling 2026-11-22).
+- Old checkout <projects>/cc-config: its 7 local branches were all landed and its worktrees held nothing unlanded; worktrees removed through `python -m dev_lab.dev.worktrees --remove`. The checkout itself stays until the user says (ruling 2026-11-22).
 - Still to clean after landing: the worktrees under claude-code-config/.claude/worktrees and cc-market/.claude/worktrees, then the landed branches.
 
 Open, needs the user:
-- WS1 accepts no inbound Telegram message: the daemon logs "bridge allowlist empty ... nothing declared" since at least 2026-11-20, because hosts-config hosts/WS1.toml has no `[dev] channels = { "session-bridge" = "<id>" }` (G and WS5 declare the user's numeric id by the user's approval). Declaring it gives Telegram messages the user's authority on WS1, so it waits for an explicit yes.
+- <machine> accepts no inbound Telegram message: the daemon logs "bridge allowlist empty ... nothing declared" since at least 2026-11-20, because hosts-config hosts/<machine>.toml has no `[dev] channels = { "session-bridge" = "<id>" }` (G and WS5 declare the user's numeric id by the user's approval). Declaring it gives Telegram messages the user's authority on <machine>, so it waits for an explicit yes.
+
+> Redacted 2026-11-25: site markers removed (public repo).
+
+> Redacted 2026-11-25: site markers removed (public repo).

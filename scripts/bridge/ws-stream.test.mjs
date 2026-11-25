@@ -49,7 +49,7 @@ test('client handshakes, reassembles fragments, answers ping', async () => {
   const ws = new WsStreamClient(srv.toClient, srv.fromClient);
   await new Promise((r) => ws.once('open', r));
   const got = new Promise((r) => ws.once('message', r));
-  const a = encodeFrame('hel', { mask: false }); a[0] &= 0x7f;            // FIN off
+  const a = encodeFrame('hel', { mask: false }); a[0] &= 0x7f;            // FIN off; spelling-ignore-line: a fragment of hello
   const b = encodeFrame('lo', { mask: false, opcode: 0 });               // continuation
   srv.toClient.write(Buffer.concat([a, b]));
   assert.equal(await got, 'hello');

@@ -4,8 +4,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { acquireDaemonLock, daemonRunning, ensureDaemon } from './ensure.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-ensure-'));
+const tmp = () => tempDir('bridge-ensure-');
 
 test('lock admits one live owner, takes over a dead one, releases only its own', () => {
   const dir = tmp();

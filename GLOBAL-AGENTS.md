@@ -2,7 +2,7 @@
 
 ## Principles
 
-<!-- principles:begin -- family policy, rendered from dev_lab.dev.principles via .claude/rules/principles.md; edit there -->
+<!-- principles:begin -- family policy, rendered from dev_lab.dev.principles by scripts/shared/principles.mjs; edit there -->
 - **First principles** (`first-principles`): Derive from the actual system and current needs, not habit or precedent;
   state shaping assumptions.
 - **Discard historical baggage** (`no-historical-baggage`): Remove obsolete structures, duplicates and dead paths no
@@ -11,7 +11,7 @@
 - **Single source of truth** (`single-source-of-truth`): Each fact lives in one place; all else derives from it.
 - **Layered decoupling** (`layered-decoupling`): Depend one way through narrow interfaces; never into internals or
   upward.
-- **Names match what they do** (`names-match-behaviour`): A name says what the thing does now.
+- **Names match what they do** (`names-match-behavior`): A name says what the thing does now.
 - **No backward compatibility** (`no-backward-compatibility`): No shims, aliases or dual paths for old callers; callers
   move with the change.
 - **Progressive disclosure** (`progressive-disclosure`): An entry point states what is needed first and points to
@@ -25,6 +25,14 @@
 - **Fan out without a barrier** (`no-barrier-fan-out`): Parallel work is independent items, each landed the moment it is
   done; nothing waits for the slowest sibling -- no barrier-style orchestration (e.g. a dynamic workflow that joins all
   agents) unless a step truly needs every result. How: docs-src/dev/fanout.md.
+- **Deliver an image by its absolute path** (`images-by-absolute-path`): An image handed to the user is named by its
+  ABSOLUTE path, never a relative one (IMAGES-BY-ABSOLUTE-PATH).
+- **A worktree is named for its task** (`worktree-names-its-task`): A worktree's name has a physical meaning tied to its
+  task; a hash-like name (`agent-<hex>`, an appended hash) is forbidden (WORKTREE-NAMES-ITS-TASK).
+- **Native first** (`native-first`): Python declares and orchestrates, Rust computes. A stage Rust owns is written in
+  Rust from its first line; a Python version of it is only a scratch prototype, never a second implementation;
+  acceptance is against references (analytic, the vendor ladder, the previous implementation during a migration), never
+  against a Python twin.
 <!-- principles:end -->
 - **Deliver at full scope.** Complete the requested work under reasonable assumptions; do not stop at the minimal subset unless asked.
 - **Analyze before implementing.** For open-ended questions, present analysis, options, and tradeoffs instead of jumping to code.

@@ -17,7 +17,7 @@
 // the payload. See docs/sync-architecture.md § 3.
 //
 // SAFETY. The output of this splitter is written back over a CLOUD-SYNCED file, so a
-// misparse is not a local annoyance — it is fleet-wide data loss. Two defences:
+// misparse is not a local annoyance — it is fleet-wide data loss. Two defenses:
 //   1. The line scanner tracks TOML multi-line strings (""" / '''), so a line that merely
 //      LOOKS like a table header inside a string is not treated as one. Without this, a
 //      `[projects.x]` line inside a multi-line string split the file mid-string and

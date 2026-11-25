@@ -1,11 +1,11 @@
 // Tests for discover-styles.mjs + build.mjs (system-prompt platform tooling).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { parseFrontmatter, discoverStyles } from './discover-styles.mjs';
 import { validateStatic, buildStyle } from './build.mjs';
+import { tempDir } from '../scripts/shared/temp-dir.mjs';
 
 test('parseFrontmatter: name/description/keep-coding-instructions + body', () => {
   const { body, meta } = parseFrontmatter('---\nname: "Academic"\ndescription: "Scholarly"\nkeep-coding-instructions: false\n---\nBODY TEXT\n');
@@ -20,7 +20,7 @@ test('parseFrontmatter: name/description/keep-coding-instructions + body', () =>
 });
 
 test('discoverStyles: user dir + project dir, nearest wins on conflict', () => {
-  const root = mkdtempSync(join(tmpdir(), 'disc-'));
+  const root = tempDir('disc-');
   const user = join(root, 'user', '.claude', 'output-styles');
   const proj = join(root, 'proj', '.claude', 'output-styles');
   mkdirSync(user, { recursive: true });

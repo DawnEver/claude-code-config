@@ -33,7 +33,7 @@ const READERS = {
  */
 const balanceKey = (entry) => `api:${entry.provider}:${entry.label ?? 'default'}`;
 
-/** The account an API-key session on `provider` spends: its unlabelled entry (the launcher's key), else the first. */
+/** The account an API-key session on `provider` spends: its unlabeled entry (the launcher's key), else the first. */
 export function balanceKeyFor(provider, entries) {
   const mine = entries.filter((e) => e.provider === provider);
   const e = mine.find((x) => !x.label) ?? mine[0];

@@ -20,7 +20,7 @@ import { resolveSyncDir } from '../shared/sync-dir.mjs';
 import { declaredAllowlist, readChannelDeclaration } from '../shared/channel-declaration.mjs';
 
 /**
- * Fingerprint of what a daemon reads once at startup: the normalised bridge settings and the
+ * Fingerprint of what a daemon reads once at startup: the normalized bridge settings and the
  * declared sender allowlist (hosts-config, bridgeAllowlist). A daemon is stale once either changes,
  * so a newly declared channel hands it over like a settings edit.
  */
@@ -52,7 +52,7 @@ export const BRIDGE_DEFAULTS = { idleCloseMinutes: 30, deleteClosedAfterHours: 2
 const nonNegative = (v, dflt) => (typeof v === 'number' && v >= 0 ? v : dflt);
 
 /**
- * Normalised bridge config.
+ * Normalized bridge config.
  * shared:  bridge.projects.<repo>.{chatId, projectInTitle?: 'always'|'main'|'never'}, bridge.fallbackChatId,
  *          bridge.idleCloseMinutes, bridge.deleteClosedAfterHours, bridge.codexSources,
  *          bridge.dashboard.{url, everySeconds?} (push to the dashboard; off without url + hostToken)

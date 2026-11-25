@@ -13,11 +13,12 @@ import { forgeHistory, ingest, query, report } from '../dashboard/usage-store.mj
 import { createApi } from '../dashboard/api.mjs';
 import { newHostToken } from '../dashboard/auth.mjs';
 import { bindUsageDb } from '../dashboard/deploy.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const T0 = Date.parse('2026-10-20T10:00:00Z');
 
 test('explicit homes scope Codex transcript roots and unknown-account attribution', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-homes-'));
+  const home = tempDir('usage-homes-');
   try {
     const one = sources(home, { codexHomes: [path.join(home, 'one')], machine: 'host' }).filter(s => s.agent === 'codex');
     const two = sources(home, { codexHomes: [path.join(home, 'two')], machine: 'host' }).filter(s => s.agent === 'codex');
@@ -76,7 +77,7 @@ const codexMeta = { timestamp: iso(0), type: 'session_meta', payload: { id: 'C1'
   git: { branch: 'main', repository_url: 'git@github.com:o/repo.git' } } };
 const usage = (input, cached, out, reasoning) => ({ input_tokens: input, cached_input_tokens: cached, output_tokens: out, reasoning_output_tokens: reasoning, total_tokens: input + out });
 
-test('codex rollout: per-response records by turn; input normalised to its uncached part', () => {
+test('codex rollout: per-response records by turn; input normalized to its uncached part', () => {
   const r = codexTranscript(jsonl([
     codexMeta,
     { timestamp: iso(10), type: 'event_msg', payload: { type: 'task_started', turn_id: 'T1' } },
@@ -104,7 +105,7 @@ test('codex rollout without records: token_count counted when the running total 
 });
 
 test('a collector login change never relabels historical Codex turns as the currently signed-in account', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'usage-account-switch-'));
+  const home = tempDir('usage-account-switch-');
   try {
     const codexHome = path.join(home, 'custom');
     fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });
@@ -125,10 +126,8 @@ test('a collector login change never relabels historical Codex turns as the curr
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
-function tmpdir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'usage-test-')); }
-
 test('scanner: sends what is new, resends the last sent turn, forgets deleted files, never sends a cwd', async () => {
-  const dir = tmpdir();
+  const dir = tempDir('usage-test-');
   const root = path.join(dir, 'projects', 'p');
   fs.mkdirSync(root, { recursive: true });
   const file = path.join(root, 'S1.jsonl');
@@ -157,7 +156,7 @@ test('scanner: sends what is new, resends the last sent turn, forgets deleted fi
 });
 
 test('scanner: a limit cuts at a whole file and reports more', async () => {
-  const dir = tmpdir();
+  const dir = tempDir('usage-test-');
   const root = path.join(dir, 'projects', 'p');
   fs.mkdirSync(root, { recursive: true });
   for (const n of ['a', 'b']) fs.writeFileSync(path.join(root, `${n}.jsonl`), jsonl([prompt('p', 0, { sessionId: n }), call('m', 1)].map((e) => ({ ...e, sessionId: n }))));
@@ -458,7 +457,7 @@ test('usage view: every day of the range, split by platform; ranked lists with s
 
 test('scanner: an agent worktree is its repo\'s project', () => {
   const seen = [];
-  const s = new UsageScanner({ cursorFile: path.join(tmpdir(), 'c.json'), sources: () => [], project: (cwd) => { seen.push(cwd); return cwd.split(/[\\/]/).pop(); } });
+  const s = new UsageScanner({ cursorFile: path.join(tempDir('usage-test-'), 'c.json'), sources: () => [], project: (cwd) => { seen.push(cwd); return cwd.split(/[\\/]/).pop(); } });
   assert.equal(s.projectOf(String.raw`C:\w\repo\.claude\worktrees\agent-a1\sub`), 'repo');
   assert.equal(s.projectOf('/w/repo/.claude/worktrees/x'), 'repo');
   assert.equal(s.projectOf('/w/other', 'git@h:o/named.git'), 'named', 'Codex names its repo itself');

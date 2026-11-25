@@ -12,9 +12,10 @@ import {
   validateSyncDir,
   SYNC_DIR_POINTER_NAME,
 } from './sync-dir.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 function tmp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `sync-dir-${prefix}-`));
+  return tempDir(`sync-dir-${prefix}-`);
 }
 
 // A fake $HOME whose .claude dir we control, so no test ever touches the real one.
@@ -39,7 +40,7 @@ test('resolveSyncDir: defaults to the repo root when nothing is configured', () 
   const home = fakeHome();
   const repoRoot = tmp('repo');
   // This is the zero-config path for users with no cloud storage: the resolved
-  // layout must be byte-identical to the pre-syncDir behaviour.
+  // layout must be byte-identical to the pre-syncDir behavior.
   assert.equal(resolveSyncDir({ repoRoot, env: {}, home }), repoRoot);
 });
 

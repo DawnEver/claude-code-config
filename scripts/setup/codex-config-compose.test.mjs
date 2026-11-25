@@ -114,10 +114,10 @@ test('a [model_providers.*] table OUTSIDE the markers is not baked into the shar
   assert.match(head, /\[tui\]/);
 });
 
-test('a table header with a trailing comment is recognised', () => {
+test('a table header with a trailing comment is recognized', () => {
   const src = "model = \"x\"\n\n[projects.'/tmp/a']  # trusted earlier\ntrust_level = \"trusted\"\n";
   const head = sharedHeadOf(src);
-  // Previously unrecognised: the machine-local path leaked into the payload AND the
+  // Previously unrecognized: the machine-local path leaked into the payload AND the
   // rest of the file collapsed into the preamble.
   assert.doesNotMatch(head, /projects/);
   assert.doesNotMatch(head, /trust_level/);

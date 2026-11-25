@@ -18,9 +18,9 @@
 // session, one bring-up hold, one echo suppression.
 //
 // Inbound from allowlisted users only: plain text = inject; `/status`, `/interrupt`.
-// Approval buttons only when this machine opts in, honoured only for allowlisted ids.
+// Approval buttons only when this machine opts in, honored only for allowlisted ids.
 // Question buttons (and text answers) need no opt-in — a question is not an approval — but
-// are equally honoured only for allowlisted ids.
+// are equally honored only for allowlisted ids.
 
 import fs from 'fs';
 import os from 'os';

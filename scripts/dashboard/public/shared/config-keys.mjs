@@ -2,7 +2,7 @@
 // once for the Worker, the host (scripts/bridge/context.mjs) and the page (bounds and options; its example data). Labels are words: i18n.mjs `config.<key>`.
 // Pure: no imports.
 
-// The only keys a remote request can touch: behaviour that grants nothing. Permissions
+// The only keys a remote request can touch: behavior that grants nothing. Permissions
 // (allowedUserIds, approvalsFromTelegram), routing (chat ids) and secrets are never here, so a
 // compromised dashboard or Telegram account cannot widen who controls a host or where its
 // sessions go. Both the Worker and the host validate against this one table.

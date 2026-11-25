@@ -27,7 +27,7 @@
 //     every network step is bounded, so an offline host or a credential prompt
 //     cannot stall startup.
 //   * Only plumbing output is parsed (porcelain, rev-list). Git's human-facing
-//     text is localised and is never matched against.
+//     text is localized and is never matched against.
 //   * Nothing here is fatal. Every failure degrades to a silent no-op, and a
 //     notice goes out via systemMessage — user-visible, never model context.
 
@@ -386,7 +386,7 @@ function readPayload() {
 }
 
 // SessionStart fires on startup, resume, clear, and compact. Only a fresh
-// session should move the tree out from under a running one; an unrecognised
+// session should move the tree out from under a running one; an unrecognized
 // or absent source is treated as a startup so the sync is not silently lost.
 export function isStartup(payload) {
   const source = payload?.source;

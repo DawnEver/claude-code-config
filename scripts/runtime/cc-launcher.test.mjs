@@ -8,22 +8,22 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { buildClaudeInvocation as launch } from './cc-launcher.mjs';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { fakeAiLab, writeCache } from '../shared/provider-cache-fixture.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 // The launch directory and home are the launcher's only machine reads besides injected ones.
 const buildClaudeInvocation = (opts) => launch({
-  cwd: mkdtempSync(join(tmpdir(), 'cc-launcher-cwd-')), home: mkdtempSync(join(tmpdir(), 'cc-launcher-home-')), ...opts,
+  cwd: tempDir('cc-launcher-cwd-'), home: tempDir('cc-launcher-home-'), ...opts,
 });
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'cc-launcher-'));
+  const dir = tempDir('cc-launcher-');
   return {
     shared: join(dir, 'claude_env_settings.json'),
     local: join(dir, 'claude_env_settings.local.json'),
@@ -190,7 +190,7 @@ test('--seat points CLAUDE_CONFIG_DIR at the seat dir; without it the base dir i
   const { mkdirSync } = await import('node:fs');
   const { shared, local } = fixture();
   writeFileSync(shared, '{}');
-  const home = mkdtempSync(join(tmpdir(), 'cc-seat-home-'));
+  const home = tempDir('cc-seat-home-');
   mkdirSync(join(home, '.claude-team-b'));
   const seats = [{ alias: 'team-a', machines: ['m1'] }, { alias: 'team-b', machines: ['m1'] }];
   const run = (o) => buildClaudeInvocation({ provider: null, envSettingsPath: shared, localPath: local, machine: 'm1', gitUserName: null, home, seats, ...o });
@@ -211,7 +211,7 @@ test('--seat for the seat the base login holds runs in the base dir, like plain 
   const { mkdirSync } = await import('node:fs');
   const { shared, local } = fixture();
   writeFileSync(shared, '{}');
-  const home = mkdtempSync(join(tmpdir(), 'cc-seat-base-'));
+  const home = tempDir('cc-seat-base-');
   mkdirSync(join(home, '.claude'));
   writeFileSync(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@x', organizationName: 'Team B' } }));
   const seats = [{ alias: 'team-b', email: 'a@x', org: 'Team B', machines: ['m1'] }];
@@ -224,7 +224,7 @@ test('a partial seat name reports what it matched and how', async () => {
   const { mkdirSync } = await import('node:fs');
   const { shared, local } = fixture();
   writeFileSync(shared, '{}');
-  const home = mkdtempSync(join(tmpdir(), 'cc-seat-match-'));
+  const home = tempDir('cc-seat-match-');
   mkdirSync(join(home, '.claude-team-a'));
   const seats = [{ alias: 'team-a', machines: ['m1'] }];
   const run = (seat) => buildClaudeInvocation({ provider: null, envSettingsPath: shared, localPath: local, machine: 'm1', gitUserName: null, home, seats, seat });
@@ -245,13 +245,13 @@ test('withKey: false projects url and models but never reads or sets the key (se
 test('a trusted repo fragment loads with --settings; the isolated default never sees one', () => {
   const { shared, local } = fixture();
   writeFileSync(shared, '{}');
-  const repo = mkdtempSync(join(tmpdir(), 'cc-launcher-repo-'));
+  const repo = tempDir('cc-launcher-repo-');
   const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
   git('init', '-q');
   git('remote', 'add', 'origin', 'https://forge.example/o/r.git');
   mkdirSync(join(repo, '.claude'));
   writeFileSync(join(repo, '.claude', 'automode.json'), JSON.stringify({ autoMode: { allow: [] } }));
-  const home = mkdtempSync(join(tmpdir(), 'cc-launcher-trust-'));
+  const home = tempDir('cc-launcher-trust-');
   mkdirSync(join(home, '.claude'));
   writeFileSync(join(home, '.claude', 'trusted-origins'), 'forge.example/o/*\n');
   const base = { provider: null, extraArgs: ['--foo'], envSettingsPath: shared, localPath: local };

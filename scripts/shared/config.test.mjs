@@ -3,13 +3,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deepMerge, readMergedEnvSettings } from './config.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'cc-config-'));
+  const dir = tempDir('cc-config-');
   return {
     shared: join(dir, 'claude_env_settings.json'),
     local: join(dir, 'claude_env_settings.local.json'),
@@ -48,7 +49,7 @@ test('readMergedEnvSettings adds providers defined only locally', () => {
 });
 
 test('readMergedEnvSettings returns null when the shared file is missing', () => {
-  assert.equal(readMergedEnvSettings({ sharedPath: join(tmpdir(), 'does-not-exist.json') }), null);
+  assert.equal(readMergedEnvSettings({ sharedPath: join(tempDir('config-'), 'does-not-exist.json') }), null);
 });
 
 test('deepMerge overrides scalars and arrays, recurses into plain objects', () => {

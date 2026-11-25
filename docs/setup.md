@@ -101,7 +101,7 @@ never from a repo's `.claude/settings*.json`. Arrays from these scopes concatena
 
 | Layer | Where | Holds |
 | --- | --- | --- |
-| public mechanism | `scripts/runtime/repo-automode.mjs`, called by `buildClaudeInvocation` for every `ccc` / `ccds` launch | nothing personal; the template's `autoMode` is absent, i.e. the built-in defaults |
+| public mechanism | `scripts/runtime/repo-automode.mjs`, called by `buildClaudeInvocation` for every `ccc` / `ccds` launch | nothing personal; the template's `autoMode` is the built-in defaults plus one generic `environment` line: a session-bridge channel message marked `declared="true"` is the user, its codes carry the user's authority |
 | personal trust | `~/.claude/trusted-origins` (sync payload, optional) | one origin glob per line, `#` comments; `*` stays inside a path segment, `**` crosses: `git.example.com/my-org/*` |
 | repo declaration | `<repo>/.claude/automode.json` | `{ "autoMode": { "allow": [...], "environment": [...] } }` — that key only |
 
@@ -159,7 +159,7 @@ Everything below is per user account; nothing needs admin rights.
    but the new Worker config can take ~5 minutes to reach every edge: `dashboard: push failed
    (HTTP 401)` in `~/.claude/bridge/daemon.log` in that window is expected and clears with
    `dashboard: push restored`. Only if 401 persists beyond that, run `npm run dashboard -- deploy`.
-9. **Managed antivirus.** Sophos' behaviour detection (`Cleanup_3c`, source 7) can quarantine
+9. **Managed antivirus.** Sophos' behavior detection (`Cleanup_3c`, source 7) can quarantine
    `scripts/setup/setup.js` right after a run — links, a HKCU Run key, PATH and child processes
    look like persistence. Symptom: `git status` shows ` D scripts/setup/setup.js` and doctor
    fails with `ERR_MODULE_NOT_FOUND`; proof: `C:\ProgramData\Sophos\…\SophosSafestore.log`.
@@ -276,5 +276,5 @@ as `<name>.setup-bak`, with every secret-named value (token, key, password) reda
 **The `claude-hud` config is always hard-linked.** `claude-hud` >= 0.8.0 refuses a symlinked
 `config.json`. Hard links need source and target on the same volume; otherwise setup falls back
 to a **copy** and says so. The real config is gitignored and per-machine (host tuning); the
-tracked file is `config.template.json`, materialised by setup and by `check-links` at
+tracked file is `config.template.json`, materialized by setup and by `check-links` at
 SessionStart, which also repairs a broken link.

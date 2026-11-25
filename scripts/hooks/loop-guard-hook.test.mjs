@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluate, loadConfig, normalize, jaccard, DEFAULTS, guardCall } from './loop-guard-hook.js';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const NOW = 1_700_000_000_000;
 const bash = (command) => ({ tool: 'Bash', input: { command }, now: NOW });
@@ -94,7 +94,7 @@ test('a warn threshold above its deny threshold is clamped so it still fires', (
   assert.equal(cfg.warnAt, 2);
 });
 
-test('exempt list is extensible and disable is honoured', () => {
+test('exempt list is extensible and disable is honored', () => {
   const cfg = loadConfig({ HARNESS_LOOP_GUARD_EXEMPT: 'Grep, Glob' });
   assert.ok(cfg.exempt.has('Grep') && cfg.exempt.has('Glob') && cfg.exempt.has('Monitor'));
   assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DISABLE: '1' }).disable, true);
@@ -129,7 +129,7 @@ test('shared config works without launcher env; explicit env has defined precede
 });
 
 test('Codex sibling threads do not count against each other and unknown identity fails open', (t) => {
-  const stateDir = mkdtempSync(join(tmpdir(), 'guard-thread-'));
+  const stateDir = tempDir('guard-thread-');
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const payload = { session_id: 'root', tool_name: 'Bash', tool_input: { command: 'npm test' } };
   const call = thread => guardCall(payload, { host: 'codex', env: thread ? { CODEX_THREAD_ID: thread } : {}, settings: {}, stateDir, now: NOW });
@@ -147,7 +147,7 @@ test('Codex polling tools are exempt', () => {
 });
 
 test('qualified native polling tools are exempt without exempting arbitrary providers', t => {
-  const stateDir = mkdtempSync(join(tmpdir(), 'guard-qualified-'));
+  const stateDir = tempDir('guard-qualified-');
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const call = tool_name => guardCall({ thread_id: 'qualified', tool_name, tool_input: {} },
     { host: 'codex', env: {}, settings: {}, stateDir, now: NOW });
@@ -158,7 +158,7 @@ test('qualified native polling tools are exempt without exempting arbitrary prov
 });
 
 test('guard state containing input fingerprints is stored privately', t => {
-  const root = mkdtempSync(join(tmpdir(), 'guard-private-'));
+  const root = tempDir('guard-private-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const stateDir = join(root, 'state');
   assert.equal(guardCall({ session_id: 'private', tool_name: 'Bash', tool_input: { command: 'read data' } },
@@ -172,7 +172,7 @@ test('guard state containing input fingerprints is stored privately', t => {
 });
 
 test('parallel hook processes preserve the complete read-modify-write transaction', async (t) => {
-  const stateDir = mkdtempSync(join(tmpdir(), 'guard-parallel-'));
+  const stateDir = tempDir('guard-parallel-');
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const module = new URL('./loop-guard-hook.js', import.meta.url).href;
   const code = `import {guardCall} from ${JSON.stringify(module)}; guardCall({session_id:'s',tool_name:'Bash',tool_input:{command:'same'}},{env:{},settings:{},stateDir:process.argv[1]});`;
@@ -184,7 +184,7 @@ test('parallel hook processes preserve the complete read-modify-write transactio
 });
 
 test('agy: toolCall payload keyed by conversation, cosmetic args ignored, polling tools exempt', (t) => {
-  const stateDir = mkdtempSync(join(tmpdir(), 'guard-agy-'));
+  const stateDir = tempDir('guard-agy-');
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const call = (conversationId, toolSummary, name = 'run_command') => guardCall(
     { conversationId, toolCall: { name, args: { CommandLine: 'npm test', toolSummary, WaitMsBeforeAsync: 500 } } },

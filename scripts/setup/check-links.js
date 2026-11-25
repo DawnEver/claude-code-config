@@ -59,7 +59,7 @@ export function checkLinks() {
   const warnings = [];
 
   // The claude-hud config is gitignored and per-machine (see ensureClaudeHudConfig), so a
-  // fresh clone or a cleaned working tree has no link source until it is materialised.
+  // fresh clone or a cleaned working tree has no link source until it is materialized.
   // Doing it here means the SessionStart self-heal covers it without a full setup run.
   try {
     if (ensureClaudeHudConfig(sourceDir)) repaired.push('claude-hud config (from template)');
@@ -96,8 +96,8 @@ export function checkLinks() {
     else if (codex.status === 'unreadable') warnings.push('codex_config.toml: sync payload not readable (cloud placeholder?)');
     else if (codex.status === 'unsafe') warnings.push(`codex_config.toml: ${codex.error.message}`);
     if (artifacts.cache !== 'ok') warnings.push(artifacts.cache);
-    if (artifacts.settings === 'unparseable') {
-      warnings.push(`claude_env_settings.json: unparseable JSON (${artifacts.error.message})`);
+    if (artifacts.settings === 'unparsable') {
+      warnings.push(`claude_env_settings.json: unparsable JSON (${artifacts.error.message})`);
     } else if (artifacts.settings === 'ok' && artifacts.models.status === 'updated') {
       repaired.push('models.json (regenerated)');
     }

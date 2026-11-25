@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { resolveAttachmentSession, sendSessionAttachment } from './send-attachment.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('resolveAttachmentSession detects codex, agy (ANTIGRAVITY_CONVERSATION_ID), and claude', () => {
   assert.deepEqual(resolveAttachmentSession({ CODEX_THREAD_ID: 'cx-1' }), { agent: 'codex', sessionId: 'cx-1' });
@@ -14,7 +15,7 @@ test('resolveAttachmentSession detects codex, agy (ANTIGRAVITY_CONVERSATION_ID),
 });
 
 test('sendSessionAttachment delivers an agy session attachment over local IPC using ANTIGRAVITY_CONVERSATION_ID', async t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'send-att-'));
+  const dir = tempDir('send-att-');
   const hub = new ClaudeAdapter();
   const received = [];
   hub.sendAttachment = async (agent, sessionId, params) => {

@@ -76,7 +76,7 @@ test('a turn end ends every foreground task still running: its end was lost, it 
   assert.deepEqual(ids(b, 12), ['g1', 'next'], 'a start stamped before the turn end arrived late: that turn ended it');
 });
 
-test('a shell is labelled by what it does: its description, else the command without its leading cd and with ~ for home', () => {
+test('a shell is labeled by what it does: its description, else the command without its leading cd and with ~ for home', () => {
   const b = new ActivityBoard();
   b.start('d', { kind: 'shell', label: 'Run the unit tests', at: 1 });
   b.start('c', { kind: 'shell', label: 'cd C:/Users/someone/Documents/repo/.claude/worktrees/x && git status && ls', at: 2 });

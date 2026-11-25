@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { forgeSources, forgeToken, readSource, sourceId, ForgeReader, readHistory } from './forges.mjs';
 import { repoKey } from '../shared/repo-key.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const NOW = Date.parse('2026-10-30T12:00:00Z');
 const day = (n) => new Date(NOW - n * 86400000).toISOString();
@@ -152,7 +153,7 @@ password=${stored}
 
 test('history: the year before the first read is backfill within a daily row budget, continued where it stopped; what is new is read whole', async () => {
   const fs = await import('node:fs'), os = await import('node:os'), path = await import('node:path');
-  const cursorFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'forge-')), 'cursor.json');
+  const cursorFile = path.join(tempDir('forge-'), 'cursor.json');
   const src = { kind: 'gitea', base: 'https://git.example.org', owner: null, repos: ['team/a'], show: null, keyUsername: null };
   const asked = [];
   let t = NOW;

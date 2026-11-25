@@ -4,11 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CodexLocalObserver } from './codex-local.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const at = 1800000000000;
 const row = (type, payload, time = at) => JSON.stringify({ timestamp: new Date(time).toISOString(), type, payload }) + '\n';
 function fixture({ source = 'cli', parent_thread_id, time = at } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-local-'));
+  const root = tempDir('codex-local-');
   const dir = path.join(root, '2027', '01', '15');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'rollout-test.jsonl');

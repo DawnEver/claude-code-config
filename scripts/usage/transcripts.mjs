@@ -3,7 +3,7 @@
 // call carries its model and token usage, every prompt its time, cwd and branch. Nothing of the
 // conversation's text leaves this module: a row holds ids, times, counts and tool names.
 //
-// Tokens are normalised to one meaning on both hosts: `input` uncached, `cache_read`,
+// Tokens are normalized to one meaning on both hosts: `input` uncached, `cache_read`,
 // `cache_write`, `output` (reasoning included) and `reasoning` (of output). Codex's input
 // counts its cached part; Claude's does not.
 

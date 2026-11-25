@@ -12,6 +12,7 @@ import { mirrorFor, callHub } from './bridge-hook.js';
 import { ClaudeAdapter } from '../bridge/claude-adapter.mjs';
 import { checkHooks } from '../setup/doctor.js';
 import { hooksDrift } from '../setup/settings-hooks.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const REPO = fileURLToPath(new URL('../..', import.meta.url));
 const SCRIPTS = path.join(REPO, 'scripts');
@@ -173,7 +174,7 @@ test('stepsFor: lanes split by background, a match filters on its payload field'
 
 /** A live hub with one registered channel session 's', and a send that delivers what `settings` mirrors. */
 async function hub(settings) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-hook-hub-'));
+  const dir = tempDir('claude-hook-hub-');
   const a = new ClaudeAdapter();
   const port = await a.listen(0);
   const runtimeFile = path.join(dir, 'runtime.json');
@@ -220,7 +221,7 @@ test('mirror: a foreground Bash call reaches the board at its PreToolUse and lea
 
 /** A scripts dir holding `files` ({relative path: source}). */
 function fixtureDir(files) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-hook-'));
+  const dir = tempDir('claude-hook-');
   for (const [rel, src] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     fs.writeFileSync(path.join(dir, rel), src);
@@ -263,7 +264,7 @@ test('runSteps: a throw, an exit code and an overrun each end only their step; t
 });
 
 test('runSteps: a deny is the entry\'s and ends the run; an exit 2 is the entry\'s block', async () => {
-  const log = path.join(os.tmpdir(), `claude-hook-after-${process.pid}.txt`);
+  const log = path.join(tempDir('claude-hook-after-'), 'after.txt');
   const dir = fixtureDir({
     'warns.mjs': `process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: 'careful' } }));`,
     'denies.mjs': `process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'looping' } })); process.exit(0);`,
@@ -290,7 +291,9 @@ test('runSteps: a deny is the entry\'s and ends the run; an exit 2 is the entry\
 });
 
 test('the real loop guard denies through the shared entry; the bridge activity runs beside it, as before', async () => {
-  const env = { HARNESS_LOOP_GUARD_WARN_AT: '2', HARNESS_LOOP_GUARD_DENY_AT: '3', HARNESS_LOOP_GUARD_DISABLE: '0', HARNESS_AGENT: '', CODEX_THREAD_ID: '', CODEX_SESSION_ID: '' };
+  // The guard keeps its state under the temp root; the spawned hook inherits a private one so the run reclaims it.
+  const tmp = tempDir('claude-hook-guard-');
+  const env = { HARNESS_LOOP_GUARD_WARN_AT: '2', HARNESS_LOOP_GUARD_DENY_AT: '3', HARNESS_LOOP_GUARD_DISABLE: '0', HARNESS_AGENT: '', CODEX_THREAD_ID: '', CODEX_SESSION_ID: '', TMP: tmp, TEMP: tmp, TMPDIR: tmp };
   const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
   Object.assign(process.env, env);
   const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: `claude-hook-test-${process.pid}-${Date.now()}`, tool_name: 'Bash', tool_input: { command: 'echo same' } });
@@ -311,7 +314,7 @@ test('the real loop guard denies through the shared entry; the bridge activity r
 });
 
 test('a missing step script is a named failure, not a silent no-op', async () => {
-  const r = await runStep({ script: 'hooks/absent.mjs', budgetMs: 5000 }, '{}', { scriptsDir: os.tmpdir() });
+  const r = await runStep({ script: 'hooks/absent.mjs', budgetMs: 5000 }, '{}', { scriptsDir: tempDir('claude-hook-scripts-') });
   assert.match(failureOf({ script: 'hooks/absent.mjs', budgetMs: 5000 }, r), /^hooks\/absent\.mjs (failed|exited)/);
 });
 
@@ -357,7 +360,7 @@ const fakePull = (brings) => "import fs from 'node:fs'; import path from 'node:p
 
 /** A HOME whose ~/.claude is a git checkout holding scripts/hooks: the pull, and the entry when `entry`. */
 function home({ entry = false, brings = false, upstreamCarries = false } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-hook-boot-'));
+  const dir = tempDir('claude-hook-boot-');
   const repo = path.join(dir, '.claude'), hooks = path.join(repo, 'scripts', 'hooks');
   fs.mkdirSync(hooks, { recursive: true });
   fs.writeFileSync(path.join(repo, 'package.json'), '{"type":"module"}');
@@ -420,7 +423,7 @@ test('bootstrap: Notification and PreToolUse without the entry exit 0 silently a
 });
 
 test('doctor reads the entry out of the bootstrap command; the drift check holds on it', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-hook-doc-'));
+  const dir = tempDir('claude-hook-doc-');
   const events = ['SessionStart', 'Notification', 'PreToolUse'];
   const settings = { hooks: Object.fromEntries(events.map((e) => [e, template.hooks[e]])) };
   try {

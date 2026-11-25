@@ -9,8 +9,9 @@ import {
 } from './agy-adapter.mjs';
 import { ClaudeAdapter } from './claude-adapter.mjs';
 import { Bridge } from './daemon.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'agy-'));
+const tmp = () => tempDir('agy-');
 const until = async (fn, ms = 2000) => {
   const end = Date.now() + ms;
   while (!fn()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 5)); }
@@ -146,6 +147,8 @@ test('forwardAgyHook contract: { injectSteps?, stopContinue?, decision?, reason?
   fs.writeFileSync(rt, '{}');
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => ({ ok: true, deliver: [{ text: 'hi', user: 'ann' }] }) }),
     { stopContinue: 'Message from Telegram (ann):\nhi' });
+  assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, env: { CLAUDE_CODE_SESSION_ID: 'x' }, call: async () => ({ ok: true, deliver: [{ text: 'hi', user: 'ann' }] }) }),
+    {}, 'an explicit nested-session env still fails open');
   assert.deepEqual(await forwardAgyHook('PreToolUse', { conversationId: 'c', toolCall: { name: 'ask_question' } }, { runtimeFile: rt, call: async () => ({ ok: true, decision: 'deny', reason: 'User answered via Telegram:\nQ -> A' }) }),
     { decision: 'deny', reason: 'User answered via Telegram:\nQ -> A' });
   assert.deepEqual(await forwardAgyHook('PreToolUse', { conversationId: 'c', toolCall: { name: 'run_command' } }, { runtimeFile: rt, call: async () => ({ ok: true, decision: 'allow' }) }),

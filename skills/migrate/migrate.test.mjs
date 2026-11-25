@@ -8,12 +8,13 @@ import { CLAUDE_LINKS, CODEX_LINKS, discoverSkillLinks, getCodexLinks } from '..
 import { findOrphanedLinks, discoverProjectMigrators } from './migrate.js';
 import { ensureGitignoreTemplate, migrateGitignore, reposNeedingTemplate } from './gitignore-hygiene.js';
 import { locateBinDir, resolveWrapperBinDirs } from '../../scripts/setup/install-cli-wrappers.js';
+import { tempDir } from '../../scripts/shared/temp-dir.mjs';
 
 describe('findOrphanedLinks', () => {
   let tmpDir, sourceDir, baseDir;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-test-'));
+    tmpDir = tempDir('migrate-test-');
     sourceDir = path.join(tmpDir, 'repo');
     baseDir = path.join(tmpDir, 'claude');
     fs.mkdirSync(sourceDir, { recursive: true });
@@ -66,7 +67,7 @@ describe('findOrphanedLinks', () => {
     // dest comes from path.join, so on Windows it is 'skills\\git-tidy' while the scanner
     // builds rel as 'skills/git-tidy'. Comparing the raw forms left containerPrefixes
     // EMPTY, so ~/.codex/skills/ was never scanned and leftovers there needed manual
-    // cleanup. This test fails on Windows before the normalisation.
+    // cleanup. This test fails on Windows before the normalization.
     const nested = path.join(baseDir, 'skills');
     fs.mkdirSync(nested, { recursive: true });
     fs.mkdirSync(path.join(sourceDir, 'skills', 'git-tidy'), { recursive: true });
@@ -153,7 +154,7 @@ describe('discoverProjectMigrators', () => {
   }
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-cc-'));
+    tmpDir = tempDir('migrate-cc-');
     ccMarketDir = path.join(tmpDir, 'cc-market');
     fs.mkdirSync(ccMarketDir, { recursive: true });
   });
@@ -197,7 +198,7 @@ describe('setup link tables', () => {
   });
 
   test('Codex links project skills inside its own skills directory', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-skills-'));
+    const tmpDir = tempDir('codex-skills-');
     try {
       fs.mkdirSync(path.join(tmpDir, 'skills', 'alpha'), { recursive: true });
       fs.mkdirSync(path.join(tmpDir, 'skills', '.system'), { recursive: true });
@@ -236,7 +237,7 @@ describe('ensureGitignoreTemplate', () => {
     '**/_meta.json',
   ];
 
-  beforeEach(() => { repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gi-tmpl-')); });
+  beforeEach(() => { repoDir = tempDir('gi-tmpl-'); });
   afterEach(() => { fs.rmSync(repoDir, { recursive: true, force: true }); });
 
   const read = () => fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
@@ -283,7 +284,7 @@ describe('migrateGitignore (integration)', () => {
   const g = (...a) => execFileSync('git', a, { cwd: repoDir, stdio: 'pipe' });
 
   beforeEach(() => {
-    repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gi-int-'));
+    repoDir = tempDir('gi-int-');
     g('init', '-q');
     g('config', 'user.email', 't@t');
     g('config', 'user.name', 't');
@@ -363,4 +364,3 @@ describe('locateBinDir', () => {
     assert.equal(locateBinDir('nope', run), null);
   });
 });
-

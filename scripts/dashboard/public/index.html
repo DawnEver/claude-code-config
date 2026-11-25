@@ -7,10 +7,10 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   /* Style: every value is a token in :root; components compose the primitives below (:where(), so they
-     carry no specificity) and keep only their layout. No colour, text size, radius or spacing literal
+     carry no specificity) and keep only their layout. No color, text size, radius or spacing literal
      is written outside :root — dashboard.test.mjs guards it. docs/dashboard.md § Style. */
   :root {
-    /* Colour: the Telegram theme, with fallbacks, and what is derived from it. */
+    /* Color: the Telegram theme, with fallbacks, and what is derived from it. */
     --bg: var(--tg-theme-bg-color, #fff); --fg: var(--tg-theme-text-color, #111);
     --hint: var(--tg-theme-hint-color, #8a8a8e); --card: var(--tg-theme-secondary-bg-color, #f2f2f7);
     --accent: var(--tg-theme-button-color, #2481cc); --accent-fg: var(--tg-theme-button-text-color, #fff);
@@ -18,8 +18,8 @@
     --hover: color-mix(in srgb, var(--fg) 5%, transparent); --press: color-mix(in srgb, var(--fg) 10%, transparent);
     --shadow: color-mix(in srgb, var(--fg) 15%, transparent);
     --ok: #34c759; --warn: #ff9500; --bad: #ff3b30; --run: #0a84ff; --idle: #8e8e93;
-    --on-colour: #fff;   /* text on a filled brand colour (an avatar's letter) */
-    /* The platforms' own brand colours: Claude's terracotta, OpenAI's black on white, DeepSeek's blue. */
+    --on-color: #fff;   /* text on a filled brand color (an avatar's letter) */
+    /* The platforms' own brand colors: Claude's terracotta, OpenAI's black on white, DeepSeek's blue. */
     --claude: #d97757; --codex: #10a37f; --agy: #3186ff; --deepseek: #4d6bfe; --openai: #000; --logo-bg: #fff;
     /* A running task's kind. */
     --k-shell: var(--run); --k-powershell: #30b0c7; --k-monitor: #ff9f0a; --k-agent: #af52de;
@@ -67,7 +67,7 @@
   /* Key fact: what to read first in a row — use, reset, forecast, warning, the account under a logo. */
   :where(.qmini .used, .qmini .reset, .win .reset, .win .used, .win-sub > .forecast, .warn, .who .acct-name)
     { color: var(--fg); font-size: var(--t2); font-weight: var(--w-strong); }
-  /* Label: a short key in secondary colour. */
+  /* Label: a short key in secondary color. */
   :where(.res-m .k, .qmini .k, .win .k) { font-weight: var(--w-strong); white-space: nowrap; }
   /* Section header: names a group of rows. */
   :where(.section-h, .code-h, .cfg-h) { margin: var(--s5) var(--s2) var(--s2); color: var(--hint); font-size: var(--t3); font-weight: var(--w-strong);
@@ -175,9 +175,9 @@
   .who { flex: none; width: var(--who); display: grid; justify-items: center; gap: var(--s1); }
   .who .acct-name { max-width: var(--who); line-height: 1.15; }
   .avatar { position: relative; flex: none; width: var(--avatar); height: var(--avatar); border-radius: 50%; display: grid; place-items: center;
-    color: var(--on-colour); font-weight: var(--w-bold); background: var(--idle); }
+    color: var(--on-color); font-weight: var(--w-bold); background: var(--idle); }
   .avatar.claude { background: var(--claude); } .avatar.codex { background: var(--codex); } .avatar.agy { background: var(--agy); }
-  /* The platform's own mark in its own colour on white, as the platforms show it. */
+  /* The platform's own mark in its own color on white, as the platforms show it. */
   .avatar[class*=" b-"] { background: var(--logo-bg); box-shadow: inset 0 0 0 1px var(--sep); }
   .avatar.b-claude { color: var(--claude); } .avatar.b-openai { color: var(--openai); } .avatar.b-agy { color: var(--agy); } .avatar.b-deepseek { color: var(--deepseek); }
   .avatar svg { width: var(--logo); height: var(--logo); fill: currentColor; }
@@ -189,7 +189,7 @@
   .chat-time { flex: none; } .chat-time.fresh { color: var(--accent); }
   /* What a session or repo waits for, one per column. */
   .waiting { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--col), 100%), 1fr)); gap: 0 var(--gap-block); margin-top: var(--s2); font-size: var(--t3); }
-  /* A session's running tasks: kind tag | what it does | how long. Kind is the tag's colour. */
+  /* A session's running tasks: kind tag | what it does | how long. Kind is the tag's color. */
   .tasks { display: grid; gap: var(--s1); margin-top: var(--s2); }
   .task { --kind: var(--k-shell); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: var(--s3); font-size: var(--t3); }
   .task.k-powershell { --kind: var(--k-powershell); } .task.k-monitor { --kind: var(--k-monitor); } .task.k-agent { --kind: var(--k-agent); }

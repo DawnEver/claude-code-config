@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { resolveCodexHome, codexHomeKey } from './codex-home.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 test('one resolver honors explicit homes without guessing account directories', () => {
   const home = path.resolve('fixture-home');
@@ -17,7 +18,7 @@ test('codexHomes: the base home, then every other home a launch recorded and sti
   const fs = await import('node:fs');
   const os = await import('node:os');
   const { recordCodexHome, codexHomes, codexHomeLabel } = await import('./codex-home.mjs');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cxh-'));
+  const home = tempDir('cxh-');
   const file = path.join(home, '.claude', 'bridge', 'codex-homes.json');
   const work = path.join(home, '.codex-work'), other = path.join(home, 'accounts', 'Codex Two');
   fs.mkdirSync(work, { recursive: true });

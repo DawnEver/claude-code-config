@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isMain } from './is-main.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
@@ -22,7 +23,7 @@ const REPO = path.resolve(HERE, '..', '..');
  * the repo.
  */
 function withLink(fn) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'is-main-'));
+  const tmp = tempDir('is-main-');
   const real = path.join(tmp, 'real');
   const link = path.join(tmp, 'link');
   fs.mkdirSync(real);
@@ -46,7 +47,7 @@ test('isMain is true when the entry path goes through a link', () => {
     const out = execFileSync(process.execPath, [path.join(link, 'probe.mjs')], {
       encoding: 'utf8', windowsHide: true,
     });
-    assert.equal(out.trim(), 'true', 'a module invoked via a link must still recognise itself');
+    assert.equal(out.trim(), 'true', 'a module invoked via a link must still recognize itself');
   });
 });
 
@@ -73,7 +74,7 @@ test('isMain is false for an imported module', () => {
 // A silent exit 0 satisfies any assertion that only checks the exit code, so
 // this asserts on output.
 test('sync-hook still runs when reached through a linked path', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-hook-link-'));
+  const tmp = tempDir('sync-hook-link-');
   const link = path.join(tmp, 'scripts');
   try {
     fs.symlinkSync(path.join(REPO, 'scripts'), link, 'junction');
@@ -102,7 +103,7 @@ test('sync-hook still runs when reached through a linked path', () => {
       ahead = Number(execFileSync('git', ['rev-list', '--count', 'HEAD', '--not', '--remotes'], {
         cwd: REPO, encoding: 'utf8', windowsHide: true,
       }).trim());
-    } 
+    }
     if (dirty || ahead > 0 || noUpstream) assert.match(raw, /\[cc-config\]/, 'hook body must execute via a linked path');
     else assert.equal(raw, '');
   } finally {

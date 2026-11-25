@@ -557,9 +557,12 @@ export async function forwardAgyHook(event, input, opts = {}) {
   const isolated = Boolean(call) || (opts.runtimeFile !== undefined && opts.runtimeFile !== RUNTIME_FILE);
   const appDir = opts.appDir !== undefined ? opts.appDir : (isolated ? null : AGY_APP_DIR);
   const ancestry = opts.ancestry !== undefined ? opts.ancestry : (isolated ? false : null);
+  // An isolated call (tests, injected `call`) never reads the host's env: a hook test run from inside a
+  // Claude or Codex session would otherwise be classed as a nested agy and fail open.
+  const env = opts.env !== undefined ? opts.env : (isolated ? {} : process.env);
   try {
     if (!AGY_EVENTS.includes(event) || !input?.conversationId || !fs.existsSync(runtimeFile)) return {};
-    if (!isAgyMainSession(input, { appDir, ancestry })) return {};
+    if (!isAgyMainSession(input, { appDir, ancestry, env })) return {};
     const params = agyCallFor(event, input, { settingsFile, appDir });
     const interactive = event === 'PreToolUse' && (params.toolCall?.name === 'ask_question' || params.needsApproval === true);
     const send = call ?? (await import('../hooks/bridge-hook.js')).callHub;
