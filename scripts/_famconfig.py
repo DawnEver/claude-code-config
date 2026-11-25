@@ -47,7 +47,6 @@ _GITIGNORE: Final = (
 
 _GITATTRIBUTES: Final = (
     '.claude/memory/**/*.md text eol=lf',
-    '.claude/rules/**/*.md text eol=lf',
 )
 
 DELTAS: Final[dict[str, Delta]] = {

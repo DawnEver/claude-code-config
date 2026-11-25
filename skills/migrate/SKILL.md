@@ -65,7 +65,12 @@ This does the following, all idempotent (safe to re-run, no-op once current):
 4. **Project `.claude/`** — for every cc-market plugin that provides a
    `migrations/migrate.mjs` (e.g. rem's memory/frontmatter normalization,
    sharp-review's legacy finding-file consolidation), runs it against the
-   current project.
+   current project. Discovery is by directory in the declared cc-market checkout
+   (machine file `[repos] cc-market`), never `installed_plugins.json`, so a plugin's
+   migration runs whether or not it is installed there. The contract:
+   `export async function migrate(projectRoot) -> {changed, summary}`, idempotent and
+   self-detecting; a breaking `.claude/` format change is folded into the plugin's one
+   `migrations/migrate.mjs`, never a new versioned step.
 
 Preview repo-link changes only, without touching anything:
 

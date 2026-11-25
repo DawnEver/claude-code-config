@@ -50,7 +50,7 @@ three files.
 ### Tier A — tracked in git, synced via GitHub
 
 Everything under `scripts/`, `skills/`, `output-styles/`, `system-prompt/`,
-`claude_plugins/`, `.claude/rules/`, `.claude/memory/`, `docs/`, all `*.template.*`
+`claude_plugins/`, `.claude/memory/`, `docs/`, all `*.template.*`
 files, `GLOBAL-AGENTS.md`, `keybindings.json`, `AGENTS.md`, `README.md`.
 
 Transport: `git pull` / `git push`. Nothing else.

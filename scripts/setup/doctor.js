@@ -450,22 +450,18 @@ export function scanPublicHygiene(text, markers = []) {
   return hits;
 }
 
-/**
- * A rule file (.claude/rules/**) is read by every session, so a function or constant it names
- * must exist: one renamed in the code but not in the rule misleads every agent that reads it
- * (rules/rem/migration.md named `KNOWN_ALIAS_NAMES` long after the code had renamed it). Only
- * code-shaped names count — `name()`, `ALL_CAPS_WITH_UNDERSCORE`, `camelCase` — matched as whole
- * words in the tracked JS. Words, file names and config keys are left alone.
- */
 const AGY_RULE_MAX_BYTES = 24000;
 
+/** The rule files every session reads: AGENTS.md is the one agent entry (dev-lab retired .claude/rules). */
+const RULE_FILES = ['AGENTS.md', 'GLOBAL-AGENTS.md'];
+
 /**
- * Antigravity truncates any rule file (`AGENTS.md`, `GLOBAL-AGENTS.md`, `.claude/rules/*.md`)
- * exceeding 24,000 bytes, silently dropping standards at the tail (incident 2026-11-19).
+ * Antigravity truncates any rule file exceeding 24,000 bytes, silently dropping standards at the
+ * tail (incident 2026-11-19).
  */
 export function checkRuleFileSize(root = sourceDir, maxBytes = AGY_RULE_MAX_BYTES) {
   const out = [];
-  for (const rel of ['AGENTS.md', 'GLOBAL-AGENTS.md']) {
+  for (const rel of RULE_FILES) {
     const p = path.join(root, rel);
     let size;
     try { size = fs.statSync(p).size; } catch { continue; }
@@ -477,11 +473,18 @@ export function checkRuleFileSize(root = sourceDir, maxBytes = AGY_RULE_MAX_BYTE
   return out;
 }
 
+/**
+ * A rule file is read by every session, so a function or constant it names must exist: one
+ * renamed in the code but not in the rule misleads every agent that reads it (a rule page named
+ * `KNOWN_ALIAS_NAMES` long after the code had renamed it). Only code-shaped names count —
+ * `name()`, `ALL_CAPS_WITH_UNDERSCORE`, `camelCase` — matched as whole words in the tracked JS.
+ * Words, file names and config keys are left alone.
+ */
 export function checkRuleSymbols(root = sourceDir, files = trackedFiles(root)) {
   const code = files.filter((f) => /\.(mjs|js|cjs)$/.test(f)).map((f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch { return ''; } }).join('\n');
   const known = new Set(code.match(/[A-Za-z_$][\w$]*/g) ?? []);
   const out = [];
-  for (const f of files.filter((x) => /^\.claude\/rules\/.+\.md$/.test(x))) {
+  for (const f of files.filter((x) => RULE_FILES.includes(x))) {
     let text;
     try { text = fs.readFileSync(path.join(root, f), 'utf8'); } catch { continue; }
     for (const [, id, call] of text.matchAll(/`([A-Za-z_][\w]*)(\(\))?`/g)) {

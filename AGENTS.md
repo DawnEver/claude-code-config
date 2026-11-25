@@ -19,7 +19,7 @@ rendered (`python -m dev_lab.dev.ciworkflows render`) and `.gitignore`/`.gitattr
 - `npm run setup` / `node scripts/setup/setup.js` — Initial and idempotent setup across `~/.claude`, `~/.codex`, and `~/.gemini/config` (where `~/.gemini` exists).
 - `npm run doctor` — Read-only invariant checker (`scripts/setup/doctor.js`). Every check maps to a real silent-divergence incident (dead entry-point guards, payload/template drift, machine paths in synced files, rule-file truncation >24 KB, stale/unexecuted native hooks). At SessionStart `--hook` reports the last run's FAILs (`~/.claude/doctor-last.json`) and refreshes detached (`--hook-refresh` under `~/.claude/doctor-refresh.lock`, keeping every hook <5 s per D24). Add a check whenever a new silent-divergence class is found.
 - **Public hygiene:** `doctor.js --public-hygiene` (also wired as the `public-hygiene` pre-commit row) FAILs on personal data in tracked files (home paths, real emails, Telegram chat ids, org cloud folders, plus the synced denylist `~/.claude/private-markers`). Exception: inline `public-hygiene: allow (<reason>)`.
-- **Multi-machine sync:** `node scripts/setup/setup.js --sync-dir "<path>"` records `~/.claude/sync-dir` (`--init-sync-dir` seeds templates on the FIRST machine only; later machines wait for cloud download). Working tree MUST live outside any cloud-synced folder (`docs/sync-architecture.md`).
+- **Multi-machine sync:** `node scripts/setup/setup.js --sync-dir "<path>"` records `~/.claude/sync-dir` (`--init-sync-dir` seeds templates on the FIRST machine only; later machines wait for cloud download). Working tree MUST live outside any cloud-synced folder (`docs/sync-architecture.md`): a sync daemon conflict-copies `.git/index`, overwrites `logs/HEAD` (the reflog is lost) and pushes divergent branches — this repo left OneDrive on 2026-08-29 after exactly that.
 - **Provenance:** `node scripts/setup/setup.js --machine <NAME>` writes `~/.claude/machine.json` (read via `scripts/shared/machine.mjs`), projected into committer provenance + `HARNESS_*` env by launchers and Codex's composed `[shell_environment_policy.set]`.
 - `npm run migrate` (`-- --dry-run`) — Cleans orphaned links/wrappers and migrates `.claude/` plugin files (`skills/migrate/`).
 
@@ -40,10 +40,10 @@ Cross-platform config sync & multi-host harness for **Claude Code**, **Codex**, 
 - `scripts/shared/`: `is-main.mjs`, `config.mjs`, `sync-dir.mjs`, `machine.mjs`, `seats.mjs`, `codex-home.mjs`, `agy-payload.mjs` (SSOT for agy prompt envelope & tool normalization), `provider-cache.mjs`, `session-launcher.mjs`, `session-identity.mjs`, `dashboard-schema.mjs`, `claude-defaults.mjs`, `channel-server.mjs`.
 - **Configs & Assets:**
   - Sync payloads (gitignored, live in sync dir): `claude_settings.json`, `claude_env_settings.json`, `codex_config.toml` (hand-edited head only), seeded from `*.template.*`. Machine-local secrets: `~/.claude/claude_env_settings.local.json` (bridge/dashboard tokens only; API keys in git credential store).
-  - `GLOBAL-AGENTS.md`: single global rules source linked to `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.gemini/config/GEMINI.md`. Never write repo-specific memory there.
-  - cc-market (`DawnEver/cc-market`; `rem`, `sharp-review`, `evolve`, `fabric` enabled; `watch`, `cc-latex`, `cc-academia` dormant) is a family repo checked out beside the others, declared in the machine file `[repos] cc-market` and read by `scripts/shared/market-dir.mjs`; never a clone inside this repo. See its own `AGENTS.md`.
+  - `GLOBAL-AGENTS.md`: single global rules source linked to `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, and `~/.gemini/config/GEMINI.md`. Never write repo-specific memory there, and never hand-edit it for a project change: it applies to every project on every host; project changes go in this `AGENTS.md`.
+  - cc-market (`DawnEver/cc-market`; `rem`, `sharp-review`, `evolve`, `fabric` enabled; `watch`, `cc-latex`, `cc-academia` dormant) is a family repo checked out beside the others, declared in the machine file `[repos] cc-market` and read by `scripts/shared/market-dir.mjs`; never a clone inside this repo (two clones drift). Commit plugin changes in that checkout (`git -C <declared cc-market checkout> ...`); `~/.claude/plugins/marketplaces/cc-market` and `~/.claude/plugins/cache/cc-market/` are the installed copies and lag it until it lands. See its own `AGENTS.md`.
   - `claude_plugins/`: `claude-hud` config; `session-bridge` (Claude channel MCP server).
-  - `skills/`, `system-prompt/`, `output-styles/`, `keybindings.json`, `.claude/rules/rem/`, `.claude/memory/`.
+  - `skills/` (every custom skill and agent is written to `skills/<name>/SKILL.md` here, linked to `~/.claude/skills` and `~/.codex/skills` — never into `~/.claude/` or the plugin cache), `system-prompt/`, `output-styles/`, `keybindings.json`, `.claude/memory/`.
 
 ### CLI Tools
 - `ccc` / `ccds` (`ccc --seat <alias>`) — Claude Code launchers.
@@ -54,8 +54,11 @@ Cross-platform config sync & multi-host harness for **Claude Code**, **Codex**, 
 ### Standard
 - **Every script that is also a module MUST gate its entry point with `isMain(import.meta.url)` from `scripts/shared/is-main.mjs` — never `process.argv[1] === fileURLToPath(import.meta.url)`.** Node realpaths a module but not `argv[1]`, so raw comparison through `~/.claude/scripts` links silently exits 0 without running. `npm run doctor` FAILs on any recurrence.
 - **Rule files (`AGENTS.md`, `GLOBAL-AGENTS.md`) must stay well below 24,000 bytes** (`doctor` `rule-file-size` FAILs at 24,000 B, where Antigravity truncates rule files). Keep `AGENTS.md` concise and place subsystem details in `docs/*.md`.
-- **A skill's execution knowledge goes in its `SKILL.md` / `references/*.md`, never in `rules/*` or `AGENTS.md`/`GLOBAL-AGENTS.md`.**
+- **A skill's execution knowledge goes in its `SKILL.md` / `references/*.md`, never in `AGENTS.md`/`GLOBAL-AGENTS.md`.**
 - No backward compatibility: rename, restructure, or remove outdated code directly rather than adding shims or aliases.
+- **No machine path in a tracked or synced file.** Shared config names `~/.claude/...` / `~/.codex/...` and the per-host links (`CLAUDE_LINKS` / `CODEX_LINKS` in `setup.js`) resolve it; one host's hardcoded cloud path once made the CLI exit 1 at startup for every session on another host. Only `setup.js` and `check-links.js` resolve the sync dir; everything else reads through the link, except the one write, `applyConfigChange` (`docs/sync-architecture.md`). Bulk local-only data (archives, PII transcripts) is a third tenant in `<cloud>/Sync/agent-data/`, joined back by gitignored symlinks — neither git nor the payload.
+- **`~/.codex/config.toml` is composed, not linked:** never add `[projects.*]`, `[hooks.state.*]` or `[notice]` to the shared head — setup strips them back out and they silently disappear.
+- **Commits:** imperative conventional commits (`feat:`, `fix:`, `docs:`, `chore:`), multi-line messages through a Bash heredoc — a PowerShell here-string leaks `@` into the message. Never force-push a shared branch.
 
 <!-- BEGIN dev-lab family section -->
 

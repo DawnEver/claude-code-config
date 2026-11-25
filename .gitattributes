@@ -4,6 +4,5 @@
 
 * text=auto eol=lf
 
-# --- claude-code-config delta, 2 of 2 allowed ---
+# --- claude-code-config delta, 1 of 1 allowed ---
 .claude/memory/**/*.md text eol=lf
-.claude/rules/**/*.md text eol=lf
