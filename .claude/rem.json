@@ -1,1 +1,0 @@
-{"backlog": "issues", "onClose": ["uv", "run", "--no-sync", "python", "-m", "dev_lab.dev.branchprune", "task", "{slug}"]}

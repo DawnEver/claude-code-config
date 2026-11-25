@@ -12,7 +12,7 @@ This repo is a dev-lab family member (`pyproject.toml` `[tool.dev_lab.*]`, no Py
 the dashboard) and moves only by the nightly `integrate promote`. Tests are `npm test`, posted as the `base`
 part by `dev_lab.dev.commandpart`. Bootstrap with `uv sync --all-groups`, then install the family hooks once per
 checkout: `.venv/Scripts/python -m dev_lab.dev.hook_install --install` (`.venv/bin/python` on POSIX). Workflows are
-rendered (`python -m dev_lab.dev.ciworkflows render`) and `.gitignore`/`.gitattributes`/`.rgignore` too
+rendered (`python -m dev_lab.dev.ciworkflows render`) and `.gitignore`/`.gitattributes` too
 (`python -m dev_lab.dev.famfiles --deltas scripts/_famconfig.py`): edit the TOML or the delta, never the output.
 
 ## Setup & Invariants
