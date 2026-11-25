@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { burn, readSeries, recordSample } from './quota-series.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const H = 3600000;
 const T0 = Date.UTC(2026, 9, 3, 7, 0);   // a 5h window opens here
@@ -11,7 +12,7 @@ const W5 = (used, resetsAt = T0 + 5 * H) => ({ '5h': { used, resetsAt, windowMs:
 const sample = (from, at, used) => ({ from, at, windows: W5(used) });
 
 test('recordSample grows with change, not time: an unchanged reading only moves `at`', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-'));
+  const dir = tempDir('qs-');
   try {
     const file = path.join(dir, 'b', 'usage.jsonl');
     assert.equal(recordSample(file, null, T0), false);
@@ -25,7 +26,7 @@ test('recordSample grows with change, not time: an unchanged reading only moves 
 });
 
 test('recordSample: a window missing from one reading keeps its last current value', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-'));
+  const dir = tempDir('qs-');
   try {
     const file = path.join(dir, 'usage.jsonl');
     const w7 = { '7d': { used: 68, resetsAt: T0 + 100 * H, windowMs: 168 * H } };
@@ -36,7 +37,7 @@ test('recordSample: a window missing from one reading keeps its last current val
 });
 
 test('recordSample drops samples whose every window has reset: retention is the windows themselves', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-'));
+  const dir = tempDir('qs-');
   try {
     const file = path.join(dir, 'usage.jsonl');
     recordSample(file, W5(50), T0 + H);

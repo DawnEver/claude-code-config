@@ -4,9 +4,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { readBridgeConfig, bridgeAllowlist, repoNameFromUrl, gitContext, bridgeSourceRevision, bridgeConfigRevision } from './context.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('bridgeSourceRevision follows source edits, ignores tests and config, and exposes only a digest', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-revision-'));
+  const root = tempDir('bridge-revision-');
   try {
     for (const dir of ['bridge', 'shared']) fs.mkdirSync(path.join(root, 'scripts', dir), { recursive: true });
     const file = path.join(root, 'scripts', 'bridge', 'daemon.mjs');
@@ -30,7 +31,7 @@ test('repoNameFromUrl handles https, ssh, and no .git', () => {
 });
 
 test('readBridgeConfig merges shared projects with local secrets', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bcfg-'));
+  const dir = tempDir('bcfg-');
   const sharedPath = path.join(dir, 's.json');
   const localPath = path.join(dir, 'l.json');
   fs.writeFileSync(sharedPath, JSON.stringify({ bridge: { fallbackChatId: -1, projects: { a: { chatId: -100 }, b: { chatId: null } } } }));
@@ -49,7 +50,7 @@ test('readBridgeConfig merges shared projects with local secrets', () => {
 });
 
 test('bridgeAllowlist: the declared user, never the local allowedUserIds key, which is named', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ballow-'));
+  const dir = tempDir('ballow-');
   const sharedPath = path.join(dir, 's.json');
   const localPath = path.join(dir, 'l.json');
   fs.writeFileSync(sharedPath, JSON.stringify({ bridge: {} }));
@@ -69,7 +70,7 @@ test('bridgeAllowlist: the declared user, never the local allowedUserIds key, wh
 });
 
 test('readBridgeConfig: a leftover bridge.alerts is ignored (Telegram quota alerts are gone)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-'));
+  const dir = tempDir('ctx-');
   try {
     const sharedPath = path.join(dir, 's.json'), localPath = path.join(dir, 'l.json');
     fs.writeFileSync(localPath, '{}');

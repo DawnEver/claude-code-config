@@ -6,8 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { acquireOwnerLock, ownerLockLive } from './owner-lock.mjs';
+import { tempDir } from './temp-dir.mjs';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'owner-lock-'));
+const tmp = () => tempDir('owner-lock-');
 // A pid that WAS a process and is now dead: a child that already exited.
 const deadPid = () => spawnSync(process.execPath, ['-e', '0'], { windowsHide: true }).pid;
 

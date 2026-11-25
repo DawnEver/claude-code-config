@@ -1,14 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import {
   isValidMachineName, readMachineName, writeMachineName, provenanceEnv, codexShellEnv,
   readGitUserName,
 } from './machine.mjs';
+import { tempDir } from './temp-dir.mjs';
 
-const tmp = () => mkdtempSync(join(tmpdir(), 'machine-'));
+const tmp = () => tempDir('machine-');
 
 test('provenance can use Git effective identity without writing a global user profile', () => {
   const calls = [];

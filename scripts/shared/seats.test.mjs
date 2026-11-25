@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
 import { isValidAlias, baseDir, seatDir, configDir, aliasOf, accountFile, usageFile, seatsFor, resolveSeat } from './seats.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 test('resolveSeat: exact, else a unique prefix, else a unique near typo; otherwise list every seat', () => {
   const aliases = ['alpha', 'beta', 'bravo'];
@@ -53,7 +54,7 @@ test('seatsFor returns this machine\'s seats normalised and survives junk', () =
 test('a seat runs in the base dir when the base login holds it, else in its own dir', async () => {
   const fs = await import('fs');
   const os = await import('os');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'seats-home-'));
+  const home = tempDir('seats-home-');
   const { readAccount, baseSeat, seatHome, seatOf } = await import('./seats.mjs');
   try {
     fs.mkdirSync(baseDir(home));

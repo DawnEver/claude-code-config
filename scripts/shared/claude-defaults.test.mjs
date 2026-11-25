@@ -4,8 +4,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { applyGlobalDefaults, GLOBAL_DEFAULTS } from './claude-defaults.mjs';
+import { tempDir } from './temp-dir.mjs';
 
-const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cc-defaults-')), '.claude.json');
+const tmp = () => path.join(tempDir('cc-defaults-'), '.claude.json');
 
 test('applyGlobalDefaults closes the diff panel and keeps every other key', () => {
   const file = tmp();

@@ -6,10 +6,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runAgyHook, agyNotification } from './agy-hook.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const noop = async () => null;
 function deps(t, extra = {}) {
-  const agyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-hook-'));
+  const agyHome = tempDir('agy-hook-');
   t.after(() => fs.rmSync(agyHome, { recursive: true, force: true }));
   return { agyHome, env: {}, bridge: null, background: noop, heal: noop, doctor: noop, guard: noop, notify: noop, remind: noop, ...extra };
 }
@@ -85,7 +86,7 @@ test('a throwing bridge fails open', async t => {
 
 test('CLI: any failure fails open (ask on PreToolUse, {} elsewhere) and exits 0', () => {
   const script = fileURLToPath(new URL('./agy-hook.mjs', import.meta.url));
-  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-cli-'));
+  const tmpHome = tempDir('agy-cli-');
   try {
     for (const [args, input, env, expected] of [
       [['--event', 'PreToolUse'], '{}', { HOME: tmpHome, USERPROFILE: tmpHome }, '{"decision":"ask"}'],

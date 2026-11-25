@@ -8,12 +8,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { buildCodexInvocation } from './codex-launcher.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { fakeAiLab, writeCache } from '../shared/provider-cache-fixture.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 // Provider launches scope the codex model catalog to the absolute
 // ~/.codex/models.json (global config would leak 3rd-party models into plain
@@ -26,7 +27,7 @@ const CODEX_STRIP_KEYS = [
 ];
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'codex-launcher-'));
+  const dir = tempDir('codex-launcher-');
   return {
     shared: join(dir, 'claude_env_settings.json'),
     local: join(dir, 'claude_env_settings.local.json'),
@@ -49,7 +50,7 @@ test('default Codex (provider=null) leaves env untouched beyond strip sets and a
 });
 
 test('explicit Codex home reaches vendor process and scopes its provider model catalogue', () => {
-  const customHome = join(tmpdir(), 'codex-custom-home');
+  const customHome = join(tempDir('codex-custom-'), 'codex-custom-home');
   const { env, args } = invoke(RULES, {}, { baseEnv: { CODEX_HOME: customHome } });
   assert.equal(env.CODEX_HOME, customHome);
   assert.ok(args.includes(`model_catalog_json=${join(customHome, 'models.json')}`));
@@ -115,7 +116,7 @@ test('provenance: the codex launcher injects nothing (config.toml shell_environm
 // ── session bridge: the TUI must attach to the shared app-server (docs/bridge.md) ──
 
 function bridgeFixture(botToken) {
-  const dir = mkdtempSync(join(tmpdir(), 'codex-bridge-'));
+  const dir = tempDir('codex-bridge-');
   const shared = join(dir, 'claude_env_settings.json');
   const local = join(dir, 'claude_env_settings.local.json');
   writeFileSync(shared, JSON.stringify({ providers: { deepseek: { codexApiKeyEnv: 'DEEPSEEK_API_KEY' } } }));
@@ -129,7 +130,7 @@ test('bridge: interactive official TUI attaches to the shared daemon', () => {
     ['--remote', 'unix://']);
   assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['fix the build'], envSettingsPath: shared, localPath: local }).args,
     ['--remote', 'unix://', 'fix the build']);
-  const codexHome = mkdtempSync(join(tmpdir(), 'codex-home-'));  // no rollout: `--last` stays for the TUI to pick
+  const codexHome = tempDir('codex-home-');  // no rollout: `--last` stays for the TUI to pick
   assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['resume', '--last'], envSettingsPath: shared, localPath: local, codexHome }).args,
     ['--remote', 'unix://', 'resume', '--last']);
 });

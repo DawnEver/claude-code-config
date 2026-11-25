@@ -10,6 +10,7 @@ import {
   composeCodexConfigFile,
   withCodexNotify,
 } from './codex-config-file.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('native notify is projected into the local preamble, never overrides user configuration', () => {
   const out = withCodexNotify('model = "x"\n[tui]\ntheme = "x"\n', '/scripts/codex-hook.mjs');
@@ -19,7 +20,7 @@ test('native notify is projected into the local preamble, never overrides user c
   assert.equal(withCodexNotify(user), user);
 });
 
-const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), `codex-cfg-${p}-`));
+const tmp = (p) => tempDir(`codex-cfg-${p}-`);
 
 test('per-home instruction path is projected locally without modifying the shared head', () => {
   const payload = 'model_instructions_file = "~/.codex/system-prompt/codex-base.md"\n';

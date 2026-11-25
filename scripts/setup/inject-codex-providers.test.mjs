@@ -1,14 +1,13 @@
 // Unit tests for scripts/setup/inject-codex-providers.mjs.
 //
 // Generates [model_providers.*] blocks for codex_config.toml from
-// `claude_env_settings.json`. Each test uses mkdtempSync for temp files; the
+// `claude_env_settings.json`. Each test uses tempDir() for temp files; the
 // real ~/.codex is never touched.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import {
   generateModelProvidersBlock,
   injectModelProviders,
@@ -21,9 +20,10 @@ import {
   CODEX_TOML_START_MARKER,
   CODEX_TOML_END_MARKER,
 } from './inject-codex-providers.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'inject-codex-'));
+  const dir = tempDir('inject-codex-');
   return {
     path: join(dir, 'codex_config.toml'),
     modelsPath: join(dir, 'models.json'),

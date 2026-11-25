@@ -14,6 +14,7 @@ import { alertText, telegramNotifier, ALERT_KINDS } from './notify.mjs';
 const locale = (name) => JSON.parse(fs.readFileSync(new URL(`./public/shared/locales/${name}`, import.meta.url), 'utf8'));
 const EN = locale('strings.json');
 const ZH = locale('strings.zh.json');
+import { tempDir } from '../shared/temp-dir.mjs';
 import { accountSessions, codeView, ago, applyFilters, attention, displayStatus, filterOptions, quotaAlerts, alertKey, quotaView, stats, tabs, taskView, taskLines, searchAll, sessionAccountLabel, hostsView, accountTag, timeTicks, stateAge, groupSessions, configView, verdictText, resetText, windowLabel, bestAccounts, emailName, amount, formatTime } from './public/view.mjs';
 
 const BOT_ID = 123456;
@@ -624,7 +625,7 @@ test('end to end: a dashboard edit reaches the shared settings through a host pu
   const fs2 = await import('fs'); const os2 = await import('os'); const path2 = await import('path');
   const { DashboardPush } = await import('../bridge/dashboard-push.mjs');
   const { applyConfigChange } = await import('../bridge/context.mjs');
-  const dir = fs2.mkdtempSync(path2.join(os2.tmpdir(), 'dash-e2e-'));
+  const dir = tempDir('dash-e2e-');
   try {
     const sharedPath = path2.join(dir, 's.json');
     fs2.writeFileSync(sharedPath, JSON.stringify({ bridge: { idleCloseMinutes: 30, allowedUserIds: [1] } }));

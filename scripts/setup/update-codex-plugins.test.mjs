@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { updateCodexPlugins, inspectProtectedPluginCaches } from './update-codex-plugins.mjs';
 import * as updater from './update-codex-plugins.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 test('repair CLI restores protected files without a marketplace or native executable', async t => {
   const f = fixture(t);
@@ -27,7 +28,7 @@ test('repair CLI restores protected files without a marketplace or native execut
 });
 
 function fixture(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codex-plugin-update-'))); // macOS tmpdir is a symlink; the code compares real paths
+  const root = fs.realpathSync(tempDir('codex-plugin-update-')); // macOS tmpdir is a symlink; the code compares real paths
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const codexHome = path.join(root, 'home');
   const marketplaceRoot = path.join(root, 'local marketplace');

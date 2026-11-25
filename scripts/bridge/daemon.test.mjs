@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { Bridge, cardDetail, cardWho, topicTitle } from './daemon.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const M = 60000, H = 60 * M;
 const isCard = m => m.replyMarkup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('status:');
@@ -81,7 +82,7 @@ test('one status card follows native state and authenticates refresh', async () 
 });
 
 test('status card reuses cached message on restart and status failure does not lose backlog', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-status-'));
+  const dir = tempDir('bridge-status-');
   try {
     const file = path.join(dir, 'topics.json');
     fs.writeFileSync(file, JSON.stringify({ '-100|codex:card': { topicId: 77,
@@ -145,7 +146,7 @@ test('projectInTitle drops the project name per group', () => {
 });
 
 test('cached active Topics are renamed without replacing their Topic identity', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-title-'));
+  const dir = tempDir('bridge-title-');
   try {
     const file = path.join(dir, 'topics.json');
     fs.writeFileSync(file, JSON.stringify({ '-100|codex:s': { topicId: 77, title: 'host-a/codex/main #4' } }));
@@ -159,7 +160,7 @@ test('cached active Topics are renamed without replacing their Topic identity', 
 
 test('attachments are session scoped and reject files outside the workspace', async () => {
   const r = make();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-upload-'));
+  const dir = tempDir('bridge-upload-');
   try {
     const file = path.join(dir, 'result.txt');
     fs.writeFileSync(file, 'safe fixture');
@@ -395,7 +396,7 @@ test('topics: <machine>/<agent>/<branch> in the project group, fallback otherwis
 
 for (const agent of HOSTS) {
   test(`${agent}: the whole lifecycle — up, mirror, idle close, reopen same Topic, end, delete`, async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+    const dir = tempDir('br-');
     const topicCacheFile = path.join(dir, 'topics.json');
     const cache = () => JSON.parse(fs.readFileSync(topicCacheFile, 'utf8'));
     try {
@@ -443,7 +444,7 @@ for (const agent of HOSTS) {
   });
 
   test(`${agent}: a restarted bridge re-attaches to the cached Topic; a closed one is reopened on resume`, async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+    const dir = tempDir('br-');
     const topicCacheFile = path.join(dir, 'topics.json');
     try {
       const a = make({ topicCacheFile });
@@ -594,7 +595,7 @@ test('an inject that fails is reported in the Topic', async () => {
 });
 
 test('a superseded session hands its Topic to the relaunch; the relaunch\'s own Topic is closed', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-supersede-'));
+  const dir = tempDir('bridge-supersede-');
   try {
     const file = path.join(dir, 'topics.json');
     const r = make({ topicCacheFile: file });
@@ -662,7 +663,7 @@ test('Telegram drift: a Topic closed by hand is reopened, a deleted one recreate
 });
 
 test('sweep: rights errors logged once per distinct message, entry kept; 0 = never; untouched without closedAt', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const dir = tempDir('br-');
   const topicCacheFile = path.join(dir, 'topics.json');
   try {
     fs.writeFileSync(topicCacheFile, JSON.stringify({
@@ -685,7 +686,7 @@ test('sweep: rights errors logged once per distinct message, entry kept; 0 = nev
 });
 
 test('a re-attach never binds to a Topic whose deletion is in flight', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const dir = tempDir('br-');
   const topicCacheFile = path.join(dir, 'topics.json');
   try {
     fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|claude:s1': { topicId: 55, title: 't', closedAt: 0 } }));
@@ -707,7 +708,7 @@ test('a re-attach never binds to a Topic whose deletion is in flight', async () 
 });
 
 test('failed in-flight deletion retains the old Topic retry without replacing the live binding', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const dir = tempDir('br-');
   try {
     const topicCacheFile = path.join(dir, 'topics.json');
     fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|claude:s1': { topicId: 55, title: 'old', closedAt: 0 } }));
@@ -727,7 +728,7 @@ test('failed in-flight deletion retains the old Topic retry without replacing th
 });
 
 test('a dismissed (non-main) session never gets a Topic; one it already had is closed quietly', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const dir = tempDir('br-');
   const topicCacheFile = path.join(dir, 'topics.json');
   try {
     fs.writeFileSync(topicCacheFile, JSON.stringify({ '-100|codex:sub': { topicId: 77, title: 'host-a/codex/main #3' } }));
@@ -772,7 +773,7 @@ test('a Claude session seat names its Topic and its dashboard entry', async () =
 });
 
 test('a failed Topic rename keeps the cached title and session, and is logged', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-title-'));
+  const dir = tempDir('bridge-title-');
   try {
     const file = path.join(dir, 'topics.json');
     fs.writeFileSync(file, JSON.stringify({ '-100|codex:s': { topicId: 77, title: 'host-a/codex/main #4' } }));
@@ -875,7 +876,7 @@ test('waiting-input reads Needs input', async () => {
 });
 
 test('sweep: an open Topic no registered session holds is closed as an orphan, then ages out', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-'));
+  const dir = tempDir('br-');
   const topicCacheFile = path.join(dir, 'topics.json');
   try {
     fs.writeFileSync(topicCacheFile, JSON.stringify({
@@ -984,7 +985,7 @@ test('the dashboard can open a Topic at its first unread post or its latest, and
 });
 
 test('a standing mention and the unread count survive a daemon restart', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-mention-'));
+  const dir = tempDir('bridge-mention-');
   try {
     const file = path.join(dir, 'topics.json');
     const a = make({ topicCacheFile: file });

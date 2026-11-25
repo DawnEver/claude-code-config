@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { HpcReader, budgetAlert, hpcConfig, hpcRows } from './hpc.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const NOW = Date.parse('2027-02-01T10:20:00Z');
 const REPORT = {
@@ -55,7 +56,7 @@ test('budget alert: a billed grant spending past its total before its window end
 });
 
 test('reader: reads on its cadence across restarts, raises a budget alert once per condition, says why a read failed', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hpc-'));
+  const dir = tempDir('hpc-');
   try {
     const file = path.join(dir, 'hpc.json');
     let now = NOW, runs = 0, out = JSON.stringify(REPORT);

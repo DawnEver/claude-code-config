@@ -6,6 +6,7 @@ import path from 'path';
 import { pathToFileURL } from 'url';
 import { agyTranscript } from './transcripts.mjs';
 import { UsageScanner, PARSERS, sources } from './scan.mjs';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const line = (e) => JSON.stringify(e);
 const SUB_ID = '11111111-2222-3333-4444-555555555555';
@@ -42,7 +43,7 @@ test('agyTranscript: one turn per USER_INPUT / SYSTEM_MESSAGE, subagent flag set
 });
 
 test('scanner attributes both main and subagent agy conversations to their workspace project via conversation_metadata.json and parent invoke_subagent', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agyu-'));
+  const root = tempDir('agyu-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const agyDir = path.join(root, '.gemini', 'antigravity-cli');
   const repoDir = path.join(root, 'consumer-a');

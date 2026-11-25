@@ -2,16 +2,17 @@
 // (PLAN-a-short-robust-toolchain P4): it mints or inherits LAB_SESSION; cc-config issues none.
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { venvFingerprint, ensureImportable, SESSION_MODULE, sessionSpawn } from './session-launcher.mjs';
+import { tempDir } from './temp-dir.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const python = join(tmpdir(), 'venv', 'python.exe');
+const python = join(tempDir('session-launcher-'), 'venv', 'python.exe');
 const has = () => ({ ok: true });
 
 test('the agent runs as `<own python> -m ai_lab.session <agent> ...`', () => {
@@ -29,7 +30,7 @@ test('planted: an environment without ai_lab.session still launches the agent, s
 });
 
 test('the default probe treats an interpreter that does not exist as no ai-lab', () => {
-  const run = sessionSpawn('claude', [], { python: join(tmpdir(), 'no-such-python.exe') });
+  const run = sessionSpawn('claude', [], { python: join(tempDir('session-launcher-'), 'no-such-python.exe') });
   assert.equal(run.command, 'claude');
   assert.match(run.notice, /cannot import/);
 });
@@ -74,7 +75,7 @@ test('an importable venv is not synced; a non-uv interpreter or a failed sync re
 });
 
 test('a launch whose lock and HEAD are unchanged since a verified one skips the import', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ai-lab-fp-'));
+  const dir = tempDir('ai-lab-fp-');
   mkdirSync(join(dir, '.git', 'refs', 'heads'), { recursive: true });
   writeFileSync(join(dir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   writeFileSync(join(dir, '.git', 'refs', 'heads', 'main'), 'a'.repeat(40));

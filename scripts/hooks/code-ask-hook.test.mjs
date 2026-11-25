@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { asksForCode, decide, finalMessage, readReceipts, PREFLIGHT_DOOR } from './code-ask-hook.js';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 const template = JSON.parse(fs.readFileSync(new URL('../../claude_settings.template.json', import.meta.url), 'utf8'));
 const ASK = 'Preflight is green. Please give me the TOTP code and I will open the wave.';
@@ -36,7 +37,7 @@ test('a message that asks nothing never reads the receipts', () => {
 });
 
 test('a checkout with no dev-lab door has nothing to preflight: the stop passes', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'code-ask-'));
+  const bare = tempDir('code-ask-');
   try {
     assert.deepEqual(readReceipts(bare), { status: null, said: '' });
     assert.equal(decide({ last_assistant_message: ASK, cwd: bare }), null);
@@ -50,7 +51,7 @@ test('a checkout with no dev-lab door has nothing to preflight: the stop passes'
 });
 
 test('the final message falls back to the transcript when the payload carries none', () => {
-  const file = path.join(os.tmpdir(), `code-ask-${process.pid}.jsonl`);
+  const file = path.join(tempDir('code-ask-'), 'receipts.jsonl');
   fs.writeFileSync(file, [JSON.stringify({ type: 'user', message: { content: 'go' } }),
     JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: ASK }] } })].join('\n'));
   try { assert.equal(finalMessage({ transcript_path: file }), ASK); } finally { fs.rmSync(file, { force: true }); }

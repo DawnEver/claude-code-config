@@ -5,12 +5,13 @@ import os from 'os';
 import path from 'path';
 import { healSyncLinks } from './check-links.js';
 import { isHardLinked, sameVolume } from './setup.js';
+import { tempDir } from '../shared/temp-dir.mjs';
 
 // 2026-10-18: OneDrive replaced the synced settings on download, which broke this host's hard
 // link; the host read a private copy for 11 days and every edit stayed on one side.
 const LINK = { src: 'claude_env_settings.json', dest: 'claude_env_settings.json', type: 'file', base: 'sync' };
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'heal-'));
+  const root = tempDir('heal-');
   const syncDir = path.join(root, 'sync'), dir = path.join(root, 'claude');
   fs.mkdirSync(syncDir); fs.mkdirSync(dir);
   const src = path.join(syncDir, LINK.src), dest = path.join(dir, LINK.dest);
@@ -53,7 +54,7 @@ test('an intact link is left alone', () => {
 });
 
 test('sameVolume on Windows is the drive, whatever dev a cloud-managed file reports', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vol-'));
+  const root = tempDir('vol-');
   try {
     fs.writeFileSync(path.join(root, 'a'), 'x');
     assert.equal(sameVolume(path.join(root, 'a'), root, 'win32'), true);
