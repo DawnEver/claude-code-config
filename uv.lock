@@ -4,8 +4,8 @@ requires-python = ">=3.13"
 
 [[package]]
 name = "ai-lab"
-version = "0.0.1.dev403+gf007f2635"
-source = { git = "https://github.com/DawnEver/ai-lab.git?branch=integrate%2Fmain#f007f26351434edddaeda518eb1f454c448e4f2e" }
+version = "0.0.1.dev418+g29dc4a7d0"
+source = { git = "https://github.com/DawnEver/ai-lab.git?branch=integrate%2Fmain#29dc4a7d02fcb113bb7caddb11d764f65ffb3a3b" }
 dependencies = [
     { name = "lab-commons", extra = ["paths"] },
 ]
@@ -288,11 +288,12 @@ wheels = [
 
 [[package]]
 name = "dev-lab"
-version = "0.0.1.dev4444+g95db976fa"
-source = { git = "https://github.com/DawnEver/dev-lab.git?branch=integrate%2Fmain#95db976fa3d4d98381eb2002cdad19a0d052fb31" }
+version = "0.0.1.dev4911+g762fc5219"
+source = { git = "https://github.com/DawnEver/dev-lab.git?branch=integrate%2Fmain#762fc5219fd9dee285f2a51e34962ea6612f511e" }
 dependencies = [
     { name = "cryptography" },
     { name = "lab-commons", extra = ["io", "paths", "structured", "units"] },
+    { name = "numpy" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
@@ -344,8 +345,8 @@ wheels = [
 
 [[package]]
 name = "lab-commons"
-version = "0.3.1.dev1661+g029cb6dc2"
-source = { git = "https://github.com/DawnEver/lab-commons.git#029cb6dc2486915dbb64110b27ecc48053129f30" }
+version = "0.3.1.dev1729+g3d9bc02f2"
+source = { git = "https://github.com/DawnEver/lab-commons.git#3d9bc02f27a916008f191b15f7a74f23381edb0b" }
 
 [package.optional-dependencies]
 io = [
