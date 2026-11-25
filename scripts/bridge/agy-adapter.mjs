@@ -557,8 +557,8 @@ export async function forwardAgyHook(event, input, opts = {}) {
   const isolated = Boolean(call) || (opts.runtimeFile !== undefined && opts.runtimeFile !== RUNTIME_FILE);
   const appDir = opts.appDir !== undefined ? opts.appDir : (isolated ? null : AGY_APP_DIR);
   const ancestry = opts.ancestry !== undefined ? opts.ancestry : (isolated ? false : null);
-  // Isolated reads none of this machine's state, the caller's session env included: a hook run from inside a
-  // Claude Code or Codex session would otherwise read as a nested agent and forward nothing.
+  // An isolated call (tests, injected `call`) never reads the host's env: a hook test run from inside a
+  // Claude or Codex session would otherwise be classed as a nested agy and fail open.
   const env = opts.env !== undefined ? opts.env : (isolated ? {} : process.env);
   try {
     if (!AGY_EVENTS.includes(event) || !input?.conversationId || !fs.existsSync(runtimeFile)) return {};

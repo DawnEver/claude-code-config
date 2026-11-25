@@ -147,6 +147,8 @@ test('forwardAgyHook contract: { injectSteps?, stopContinue?, decision?, reason?
   fs.writeFileSync(rt, '{}');
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => ({ ok: true, deliver: [{ text: 'hi', user: 'ann' }] }) }),
     { stopContinue: 'Message from Telegram (ann):\nhi' });
+  assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, env: { CLAUDE_CODE_SESSION_ID: 'x' }, call: async () => ({ ok: true, deliver: [{ text: 'hi', user: 'ann' }] }) }),
+    {}, 'an explicit nested-session env still fails open');
   assert.deepEqual(await forwardAgyHook('PreToolUse', { conversationId: 'c', toolCall: { name: 'ask_question' } }, { runtimeFile: rt, call: async () => ({ ok: true, decision: 'deny', reason: 'User answered via Telegram:\nQ -> A' }) }),
     { decision: 'deny', reason: 'User answered via Telegram:\nQ -> A' });
   assert.deepEqual(await forwardAgyHook('PreToolUse', { conversationId: 'c', toolCall: { name: 'run_command' } }, { runtimeFile: rt, call: async () => ({ ok: true, decision: 'allow' }) }),
@@ -159,11 +161,6 @@ test('forwardAgyHook contract: { injectSteps?, stopContinue?, decision?, reason?
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => null }), {});
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => ({ error: { code: 401 } }) }), {});
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => { throw new Error('x'); } }), {});
-  // Isolated ignores the ambient session env (these tests run inside agent sessions); a given env still counts.
-  const deliver = async () => ({ ok: true, deliver: [{ text: 'hi' }] });
-  for (const nested of [{ CLAUDE_CODE_SESSION_ID: 's' }, { CLAUDE_PID: '1' }, { CODEX_THREAD_ID: 't' }]) {
-    assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: deliver, env: nested }), {}, JSON.stringify(nested));
-  }
 });
 
 test('isAgyMainSession: keeps only top-level interactive main sessions and syncs conversation Title', async () => {
