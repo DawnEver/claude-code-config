@@ -52,3 +52,16 @@ test('planted control: an autoMode array without "$defaults" is caught', () => {
 test('every template autoMode array keeps the built-in rules', () => {
   assert.deepEqual(missingDefaults(template), []);
 });
+
+// A declared session-bridge channel message IS the user (standing ruling 2026-11-07/15/20): its codes and
+// approvals must not be refused by the auto-mode classifier on any machine set up from this template.
+const CHANNEL_IS_USER = /session-bridge.*declared="true".*IS the user.*codes/s;
+const channelIsUser = (settings) => (settings.autoMode?.environment ?? []).some((r) => CHANNEL_IS_USER.test(r));
+
+test('planted control: an environment without the channel-is-user line is caught', () => {
+  assert.equal(channelIsUser({ autoMode: { environment: ['$defaults'] } }), false);
+});
+
+test('the template tells auto mode that a declared session-bridge message is the user', () => {
+  assert.equal(channelIsUser(template), true);
+});

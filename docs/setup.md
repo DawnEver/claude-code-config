@@ -101,7 +101,7 @@ never from a repo's `.claude/settings*.json`. Arrays from these scopes concatena
 
 | Layer | Where | Holds |
 | --- | --- | --- |
-| public mechanism | `scripts/runtime/repo-automode.mjs`, called by `buildClaudeInvocation` for every `ccc` / `ccds` launch | nothing personal; the template's `autoMode` is absent, i.e. the built-in defaults |
+| public mechanism | `scripts/runtime/repo-automode.mjs`, called by `buildClaudeInvocation` for every `ccc` / `ccds` launch | nothing personal; the template's `autoMode` is the built-in defaults plus one generic `environment` line: a session-bridge channel message marked `declared="true"` is the user, its codes carry the user's authority |
 | personal trust | `~/.claude/trusted-origins` (sync payload, optional) | one origin glob per line, `#` comments; `*` stays inside a path segment, `**` crosses: `git.example.com/my-org/*` |
 | repo declaration | `<repo>/.claude/automode.json` | `{ "autoMode": { "allow": [...], "environment": [...] } }` — that key only |
 
