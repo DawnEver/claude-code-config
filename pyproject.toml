@@ -16,8 +16,8 @@ default-groups = ["doors", "dev"]
 [dependency-groups]
 # The doors the launchers, the bridge and setup run at runtime (scripts/shared/own-python.mjs).
 doors = ["ai-lab", "lab-commons[paths]", "dev-lab"]
-# The family development system (part producer, hooks, forge door).
-dev = ["dev-lab"]
+# The family development system (part producer, hooks, forge door) and its test kit (the JS engine, typos).
+dev = ["dev-lab[test]"]
 
 [tool.uv.sources]
 # Every family member floats on integrate/main; the lock is the pin.
