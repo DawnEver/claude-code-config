@@ -38,7 +38,7 @@ export function trackItem(board, item, at) {
     // Its kind by what runs it: a PowerShell (as Codex runs a command on Windows), else a shell. A
     // unified-exec session is a terminal kept open: it runs in the background of the turn.
     const kind = POWERSHELL.test(item.command ?? '') ? 'powershell' : 'shell';
-    // A PowerShell is labelled by the script it runs, not by the path to powershell.exe.
+    // A PowerShell is labeled by the script it runs, not by the path to powershell.exe.
     const body = kind === 'powershell' ? POWERSHELL_BODY.exec(item.command) : null;
     board.start(item.id, { kind, label: body ? body[1] ?? body[2] ?? body[3] : item.command, background: item.source === 'unifiedExecStartup',
       at: item.status === 'inProgress' ? at : at - (item.durationMs ?? 0) });

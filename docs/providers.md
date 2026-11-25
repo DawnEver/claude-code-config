@@ -30,7 +30,7 @@ cache in Node and never runs Python for it.
 Every launch checks the cache in Node and REFUSES to launch on any of these, naming the
 remedy (rerun setup) -- there is no silent regeneration:
 
-- absent, unparseable, or a `schema_version` other than 1;
+- absent, unparsable, or a `schema_version` other than 1;
 - (a) `source_sha256` differs from a fresh sha256 over the recorded input files (the packaged
   `providers.toml`, then the user `providers.toml`; an absent file adds no bytes);
 - (b) the ai-lab version in the `ai_lab-<v>.dist-info` beside the interpreter that generated it

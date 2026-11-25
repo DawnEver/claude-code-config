@@ -56,7 +56,7 @@ export function withCodexNotify(head, script = fileURLToPath(new URL('../hooks/c
  * The pre-split `~/.codex/config.toml` was a symlink into the shared tree, so its
  * `[projects.*]` list is the whole fleet's — 30 entries across two usernames and three
  * drive letters. Importing all of them would spread dead paths; discarding all of them
- * (the previous behaviour) threw away this host's own trust decisions. Keep the ones that
+ * (the previous behavior) threw away this host's own trust decisions. Keep the ones that
  * resolve here, drop the rest.
  */
 export function localSectionsForThisHost(text) {

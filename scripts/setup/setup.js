@@ -53,7 +53,7 @@ export const CLAUDE_LINKS = [
   { src: 'claude_settings.json', dest: 'settings.json', type: 'file', base: 'sync', seat: true },
   // claude-hud >= 0.8.0 refuses to load a symlinked config.json (its readConfigFile
   // lstat-checks and ignores non-regular files), so this one must be a HARD link.
-  // The source is gitignored and per-machine; ensureClaudeHudConfig() materialises it
+  // The source is gitignored and per-machine; ensureClaudeHudConfig() materializes it
   // from config.template.json before this pass, and check-links does the same at
   // SessionStart. Tracking it made `git checkout` the writer that broke the link.
   { src: path.join('claude_plugins', 'claude-hud', 'config.json'), dest: path.join('plugins', 'claude-hud', 'config.json'), type: 'file', hardlink: true },
@@ -152,7 +152,7 @@ export function getAgyLinks(baseSourceDir = sourceDir) {
 // claude-hud's config is machine-tuned (lineLayout, language, maxWidth) and is hard-linked
 // into ~/.claude. It is therefore NOT tracked: while it was, `git checkout`/`pull` was the
 // writer that replaced the inode and broke the link §10 describes. The tracked file is
-// config.template.json; materialise the real one from it when absent.
+// config.template.json; materialize the real one from it when absent.
 // It also repairs a 256-color index written as a string ("208"): claude-hud accepts only the
 // number and rejects the whole config otherwise. The template once shipped one, so every host
 // copied it; the write is in place (same inode) so the ~/.claude hard link stays intact.
@@ -212,7 +212,7 @@ function filesMatch(a, b) {
 // same volume (dev) and same file record (ino).
 // Hard links cannot cross volumes. Knowing that up front is what lets a hardlink-required
 // entry fall back to a copy instead of failing (see createLink), and lets an up-to-date copy
-// be recognised as satisfied rather than re-reported as unlinked on every run.
+// be recognized as satisfied rather than re-reported as unlinked on every run.
 // On Windows the volume is the drive: `dev` is not reliable there — a cloud-managed file
 // (a cloud-files reparse point) reports another dev than its folder's even when it is
 // hard-linked to a file beside it (2026-10-18), which made a detached payload look like a
@@ -571,7 +571,7 @@ export function setup(options = {}) {
   // All-or-nothing. Seeding is per-file, so a per-directory "is anything here?" check let a
   // PARTIALLY downloaded payload seed templates for the files that had not arrived yet —
   // which the cloud client then reconciles against the real incoming file, producing
-  // conflict copies. Only seed when the payload is empty AND explicitly initialised, or
+  // conflict copies. Only seed when the payload is empty AND explicitly initialized, or
   // when there is no sync dir at all.
   const seedTemplates = !usingSyncDir
     || (present.length === 0 && initSyncDir)
@@ -674,8 +674,8 @@ export function setup(options = {}) {
     modelsPath: path.join(sourceDir, 'models.json'),
   });
 
-  if (artifacts.settings === 'unparseable' || artifacts.settings === 'missing') {
-    console.log(`ERR   claude_env_settings.json - ${artifacts.settings === 'unparseable'
+  if (artifacts.settings === 'unparsable' || artifacts.settings === 'missing') {
+    console.log(`ERR   claude_env_settings.json - ${artifacts.settings === 'unparsable'
       ? `could not parse JSON: ${artifacts.error.message}`
       : 'not found; skipping codex artifact generation'}`);
     counters.errors++;
@@ -724,7 +724,7 @@ export function setup(options = {}) {
     counters.errors++;
   }
 
-  // Materialise the per-machine claude-hud config before the link pass: it is gitignored,
+  // Materialize the per-machine claude-hud config before the link pass: it is gitignored,
   // so on a fresh clone the link source does not exist yet.
   if (ensureClaudeHudConfig(sourceDir)) {
     console.log('COPY  claude-hud/config.template.json - claude-hud/config.json');

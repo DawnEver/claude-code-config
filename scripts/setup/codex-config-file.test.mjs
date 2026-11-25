@@ -153,7 +153,7 @@ test('the generated provider block lands between the markers', () => {
   assert.match(out, /setup-managed[\s\S]*\[model_providers\.deepseek\][\s\S]*setup-managed/);
 });
 
-test('an unparseable payload is REFUSED, not rewritten', () => {
+test('an unparsable payload is REFUSED, not rewritten', () => {
   // A multi-line string containing a header-looking line: splitting it would emit
   // unterminated TOML over the cloud payload.
   const payload = 'notes = """\n[projects.evil]\n';   // deliberately unbalanced

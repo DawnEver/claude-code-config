@@ -283,7 +283,7 @@ test('linkEntry: --replace keeps a secret-free drifted file byte for byte', () =
 
 // ── the per-machine claude-hud config ────────────────────────────────────────
 
-test('ensureClaudeHudConfig: materialises the real config from the tracked template', async () => {
+test('ensureClaudeHudConfig: materializes the real config from the tracked template', async () => {
   const { ensureClaudeHudConfig } = await import('./setup.js');
   const repo = tmp('repo');
   const dir = path.join(repo, 'claude_plugins', 'claude-hud');

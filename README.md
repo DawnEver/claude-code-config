@@ -8,7 +8,7 @@ zero-config default).
 > corrupts the index and overwrites the reflog.
 
 MIT-licensed, but built for personal use and rapid iteration: backward compatibility is not a
-concern. Third-party tools and separately cloned repos keep their own licences.
+concern. Third-party tools and separately cloned repos keep their own licenses.
 
 ## Quick start
 

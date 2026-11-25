@@ -16,7 +16,7 @@ export const PLATFORMS = [...AGENTS, ...new Set(MODEL_PLATFORMS.map(([, p]) => p
 export const platformOf = (agent, model) => MODEL_PLATFORMS.find(([re]) => re.test(model ?? ''))?.[1] ?? agent;
 const PLATFORM_NAMES = { deepseek: 'DeepSeek' };
 export const platformName = (p) => PLATFORM_NAMES[p] ?? agentName(p);
-/** Each agent's Telegram Topic icon colour (createForumTopic icon_color: one of the six Telegram allows). */
+/** Each agent's Telegram Topic icon color (createForumTopic icon_color: one of the six Telegram allows). */
 export const TOPIC_ICON_COLORS = { claude: 16478047, codex: 9367192, agy: 7322096 };
 
 /**

@@ -67,7 +67,7 @@ describe('findOrphanedLinks', () => {
     // dest comes from path.join, so on Windows it is 'skills\\git-tidy' while the scanner
     // builds rel as 'skills/git-tidy'. Comparing the raw forms left containerPrefixes
     // EMPTY, so ~/.codex/skills/ was never scanned and leftovers there needed manual
-    // cleanup. This test fails on Windows before the normalisation.
+    // cleanup. This test fails on Windows before the normalization.
     const nested = path.join(baseDir, 'skills');
     fs.mkdirSync(nested, { recursive: true });
     fs.mkdirSync(path.join(sourceDir, 'skills', 'git-tidy'), { recursive: true });
@@ -364,4 +364,3 @@ describe('locateBinDir', () => {
     assert.equal(locateBinDir('nope', run), null);
   });
 });
-

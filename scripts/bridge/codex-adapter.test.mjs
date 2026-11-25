@@ -19,7 +19,7 @@ function fakeAppServer({ loaded = ['t1'], threads = {}, beforeReply } = {}) {
       if (m.id === undefined) return;
       if (beforeReply?.(m, onMsg)) return;
       const spec = threads[m.params?.threadId];
-      // A fresh thread: resume AND read both fail until the rollout exists (real Codex behaviour).
+      // A fresh thread: resume AND read both fail until the rollout exists (real Codex behavior).
       const resumeFails = m.method === 'thread/resume' && spec?.error && (spec.failTimes ?? Infinity) > 0;
       const readFails = m.method === 'thread/read' && spec?.readFails && (spec.failTimes ?? Infinity) > 0;
       const fail = (resumeFails || readFails) && spec.error;
@@ -245,7 +245,7 @@ test('deltas aggregate; final message is emitted on turn/completed; progress per
   a.on('progress', (p) => progress.push(p.text));
   srv.push('turn/started', { threadId: 't1', turn: { id: 'turnA' } });
   assert.match(a.status('t1'), /in progress/);
-  srv.push('item/agentMessage/delta', { threadId: 't1', turnId: 'turnA', itemId: 'i1', delta: 'Hel' });
+  srv.push('item/agentMessage/delta', { threadId: 't1', turnId: 'turnA', itemId: 'i1', delta: 'Hel' }); // spelling-ignore-line: a streamed fragment of Hello
   srv.push('item/agentMessage/delta', { threadId: 't1', turnId: 'turnA', itemId: 'i1', delta: 'lo' });
   srv.push('item/completed', { threadId: 't1', turnId: 'turnA', item: { type: 'commandExecution', id: 'c', command: 'npm test', exitCode: 0 } });
   srv.push('turn/completed', { threadId: 't1', turn: { id: 'turnA', status: 'completed' } });
@@ -688,7 +688,7 @@ test('trackItem: a command runs from its inProgress item to its end; each subage
   assert.deepEqual(b.list(9000).map((t) => t.id), ['c3'], 'the subagent ended as agentsStates says');
 });
 
-test('trackItem: a command run by PowerShell is a PowerShell, labelled by its script; an exec session kept open is in the background', async () => {
+test('trackItem: a command run by PowerShell is a PowerShell, labeled by its script; an exec session kept open is in the background', async () => {
   const { ActivityBoard } = await import('./activity-board.mjs');
   const b = new ActivityBoard();
   trackItem(b, { type: 'commandExecution', id: 'p1', status: 'inProgress',
@@ -731,7 +731,7 @@ test('waiting: a pending approval or question is what the thread waits for', asy
   assert.equal(a.statusSnapshot('t1').waiting, 'Which branch?');
 });
 
-test('CodexHomes: one adapter per Codex home, sessions labelled with their home, calls routed to the owning adapter', async () => {
+test('CodexHomes: one adapter per Codex home, sessions labeled with their home, calls routed to the owning adapter', async () => {
   const made = [];
   const create = (home, refPrefix) => {
     const a = Object.assign(new EventEmitter(), { home, refPrefix, threads: new Map(), quota: { at: 1 }, account: { email: `${home}@x` }, stopped: false,

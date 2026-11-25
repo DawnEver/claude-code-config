@@ -47,7 +47,7 @@ test('isMain is true when the entry path goes through a link', () => {
     const out = execFileSync(process.execPath, [path.join(link, 'probe.mjs')], {
       encoding: 'utf8', windowsHide: true,
     });
-    assert.equal(out.trim(), 'true', 'a module invoked via a link must still recognise itself');
+    assert.equal(out.trim(), 'true', 'a module invoked via a link must still recognize itself');
   });
 });
 
@@ -103,7 +103,7 @@ test('sync-hook still runs when reached through a linked path', () => {
       ahead = Number(execFileSync('git', ['rev-list', '--count', 'HEAD', '--not', '--remotes'], {
         cwd: REPO, encoding: 'utf8', windowsHide: true,
       }).trim());
-    } 
+    }
     if (dirty || ahead > 0 || noUpstream) assert.match(raw, /\[cc-config\]/, 'hook body must execute via a linked path');
     else assert.equal(raw, '');
   } finally {

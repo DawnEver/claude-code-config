@@ -345,13 +345,13 @@ test('regenerate: missing settings returns missing and writes nothing', () => {
   assert.equal(readFileSync(path, 'utf8'), cfgBefore); // last-known-good config preserved
 });
 
-test('regenerate: unparseable settings returns unparseable with an error and writes nothing', () => {
+test('regenerate: unparsable settings returns unparsable with an error and writes nothing', () => {
   const { path, modelsPath, settingsPath } = fixture();
   writeFileSync(settingsPath, '{ this is not json');
   writeFileSync(path, 'model = "gpt-5.6-sol"\n');
   const cfgBefore = readFileSync(path, 'utf8');
   const r = regenerateCodexArtifacts({ settingsPath, codexConfigPath: path, modelsPath, readCache });
-  assert.equal(r.settings, 'unparseable');
+  assert.equal(r.settings, 'unparsable');
   assert.ok(r.error instanceof Error);
   assert.equal(existsSync(modelsPath), false);
   assert.equal(readFileSync(path, 'utf8'), cfgBefore);

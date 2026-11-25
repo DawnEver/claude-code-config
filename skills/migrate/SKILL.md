@@ -28,7 +28,7 @@ This does the following, all idempotent (safe to re-run, no-op once current):
    into this repo but no longer correspond to an entry in `CLAUDE_LINKS` /
    `CODEX_LINKS` (e.g. a renamed/removed skill or config), then re-runs the
    normal link-creation pass for the current layout.
-2. **Orphaned CLI aliases** — removes wrapper files this repo wrote (recognised by their
+2. **Orphaned CLI aliases** — removes wrapper files this repo wrote (recognized by their
    marker comment) whose name is no longer in `WRAPPER_NAMES` (scripts/setup/install-cli-wrappers.js). This is what stops a
    retired provider leaving `<name>.cmd` behind after its `<name>` is gone. It sweeps the
    claude bin dir, so on a Codex-only host it is a no-op.

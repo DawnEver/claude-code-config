@@ -40,7 +40,7 @@ test('resolveSyncDir: defaults to the repo root when nothing is configured', () 
   const home = fakeHome();
   const repoRoot = tmp('repo');
   // This is the zero-config path for users with no cloud storage: the resolved
-  // layout must be byte-identical to the pre-syncDir behaviour.
+  // layout must be byte-identical to the pre-syncDir behavior.
   assert.equal(resolveSyncDir({ repoRoot, env: {}, home }), repoRoot);
 });
 

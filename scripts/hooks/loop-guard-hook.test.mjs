@@ -94,7 +94,7 @@ test('a warn threshold above its deny threshold is clamped so it still fires', (
   assert.equal(cfg.warnAt, 2);
 });
 
-test('exempt list is extensible and disable is honoured', () => {
+test('exempt list is extensible and disable is honored', () => {
   const cfg = loadConfig({ HARNESS_LOOP_GUARD_EXEMPT: 'Grep, Glob' });
   assert.ok(cfg.exempt.has('Grep') && cfg.exempt.has('Glob') && cfg.exempt.has('Monitor'));
   assert.equal(loadConfig({ HARNESS_LOOP_GUARD_DISABLE: '1' }).disable, true);

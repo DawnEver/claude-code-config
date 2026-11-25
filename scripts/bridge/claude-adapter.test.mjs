@@ -446,7 +446,7 @@ test('hook activity drives the state machine; only the channel closing takes the
   } finally { await r.a.close(); }
 });
 
-const ASK = [{ question: 'Which colour?', header: 'Colour', multiSelect: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }];
+const ASK = [{ question: 'Which color?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }];
 const ask = async (r, params) => { const s = await r.open(); const res = r.rpc(s, 'question', params); return { s, res }; };
 
 // A question never holds its hook (every hook < 5 s, user ruling D24): in a Telegram-started
@@ -468,14 +468,14 @@ test('a question in a Telegram-started turn is posted there at once; its answer 
     assert.ok(Date.now() - t0 < 1000);
     s.destroy();
     assert.equal(questions.length, 1);
-    assert.deepEqual(questions[0].questions, [{ id: '0', header: 'Colour', question: 'Which colour?', isOther: true, isSecret: false, multiSelect: false,
+    assert.deepEqual(questions[0].questions, [{ id: '0', header: 'Color', question: 'Which color?', isOther: true, isSecret: false, multiSelect: false,
       options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }] }]);
     assert.equal(questions[0].answerable, true);
     await new Promise((res2) => setTimeout(res2, 30));
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 's'), true, 'the hook closing its socket does not withdraw a posted question');
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Blue'] }, 'other'), false, 'wrong session');
     assert.equal(r.a.answerQuestion(questions[0].ref, { 0: ['Red'] }, 's'), false, 'answered once');
-    await until(() => inbound.some((m) => /Which colour\? -> Blue/.test(m.text)));
+    await until(() => inbound.some((m) => /Which color\? -> Blue/.test(m.text)));
     assert.equal(r.a.statusSnapshot('s').state, 'running', 'the answer starts the next turn');
   } finally { await r.a.close(); }
 });

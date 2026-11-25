@@ -171,7 +171,7 @@ async function setMenu() {
   };
   await call('setChatMenuButton', menuRequest(g, token));
   const now = await call('getChatMenuButton');
-  // Telegram normalises the URL (a trailing slash), so compare what the URLs mean.
+  // Telegram normalizes the URL (a trailing slash), so compare what the URLs mean.
   if (!now?.web_app?.url || new URL(now.web_app.url).href !== new URL(g.url).href) throw new Error(`menu button reads back ${now?.web_app?.url ?? now?.type}, not ${g.url}`);
   console.log(`menu button "${now.text}" -> ${now.web_app.url} (read back)`);
 }

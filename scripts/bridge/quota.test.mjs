@@ -47,7 +47,7 @@ test('project: the current speed, else the average, to the reset; one forecast',
   assert.equal(project({ ...v, used: 100 }, { now: NOW, fresh: true }), null, 'exhausted says so itself');
 });
 
-test('quota windows are labelled by their real length; distinct short windows do not collide', () => {
+test('quota windows are labeled by their real length; distinct short windows do not collide', () => {
   const c = claudeQuota({ at: NOW, five_hour: { used_percentage: 50, resets_at: (NOW + 2 * H) / 1000 },
     seven_day: { used_percentage: 10, resets_at: (NOW + 100 * H) / 1000 } });
   assert.deepEqual(Object.keys(c.windows), ['5h', '7d']);
@@ -188,7 +188,7 @@ test('accountFor: a Claude session by its config dir, a Codex session by the Cod
   assert.equal(accountFor({ agent: 'codex' }, accounts), 'codex:c@example.com');
   assert.equal(accountFor({ agent: 'codex', seat: 'work' }, accounts), 'codex:w@example.com', "a session in another Codex home spends that home's account");
   // An API-key session (ccds, cods) spends its platform's balance, never the subscription beside it.
-  // The configured entry is the account, read here or not; the unlabelled one is the launcher's key.
+  // The configured entry is the account, read here or not; the unlabeled one is the launcher's key.
   const entries = [{ provider: 'deepseek', label: 'lab' }, { provider: 'deepseek', label: null }];
   assert.equal(accountFor({ agent: 'claude', seat: null, provider: 'deepseek' }, accounts, entries), 'api:deepseek:default');
   assert.equal(accountFor({ agent: 'codex', provider: 'deepseek' }, accounts, entries), 'api:deepseek:default');

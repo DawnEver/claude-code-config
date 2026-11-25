@@ -13,7 +13,7 @@
 //                              Not an env var, so it also works for GUI-launched apps
 //                              and non-login shells.
 //   3. the repo root         — zero-config default. No cloud storage required; the
-//                              layout collapses to exactly the pre-syncDir behaviour.
+//                              layout collapses to exactly the pre-syncDir behavior.
 //
 // There is deliberately NO OneDrive auto-detection. Not every user of this repo has
 // OneDrive (or wants their config in it), several accounts may be mounted at once, and

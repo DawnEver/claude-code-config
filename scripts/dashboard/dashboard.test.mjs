@@ -228,7 +228,7 @@ test('style: tokens only in :root, every class in use, inline styles only for ge
   const body = css.replace(/:root\s*\{[^}]*\}/, '');
   for (const [, prop, value] of body.matchAll(/([a-z-]+)\s*:\s*([^;{}]+)/g)) {
     const at = `${prop}: ${value.trim()}`;
-    assert.doesNotMatch(value, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\b(white|black)\b/i, `colour literal outside :root — ${at}`);
+    assert.doesNotMatch(value, /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\b(white|black)\b/i, `color literal outside :root — ${at}`);
     if (/^(font|font-size|border-radius|gap|row-gap|column-gap)$|^(margin|padding)/.test(prop)) assert.doesNotMatch(value, /\d(px|rem|em)\b/, `size literal outside :root — ${at}`);
   }
   const used = new Set(code.match(/[\w-]+/g));
@@ -1074,7 +1074,7 @@ test('account: a session names the account it spends, as the Quota tab names it,
   const byKey = (k) => m.accounts.find((q) => q.key === k);
   const [claude, codex] = m.hosts[0].sessions;
   assert.equal(sessionAccountLabel(claude, byKey(claude.account)), 'team-a', 'a Claude seat by its label');
-  assert.equal(sessionAccountLabel(codex, byKey(codex.account)), 'bob', 'an unlabelled account by its email name');
+  assert.equal(sessionAccountLabel(codex, byKey(codex.account)), 'bob', 'an unlabeled account by its email name');
   assert.equal(sessionAccountLabel({ agent: 'claude', seat: 'team-b' }, undefined), 'team-b', 'no reading: the seat');
   assert.equal(sessionAccountLabel({ agent: 'codex', provider: 'deepseek' }, undefined), 'DeepSeek', 'an API platform');
   assert.equal(sessionAccountLabel({ agent: 'claude' }, undefined), null);

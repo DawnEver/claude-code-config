@@ -37,7 +37,7 @@ export function findOrphanedLinks({ baseDir, links, sourceDir }) {
   // dests never matched: containerPrefixes came out EMPTY (split('/') on 'plugins\x' yields
   // one element), so the scan never recursed into plugins/ or skills/ and leftovers there
   // had to be cleaned by hand. Worse, had it recursed, goodDests.has(rel) would have missed
-  // every healthy nested link and deleted it as an orphan. Normalise both sides to '/'.
+  // every healthy nested link and deleted it as an orphan. Normalize both sides to '/'.
   const norm = p => p.split(path.sep).join('/');
   const goodDests = new Set(links.map(l => norm(l.dest)));
   // All proper prefixes of every dest (e.g. 'plugins', 'plugins/claude-hud' for

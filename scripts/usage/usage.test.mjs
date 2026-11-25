@@ -77,7 +77,7 @@ const codexMeta = { timestamp: iso(0), type: 'session_meta', payload: { id: 'C1'
   git: { branch: 'main', repository_url: 'git@github.com:o/repo.git' } } };
 const usage = (input, cached, out, reasoning) => ({ input_tokens: input, cached_input_tokens: cached, output_tokens: out, reasoning_output_tokens: reasoning, total_tokens: input + out });
 
-test('codex rollout: per-response records by turn; input normalised to its uncached part', () => {
+test('codex rollout: per-response records by turn; input normalized to its uncached part', () => {
   const r = codexTranscript(jsonl([
     codexMeta,
     { timestamp: iso(10), type: 'event_msg', payload: { type: 'task_started', turn_id: 'T1' } },

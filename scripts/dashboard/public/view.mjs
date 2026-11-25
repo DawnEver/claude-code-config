@@ -298,8 +298,8 @@ export const quotaAlerts = (snapshot, now = Date.now(), read = [], index = accou
 
 /**
  * Time ticks for a window's trend, whose axis runs from the window's opening to its reset, in
- * the reader's local time: a short window (≤ 1 day) ticks at every full hour labelled by the
- * hour of the day, a long one at every local midnight labelled by weekday and date. `pos` is
+ * the reader's local time: a short window (≤ 1 day) ticks at every full hour labeled by the
+ * hour of the day, a long one at every local midnight labeled by weekday and date. `pos` is
  * 0..1 along the axis; `now` is where the present sits on it (null once past the reset).
  */
 export function timeTicks(w, now = Date.now(), lang = 'en') {

@@ -67,7 +67,7 @@ CREATE TABLE resources (
   mem_sum REAL NOT NULL,        -- memory used, bytes, summed
   mem_max REAL NOT NULL,
   mem_total REAL NOT NULL,
-  gpu_sum REAL,                 -- utilisation of the busiest GPU, %, summed; NULL without a GPU
+  gpu_sum REAL,                 -- utilization of the busiest GPU, %, summed; NULL without a GPU
   gpu_max REAL,
   gpu_mem_max REAL,             -- GPU memory used, bytes
   PRIMARY KEY (machine, hour)

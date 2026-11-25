@@ -317,7 +317,7 @@ Claude adapter's 127.0.0.1 IPC (same `runtime.json` token); the daemon routes it
 which emits the standard events. A call fails open and silent within ~1.2 s when no daemon runs.
 
 - **Topic**: on the first hook of a conversation (`conversationId`), cwd from `workspacePaths[0]`.
-  Its icon colour is Antigravity's (`TOPIC_ICON_COLORS` in `vocab.mjs`; Claude and Codex have theirs).
+  Its icon color is Antigravity's (`TOPIC_ICON_COLORS` in `vocab.mjs`; Claude and Codex have theirs).
 - **Prompt**: PreInvocation with `invocationNum` 1, text from `lastUserInput` without agy's
   `<USER_REQUEST>` envelope. A Stop continuation (`continuationActive`) is not re-posted.
 - **Tasks**: `run_command` (shell) and `invoke_subagent` (agent) from PreToolUse to PostToolUse;
@@ -411,7 +411,7 @@ In a session's Topic (allowlisted senders only):
 
 Telegram lets only admins post in a closed Topic: as an admin your message reaches the bot
 and reopens the Topic; a non-admin member cannot post there. Long text is split at 4096
-chars; 429s honour `retry_after`.
+chars; 429s honor `retry_after`.
 
 ## Approvals
 

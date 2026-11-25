@@ -191,7 +191,7 @@ function readBadge(s, u, redraw) {
 // Sessions whose full task list is open (this page's life): opened by the tasks icon, never the row.
 const tasksOpen = new Set();
 
-// One line icon per task kind (Config › Layout › Task tags: Icons), drawn in the kind's colour.
+// One line icon per task kind (Config › Layout › Task tags: Icons), drawn in the kind's color.
 const TASK_ICONS = {
   shell: '<path d="M4 7l5 5-5 5M12 17h8"/>',
   powershell: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9l4 3-4 3M12 15h5"/>',
@@ -200,7 +200,7 @@ const TASK_ICONS = {
 };
 
 /**
- * One running task, three columns: what kind (a tag in the kind's colour — a word or an icon, as
+ * One running task, three columns: what kind (a tag in the kind's color — a word or an icon, as
  * this device chose; filled in the foreground, outlined in the background), what it does, how
  * long it has run. Full: the label wraps instead of being cut.
  */
@@ -355,7 +355,7 @@ function accountDetail(q, hostId) {
     const sub = el('div', 'win-sub');
     const forecast = w.forecast && (w.forecast.short ? tr('quota.runsOutIn', { eta: countdown(w.forecast.eta) })
       : tr('quota.atReset', { n: amount(w.forecast.atReset, pref.unit), unit: tr(`quota.${pref.unit}`) }));
-    // The forecast is read alongside the window's use and reset: the same weight, coloured when it runs out.
+    // The forecast is read alongside the window's use and reset: the same weight, colored when it runs out.
     sub.append(trend(w), el('span', `forecast${w.forecast?.short ? ' hot' : ''}`, w.renewed ? tr('quota.resetUnknown') : forecast || ''));
     box.append(row, sub);
   }
@@ -512,7 +512,7 @@ function logo(brand) {
   return svg;
 }
 
-/** An account as a compact tag: who and how much is left, coloured by its verdict. */
+/** An account as a compact tag: who and how much is left, colored by its verdict. */
 function acctTag(q, withAgent = false) {
   const left = q.left === null ? '' : ` ${windowLabel(q.bind, q.stale, pref.unit, lang).text}`;
   const tag = el('span', `acct v-${q.verdict}`, `${withAgent && q.agent ? `${agentName(q.agent)} ` : ''}${accountTag(q)}${left}`);
@@ -582,7 +582,7 @@ function foldRow(id, opts) {
   if (title) row.title = title;
   const top = el('div', 'qrow-top');
   // A tap opens or folds the row, as everywhere; `go` ({label, to}) adds an in-app jump of its own (a repo to its sessions):
-  // a labelled pill, not an arrow — an arrow reads as an external link to the forge.
+  // a labeled pill, not an arrow — an arrow reads as an external link to the forge.
   const jump = go && el('button', 'go', tr('code.sessionsChip'));
   if (jump) {
     jump.title = go.label;
@@ -736,7 +736,7 @@ function bankedBulk() {
   return box;
 }
 
-/** A host's load: one meter per CPU, memory and GPU (coloured past 80%), then what the hardware is. */
+/** A host's load: one meter per CPU, memory and GPU (colored past 80%), then what the hardware is. */
 // Hosts whose load a tap opened to the detailed view in compact mode (this page's life only).
 const loadOpen = new Set();
 

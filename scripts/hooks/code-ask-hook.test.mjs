@@ -9,7 +9,7 @@ import { tempDir } from '../shared/temp-dir.mjs';
 const template = JSON.parse(fs.readFileSync(new URL('../../claude_settings.template.json', import.meta.url), 'utf8'));
 const ASK = 'Preflight is green. Please give me the TOTP code and I will open the wave.';
 
-test('an ask for a one-time code is recognised; talk about a code is not (planted negatives)', () => {
+test('an ask for a one-time code is recognized; talk about a code is not (planted negatives)', () => {
   for (const ask of [ASK, 'Send the consent code when ready?', "What's your 6-digit code", 'I need your cluster code.']) {
     assert.equal(asksForCode(ask), true, ask);
   }

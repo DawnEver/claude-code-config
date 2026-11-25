@@ -8,7 +8,7 @@ test('resolveSeat: exact, else a unique prefix, else a unique near typo; otherwi
   const aliases = ['alpha', 'beta', 'bravo'];
   assert.deepEqual(resolveSeat('beta', aliases), { alias: 'beta', match: 'exact' });
   assert.deepEqual(resolveSeat('Al', aliases), { alias: 'alpha', match: 'prefix' }, 'prefix, case-insensitive');
-  assert.deepEqual(resolveSeat('alpah', aliases), { alias: 'alpha', match: 'typo' }, 'transposed letters');
+  assert.deepEqual(resolveSeat('alpah', aliases), { alias: 'alpha', match: 'typo' }, 'transposed letters'); // spelling-ignore-line: the typo is the input
   assert.deepEqual(resolveSeat('bet', aliases), { alias: 'beta', match: 'prefix' });
   assert.match(resolveSeat('b', aliases).error, /unknown seat "b"; seats on this machine: alpha, beta, bravo/, 'ambiguous prefix');
   assert.match(resolveSeat('zzzzz', aliases).error, /alpha, beta, bravo/);
@@ -42,7 +42,7 @@ test('the base keeps .claude.json in home; a seat keeps it inside its dir', () =
   assert.equal(usageFile(seatDir('team-b', HOME)), path.join(HOME, '.claude-team-b', 'bridge', 'claude-usage.jsonl'));
 });
 
-test('seatsFor returns this machine\'s seats normalised and survives junk', () => {
+test('seatsFor returns this machine\'s seats normalized and survives junk', () => {
   const seats = [{ alias: 'team-a', email: 'a@x', machines: ['m1'] }, { alias: 'Bad', email: 'b@x', machines: ['m1'] },
     { alias: 'team-b', machines: ['m2'] }, null, 3, { machines: 'm1' }];
   assert.deepEqual(seatsFor(seats, 'm1'), [

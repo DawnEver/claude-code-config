@@ -96,7 +96,7 @@ no API, no authentication.
   `scripts/bridge/quota.mjs`.
 - **Tasks**: a session carries `tasks`, what it runs besides its own turn, by kind (`TASK_KINDS`
   in `public/shared/vocab.mjs`): `shell` (Claude Bash, a Codex command), `powershell` (Claude's
-  PowerShell tool; a Codex command run by powershell/pwsh, labelled by its script), `monitor`
+  PowerShell tool; a Codex command run by powershell/pwsh, labeled by its script), `monitor`
   (Claude's Monitor: always in the background, ends when its `timeout_ms` expires — default 5 min,
   at most 30 — or the session ends), `agent` (a Claude Agent call, a Codex subagent)
   (`ActivityBoard` in `scripts/bridge/activity-board.mjs`, one per session): only what runs now, each with
@@ -104,7 +104,7 @@ no API, no authentication.
   start cannot revive it); at most 50, each label one line of at most 200 characters: a Claude shell's `description`
   (what it does), else its command without a leading `cd … &&` and with `~` for home; an
   agent's type and description. Each task is one line of three columns — a kind tag in the
-  kind's colour — an icon (default) or a word, `sh` `ps` `mon` `agent` (Config › Layout › Task
+  kind's color — an icon (default) or a word, `sh` `ps` `mon` `agent` (Config › Layout › Task
   tags); filled in the foreground, outlined in the background (a Codex unified-exec session
   too), the one mark of it — what it does,
   how long it has run. Tasks are listed by kind — subagents, monitors, shells, PowerShell
@@ -315,7 +315,7 @@ carries Codex's own `modelProvider` (`openai` = the subscription). Its pinned ca
 
 Its key is `api:<provider>:<label|default>` (`balances.mjs balanceKey`), so every host reading it,
 whatever key it holds, reports the same account, and a host without the key still attributes
-its sessions to it. An API-key session spends its provider's unlabelled entry. Each host holding
+its sessions to it. An API-key session spends its provider's unlabeled entry. Each host holding
 the key (the git credential store; `keyUsername` defaults to the provider's session username in
 the provider cache) reads it every 15 min in the background (`BalanceReader`). A provider is one
 reader in `READERS`: DeepSeek has one (`/user/balance`, per currency). Anthropic and OpenAI expose
@@ -424,7 +424,7 @@ the same component as the Quota accounts) opening to its open PRs and active bra
 
 ## Config
 
-The dashboard shows each host's config and may change a fixed few keys — behaviour that grants
+The dashboard shows each host's config and may change a fixed few keys — behavior that grants
 nothing. `CONFIG_KEYS` in `scripts/shared/dashboard-schema.mjs` is the whole list:
 `bridge.idleCloseMinutes` (0–1440), `bridge.deleteClosedAfterHours` (0–720),
 `bridge.dashboard.everySeconds` (5–3600), `bridge.projects.<repo>.projectInTitle`
@@ -522,11 +522,11 @@ is whitelisted field by field; at most 200 per host.
 ## Style
 
 All CSS is the one `<style>` in `public/index.html`. Rule: **components compose primitives; no
-literal outside `:root`.** `dashboard.test.mjs` ("style") fails on a colour, or a px/em size in
+literal outside `:root`.** `dashboard.test.mjs` ("style") fails on a color, or a px/em size in
 `font`, `border-radius`, `gap`, `margin*`, `padding*`, outside `:root`; on a styled class no code
 uses; and on an inline style in `app.js` other than geometry (`width`, `height`, `left`, `--scale`).
 
-- **Tokens** (`:root`): colours from `--tg-theme-*` with fallbacks (`--bg --fg --hint --card
+- **Tokens** (`:root`): colors from `--tg-theme-*` with fallbacks (`--bg --fg --hint --card
   --accent --accent-fg`) and derived (`--sep --hover --press --shadow`), status (`--ok --warn --bad
   --run --idle`), brands, task kinds; text `--t0..--t4`, `--tb` scaled by `--scale` (Config ›
   Text size), weights `--w-strong --w-bold`; space `--s1..--s11`, `--row-pad`, `--gap-block`;

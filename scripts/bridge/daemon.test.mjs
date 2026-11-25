@@ -508,7 +508,7 @@ for (const agent of HOSTS) {
     assert.equal(r.telegram.sent.length, 2, 'end is an edit, not a message');
   });
 
-  test(`${agent}: approvals are notices by default; opt-in buttons honour only the allowlist`, async () => {
+  test(`${agent}: approvals are notices by default; opt-in buttons honor only the allowlist`, async () => {
     const off = make({ alertGraceMs: 60000 });
     await live(off, agent, 'x');
     off.hosts[agent].emit('approval', { id: 'x', ref: 'r1', summary: '$ rm x', answerable: true });
@@ -786,7 +786,7 @@ test('a failed Topic rename keeps the cached title and session, and is logged', 
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-const QS = [{ id: 'q1', header: 'Colour', question: 'Which colour?', isOther: false, isSecret: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: '' }] },
+const QS = [{ id: 'q1', header: 'Color', question: 'Which color?', isOther: false, isSecret: false, options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: '' }] },
   { id: 'q2', header: 'Name', question: 'Name it', isOther: true, isSecret: false, options: null }];
 const tap = (post, from = ALICE, i = 0) => ({ callback_query: { id: 'q', from: { id: from }, data: post.replyMarkup.inline_keyboard[i][0].callback_data,
   message: { chat: { id: post.chatId }, message_id: post.message_id, message_thread_id: post.threadId, text: post.text } } });
@@ -797,7 +797,7 @@ for (const agent of HOSTS) {
     await live(r, agent, 'x');
     await r.bridge.question(`${agent}:x`, { ref: 'ref1', questions: QS, answerable: true });
     const [first, second] = r.telegram.sent.slice(-2);
-    assert.match(first.text, /Which colour?/);
+    assert.match(first.text, /Which color?/);
     assert.deepEqual(first.replyMarkup.inline_keyboard.map((row) => row[0].text), ['Red', 'Blue']);
     assert.equal(first.alert, undefined, 'silent: the mention follows only if still unanswered');
     assert.match(second.text, /Name it\n\(reply with text to answer\)$/);
@@ -848,7 +848,7 @@ test('a question only answerable locally is posted without controls; replies sta
   const post = r.telegram.sent.at(-1);
   assert.match(post.text, /answer it in the terminal/);
   assert.doesNotMatch(post.text, /@/, "info-only notice mentions nobody");
-  assert.match(post.text, /Which colour\?\n- Red: warm\n- Blue\n\n\[Name\] Name it$/);
+  assert.match(post.text, /Which color\?\n- Red: warm\n- Blue\n\n\[Name\] Name it$/);
   assert.equal(post.replyMarkup, undefined);
   await r.bridge.handleUpdate(msg(ALICE, 'hello'));
   assert.equal(r.hosts.claude.injected.length, 1);

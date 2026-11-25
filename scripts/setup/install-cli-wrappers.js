@@ -12,7 +12,7 @@ export const WRAPPER_NAMES = [...Object.values(LAUNCHERS).flat().map(([name]) =>
 
 const isWindows = process.platform === 'win32';
 const MARKER = '# claude-code-alias';
-// The .cmd wrappers carry the same marker as a batch comment. Recognising only the `#`
+// The .cmd wrappers carry the same marker as a batch comment. Recognizing only the `#`
 // form meant setup treated every .cmd it had written itself as a third-party file and
 // refused to update it — a `.cmd` wrapper kept pointing at a repo path deleted months
 // earlier, so the CMD/PowerShell wrapper was dead while the Git Bash one worked.
