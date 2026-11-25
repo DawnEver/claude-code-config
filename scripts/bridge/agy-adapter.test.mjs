@@ -159,6 +159,11 @@ test('forwardAgyHook contract: { injectSteps?, stopContinue?, decision?, reason?
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => null }), {});
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => ({ error: { code: 401 } }) }), {});
   assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: async () => { throw new Error('x'); } }), {});
+  // Isolated ignores the ambient session env (these tests run inside agent sessions); a given env still counts.
+  const deliver = async () => ({ ok: true, deliver: [{ text: 'hi' }] });
+  for (const nested of [{ CLAUDE_CODE_SESSION_ID: 's' }, { CLAUDE_PID: '1' }, { CODEX_THREAD_ID: 't' }]) {
+    assert.deepEqual(await forwardAgyHook('Stop', { conversationId: 'c' }, { runtimeFile: rt, call: deliver, env: nested }), {}, JSON.stringify(nested));
+  }
 });
 
 test('isAgyMainSession: keeps only top-level interactive main sessions and syncs conversation Title', async () => {

@@ -137,7 +137,6 @@ function fixture() {
 // A successful pull re-runs checkLinks(), which writes into ~/.claude, ~/.codex and ~/.gemini:
 // the child gets a throwaway HOME so a test never edits the live hosts (it once broke agy's hooks.json).
 const TEST_HOME = tempDir('sync-hook-home-');
-process.on('exit', () => fs.rmSync(TEST_HOME, { recursive: true, force: true }));
 
 function runHook(repo, mode, payload = {}, extraEnv = {}) {
   // A session started by a provider launcher exports the already-synced marker;
@@ -279,6 +278,30 @@ function tempHome() {
   return { HOME: home, USERPROFILE: home };
 }
 
+// A hook that hands the update off starts the real detached `--deps` run: it sits in the clone, makes its worktree
+// and uv's lock under the temp root, and records its outcome in the home. Its env gets a private temp root, and the
+// test waits for that record, so the run is over before the clone is reclaimed (Windows cannot remove a directory
+// a live process sits in).
+function handOffEnv() {
+  const tmp = tempDir('sync-hook-deps-');
+  return { ...tempHome(), TMP: tmp, TEMP: tmp, TMPDIR: tmp };
+}
+
+/** The outcome the detached run started at or after `t0` recorded: its error, or null once it cleared its record. */
+async function handOffOutcome(home, t0) {
+  const file = path.join(home, '.claude', 'own-env-update.json');
+  const read = () => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+  let started = false;
+  for (const deadline = Date.now() + 60_000; ;) {
+    const state = read();
+    if (state?.pid && state.at >= t0) started = true;
+    if (state?.error && state.at >= t0) return state.error;
+    if (started && !state) return null;
+    if (Date.now() > deadline) throw new Error(`the detached dependency update recorded no outcome: ${JSON.stringify(state)}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 
 test('integration: only a dependency change asks for a venv sync', () => {
   const { a, b } = fixture();
@@ -364,12 +387,18 @@ test('integration: the SessionStart mode returns at once and the detached pull s
   git(a, 'push', '--quiet');
   const tmp = tempDir('sync-hook-bg-');
   const t0 = Date.now();
-  const notice = runHook(b, '--pull-background', { source: 'startup' }, '', { TMP: tmp, TEMP: tmp, TMPDIR: tmp });
+  const notice = runHook(b, '--pull-background', { source: 'startup' }, { TMP: tmp, TEMP: tmp, TMPDIR: tmp });
   assert.ok(Date.now() - t0 < 10_000, 'the hook returned without waiting on the network');
-  assert.match(notice, /^cc-config sync started in the background \(result: .+\)$/);
+  const [, log] = notice.match(/^cc-config sync started in the background \(result: (.+)\)$/) ?? [];
+  assert.ok(log, notice);
   assert.doesNotMatch(notice, /\n/, 'one line');
+  assert.equal(path.dirname(log), tmp, 'the result lands under the temp root the hook was given');
+  // The detached pull writes its JSON result last; waiting for it means the child no longer holds the fixture
+  // (Windows cannot remove a directory a live process sits in) and the run reclaims every temp dir.
+  const finished = () => { try { JSON.parse(fs.readFileSync(log, 'utf8')); return true; } catch { return false; } };
   const deadline = Date.now() + 60_000;
-  while (!fs.existsSync(path.join(b, 'from-a.txt')) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+  while (!finished() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+  assert.ok(finished(), 'the detached pull wrote its result');
   assert.equal(readText(path.join(b, 'from-a.txt')), 'bg\n', 'the detached pull fast-forwarded');
 });
 
@@ -388,23 +417,28 @@ test('SessionStart runs the sync hook in the background mode with a short bound'
 
 // 2026-11-22: ai-lab was a second checkout this hook pulled, because cc-config borrowed its environment. cc-config
 // now owns its environment (scripts/shared/own-python.mjs), so a lock change in cc-config itself is the update.
-test('integration: a dependency change leaves cc-config where it is and hands the update off', () => {
+test('integration: a dependency change leaves cc-config where it is and hands the update off', async () => {
   const cfg = fixture();
   fs.writeFileSync(path.join(cfg.a, 'uv.lock'), 'lock\n');
   git(cfg.a, 'add', '.'); git(cfg.a, 'commit', '--quiet', '-m', 'relock'); git(cfg.a, 'push', '--quiet');
   const before = git(cfg.b, 'rev-parse', 'HEAD');
-  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, tempHome());
+  const env = handOffEnv();
+  const t0 = Date.now();
+  const notice = runHook(cfg.b, '--pull', { source: 'startup' }, env);
   assert.match(notice, /not updated: the update changes its dependencies; updating in the background/);
   assert.equal(git(cfg.b, 'rev-parse', 'HEAD'), before, 'tree, venv and cache stay consistent until the detached run');
+  await handOffOutcome(env.HOME, t0);
 });
 
-test('integration: a failed background update is reported and retried, a running one is not doubled', () => {
+test('integration: a failed background update is reported and retried, a running one is not doubled', async () => {
   const cfg = fixture();
-  const home = tempHome();
-  const state = path.join(home.HOME, '.claude', 'own-env-update.json');
+  const env = handOffEnv();
+  const state = path.join(env.HOME, '.claude', 'own-env-update.json');
   fs.mkdirSync(path.dirname(state), { recursive: true });
   fs.writeFileSync(state, JSON.stringify({ pid: 1, at: Date.now() }));
-  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, home), /still running in the background/);
-  fs.writeFileSync(state, JSON.stringify({ error: 'uv sync failed (ENOENT)', at: Date.now() }));
-  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, home), /last dependency update failed: uv sync failed \(ENOENT\); updating in the background/);
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, env), /still running in the background/);
+  fs.writeFileSync(state, JSON.stringify({ error: 'uv sync failed (ENOENT)', at: Date.now() - 1 }));
+  const t0 = Date.now();
+  assert.match(runHook(cfg.b, '--pull', { source: 'startup' }, env), /last dependency update failed: uv sync failed \(ENOENT\); updating in the background/);
+  await handOffOutcome(env.HOME, t0);
 });
