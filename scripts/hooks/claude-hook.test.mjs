@@ -291,7 +291,9 @@ test('runSteps: a deny is the entry\'s and ends the run; an exit 2 is the entry\
 });
 
 test('the real loop guard denies through the shared entry; the bridge activity runs beside it, as before', async () => {
-  const env = { HARNESS_LOOP_GUARD_WARN_AT: '2', HARNESS_LOOP_GUARD_DENY_AT: '3', HARNESS_LOOP_GUARD_DISABLE: '0', HARNESS_AGENT: '', CODEX_THREAD_ID: '', CODEX_SESSION_ID: '' };
+  // The guard keeps its state under the temp root; the spawned hook inherits a private one so the run reclaims it.
+  const tmp = tempDir('claude-hook-guard-');
+  const env = { HARNESS_LOOP_GUARD_WARN_AT: '2', HARNESS_LOOP_GUARD_DENY_AT: '3', HARNESS_LOOP_GUARD_DISABLE: '0', HARNESS_AGENT: '', CODEX_THREAD_ID: '', CODEX_SESSION_ID: '', TMP: tmp, TEMP: tmp, TMPDIR: tmp };
   const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
   Object.assign(process.env, env);
   const raw = JSON.stringify({ hook_event_name: 'PreToolUse', session_id: `claude-hook-test-${process.pid}-${Date.now()}`, tool_name: 'Bash', tool_input: { command: 'echo same' } });
