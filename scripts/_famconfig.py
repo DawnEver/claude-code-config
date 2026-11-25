@@ -45,9 +45,7 @@ _GITIGNORE: Final = (
     '.wrangler/',
 )
 
-_GITATTRIBUTES: Final = (
-    '.claude/memory/**/*.md text eol=lf',
-)
+_GITATTRIBUTES: Final = ('.claude/memory/**/*.md text eol=lf',)
 
 DELTAS: Final[dict[str, Delta]] = {
     '.gitignore': Delta(repo=REPO, added=_GITIGNORE, dropped={}, ceiling=len(_GITIGNORE)),
