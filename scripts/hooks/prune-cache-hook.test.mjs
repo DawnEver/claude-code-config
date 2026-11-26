@@ -111,6 +111,14 @@ test('orphans: a failed scan or a running Codex app-server deletes nothing', () 
   } finally { rmSync(join(root, '..'), { recursive: true, force: true }); }
 });
 
+test('orphans: the daemon manager (`app-server daemon <verb>`) serves no plugin code and holds nothing', () => {
+  const root = orphanCache();
+  try {
+    pruneOrphans({ root, listed, apply: true, scan: () => 'codex.exe app-server daemon pid-update-loop', log: () => {} });
+    assert.equal(existsSync(join(root, 'cc-market', 'takeover')), false, 'the manager alone must not block removal');
+  } finally { rmSync(join(root, '..'), { recursive: true, force: true }); }
+});
+
 test('codexMarketListing reads the cc-market Codex manifest; an unreadable one lists nothing to delete', () => {
   const market = tempDir('market-');
   assert.equal(codexMarketListing(market), null);
