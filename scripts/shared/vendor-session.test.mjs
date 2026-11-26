@@ -65,7 +65,7 @@ test('the launchers resolve the continuation and issue no LAB_SESSION of their o
   assert.deepEqual(claude.args.slice(-2), ['--resume', B]);
   assert.equal(claude.env.LAB_SESSION, process.env.LAB_SESSION);
   const codex = buildCodexInvocation({ provider: null, extraArgs: ['resume', '--last'], envSettingsPath: '/nonexistent',
-    codexHome: codexHome([A, B]), baseEnv: {} });
+    codexHome: codexHome([A, B]), baseEnv: {}, startDaemon: () => null });
   assert.deepEqual(codex.args.slice(-2), ['resume', B]);
   assert.equal(codex.env.LAB_SESSION, undefined);
 });

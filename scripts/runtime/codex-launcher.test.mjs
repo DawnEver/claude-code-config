@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
-import { buildCodexInvocation } from './codex-launcher.mjs';
+import { buildCodexInvocation, startCodexDaemon } from './codex-launcher.mjs';
 import { readProviderCache } from '../shared/provider-cache.mjs';
 import { fakeAiLab, writeCache } from '../shared/provider-cache-fixture.mjs';
 import { tempDir } from '../shared/temp-dir.mjs';
@@ -124,22 +124,60 @@ function bridgeFixture(botToken) {
   return { shared, local };
 }
 
-test('bridge: interactive official TUI attaches to the shared daemon', () => {
+// The shared daemon, as the launcher asks Codex to start it: each call is recorded; null is "running".
+function daemonStub(error = null) {
+  const calls = [];
+  return { calls, startDaemon: (opts) => { calls.push(opts); return error; } };
+}
+
+test('bridge: interactive official TUI starts the shared daemon, then attaches to it', () => {
   const { shared, local } = bridgeFixture('123:abc');
-  assert.deepEqual(buildCodexInvocation({ provider: null, envSettingsPath: shared, localPath: local }).args,
-    ['--remote', 'unix://']);
-  assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['fix the build'], envSettingsPath: shared, localPath: local }).args,
+  const d = daemonStub();
+  const baseEnv = { PATH: '/bin' };
+  const plain = buildCodexInvocation({ provider: null, envSettingsPath: shared, localPath: local, baseEnv, startDaemon: d.startDaemon });
+  assert.deepEqual(plain.args, ['--remote', 'unix://']);
+  assert.equal(plain.notice, null);
+  assert.equal(d.calls.length, 1, 'the daemon is started (or found running) before the TUI attaches');
+  assert.equal(d.calls[0].env.CODEX_HOME, plain.env.CODEX_HOME, 'in the Codex home the TUI attaches to');
+  assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['fix the build'], envSettingsPath: shared, localPath: local, startDaemon: d.startDaemon }).args,
     ['--remote', 'unix://', 'fix the build']);
   const codexHome = tempDir('codex-home-');  // no rollout: `--last` stays for the TUI to pick
-  assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['resume', '--last'], envSettingsPath: shared, localPath: local, codexHome }).args,
+  assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs: ['resume', '--last'], envSettingsPath: shared, localPath: local, codexHome, startDaemon: d.startDaemon }).args,
     ['--remote', 'unix://', 'resume', '--last']);
 });
 
-test('bridge: non-TUI subcommands, an explicit --remote, or no bot token stay untouched', () => {
+test('bridge: a daemon that will not start leaves the TUI on its own server, and says why', () => {
   const { shared, local } = bridgeFixture('123:abc');
+  const d = daemonStub('connection refused (os error 10061)');
+  const r = buildCodexInvocation({ provider: null, extraArgs: ['fix the build'], envSettingsPath: shared, localPath: local, startDaemon: d.startDaemon });
+  assert.deepEqual(r.args, ['fix the build'], 'no --remote to a daemon that is not there');
+  assert.equal(r.error, null, 'the launch goes on');
+  assert.match(r.notice, /connection refused \(os error 10061\)/, 'the cause');
+  assert.match(r.notice, /outside the session bridge/, 'what it costs');
+  assert.match(r.notice, /codex app-server daemon start/, 'the door');
+});
+
+test('bridge: non-TUI subcommands, an explicit --remote, or no bot token stay untouched and start nothing', () => {
+  const { shared, local } = bridgeFixture('123:abc');
+  const d = daemonStub();
   for (const extraArgs of [['exec', 'hi'], ['app-server', 'daemon', 'version'], ['--remote', 'ws://h:1'], ['--no-daemon'], ['--no-daemon', 'resume', '--last'], ['--model', 'x', 'exec', 'hi']]) {
-    assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs, envSettingsPath: shared, localPath: local }).args, extraArgs);
+    assert.deepEqual(buildCodexInvocation({ provider: null, extraArgs, envSettingsPath: shared, localPath: local, startDaemon: d.startDaemon }).args, extraArgs);
   }
   const none = bridgeFixture(null);
-  assert.deepEqual(buildCodexInvocation({ provider: null, envSettingsPath: none.shared, localPath: none.local }).args, []);
+  assert.deepEqual(buildCodexInvocation({ provider: null, envSettingsPath: none.shared, localPath: none.local, startDaemon: d.startDaemon }).args, []);
+  assert.equal(d.calls.length, 0, 'only an attaching TUI needs the daemon');
+});
+
+test('startCodexDaemon reads the status Codex prints last; anything but started or alreadyRunning is the cause', () => {
+  const status = (s) => () => `{"timestampMs":1,"stage":"pid_write"}\n{"status":"${s}","pid":7}\n`;
+  assert.equal(startCodexDaemon({ run: status('started') }), null);
+  assert.equal(startCodexDaemon({ run: status('alreadyRunning') }), null);
+  assert.match(startCodexDaemon({ run: status('stopped') }), /stopped/);
+  assert.match(startCodexDaemon({ run: () => 'not json' }), /no status/);
+  assert.match(startCodexDaemon({ run: () => { throw new Error('spawn codex ENOENT\nmore'); } }), /^spawn codex ENOENT$/);
+  let seen;
+  startCodexDaemon({ env: { CODEX_HOME: '/h' }, run: (cmd, args, opts) => { seen = { cmd, args, opts }; return '{"status":"started"}'; } });
+  assert.deepEqual([seen.cmd, ...seen.args].join(' ').split(' ').slice(-4), ['codex', 'app-server', 'daemon', 'start'].slice(-4));
+  assert.equal(seen.opts.env.CODEX_HOME, '/h');
+  assert.ok(seen.opts.timeout > 0, 'a hung start cannot hold the launch');
 });
