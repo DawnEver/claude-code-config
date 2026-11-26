@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
-import { resolveHostBinary, envWithHostOnPath } from './host-binary.mjs';
+import { resolveHostBinary, envWithHostOnPath, STANDARD_DIRS } from './host-binary.mjs';
 import { tempDir } from './temp-dir.mjs';
 
 // A fake Windows host: every input is injected, the live registry is never read.
@@ -48,6 +48,14 @@ test('absent everywhere is refused with every place searched', () => {
     assert.ok(found.error.includes(place), `${place} missing from: ${found.error}`);
   }
   assert.match(found.error, /agy not found/);
+});
+
+test('every standard dir is segments, never a string with a baked-in separator', () => {
+  for (const hosts of Object.values(STANDARD_DIRS)) {
+    for (const dirs of Object.values(hosts)) for (const segs of dirs) {
+      assert.ok(Array.isArray(segs) && segs.every((x) => !/[\/]/.test(x)), JSON.stringify(segs));
+    }
+  }
 });
 
 test('off Windows the registry is never consulted', () => {

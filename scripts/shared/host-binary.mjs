@@ -19,10 +19,12 @@ const MACHINE_KEY = String.raw`HKLM\SYSTEM\CurrentControlSet\Control\Session Man
  * Documented standard install dirs, per platform, only where evidence names them:
  * agy on Windows installs into %LOCALAPPDATA%\agy\bin; Claude Code's native installer uses
  * ~/.local/bin (docs/setup.md). codex (npm global) has no fixed dir and so none here.
+ * Each dir is path segments joined by the running host's path module: a separator baked into a
+ * string resolves only on the OS that wrote it.
  */
 export const STANDARD_DIRS = {
-  win32: { agy: [String.raw`%LOCALAPPDATA%\agy\bin`], claude: [String.raw`%USERPROFILE%\.local\bin`] },
-  posix: { claude: ['$HOME/.local/bin'] },
+  win32: { agy: [['%LOCALAPPDATA%', 'agy', 'bin']], claude: [['%USERPROFILE%', '.local', 'bin']] },
+  posix: { claude: [['$HOME', '.local', 'bin']] },
 };
 
 const envGet = (env, name) => env[Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase())];
@@ -53,7 +55,7 @@ export function resolveHostBinary(name, { env = process.env, platform = process.
     const reg = registryPaths();
     places.push(['registry user PATH', split(reg.user)], ['registry machine PATH', split(reg.machine)]);
   }
-  places.push(['standard dir', (STANDARD_DIRS[win ? 'win32' : 'posix'][name] || []).map((d) => expand(d, env))]);
+  places.push(['standard dir', (STANDARD_DIRS[win ? 'win32' : 'posix'][name] || []).map((segs) => path.join(...segs.map((x) => expand(x, env))))]);
   const searched = [];
   for (const [source, dirs] of places) {
     for (const dir of dirs) {
