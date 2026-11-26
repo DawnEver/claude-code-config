@@ -97,6 +97,8 @@ if (error) {
 console.log(provider ? `[codex] Using provider: ${provider}` : '[codex] Using default Codex');
 
 // Codex runs through ai-lab's session launcher, which mints or inherits LAB_SESSION (session-launcher.mjs).
+// The host binary may be on the user PATH yet absent from this shell's (host-binary.mjs).
+const hostEnv = (await import('../shared/host-binary.mjs')).envWithHostOnPath('codex', env);
 const session = sessionSpawn('codex', args, { log: (m) => console.error(`[codex] ${m}`) });
 if (session.error) {
   console.error(`[codex] ${session.error}`);
@@ -105,6 +107,6 @@ if (session.error) {
 if (session.notice) console.error(`[codex] ${session.notice}`);
 // Not `shell: true`: that concatenates args unescaped, so `cods exec "a prompt with spaces"`
 // reached Codex as separate words. `prepareSpawn` quotes for us.
-const launch = prepareSpawn(session.command, session.args, { env });
-const child = spawn(launch.command, launch.args, { ...launch.options, env, stdio: 'inherit' });
+const launch = prepareSpawn(session.command, session.args, { env: hostEnv });
+const child = spawn(launch.command, launch.args, { ...launch.options, env: hostEnv, stdio: 'inherit' });
 child.on('exit', code => process.exit(code ?? 0));

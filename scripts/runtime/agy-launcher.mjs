@@ -7,8 +7,6 @@
 
 import { readMachineName, readGitUserName, provenanceEnv } from '../shared/machine.mjs';
 
-export const AGY_BINARY = 'agy';
-
 /**
  * @param {object} opts
  * @param {string[]} [opts.extraArgs]  passed through to agy unchanged
