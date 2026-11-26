@@ -28,7 +28,8 @@ const CACHE_ROOTS = [
 ];
 const VERSION = /^\d+\.\d+\.\d+$/;
 // A Codex app-server (managed daemon or proxy) can hold plugin paths for lazy loading without naming them in argv.
-const DAEMON = /\bcodex(?:\.exe)?["']?\s+app-server\b/i;
+// `app-server daemon <verb>` (pid-update-loop, stop, version) only manages that process and serves no plugin code.
+const DAEMON = /\bcodex(?:\.exe)?["']?\s+app-server\b(?!\s+daemon\b)/i;
 
 function compareVersion(a, b) {
   const ap = a.split('.').map(Number);
