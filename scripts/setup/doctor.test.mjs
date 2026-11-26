@@ -321,6 +321,7 @@ test('a retired Codex plugin cache is reported without flagging current plugins'
   assert.equal(out.length, 1);
   assert.equal(out[0].id, 'codex-plugin-orphan-cache');
   assert.match(out[0].title, /takeover/);
+  assert.match(out[0].detail, /prune-cache-hook\.js --orphans --apply/);
 });
 
 test('project-scoped plugin installs are not reported as globally dormant', () => {

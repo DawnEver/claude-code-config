@@ -29,6 +29,7 @@ import { isMain } from '../shared/is-main.mjs';
 import { inspectCodexHooks } from './codex-hooks.mjs';
 import { inspectAgyConfig, agyInstalled } from './agy-config.mjs';
 import { readMarketDir } from '../shared/market-dir.mjs';
+import { orphanPlugins, codexMarketListing } from '../hooks/prune-cache-hook.js';
 import { inspectProtectedPluginCaches, inspectPluginCacheLock } from './update-codex-plugins.mjs';
 import { withoutRetiredCodexRootKey } from './codex-config-compose.mjs';
 import { SYNC_PAYLOAD_FILES } from '../shared/sync-dir.mjs';
@@ -328,21 +329,14 @@ export function checkPlugins(settings, home = HOME) {
 // without treating disabled-but-still-available plugins as orphans.
 export function checkCodexPluginCache(marketDir, home = HOME) {
   if (!marketDir) return [];
-  const cache = path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'plugins', 'cache', 'cc-market');
-  const manifest = path.join(marketDir, '.agents', 'plugins', 'marketplace.json');
-  if (!fs.existsSync(cache) || !fs.existsSync(manifest)) return [];
-  let known;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-    known = new Set((parsed.plugins ?? []).map((p) => p.name));
-  } catch {
-    return [];
-  }
-  return fs.readdirSync(cache, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !known.has(entry.name))
-    .map((entry) => finding('WARN', 'codex-plugin-orphan-cache',
-      `${entry.name}@cc-market remains in the Codex cache but is no longer in the marketplace`,
-      `${path.join(cache, entry.name)} — remove it after confirming no Codex process is using it`));
+  const cache = path.join(home === HOME ? codexDir : path.join(home, '.codex'), 'plugins', 'cache');
+  return orphanPlugins(cache, codexMarketListing(marketDir)).map((key) => {
+    const [market, name] = key.split('/');
+    return finding('WARN', 'codex-plugin-orphan-cache',
+      `${name}@${market} remains in the Codex cache but is no longer in the marketplace`,
+      `${path.join(cache, market, name)} — remove it with: node ~/.claude/scripts/hooks/prune-cache-hook.js --orphans --apply `
+      + '(keeps any dir a running process holds; removes nothing while a Codex app-server runs)');
+  });
 }
 
 // Code hygiene that made a file unreadable to tools: a NUL byte makes git call a file
