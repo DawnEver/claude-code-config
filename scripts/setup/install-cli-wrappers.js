@@ -3,7 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync } from 'child_process';
+import { resolveHostBinary } from '../shared/host-binary.mjs';
 
 /** The provider launchers, per host binary they need: [wrapper name, provider argument]. */
 const LAUNCHERS = { claude: [['ccc', 'claude'], ['ccds', 'deepseek']], codex: [['codc', 'codex'], ['cods', 'deepseek']], agy: [['agyc', 'agy']] };
@@ -60,28 +60,19 @@ export function shWrapper(name, script, args) {
   return `#!/usr/bin/env sh\n${MARKER}\ncommand -v node >/dev/null 2>&1 || { echo "${noNode(name)}" >&2; exit 127; }\nexec node "${script}" ${args}\n`;
 }
 
-// Locate the bin directory of a command on PATH, or null if not found.
-export function locateBinDir(cmd, run = (c) => execFileSync(isWindows ? 'where' : 'which', [c], { stdio: 'pipe' }).toString()) {
-  try {
-    const first = run(cmd).trim().split(/\r?\n/)[0].trim();
-    return first ? path.dirname(first) : null;
-  } catch {
-    return null;
-  }
-}
-
 const isWritableDir = (dir) => { try { fs.accessSync(dir, fs.constants.W_OK); return true; } catch { return false; } };
 
-// Every wrapper lives in ONE dir: the first host bin dir (claude, then codex) that is on
-// PATH by construction and writable by this user. A host installed into a root-owned dir
-// (e.g. /usr/local/bin) is skipped — setup must never need sudo, because a root run also
-// leaves ~/.claude.json root-owned and forces a re-login on every start.
-export function resolveWrapperBinDirs(locate = locateBinDir, writable = isWritableDir) {
-  const claudeBin = locate('claude');
-  const codexBin = locate('codex');
-  const agyBin = locate('agy');
-  const binDir = [claudeBin, codexBin, agyBin].find((d) => d && writable(d)) ?? null;
-  return { hasClaude: !!claudeBin, hasCodex: !!codexBin, hasAgy: !!agyBin, binDir };
+// Each host is found by resolveHostBinary (process PATH, the registry PATH, its standard dir), so the
+// result does not depend on which shell runs setup. Every wrapper lives in ONE dir: the first host bin
+// dir (claude, codex, agy) that is on a PATH -- a host found only in its standard dir is present but
+// its dir is no PATH entry -- and writable by this user. A host installed into a root-owned dir
+// (e.g. /usr/local/bin) is skipped: setup must never need sudo, because a root run also leaves
+// ~/.claude.json root-owned and forces a re-login on every start.
+export function resolveWrapperBinDirs(locate = (cmd) => resolveHostBinary(cmd), writable = isWritableDir) {
+  const hosts = Object.fromEntries(Object.keys(LAUNCHERS).map((cmd) => [cmd, locate(cmd)]));
+  const binDir = Object.values(hosts).filter((h) => h.path && h.source !== 'standard dir')
+    .map((h) => path.dirname(h.path)).find((d) => writable(d)) ?? null;
+  return { hosts, hasClaude: !!hosts.claude.path, hasCodex: !!hosts.codex.path, hasAgy: !!hosts.agy.path, binDir };
 }
 export function wrapperPaths(binDir, name, windows = isWindows) {
   return windows ? [path.join(binDir, `${name}.cmd`), path.join(binDir, name)] : [path.join(binDir, name)];
@@ -110,7 +101,7 @@ export function installCliWrappers(claudeDir) {
   removeLegacyProfileSources();
   // On Windows: write .cmd (CMD/PowerShell) + no-extension script (Git Bash).
   // On macOS/Linux: write no-extension shell script only.
-  const { hasClaude, hasCodex, hasAgy, binDir } = resolveWrapperBinDirs();
+  const { hosts, hasClaude, hasCodex, hasAgy, binDir } = resolveWrapperBinDirs();
   if (!binDir) {
     console.log('SKIP  wrappers - no user-writable claude/codex bin dir (never re-run setup with sudo)');
     return;
@@ -150,7 +141,7 @@ export function installCliWrappers(claudeDir) {
     console.log('      ccc     - Claude (official subscription)');
     console.log('      ccds    - DeepSeek API (Anthropic-compatible, direct)');
   } else {
-    console.log('      ccc/ccds - skipped (claude binary not found; Codex-only install)');
+    console.log(`      ccc/ccds - skipped (${hosts.claude.error})`);
   }
 
   // cods launches the `codex` binary (see codex.js), so install it only when codex is
@@ -171,7 +162,7 @@ export function installCliWrappers(claudeDir) {
     console.log('      codc    - Codex official provider + startup sync');
     console.log('      cods    - Codex + DeepSeek (single-source-of-truth: providers.deepseek)');
   } else {
-    console.log('      codc/cods - skipped (codex binary not found)');
+    console.log(`      codc/cods - skipped (${hosts.codex.error})`);
   }
 
   // agyc launches the `agy` binary (see agy.js), so install it only when agy is present.
@@ -183,7 +174,7 @@ export function installCliWrappers(claudeDir) {
     }
     console.log('      agyc    - Antigravity CLI + startup sync');
   } else {
-    console.log('      agyc - skipped (agy binary not found)');
+    console.log(`      agyc - skipped (${hosts.agy.error})`);
   }
 
   // Todo CLI wrapper — task management

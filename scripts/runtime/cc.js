@@ -81,6 +81,8 @@ try {
 } catch { /* ignore */ }
 
 // Claude runs through ai-lab's session launcher, which mints or inherits LAB_SESSION (session-launcher.mjs).
+// The host binary may be on the user PATH yet absent from this shell's (host-binary.mjs).
+const hostEnv = (await import('../shared/host-binary.mjs')).envWithHostOnPath('claude', env);
 const session = sessionSpawn('claude', args, { log: (m) => console.error(`[cc] ${m}`) });
 if (session.error) {
   console.error(`[cc] ${session.error}`);
@@ -89,6 +91,6 @@ if (session.error) {
 if (session.notice) console.error(`[cc] ${session.notice}`);
 // Not `shell: true`: that concatenates args unescaped, so any argument containing a space
 // or a cmd metacharacter is mangled. `prepareSpawn` quotes for us.
-const launch = prepareSpawn(session.command, session.args, { env });
-const child = spawn(launch.command, launch.args, { ...launch.options, env, stdio: 'inherit' });
+const launch = prepareSpawn(session.command, session.args, { env: hostEnv });
+const child = spawn(launch.command, launch.args, { ...launch.options, env: hostEnv, stdio: 'inherit' });
 child.on('exit', code => process.exit(code ?? 0));

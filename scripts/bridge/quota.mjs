@@ -22,6 +22,7 @@ import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { createHash } from 'crypto';
+import { resolveHostBinary } from '../shared/host-binary.mjs';
 import { BRIDGE_RUNTIME_DIR } from './runtime-paths.mjs';
 import { readBridgeConfig } from './context.mjs';
 import { balanceKeyFor } from './balances.mjs';
@@ -447,7 +448,7 @@ export function teeAgyUsage(payload, { email = null, dir = BRIDGE_RUNTIME_DIR, n
  * in the background so `gemini` and `claude-gpt` windows are populated even while no TUI renders.
  */
 export function refreshAgyQuota({
-  agyBin = 'agy',
+  agyBin = resolveHostBinary('agy').path ?? 'agy',
   agyDir = AGY_DIR,
   dir = BRIDGE_RUNTIME_DIR,
   now = Date.now,

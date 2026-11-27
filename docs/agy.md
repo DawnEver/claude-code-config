@@ -87,4 +87,6 @@ status line is rendering.
 `scripts/runtime/agy.js` (pure part: `agy-launcher.mjs`) syncs the checkout, heals links after a
 pull, ensures the bridge, adds provenance (`HARNESS_MACHINE`, `HARNESS_AGENT=agy`, committer name),
 and spawns `agy` through `<recorded python> -m ai_lab.session agy` (`session-launcher.mjs`), which
-owns `LAB_SESSION`. Setup installs the wrapper only where `agy` is on PATH.
+owns `LAB_SESSION`. Setup installs the wrapper only where `agy` is found, wherever the shell runs:
+`scripts/shared/host-binary.mjs` searches the process PATH, then on Windows the registry user and
+machine PATH, then the standard dir (`%LOCALAPPDATA%/agy/bin` on Windows), and names every place when it fails.

@@ -34,12 +34,14 @@ try {
 } catch { /* the bridge must never block a launch */ }
 
 const { env: launchEnv, args } = buildAgyInvocation({ extraArgs: process.argv.slice(2) });
+// The host binary may be on the user PATH yet absent from this shell's (host-binary.mjs).
+const hostEnv = (await import('../shared/host-binary.mjs')).envWithHostOnPath('agy', launchEnv);
 const session = sessionSpawn('agy', args, { log: (m) => console.error(`[agy] ${m}`) });
 if (session.error) {
   console.error(session.error);
   process.exit(1);
 }
 if (session.notice) console.error(`[agy] ${session.notice}`);
-const launch = prepareSpawn(session.command, session.args, { env: launchEnv });
-const child = spawn(launch.command, launch.args, { ...launch.options, env: launchEnv, stdio: 'inherit' });
+const launch = prepareSpawn(session.command, session.args, { env: hostEnv });
+const child = spawn(launch.command, launch.args, { ...launch.options, env: hostEnv, stdio: 'inherit' });
 child.on('exit', code => process.exit(code ?? 0));
