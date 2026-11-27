@@ -49,12 +49,12 @@ export function resolveProvider({ provider, settings, readCache }) {
   return { rules, row, available };
 }
 
-/** Every provider with both projection rules and a catalogue row: name -> {rules, row}. */
+/** Every catalogue row with projection rules, or local (no rules needed): name -> {rules, row}. */
 export function projectedProviders(settings, cache) {
   const out = {};
-  for (const [name, rules] of Object.entries(settings?.providers || {})) {
-    const row = cache?.providers?.[name];
-    if (row) out[name] = { rules: rules || {}, row };
+  for (const [name, row] of Object.entries(cache?.providers || {})) {
+    const rules = settings?.providers?.[name] ?? (row?.auth === 'local' ? {} : null);
+    if (rules) out[name] = { rules, row };
   }
   return out;
 }

@@ -1,9 +1,20 @@
-// scripts/shared/local-only.mjs -- the one switch that keeps a session on this machine.
+// scripts/shared/local-only.mjs -- what keeps a session on this machine.
 //
-// The launcher sets it for a keyless local provider (cc-launcher.mjs, `ccla`); every hook that would send
-// a session's content off the box (the bridge mirror to Telegram and the dashboard) reads it and stays out.
+// A keyless local provider (ai-lab catalogue `auth = "local"`, e.g. llama.cpp) is local-only: its launchers
+// (`ccla`, `codla`) set LOCAL_ONLY_ENV, and nothing that sends a session's content off the box mirrors it:
+// the Claude bridge hook reads the env, the Codex bridge (app-server threads and rollout observer) reads
+// the thread's provider against the catalogue.
+
+import { readProviderCache } from './provider-cache.mjs';
 
 export const LOCAL_ONLY_ENV = 'HARNESS_LOCAL_ONLY';
 
 /** Whether *env* is a local-only session. */
 export const isLocalOnly = (env = process.env) => env[LOCAL_ONLY_ENV] === '1';
+
+/** Whether *provider* is a local-only provider in the catalogue; a broken cache makes none local. */
+export function isLocalProvider(provider, read = readProviderCache) {
+  if (!provider) return false;
+  const got = read();
+  return !got.error && got.cache?.providers?.[provider]?.auth === 'local';
+}

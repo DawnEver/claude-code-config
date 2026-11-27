@@ -7,7 +7,7 @@
 // Run `node scripts/setup/setup.js` to install the `ccc` / `ccds` wrappers;
 // those wrappers exec this script with the provider name.
 
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -21,7 +21,7 @@ const sync = syncBeforeLaunch({ stampFile: join(homedir(), '.claude', '.harness-
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
 const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { accountFile, configDir },
-  { channelServerPath, ensureChannelServer }, { readBridgeConfig }, { ENV_SETTINGS_PATH }, { sessionSpawn }, { ownPython }] = await Promise.all([
+  { channelServerPath, ensureChannelServer }, { readBridgeConfig }, { ENV_SETTINGS_PATH }, { sessionSpawn }, { serveLocal }] = await Promise.all([
   import('./cc-launcher.mjs'),
   import('./win-spawn.mjs'),
   import('../shared/claude-defaults.mjs'),
@@ -30,7 +30,7 @@ const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { a
   import('../bridge/context.mjs'),
   import('../shared/config.mjs'),
   import('../shared/session-launcher.mjs'),
-  import('../shared/own-python.mjs'),
+  import('../shared/local-serve.mjs'),
 ]);
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -72,8 +72,8 @@ if (notice) console.log(notice);
 
 // A local provider's server is started on demand by ai-lab (its serve.toml); its refusal names the remedy.
 if (serve) {
-  const started = spawnSync(ownPython(), ['-m', 'ai_lab.serve', 'ensure', serve], { stdio: 'inherit' });
-  if (started.status !== 0) process.exit(started.status ?? 1);
+  const local = await serveLocal(serve);
+  if (local.error) { console.error(`[cc] ${local.error}`); process.exit(1); }
 }
 
 // Best-effort: a UI preference must never block a launch.

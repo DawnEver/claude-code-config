@@ -181,3 +181,21 @@ test('startCodexDaemon reads the status Codex prints last; anything but started 
   assert.equal(seen.opts.env.CODEX_HOME, '/h');
   assert.ok(seen.opts.timeout > 0, 'a hung start cannot hold the launch');
 });
+
+// A keyless local row: no rules, no key, served on demand, and the session stays on this machine.
+test('llamacpp: a local row launches without rules or key, local-only, served on demand', () => {
+  const { env, args, error, serve } = invoke({}, {}, { provider: 'llamacpp', fetchKey: () => assert.fail('no key for a local row') });
+  assert.equal(error, null);
+  assert.equal(serve, 'llamacpp');
+  assert.equal(env.HARNESS_LOCAL_ONLY, '1');
+  assert.deepEqual(args.slice(0, 6), ['--config', 'model_provider=llamacpp', '--config', CATALOG_FLAG, '--model', 'qwen3.8-27b']);
+  for (const c of ['mcp_servers={}', 'web_search="disabled"', 'analytics.enabled=false']) {
+    assert.ok(args.includes(c), `${c} in ${args.join(' ')}`);
+  }
+});
+
+test('an api row is neither served nor local-only', () => {
+  const { env, serve } = invoke(RULES);
+  assert.equal(serve, undefined);
+  assert.equal(env.HARNESS_LOCAL_ONLY, undefined);
+});

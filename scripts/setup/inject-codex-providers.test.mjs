@@ -383,3 +383,21 @@ test('inject: no-marker append is byte-stable across two injections with exactly
   assert.equal(second.status, 'no-change');
   assert.equal(readFileSync(path, 'utf8'), afterFirst);
 });
+
+test('a local row (auth "local") reaches codex without projection rules and without env_key', () => {
+  const cache = { providers: { llamacpp: { auth: 'local', endpoints: { openai: 'http://127.0.0.1:8080/v1' }, models: { base: 'qwen3.8-27b' } } } };
+  const view = codexView({ providers: {} }, cache);
+  assert.equal(view.providers.llamacpp.baseUrl, 'http://127.0.0.1:8080/v1');
+  const block = generateModelProvidersBlock(view);
+  assert.ok(block.includes(`[model_providers.llamacpp]
+name = "llamacpp"
+base_url = "http://127.0.0.1:8080/v1"
+wire_api = "responses"
+`), block);
+  assert.doesNotMatch(block, /env_key/);
+});
+
+test('a catalogue row named like a codex built-in provider is never written (codex refuses the whole config)', () => {
+  const cache = { providers: { ollama: { auth: 'local', endpoints: { openai: 'http://localhost:11434/v1' }, models: {} } } };
+  assert.equal(generateModelProvidersBlock(codexView({ providers: {} }, cache)), '');
+});

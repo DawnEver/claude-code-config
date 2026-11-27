@@ -764,3 +764,9 @@ test('CodexHomes: one adapter per Codex home, sessions labeled with their home, 
   assert.match(warns.join('\n'), /bad home: no app-server/, 'one home failing does not stop the others');
   assert.equal(made.length, 3);
 });
+
+test('isMainSession: a thread on a local-only provider is never bridged', () => {
+  const isLocal = (p) => p === 'llamacpp';
+  assert.equal(isMainSession({ source: 'cli', modelProvider: 'llamacpp' }, undefined, isLocal), false);
+  assert.equal(isMainSession({ source: 'cli', modelProvider: 'deepseek' }, undefined, isLocal), true);
+});
