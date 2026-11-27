@@ -27,8 +27,9 @@ function retiredFieldsError(settings) {
 }
 
 /**
- * The projection rules of `provider` joined with its catalogue row. The cache is read only once
- * the settings pass (a retired field or an unknown name needs an edit, not a setup run).
+ * The projection rules of `provider` joined with its catalogue row; a local row's rules default to
+ * none. A retired field or an unknown name is reported before a broken cache (it needs an edit,
+ * not a setup run).
  * @param {{provider: string, settings: object, readCache: () => ({cache: object} | {error: string})}} opts
  * @returns {{rules: object, row: object, available: string[]} | {error: string, available: string[]}}
  */
@@ -36,9 +37,12 @@ export function resolveProvider({ provider, settings, readCache }) {
   const available = Object.keys(settings?.providers || {}).sort();
   const retired = retiredFieldsError(settings);
   if (retired) return { error: retired, available };
-  const rules = settings?.providers?.[provider];
-  if (!rules) return { error: `Unknown provider: ${provider}. Available: ${available.join(', ') || '(none)'}`, available };
+  const unknown = { error: `Unknown provider: ${provider}. Available: ${available.join(', ') || '(none)'}`, available };
   const read = readCache();
+  // A keyless local row (auth "local") has no key to project, so it needs no rules.
+  const local = !read.error && read.cache.providers?.[provider]?.auth === 'local';
+  const rules = settings?.providers?.[provider] ?? (local ? {} : null);
+  if (!rules) return unknown;
   if (read.error) return { error: read.error, available };
   const row = read.cache.providers?.[provider];
   if (!row) return { error: `provider ${provider} is not in the ai-lab catalogue (provider cache); add it to ai-lab's providers.toml, then rerun setup`, available };

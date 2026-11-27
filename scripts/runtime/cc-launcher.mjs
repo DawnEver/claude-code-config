@@ -21,8 +21,17 @@ import { readProviderCache } from '../shared/provider-cache.mjs';
 import { resolveProvider } from '../shared/provider-projection.mjs';
 import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
 import { repoAutoModeArgs } from './repo-automode.mjs';
+import { LOCAL_ONLY_ENV } from '../shared/local-only.mjs';
 
 const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:session-bridge'];
+
+// A local row's session stays on this machine: no MCP server but an explicit --mcp-config (claude.ai
+// connectors and plugin servers reach out), no web tools, no nonessential traffic (telemetry, updates),
+// and HARNESS_LOCAL_ONLY tells this repo's hooks not to mirror it (scripts/shared/local-only.mjs).
+const LOCAL_ONLY_ARGS = ['--strict-mcp-config', '--disallowedTools', 'WebSearch,WebFetch'];
+
+/** Claude Code's base URL for a catalogue anthropic endpoint: Claude Code appends `/v1/messages` itself. */
+export const claudeBaseUrl = (endpoint) => endpoint.replace(/\/v1\/?$/, '');
 
 /**
  * Build the env + args for spawning the `claude` CLI with a given provider.
@@ -44,6 +53,7 @@ const BRIDGE_CHANNEL_ARGS = ['--dangerously-load-development-channels', 'server:
  *   available: string[],
  *   error: string|null,
  *   notice?: string,  one line on whether the repo autoMode fragment was loaded
+ *   serve?: string,   a local provider whose server cc.js starts before the session
  * }}
  */
 export function buildClaudeInvocation({
@@ -115,7 +125,7 @@ export function buildClaudeInvocation({
 
   const baseUrl = row.endpoints?.anthropic;
   if (!baseUrl) return fail(`provider ${provider} declares no anthropic protocol in the ai-lab catalogue; Claude Code cannot use it`);
-  env.ANTHROPIC_BASE_URL = baseUrl;
+  env.ANTHROPIC_BASE_URL = claudeBaseUrl(baseUrl);
   env.HARNESS_PROVIDER = provider;
 
   if (rules.claudeApiKeyEnv && withKey) {
@@ -137,5 +147,9 @@ export function buildClaudeInvocation({
     env.CLAUDE_CODE_SUBAGENT_MODEL = m.subagent ?? m.base;
   }
 
-  return { env, args: [...extraArgs], provider, available, error: null, notice };
+  if (row.auth !== 'local') return { env, args: [...extraArgs], provider, available, error: null, notice };
+  // The server ignores the token; Claude Code needs one to skip its login.
+  if (!rules.claudeApiKeyEnv) env.ANTHROPIC_AUTH_TOKEN = 'local';
+  Object.assign(env, { [LOCAL_ONLY_ENV]: '1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' });
+  return { env, args: [...LOCAL_ONLY_ARGS, ...extraArgs], provider, available, error: null, notice, serve: provider };
 }

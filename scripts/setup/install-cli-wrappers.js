@@ -6,7 +6,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 
 /** The provider launchers, per host binary they need: [wrapper name, provider argument]. */
-const LAUNCHERS = { claude: [['ccc', 'claude'], ['ccds', 'deepseek']], codex: [['codc', 'codex'], ['cods', 'deepseek']], agy: [['agyc', 'agy']] };
+const LAUNCHERS = { claude: [['ccc', 'claude'], ['ccds', 'deepseek'], ['ccla', 'llamacpp']], codex: [['codc', 'codex'], ['cods', 'deepseek']], agy: [['agyc', 'agy']] };
 /** Every wrapper this repo writes. `migrate` removes any other marked wrapper as an orphan. */
 export const WRAPPER_NAMES = [...Object.values(LAUNCHERS).flat().map(([name]) => name), 'todo'];
 
@@ -149,6 +149,7 @@ export function installCliWrappers(claudeDir) {
 
     console.log('      ccc     - Claude (official subscription)');
     console.log('      ccds    - DeepSeek API (Anthropic-compatible, direct)');
+    console.log('      ccla    - local llama.cpp (ai-lab llamacpp; server started on demand, local-only)');
   } else {
     console.log('      ccc/ccds - skipped (claude binary not found; Codex-only install)');
   }
