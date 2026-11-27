@@ -570,3 +570,18 @@ test('store: the daily series splits by platform, so a DeepSeek turn under Claud
   const r = await report(db, { days: 7, now: at + 3600000 });
   assert.deepEqual(r.daily.map((d) => [d.day, d.platform]), [['2026-10-21', 'claude'], ['2026-10-21', 'deepseek']]);
 });
+
+test('scanner: a session on a local-only provider model never leaves the machine, and is never resent', async () => {
+  const dir = tempDir('usage-local-');
+  const root = path.join(dir, 'projects', 'p');
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, 'S1.jsonl'), jsonl([prompt('p1', 0), call('m1', 10, { model: 'qwen3.8-27b' })]));
+  fs.writeFileSync(path.join(root, 'S2.jsonl'), jsonl([prompt('p2', 0, { sessionId: 'S2' }), call('m2', 10)].map((e) => ({ ...e, sessionId: 'S2' }))));
+  const s = new UsageScanner({ cursorFile: path.join(dir, 'c.json'), project: () => 'secret-proj', isLocalModel: (m) => m === 'qwen3.8-27b',
+    sources: () => [{ agent: 'claude', root: path.join(dir, 'projects'), depth: 3, seat: null, account: () => null }] });
+  const b = await s.collect();
+  assert.deepEqual(b.turns.map((t) => t.session), ['S2']);
+  b.commit();
+  assert.equal((await s.collect()).turns.length, 0, 'the local session is marked read, not pending');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

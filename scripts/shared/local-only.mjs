@@ -18,3 +18,11 @@ export function isLocalProvider(provider, read = readProviderCache) {
   const got = read();
   return !got.error && got.cache?.providers?.[provider]?.auth === 'local';
 }
+
+/** A test for whether a model is served by a local-only provider (any role of a local row); read once. */
+export function localModelTest(read = readProviderCache) {
+  const got = read();
+  const models = new Set(got.error ? [] : Object.values(got.cache?.providers ?? {})
+    .filter((row) => row?.auth === 'local').flatMap((row) => Object.values(row.models ?? {})));
+  return (model) => models.has(model);
+}
