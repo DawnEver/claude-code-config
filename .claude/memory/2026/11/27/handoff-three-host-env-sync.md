@@ -1,8 +1,8 @@
 # Handoff: three-host environment sync (Claude Code, Codex, agy) on this Windows host
 
 Session 2026-11-26/27. Goal: every host (Claude Code, Codex, Antigravity `agy`) uses the latest dev
-environment equally -- dev-lab harness, claude-code-config, Telegram bridge. motronics-studio is FROZEN
-(user, 2026-11-26): the project moves to Gitea `Tianjie-Zou-Team/motronics-studio-v1`; do not sync or edit it.
+environment equally -- dev-lab harness, claude-code-config, Telegram bridge. <project> is FROZEN
+(user, 2026-11-26): the project moves to Gitea `<org>/<project>-v1`; do not sync or edit it.
 
 ## Done
 
@@ -34,6 +34,6 @@ environment equally -- dev-lab harness, claude-code-config, Telegram bridge. mot
    20261120T151500Z, 20261121T222854Z, 20261123T101100Z, 20261123T212041Z, 20261124T101550Z,
    20261126T120431Z, 20261126T183528Z. Not acked.
 7. Not started: WS5 lane `physics-systems` of the v1 migration -- follow
-   `.claude/memory/2026/11/27/v1-workstation-setup-handoff.md` in motronics-studio-v1 (integrate/main), steps 1-8
+   `.claude/memory/2026/11/27/v1-workstation-setup-handoff.md` in <project>-v1 (integrate/main), steps 1-8
    (worktree `.claude/worktrees/l1-physics-systems`, branch `pr/v1-migration/l1-physics-systems`, hooks
-   installed and `protected` confirmed before any commit), then v1 issue #4; WS1 integrates, never merge.
+   installed and `protected` confirmed before any commit), then v1 issue #4; <machine> integrates, never merge.
