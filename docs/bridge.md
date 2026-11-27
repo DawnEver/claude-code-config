@@ -44,6 +44,11 @@ and is never mirrored:
   the ancestry and the decision. Its channel keeps serving MCP and registers only as NESTED
   (never a Topic): the daemon answers that process's hook calls `nested`, so they are
   deliberately not mirrored, and leave the hooks' spool.
+  The channel answers MCP at once and runs its start probes (the dev-lab declaration and the
+  process table, up to 30 s each) on a worker thread (`start-probes.mjs`), dialing the daemon
+  only when they answer (`startChannel`). Run synchronously they once outlasted Claude Code's
+  MCP connect timeout under load: a fork's channel was killed before it registered, so the
+  fork never got a Topic and its hooks spooled unrouted (2026-11-27).
 - A Topic a session got before it was known to be non-main is closed quietly
   (`dismiss`) and deleted with the other ended Topics.
 

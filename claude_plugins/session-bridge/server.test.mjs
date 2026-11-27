@@ -7,7 +7,7 @@ import os from 'os';
 import net from 'net';
 import http from 'http';
 import path from 'path';
-import { DaemonLink, createChannelServer, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity, pruneChannelLogs, transcriptPathOf } from './server.mjs';
+import { DaemonLink, createChannelServer, startChannel, isMainSession, ancestorsOf, isClaudeProcess, sessionIdentity, pruneChannelLogs, transcriptPathOf } from './server.mjs';
 import { readChannelDeclaration, DECLARATION_DOOR } from '../../scripts/shared/channel-declaration.mjs';
 import { ClaudeAdapter } from '../../scripts/bridge/claude-adapter.mjs';
 import { Bridge } from '../../scripts/bridge/daemon.mjs';
@@ -52,7 +52,7 @@ async function rig(configureHub = () => {}, declared = {}) {
     onInbound: (p) => server.inbound(p), onVerdict: (p) => server.verdict(p),
     onDisconnect: () => server.disconnected(),
   });
-  server = createChannelServer({ write: (m) => out.push(m), link, declared });
+  server = createChannelServer({ write: (m) => out.push(m), link, declared: () => declared });
   const ups = [];
   hub.on('up', (s) => ups.push(s));
   const cleanup = async () => { link.stop(); await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); };
@@ -363,7 +363,7 @@ test('a sender id the declaration does not name, or a username equal to it, is u
 
 test('a declaration for another source grants this channel nothing', () => {
   const out = [];
-  const s = createChannelServer({ write: (m) => out.push(m), link: {}, declared: { 'other-bridge': '1001' } });
+  const s = createChannelServer({ write: (m) => out.push(m), link: {}, declared: () => ({ 'other-bridge': '1001' }) });
   s.inbound({ text: 'go', user: 'alice', userId: '1001' });
   assert.equal(out[0].params.meta.declared, 'false');
 });
@@ -390,7 +390,84 @@ test('the declaration fails closed: every door failure declares nothing', () => 
     assert.deepEqual(got.channels, {}, name);
     assert.ok(got.why, name);
     const out = [];
-    createChannelServer({ write: (m) => out.push(m), link: {}, declared: got.channels }).inbound({ text: 'go', user: 'a', userId: '1001' });
+    createChannelServer({ write: (m) => out.push(m), link: {}, declared: () => got.channels }).inbound({ text: 'go', user: 'a', userId: '1001' });
     assert.equal(out[0].params.meta.declared, 'false', name);
   }
+});
+
+// A channel's start probes (the declaration, the process table) may take their full 30 s each under
+// load -- a fork or background session started while its parent works. Claude Code kills an MCP
+// server that has not answered initialize within its connect timeout, so the probes must never
+// stand between Claude Code and the first answer (2026-11-27: a fork's channel died that way and
+// the fork never had a Topic).
+const NO_RUNTIME = path.join(import.meta.dirname, 'no-such-runtime.json');   // never written: the link only retries
+const DECLARED = { declaration: { channels: { 'session-bridge': '1001' }, why: null }, table: new Map(), tableError: null };
+
+test('a channel answers initialize while its start probes are still running, and dials the daemon only after', async () => {
+  const out = [];
+  const ch = startChannel({ write: (m) => out.push(m), session: { sessionId: 'f1', cwd: '/repo' }, probe: () => new Promise(() => {}),
+    runtimeFile: NO_RUNTIME, ppid: 4242 });
+  try {
+    await ch.onMessage({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } });
+    await ch.onMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    assert.equal(out.length, 2, 'both answered with the probes pending');
+    assert.ok(out[0].result.capabilities.experimental['claude/channel']);
+    assert.equal(ch.link.socket, null, 'no daemon dial before the probes say what this channel is');
+  } finally { ch.link.stop(); }
+});
+
+test('a new session and a fork whose start probes are slow each register their own session; hooks route by the claude process', async () => {
+  const dir = tempDir('sb-');
+  const hub = new ClaudeAdapter();
+  const port = await hub.listen(0);
+  const runtimeFile = path.join(dir, 'runtime.json');
+  fs.writeFileSync(runtimeFile, JSON.stringify({ port, token: hub.token }));
+  const ups = [];
+  hub.on('up', (e) => ups.push(e.id));
+  const slow = (ms) => () => new Promise((done) => setTimeout(() => done(DECLARED), ms));
+  // Planted control: a plain new session, probes answering at once. The fork: same parent history,
+  // its own id, probes answering late.
+  const plain = startChannel({ write: () => {}, session: { sessionId: 'parent', cwd: '/repo' }, probe: slow(0), runtimeFile, ppid: 100 });
+  const out = [];
+  const fork = startChannel({ write: (m) => out.push(m), session: { sessionId: 'forked', cwd: '/repo' }, probe: slow(150), runtimeFile, ppid: 200 });
+  try {
+    await fork.onMessage({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+    assert.equal(out.length, 1, 'the fork answered Claude Code before its probes finished');
+    await Promise.all([plain.ready, fork.ready]);
+    await until(() => plain.link.ready && fork.link.ready);
+    assert.deepEqual(ups.sort(), ['forked', 'parent']);
+    const mirror = (claudePid, sessionId) => new Promise((resolve) => {
+      const sock = net.connect({ host: '127.0.0.1', port }, () => sock.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'mirror',
+        params: { token: hub.token, sessionId, claudePid, kind: 'prompt', text: 'hi' } }) + '\n'));
+      sock.setEncoding('utf8');
+      sock.on('data', (d) => { resolve(JSON.parse(d.split('\n')[0]).result); sock.destroy(); });
+    });
+    assert.equal((await mirror(200, 'forked-later-id')).routed, true, 'the fork process routes even under a new id');
+    assert.equal((await mirror(100, 'parent')).routed, true);
+    assert.equal((await mirror(999, 'nobody')).routed, false, 'a process with no channel is not routed');
+  } finally { plain.link.stop(); fork.link.stop(); await hub.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the declaration learned by the probes decides who is declared', async () => {
+  const out = [];
+  const ch = startChannel({ write: (m) => out.push(m), session: { sessionId: 'd1', cwd: '/repo' }, probe: async () => DECLARED,
+    runtimeFile: NO_RUNTIME, ppid: 1 });
+  try {
+    ch.inbound({ text: 'early', user: 'a', userId: '1001' });
+    await ch.ready;
+    ch.inbound({ text: 'late', user: 'a', userId: '1001' });
+    assert.deepEqual(out.map((m) => m.params.meta.declared), ['false', 'true'], 'undeclared until the declaration is read');
+  } finally { ch.link.stop(); }
+});
+
+test('a channel whose probes find a claude above its own claude registers nested', async () => {
+  const table = new Map([[300, { ppid: 301, cmd: 'claude.exe' }], [301, { ppid: 1, cmd: 'claude.exe' }]]);
+  const session = { sessionId: 'n1', cwd: '/repo' };
+  const ch = startChannel({ write: () => {}, session, probe: async () => ({ ...DECLARED, table }),
+    runtimeFile: NO_RUNTIME, ppid: 300 });
+  try {
+    await ch.ready;
+    assert.equal(session.nested, true);
+    assert.equal(session.claudePid, 300);
+  } finally { ch.link.stop(); }
 });
