@@ -87,6 +87,29 @@
       "vendor": "",
       "model_wires": {},
       "models": {}
+    },
+    "llamacpp": {
+      "wire": "openai_chat",
+      "protocol": "openai",
+      "url": "http://127.0.0.1:8080",
+      "host": "127.0.0.1",
+      "paths": {
+        "anthropic": "/v1",
+        "openai": "/v1"
+      },
+      "endpoints": {
+        "anthropic": "http://127.0.0.1:8080/v1",
+        "openai": "http://127.0.0.1:8080/v1"
+      },
+      "auth": "local",
+      "key_name": "",
+      "key_usernames": {},
+      "vision": false,
+      "vendor": "",
+      "model_wires": {},
+      "models": {
+        "base": "qwen3.8-27b"
+      }
     }
   }
 }

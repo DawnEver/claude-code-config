@@ -20,6 +20,7 @@ import { BRIDGE_DEFAULTS } from './context.mjs';
 import { isProvider } from '../shared/dashboard-schema.mjs';
 import { ActivityBoard } from './activity-board.mjs';
 import { codexHomes, codexHomeKey, codexHomeLabel } from '../shared/codex-home.mjs';
+import { isLocalProvider } from '../shared/local-only.mjs';
 
 const COMMAND_END = { completed: 'completed', failed: 'failed', declined: 'stopped' };
 // A command run by PowerShell (a path to it, quoted or not, or the bare name), and the script it runs.
@@ -174,14 +175,15 @@ function sourceKind(src) {
  * is allowed by `bridge.codexSources` (default `cli`). A user fork (`forkedFromId`, no
  * parent) counts by its own source.
  */
-export function isMainSession(thread, sources = BRIDGE_DEFAULTS.codexSources) {
-  return !thread?.parentThreadId && sources.includes(sourceKind(thread?.source));
+export function isMainSession(thread, sources = BRIDGE_DEFAULTS.codexSources, isLocal = isLocalProvider) {
+  return !thread?.parentThreadId && sources.includes(sourceKind(thread?.source)) && !isLocal(thread?.modelProvider);
 }
 
 export class CodexAdapter extends EventEmitter {
-  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000, sources = BRIDGE_DEFAULTS.codexSources, localObserver = null,
+  constructor({ connect = connectProxy, probe = probeDaemon, clientName = 'cc-config-bridge', now = Date.now, resumeRetryMs = 3000, sources = BRIDGE_DEFAULTS.codexSources, localObserver = null, isLocalProvider: isLocal = isLocalProvider,
     home = null, refPrefix = '' } = {}) {
     super();
+    this.isLocalProvider = isLocal;
     // `home`: the CODEX_HOME whose shared app-server this attaches to (null: the inherited one).
     this.env = home ? { ...process.env, CODEX_HOME: home } : process.env;
     this.refPrefix = refPrefix;   // keeps approval/question refs unique across adapters (CodexHomes)
@@ -347,7 +349,7 @@ export class CodexAdapter extends EventEmitter {
     this.released.delete(threadId);
     const th = r.thread ?? {};
     if (th.ephemeral) return;
-    if (!isMainSession(th, this.sources)) { this.#dismiss(threadId); return; }
+    if (!isMainSession(th, this.sources, this.isLocalProvider)) { this.#dismiss(threadId); return; }
     // Quiet since before IDLE_RELEASE_MS (Codex's updatedAt is seconds on this machine's clock), or broken: not a presence.
     if (th.status?.type === 'systemError' || (th.status?.type === 'idle' && (th.updatedAt ?? 0) * 1000 < this.now() - IDLE_RELEASE_MS)) {
       this.released.set(threadId, th.updatedAt ?? 0);
@@ -490,7 +492,7 @@ export class CodexAdapter extends EventEmitter {
         // turn that still slipped in first.
         const id = p.thread?.id;
         if (id) this.loadedIds.add(id); // Also exclude threads born while the rollout scan awaits disk I/O.
-        if (id && !isMainSession(p.thread, this.sources)) { this.#dismiss(id); break; }
+        if (id && !isMainSession(p.thread, this.sources, this.isLocalProvider)) { this.#dismiss(id); break; }
         if (id && !this.threads.has(id) && !p.thread.ephemeral) {
           this.#subscribe(id).catch((e) => this.emit('warn', `resume ${id}: ${e.message}`));
         }

@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { resolveCodexHome } from '../shared/codex-home.mjs';
+import { isLocalProvider } from '../shared/local-only.mjs';
 
 const READ_BYTES = 1024 * 1024;
 const WINDOW_MS = 10 * 60000;
@@ -29,9 +30,9 @@ function parse(line) {
  * command output, tool arguments, reasoning, instructions, and historical prompts stay local. */
 export class CodexLocalObserver extends EventEmitter {
   constructor({ root = path.join(resolveCodexHome(), 'sessions'), sources = ['cli', 'vscode'], now = Date.now,
-    activityWindowMs = WINDOW_MS } = {}) {
+    activityWindowMs = WINDOW_MS, isLocalProvider: isLocal = isLocalProvider } = {}) {
     super();
-    Object.assign(this, { root, sources, now, activityWindowMs });
+    Object.assign(this, { root, sources, now, activityWindowMs, isLocal });
     this.startedAt = now();
     this.files = new Map();
     this.threads = new Map();
@@ -92,7 +93,7 @@ export class CodexLocalObserver extends EventEmitter {
       const id = head.id ?? head.session_id;
       const kind = typeof head.source === 'string' ? head.source : Object.keys(head.source ?? {})[0] ?? 'unknown';
       const allowed = id && !head.parent_thread_id && !head.parentThreadId && head.thread_source !== 'subagent' &&
-        !/^subagent$/i.test(kind) && this.sources.includes(kind);
+        !/^subagent$/i.test(kind) && this.sources.includes(kind) && !this.isLocal(head.model_provider);
       state = { id, allowed, cwd: head.cwd, branch: head.git?.branch ?? null, offset: Math.max(0, stat.size - READ_BYTES),
         carry: Buffer.alloc(0), skipFirst: stat.size > READ_BYTES, initial: true, turnId: null, seen: new Set() };
       this.files.set(file, state);

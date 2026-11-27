@@ -115,3 +115,20 @@ test('reasoning, tool output and user-role context records never leave the obser
   assert.equal(f.events.some(e => ['prompt', 'message', 'final'].includes(e.kind)), false);
   assert.match(f.observer.controlError('local').message, /stop that TUI first/);
 });
+
+test('a rollout on a local-only provider never registers or mirrors', async (t) => {
+  const root = tempDir('codex-local-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, '2027', '01', '15');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'rollout-local.jsonl');
+  fs.writeFileSync(file, row('session_meta', { id: 'priv', cwd: '/work', source: 'cli', model_provider: 'llamacpp' }));
+  const observer = new CodexLocalObserver({ root, sources: ['cli'], now: () => at, isLocalProvider: (p) => p === 'llamacpp' });
+  const events = [];
+  for (const kind of ['up', 'prompt', 'final', 'notice']) observer.on(kind, (e) => events.push(kind));
+  fs.appendFileSync(file, row('event_msg', { type: 'user_message', message: 'secret' }));
+  await observer.refresh();
+  await observer.refresh();
+  assert.deepEqual(events, []);
+  assert.equal(observer.has('priv'), false);
+});

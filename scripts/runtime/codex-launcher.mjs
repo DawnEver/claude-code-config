@@ -20,6 +20,9 @@ import { resolveProvider } from '../shared/provider-projection.mjs';
 import { fetchKey as fetchStoredKey, sessionUsername } from '../shared/credential-key.mjs';
 import { codexResumeArgs } from '../shared/vendor-session.mjs';
 import { resolveCodexHome } from '../shared/codex-home.mjs';
+import { LOCAL_ONLY_ENV } from '../shared/local-only.mjs';
+
+const LOCAL_ONLY_ARGS = ['--config', 'mcp_servers={}', '--config', 'web_search="disabled"', '--config', 'analytics.enabled=false'];
 
 // Subcommands that open the interactive TUI; every other subcommand (exec, app-server, ...)
 // is non-interactive and must not be redirected. A bare positional is the TUI's prompt.
@@ -171,5 +174,9 @@ export function buildCodexInvocation({
   const models = row.models || {};
   if (models.codex || models.base) args.push('--model', codexModel(models));
 
-  return { env, args: [...args, ...extraArgs], provider, available, error: null };
+  if (row.auth !== 'local') return { env, args: [...args, ...extraArgs], provider, available, error: null };
+  // A local row's session stays on this machine (scripts/shared/local-only.mjs): no MCP server, no web
+  // search, no analytics; codex.js starts the server first.
+  env[LOCAL_ONLY_ENV] = '1';
+  return { env, args: [...args, ...LOCAL_ONLY_ARGS, ...extraArgs], provider, available, error: null, serve: provider };
 }

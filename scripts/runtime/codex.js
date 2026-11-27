@@ -83,7 +83,7 @@ const argv = process.argv.slice(2);
 const provider = argv[0] && !argv[0].startsWith('-') ? argv.shift() : '';
 const extraArgs = argv;
 
-const { env, args, error, notice } = buildCodexInvocation({
+const { env, args, error, notice, serve } = buildCodexInvocation({
   provider: provider || null,
   extraArgs,
   envSettingsPath,
@@ -96,6 +96,14 @@ if (error) {
 if (notice) console.error(`[codex] ${notice}`);
 
 console.log(provider ? `[codex] Using provider: ${provider}` : '[codex] Using default Codex');
+
+// A local provider's server starts on demand; codex compacts against the running server's context.
+if (serve) {
+  const { serveLocal } = await import('../shared/local-serve.mjs');
+  const local = await serveLocal(serve);
+  if (local.error) { console.error(`[codex] ${local.error}`); process.exit(1); }
+  if (local.contextWindow) args.unshift('--config', `model_context_window=${local.contextWindow}`);
+}
 
 // Codex runs through ai-lab's session launcher, which mints or inherits LAB_SESSION (session-launcher.mjs).
 const session = sessionSpawn('codex', args, { log: (m) => console.error(`[codex] ${m}`) });

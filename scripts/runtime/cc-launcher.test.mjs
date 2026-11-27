@@ -258,3 +258,25 @@ test('a trusted repo fragment loads with --settings; the isolated default never 
   assert.ok(buildClaudeInvocation({ ...base, cwd: repo, home }).args.includes('--settings'));
   assert.ok(!buildClaudeInvocation(base).args.includes('--settings'));
 });
+
+// A keyless local row (auth "local", llama.cpp on this machine): no projection rule needed, no key,
+// Claude Code's base URL is the origin (it appends /v1/messages), and the session is local-only.
+test('llamacpp: a local row launches without rules or key, base URL without /v1, served on demand', () => {
+  const { env, args, error, serve } = invoke({}, {}, { provider: 'llamacpp', fetchKey: () => assert.fail('no key for a local row') });
+  assert.equal(error, null);
+  assert.equal(env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:8080');
+  assert.equal(env.ANTHROPIC_MODEL, 'qwen3.8-27b');
+  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'qwen3.8-27b');
+  assert.ok(env.ANTHROPIC_AUTH_TOKEN, 'Claude Code needs a token to skip its login; the server ignores it');
+  assert.equal(serve, 'llamacpp', 'cc.js starts the server before the session');
+  assert.equal(env.HARNESS_LOCAL_ONLY, '1');
+  assert.equal(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, '1');
+  assert.deepEqual(args.slice(0, 3), ['--strict-mcp-config', '--disallowedTools', 'WebSearch,WebFetch']);
+});
+
+test('an api row keeps its base URL and is neither served nor local-only', () => {
+  const { env, serve } = invoke(RULES);
+  assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+  assert.equal(serve, undefined);
+  assert.equal(env.HARNESS_LOCAL_ONLY, undefined);
+});

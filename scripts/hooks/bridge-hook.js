@@ -49,6 +49,7 @@ import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { isMain } from '../shared/is-main.mjs';
+import { isLocalOnly } from '../shared/local-only.mjs';
 import { isAlive } from '../shared/owner-lock.mjs';
 import { RUNTIME_FILE, SPOOL_NAMES } from '../bridge/runtime-paths.mjs';
 
@@ -548,6 +549,8 @@ const spoolable = (call) => call.kind !== 'activity' || Boolean(call.text) || Bo
 
 async function main() {
   if (process.argv.includes('--send-spool')) { await sendSpool(); return; }
+  // A local-only session (ccla) is never mirrored: its prompts and answers stay on this machine.
+  if (isLocalOnly()) return;
   // Most entries run async, so calls can reach the daemon out of order: the stamp orders them.
   const at = Date.now();
   if (!fs.existsSync(RUNTIME_FILE)) return;

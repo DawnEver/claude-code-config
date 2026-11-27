@@ -149,7 +149,8 @@ export function codexModelFrom(models) {
 export function codexView(settings, cache) {
   const providers = {};
   for (const [name, { rules, row }] of Object.entries(projectedProviders(settings, cache))) {
-    providers[name] = { codexApiKeyEnv: rules.codexApiKeyEnv, baseUrl: row.endpoints?.openai, models: row.models };
+    providers[name] = { codexApiKeyEnv: rules.codexApiKeyEnv, baseUrl: row.endpoints?.openai, models: row.models,
+      ...(row.auth === 'local' ? { local: true } : {}) };
   }
   return { providers };
 }
@@ -161,19 +162,24 @@ export function codexView(settings, cache) {
  * @returns {string}  The full generated block, including start/end markers. Empty
  *   string if no provider has a codex-side declaration (caller can choose to no-op).
  */
+// Codex's built-in provider ids: a [model_providers.<id>] for one is a config load ERROR that stops every
+// codex session ("reserved built-in provider IDs", codex 0.171), so such a catalogue row is never written.
+export const CODEX_BUILTIN_PROVIDERS = new Set(['openai', 'ollama', 'lmstudio', 'oss']);
+
 export function generateModelProvidersBlock(settings) {
   const providers = settings?.providers || {};
   const blocks = [];
   for (const [name, profile] of Object.entries(providers)) {
-    if (!profile || typeof profile !== 'object') continue;
+    if (!profile || typeof profile !== 'object' || CODEX_BUILTIN_PROVIDERS.has(name)) continue;
     const { baseUrl } = profile;
     if (!baseUrl) continue; // no openai protocol: codex cannot reach it
-    const envKey = profile.codexApiKeyEnv || 'API_KEY';
+    // A keyless local server needs no key: no env_key, so codex sends none.
+    const envKey = profile.local ? '' : `env_key = "${profile.codexApiKeyEnv || 'API_KEY'}"
+`;
     blocks.push(`[model_providers.${name}]
 name = "${name}"
 base_url = "${baseUrl}"
-env_key = "${envKey}"
-wire_api = "responses"
+${envKey}wire_api = "responses"
 `);
   }
   if (blocks.length === 0) return '';

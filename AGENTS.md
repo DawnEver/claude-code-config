@@ -47,7 +47,8 @@ Cross-platform config sync & multi-host harness for **Claude Code**, **Codex**, 
 
 ### CLI Tools
 - `ccc` / `ccds` (`ccc --seat <alias>`) — Claude Code launchers.
-- `codc` / `cods` — Codex launchers.
+- `ccla` — Claude Code on a local llama.cpp model (ai-lab `llamacpp`; server started on demand, session local-only: no bridge mirror, MCP or web tools). Setup: ai-lab `docs-src/local-llama.md`.
+- `codc` / `cods` — Codex launchers; `codla` — Codex on the same local llama.cpp model, local-only like `ccla`.
 - `agyc` — Antigravity CLI launcher (installed where `agy` is on PATH).
 - `todo` — Task list CLI (`todo`, `todo <text>`, `todo rm <id>`).
 

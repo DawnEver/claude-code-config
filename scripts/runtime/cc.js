@@ -21,7 +21,7 @@ const sync = syncBeforeLaunch({ stampFile: join(homedir(), '.claude', '.harness-
 if (sync.notice) console.error(sync.notice);
 process.env.CC_CONFIG_STARTUP_SYNCED = '1';
 const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { accountFile, configDir },
-  { channelServerPath, ensureChannelServer }, { readBridgeConfig }, { ENV_SETTINGS_PATH }, { sessionSpawn }] = await Promise.all([
+  { channelServerPath, ensureChannelServer }, { readBridgeConfig }, { ENV_SETTINGS_PATH }, { sessionSpawn }, { serveLocal }] = await Promise.all([
   import('./cc-launcher.mjs'),
   import('./win-spawn.mjs'),
   import('../shared/claude-defaults.mjs'),
@@ -30,6 +30,7 @@ const [{ buildClaudeInvocation }, { prepareSpawn }, { applyGlobalDefaults }, { a
   import('../bridge/context.mjs'),
   import('../shared/config.mjs'),
   import('../shared/session-launcher.mjs'),
+  import('../shared/local-serve.mjs'),
 ]);
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -51,7 +52,7 @@ const seatAt = argv.findIndex((a) => a === '--seat' || a === '-s');
 const seat = seatAt === -1 ? null : argv.splice(seatAt, 2)[1] ?? '';
 const extraArgs = argv;
 
-const { env, args, error, seat: resolvedSeat, seatMatch, notice } = buildClaudeInvocation({
+const { env, args, error, seat: resolvedSeat, seatMatch, notice, serve } = buildClaudeInvocation({
   provider: provider || null,
   extraArgs,
   envSettingsPath,
@@ -68,6 +69,12 @@ if (seatMatch && (seatMatch !== 'exact' || resolvedSeat !== seat)) console.log(`
 console.log(provider ? `[cc] Using provider: ${provider}` : `[cc] Using Claude (official subscription${resolvedSeat ? `, seat ${resolvedSeat}` : ''})`);
 
 if (notice) console.log(notice);
+
+// A local provider's server is started on demand by ai-lab (its serve.toml); its refusal names the remedy.
+if (serve) {
+  const local = await serveLocal(serve);
+  if (local.error) { console.error(`[cc] ${local.error}`); process.exit(1); }
+}
 
 // Best-effort: a UI preference must never block a launch.
 try { applyGlobalDefaults(accountFile(configDir(env))); } catch { /* ignore */ }
