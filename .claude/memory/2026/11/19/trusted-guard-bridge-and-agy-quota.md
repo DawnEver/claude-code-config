@@ -1,8 +1,6 @@
 ---
 title: Trusted Project-Guard Host Bridge & Zero-Token Antigravity Quota Probe
 created: 2026-11-19
-accessed: 2026-11-19
-tier: long-term
 tags: [antigravity, codex, hooks, quota, architecture, security]
 ---
 

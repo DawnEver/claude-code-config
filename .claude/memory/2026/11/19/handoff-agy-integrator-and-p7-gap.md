@@ -1,8 +1,6 @@
 ---
 title: Handoff — Antigravity Alignment Landings & P7 Ad-hoc PR Mechanism Gap
 created: 2026-11-19
-accessed: 2026-11-19
-tier: short-term
 tags: [handoff, integrator, antigravity, dev-lab, p7, taskbinding]
 ---
 
