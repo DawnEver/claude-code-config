@@ -25,10 +25,11 @@ import { RUNTIME_FILE } from '../../scripts/bridge/runtime-paths.mjs';
 import { isMain } from '../../scripts/shared/is-main.mjs';
 import { configDir, readSeats, seatOf } from '../../scripts/shared/seats.mjs';
 import { readMachineName } from '../../scripts/shared/machine.mjs';
-import { CHANNEL_SOURCE, readChannelDeclaration } from '../../scripts/shared/channel-declaration.mjs';
-import { tokens, base, isClaudeProcess, readProcessTable, ancestorsOf } from '../../scripts/shared/process-tree.mjs';
+import { Worker } from 'worker_threads';
+import { CHANNEL_SOURCE } from '../../scripts/shared/channel-declaration.mjs';
+import { tokens, base, isClaudeProcess, ancestorsOf } from '../../scripts/shared/process-tree.mjs';
 
-export { isClaudeProcess, readProcessTable, ancestorsOf };
+export { isClaudeProcess, ancestorsOf };
 const RECONNECT_MS = 5000;
 
 const INSTRUCTIONS = [
@@ -113,7 +114,8 @@ export class DaemonLink {
 
 /** The MCP side. `write` sends one JSON-RPC message to Claude Code. */
 
-export function createChannelServer({ write, link, declared = {} }) {
+/** `declared()` is the machine's channel declaration, read when a message arrives (it is learned after start). */
+export function createChannelServer({ write, link, declared = () => ({}) }) {
   const approvals = new Map();
   const notify = (method, params) => write({ jsonrpc: '2.0', method, params });
   const tools = [{
@@ -190,7 +192,7 @@ export function createChannelServer({ write, link, declared = {} }) {
     onMessage,
     inbound: ({ text, user, userId }) => {
       const id = String(userId ?? '');
-      const isDeclared = Boolean(id) && declared[CHANNEL_SOURCE] === id;
+      const isDeclared = Boolean(id) && declared()[CHANNEL_SOURCE] === id;
       notify('notifications/claude/channel', { content: String(text ?? ''),
         meta: { user: String(user ?? ''), user_id: id, declared: String(isDeclared) } });
     },
@@ -241,6 +243,60 @@ export function pruneChannelLogs(dir, { now = Date.now(), maxAgeDays = 7 } = {})
   }
 }
 
+/**
+ * One channel: MCP is served AT ONCE, then the slow start probes (`probe`: the declaration and the
+ * process table) say what this channel is, and only then does it dial the daemon. Claude Code
+ * kills an MCP server that has not answered `initialize` within its connect timeout (30 s), and
+ * the probes once ran synchronously before the first answer: under load (a fork or background
+ * session started while its parent works) the declaration alone took its full 30 s, the
+ * channel was killed before it registered, and the session never had a Topic while its hooks
+ * spooled unrouted for as long as it lived (2026-11-27). Until the probes answer, a Telegram
+ * message cannot arrive (the daemon does not know this channel yet) and a tool call reports the
+ * daemon down; the hooks' spool keeps every mirror call until the channel registers.
+ */
+export function startChannel({ write, session, probe, env = {}, ppid, log = () => {}, runtimeFile = RUNTIME_FILE }) {
+  let declared = {};
+  let server;
+  const link = new DaemonLink({
+    runtimeFile,
+    session,
+    onInbound: (p) => server.inbound(p),
+    onVerdict: (p) => server.verdict(p),
+    onDisconnect: () => server.disconnected(),
+    log,
+  });
+  server = createChannelServer({ write, link, declared: () => declared });
+  const ready = Promise.resolve().then(probe).then(({ declaration, table, tableError }) => {
+    // Resolved once: a declaration edited later takes effect for the next session.
+    declared = declaration.channels;
+    log(`channel declaration: ${declaration.why ?? `sources ${Object.keys(declaration.channels).join(',')}`}`);
+    if (tableError) log(`ancestry unknown: ${tableError}; nested detection falls back to CLAUDE_PID alone`);
+    const ancestors = ancestorsOf(ppid, table);
+    log(`ancestry ${ancestors.map((a) => `${a.pid}:${base(tokens(a.cmd, 1)[0])}${isClaudeProcess(a.cmd) ? '*' : ''}`).join(' < ') || 'unknown'}`);
+    // The hook names this process (its CLAUDE_PID, which Claude Code sets per process), so a call
+    // routes here even when the session id it reports is new (/clear, /resume, a fork).
+    const claude = ancestors.find((a) => isClaudeProcess(a.cmd));
+    session.claudePid = claude?.pid ?? ppid;
+    if (!isMainSession({ ppid, claudePid: env.CLAUDE_PID, ancestors })) {
+      // Keep serving MCP so Claude Code sees a healthy server. Register as NESTED only: never a
+      // Topic, and the daemon answers this process's hook calls `nested`, so they are deliberately
+      // not mirrored -- not left waiting in the hooks' spool for a channel that never comes.
+      log(`nested session (CLAUDE_PID=${env.CLAUDE_PID ?? 'unset'}, ancestry ${ancestors.map((a) => a.pid).join('<')}): not bridged`);
+      session.nested = true;
+      link.start();
+      return;
+    }
+    // Claude Code drops channel messages unless launched with this flag (ccc adds it), and
+    // always on a third-party provider (ccds: its ANTHROPIC_BASE_URL reaches this process).
+    // Such a session mirrors out; its Telegram messages wait for the Stop hook instead.
+    session.thirdParty = Boolean(env.ANTHROPIC_BASE_URL);
+    session.inbound = !session.thirdParty && (!claude || /server:session-bridge/.test(claude.cmd));
+    if (!session.inbound) log(`no channel (${session.thirdParty ? 'third-party provider' : 'flag missing'}): Telegram messages are delivered by the Stop hook`);
+    link.start();
+  });
+  return { onMessage: (m) => server.onMessage(m), inbound: (p) => server.inbound(p), link, ready };
+}
+
 function main() {
   pruneChannelLogs(path.dirname(RUNTIME_FILE));
   const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
@@ -269,47 +325,25 @@ function main() {
   process.on('exit', (code) => log(`exit ${code}`));
   process.stdout.on('error', (e) => log(`stdout: ${e.message}`));
   const write = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
-  let server;
-  const link = new DaemonLink({
-    session,
-    onInbound: (p) => server.inbound(p),
-    onVerdict: (p) => server.verdict(p),
-    onDisconnect: () => server.disconnected(),
-    log,
-  });
-  // Resolved once: a declaration edited later takes effect for the next session.
-  const declaration = readChannelDeclaration();
-  log(`channel declaration: ${declaration.why ?? `sources ${Object.keys(declaration.channels).join(',')}`}`);
-  server = createChannelServer({ write, link, declared: declaration.channels });
-  process.stdin.on('data', jsonLines((m) => server.onMessage(m)));
-  process.stdin.on('end', () => { log('stdin closed by Claude Code'); link.stop(); process.exit(0); });
-  log(`start session=${session.sessionId} from ${identity.source} cwd=${cwd}`);
-  const { table, error: tableError } = readProcessTable();
-  if (tableError) log(`ancestry unknown: ${tableError}; nested detection falls back to CLAUDE_PID alone`);
-  const ancestors = ancestorsOf(process.ppid, table);
-  log(`ancestry ${ancestors.map((a) => `${a.pid}:${base(tokens(a.cmd, 1)[0])}${isClaudeProcess(a.cmd) ? '*' : ''}`).join(' < ') || 'unknown'}`);
-  // The hook names this process (its CLAUDE_PID, which Claude Code sets per process), so a call
-  // routes here even when the session id it reports is new (/clear, /resume, a fork).
-  const claude = ancestors.find((a) => isClaudeProcess(a.cmd));
-  session.claudePid = claude?.pid ?? process.ppid;
-  if (!isMainSession({ ppid: process.ppid, claudePid: process.env.CLAUDE_PID, ancestors })) {
-    // Keep serving MCP so Claude Code sees a healthy server. Register as NESTED only: never a
-    // Topic, and the daemon answers this process's hook calls `nested`, so they are deliberately
-    // not mirrored -- not left waiting in the hooks' spool for a channel that never comes.
-    log(`nested session (CLAUDE_PID=${process.env.CLAUDE_PID ?? 'unset'}, ancestry ${ancestors.map((a) => a.pid).join('<')}): not bridged`);
-    session.nested = true;
-    link.start();
-    return;
-  }
   // This channel starts with its claude process: no background task begun before it still runs (a resumed session's).
   session.startedAt = Math.round(Date.now() - process.uptime() * 1000);
-  // Claude Code drops channel messages unless launched with this flag (ccc adds it), and
-  // always on a third-party provider (ccds: its ANTHROPIC_BASE_URL reaches this process).
-  // Such a session mirrors out; its Telegram messages wait for the Stop hook instead.
-  session.thirdParty = Boolean(process.env.ANTHROPIC_BASE_URL);
-  session.inbound = !session.thirdParty && (!claude || /server:session-bridge/.test(claude.cmd));
-  if (!session.inbound) log(`no channel (${session.thirdParty ? 'third-party provider' : 'flag missing'}): Telegram messages are delivered by the Stop hook`);
-  link.start();
+  log(`start session=${session.sessionId} from ${identity.source} cwd=${cwd}`);
+  const channel = startChannel({ write, session, probe: probeInWorker, env: process.env, ppid: process.ppid, log });
+  process.stdin.on('data', jsonLines((m) => channel.onMessage(m)));
+  process.stdin.on('end', () => { log('stdin closed by Claude Code'); channel.link.stop(); process.exit(0); });
+}
+
+/**
+ * The slow start probes -- the dev-lab channel declaration and the OS process table, each up to
+ * 30 s -- on a worker thread, so the MCP loop never waits on them (see startChannel).
+ */
+export function probeInWorker() {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(new URL('./start-probes.mjs', import.meta.url));
+    w.once('message', ({ declaration, table, tableError }) => resolve({ declaration, table: new Map(table), tableError }));
+    w.once('error', reject);
+    w.once('exit', (code) => reject(new Error(`start probes exited ${code} without an answer`)));
+  });
 }
 
 if (isMain(import.meta.url)) main();
