@@ -17,6 +17,7 @@ import { aliasOf, baseDir, readAccount } from '../shared/seats.mjs';
 import { claudeAccountKey, codexAccountKey, agyAccountKey, readAgyEmail } from '../bridge/quota.mjs';
 import { readAgyCwds } from '../bridge/agy-adapter.mjs';
 import { codexHomes as recordedCodexHomes, codexHomeKey, codexHomeLabel, codexHomesFile } from '../shared/codex-home.mjs';
+import { localModelTest } from '../shared/local-only.mjs';
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 
@@ -100,8 +101,8 @@ export class UsageScanner {
    * @param {{cursorFile: string, sources: () => Array, project?: (cwd) => string|null}} o
    *   project: a working tree's project name; cached per cwd in the cursor (a git call each).
    */
-  constructor({ cursorFile, sources: list, project = (cwd) => gitContext(cwd, { branch: '-' }).project }) {
-    Object.assign(this, { cursorFile, sources: list, project });
+  constructor({ cursorFile, sources: list, project = (cwd) => gitContext(cwd, { branch: '-' }).project, isLocalModel = null }) {
+    Object.assign(this, { cursorFile, sources: list, project, isLocalModel });
     try { this.cursor = JSON.parse(fs.readFileSync(cursorFile, 'utf8')); } catch { this.cursor = {}; }
     this.cursor.files ??= {};
     this.cursor.projects ??= {};
@@ -128,6 +129,8 @@ export class UsageScanner {
    * forgotten on commit.
    */
   async collect({ limit = 2000 } = {}) {
+    // Read per collect: the daemon outlives a catalogue change.
+    const isLocalModel = this.isLocalModel ?? localModelTest();
     const turns = [];
     const costs = [];
     const pending = {};
@@ -150,6 +153,8 @@ export class UsageScanner {
         const lastAt = t.turns.reduce((m, r) => Math.max(m, r.ended_at), 0) || null;
         const mark = { size: st.size, mtimeMs: st.mtimeMs, sent: t.turns.length, costs: JSON.stringify([t.costs, lastAt]) };
         if (!t.session) { pending[file] = mark; continue; }
+        // A local-only session (ccla/codla, scripts/shared/local-only.mjs) is read and never sent: not even its counts.
+        if (t.turns.some((r) => isLocalModel(r.model))) { pending[file] = mark; continue; }
         const sessionCwd = src.cwdOf?.(t.session) ?? this.cursor.agySubagents[t.session]
           ?? (t.subagentParent ? (src.cwdOf?.(t.subagentParent) ?? this.cursor.agySubagents[t.subagentParent]) : null)
           ?? null;
