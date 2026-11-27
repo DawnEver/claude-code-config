@@ -18,13 +18,14 @@
   detail; no duplication across levels.
 - **Keep every valuable parameter and option** (`keep-valuable-options`): Generality is a requirement: keep every
   parameter and option a real case uses or plausibly needs. A reference match ADDS a selectable option and never
-  replaces or deletes the alternative; numerical method choices are options even with no current caller.
+  replaces or deletes the alternative; numerical method choices are options even with no current caller. Every
+  retirement is classified (renamed, baggage, or capability-dropped) and only a user ruling drops a capability.
 - **Every wall teaches** (`every-wall-teaches`): Every refusal or failure an agent hits names its cause and its door;
   one that does not is a mechanism gap, and closing it (a hook row, a remedy, a test) comes before the task. Never route
-  around a wall or hand the user a command. The loop: docs-src/dev/feedback.md.
+  around a wall or hand the user a command. The loop: docs-src/dev/feedback.md (dev-lab).
 - **Fan out without a barrier** (`no-barrier-fan-out`): Parallel work is independent items, each landed the moment it is
   done; nothing waits for the slowest sibling -- no barrier-style orchestration (e.g. a dynamic workflow that joins all
-  agents) unless a step truly needs every result. How: docs-src/dev/fanout.md.
+  agents) unless a step truly needs every result. How: docs-src/dev/fanout.md (dev-lab).
 - **Deliver an image by its absolute path** (`images-by-absolute-path`): An image handed to the user is named by its
   ABSOLUTE path, never a relative one (IMAGES-BY-ABSOLUTE-PATH).
 - **A worktree is named for its task** (`worktree-names-its-task`): A worktree's name has a physical meaning tied to its
@@ -33,6 +34,10 @@
   Rust from its first line; a Python version of it is only a scratch prototype, never a second implementation;
   acceptance is against references (analytic, the vendor ladder, the previous implementation during a migration), never
   against a Python twin.
+- **Everything in its place** (`everything-in-its-place`): Each thing lives in the one owner responsible for it; a
+  misplaced thing moves, never leaving a pointer or a copy.
+- **No detour** (`no-detour`): Every hop must add something; a rule that forces a detour is the defect. Complexity is
+  measured, not guessed.
 <!-- principles:end -->
 - **Deliver at full scope.** Complete the requested work under reasonable assumptions; do not stop at the minimal subset unless asked.
 - **Analyze before implementing.** For open-ended questions, present analysis, options, and tradeoffs instead of jumping to code.
