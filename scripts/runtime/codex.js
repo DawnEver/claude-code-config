@@ -83,7 +83,7 @@ const argv = process.argv.slice(2);
 const provider = argv[0] && !argv[0].startsWith('-') ? argv.shift() : '';
 const extraArgs = argv;
 
-const { env, args, error } = buildCodexInvocation({
+const { env, args, error, notice } = buildCodexInvocation({
   provider: provider || null,
   extraArgs,
   envSettingsPath,
@@ -93,6 +93,7 @@ if (error) {
   console.error(error);
   process.exit(1);
 }
+if (notice) console.error(`[codex] ${notice}`);
 
 console.log(provider ? `[codex] Using provider: ${provider}` : '[codex] Using default Codex');
 

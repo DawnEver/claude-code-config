@@ -9,6 +9,7 @@
 // the API key through the provider's `env_key` env var, and the model is a
 // `--model` CLI flag (no env var exists).
 
+import { execFileSync } from 'child_process';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { PROVIDER_KEYS } from '../shared/provider-keys.js';
@@ -52,6 +53,29 @@ const CODEX_STRIP_KEYS = [
   'CODEX_NON_INTERACTIVE', 'CODEX_CA_CERTIFICATE',
 ];
 
+const IS_WIN = process.platform === 'win32';
+const DAEMON_START_TIMEOUT_MS = 30000;
+
+/**
+ * Ask Codex to start the shared app-server daemon of `env`'s CODEX_HOME. `daemon start` is Codex's own
+ * idempotent verb (a running daemon answers `alreadyRunning`), and nothing else brings a dead one back: the
+ * bridge only probes it. Returns null when the daemon runs, else the cause in one line.
+ */
+export function startCodexDaemon({ env = process.env, run = execFileSync } = {}) {
+  let out;
+  try {
+    // On Windows `codex` is a .cmd shim, so it goes through the shell as one command string.
+    out = run(IS_WIN ? 'codex app-server daemon start' : 'codex', IS_WIN ? [] : ['app-server', 'daemon', 'start'],
+      { env, encoding: 'utf8', timeout: DAEMON_START_TIMEOUT_MS, windowsHide: true, shell: IS_WIN, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) { return String(err.message).split('\n')[0]; }
+  // Codex prints progress records first and its status object last.
+  const status = String(out).trim().split('\n').reverse()
+    .map((line) => { try { return JSON.parse(line).status; } catch { return undefined; } })
+    .find((s) => s !== undefined);
+  if (status === 'started' || status === 'alreadyRunning') return null;
+  return status ? `the daemon reported ${status}` : 'codex app-server daemon start printed no status';
+}
+
 /**
  * Derive codex's model id from the catalogue's `models` map (the same map
  * `cc-launcher.mjs` projects). `models.codex` wins when set explicitly;
@@ -73,12 +97,15 @@ function codexModel(models) {
  * @param {string} opts.envSettingsPath  Path to the shared claude_env_settings.json.
  * @param {string} [opts.localPath]  Machine-local overlay path. Defaults to
  *   `~/.claude/claude_env_settings.local.json`.
+ * @param {Function} [opts.startDaemon]  Starts the shared app-server daemon before a TUI attaches
+ *   (`startCodexDaemon`): null when it runs, else the cause.
  * @returns {{
  *   env: NodeJS.ProcessEnv,
  *   args: string[],
  *   provider: string|null,
  *   available: string[],
  *   error: string|null,
+ *   notice?: string|null,
  * }}
  */
 export function buildCodexInvocation({
@@ -90,6 +117,7 @@ export function buildCodexInvocation({
   fetchKey = fetchStoredKey,
   baseEnv = process.env,
   codexHome = resolveCodexHome({ env: baseEnv }),
+  startDaemon = startCodexDaemon,
 }) {
   // Provenance (HARNESS_*, GIT_COMMITTER_NAME) is NOT injected here: Codex may run
   // commands in a shared daemon this env never reaches. setup writes it into
@@ -105,10 +133,14 @@ export function buildCodexInvocation({
   if (!provider || provider === 'codex') {
     // With the session bridge configured, an interactive TUI attaches to the shared
     // app-server daemon; a TUI on its own embedded server is invisible to the bridge.
+    // The daemon is started first: `--remote` to a dead one stops the TUI at "Cannot use the background server".
     const bridge = readBridgeConfig({ sharedPath: envSettingsPath, localPath });
-    const attach = (bridge.botToken || bridge.dashboard)
-      && isInteractiveTui(extraArgs) ? ['--remote', 'unix://'] : [];
-    return { env, args: [...attach, ...extraArgs], provider: null, available: [], error: null };
+    const wantsAttach = Boolean(bridge.botToken || bridge.dashboard) && isInteractiveTui(extraArgs);
+    const down = wantsAttach ? startDaemon({ env }) : null;
+    const notice = down ? `the shared app-server daemon did not start (${down}): this session runs on its own server, `
+      + 'outside the session bridge. Start it with: codex app-server daemon start' : null;
+    const attach = wantsAttach && !down ? ['--remote', 'unix://'] : [];
+    return { env, args: [...attach, ...extraArgs], provider: null, available: [], error: null, notice };
   }
 
   if (!existsSync(envSettingsPath)) {
