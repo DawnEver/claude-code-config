@@ -37,3 +37,5 @@ environment equally -- dev-lab harness, claude-code-config, Telegram bridge. <pr
    `.claude/memory/2026/11/27/v1-workstation-setup-handoff.md` in <project>-v1 (integrate/main), steps 1-8
    (worktree `.claude/worktrees/l1-physics-systems`, branch `pr/v1-migration/l1-physics-systems`, hooks
    installed and `protected` confirmed before any commit), then v1 issue #4; <machine> integrates, never merge.
+
+> Amended 2026-11-28: the private project, org and machine names are placeholders (<project>, <org>, <machine>) so public-hygiene passes -- approved: "把私有名称换成占位符"
