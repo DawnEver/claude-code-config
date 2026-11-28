@@ -53,7 +53,7 @@ sessions = ["integrate/main"]
 prune_merged = true
 # Branch limits (user ruling 2026-11-20): land or retire a head past them (dev_lab.dev.branchpolicy).
 max_ahead = 10
-max_idle_hours = 12
+max_idle = "12 h"
 ephemeral = ['pr/*']
 
 # FORGE-PROTECTION-DECLARED (dev_lab.dev.forgeprotect): the ONE bypass identity per forge; on GitHub the ops App
